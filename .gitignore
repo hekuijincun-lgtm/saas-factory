@@ -12,3 +12,9 @@ apps/web/.vercel/
 apps/web/tsconfig.tsbuildinfo
 apps/web/**/.bak.*
 apps/web/build.err.txt*
+# build artifacts
+apps/web/.next/
+apps/web/.vercel/
+apps/web/tsconfig.tsbuildinfo
+apps/web/**/.bak.*
+apps/web/build.err.txt*
