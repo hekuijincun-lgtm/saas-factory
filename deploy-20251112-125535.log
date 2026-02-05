@@ -1,0 +1,26 @@
+**********************
+PowerShell transcript start
+Start time: 20251112125535
+Username: KAZU\mesom
+RunAs User: KAZU\mesom
+Configuration Name: 
+Machine: KAZU (Microsoft Windows NT 10.0.26100.0)
+Host Application: C:\Program Files\PowerShell\7\pwsh.dll
+Process ID: 46604
+PSVersion: 7.5.3
+PSEdition: Core
+GitCommitId: 7.5.3
+OS: Microsoft Windows 10.0.26100
+Platform: Win32NT
+PSCompatibleVersions: 1.0, 2.0, 3.0, 4.0, 5.0, 5.1, 6.0, 7.0
+PSRemotingProtocolVersion: 2.3
+SerializationVersion: 1.1.0.1
+WSManStackVersion: 3.0
+**********************
+Transcript started, output file is C:\Users\mesom\deploy-20251112-125535.log
+PS C:\Users\mesom> # ...デプロイ実行...
+PS C:\Users\mesom> Stop-Transcript
+**********************
+PowerShell transcript end
+End time: 20251112125535
+**********************

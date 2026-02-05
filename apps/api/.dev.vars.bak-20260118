@@ -1,0 +1,5 @@
+# LINE Login local-dev config
+LINE_CLIENT_ID="(ここに LINE ログインチャネルの Client ID)"
+LINE_LOGIN_CHANNEL_ID="(Messaging API のチャネルIDでもOK。Client ID と同じケースもある)"
+LINE_LOGIN_CHANNEL_SECRET="(チャネルシークレット)"
+LINE_LOGIN_REDIRECT_BASE="http://localhost:3000"

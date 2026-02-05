@@ -1,0 +1,16 @@
+{
+  "name": "api",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev --ip 127.0.0.1 --port 8787 --persist-to .wrangler/state --log-level debug",
+    "deploy": "wrangler deploy"
+  },
+  "dependencies": {
+    "@cloudflare/ai": "^1.2.2",
+    "hono": "^4.11.1"
+  },
+  "devDependencies": {
+    "wrangler": "^4"
+  }
+}

@@ -1,0 +1,74 @@
+import { NextRequest, NextResponse } from "next/server";
+
+export async function GET(req: NextRequest) {
+  // API_BASE の決定ロジック（優先順位: NEXT_PUBLIC_BOOKING_API_BASE -> BOOKING_API_BASE -> デフォルト）
+  const API_BASE =
+    process.env.NEXT_PUBLIC_BOOKING_API_BASE ??
+    process.env.BOOKING_API_BASE ??
+    "http://127.0.0.1:8787";
+
+  // クエリを編集できる形で扱う
+  const url = new URL(req.url);
+
+  // tenantId が無い/空なら default を強制
+  const tenantId = url.searchParams.get("tenantId") || "default";
+
+  // upstream を組み立て（tenantIdは必ず入る）
+  const upstream = new URL(`${API_BASE.replace(/\/$/, "")}/admin/integrations/line/status`);
+  upstream.searchParams.set("tenantId", tenantId);
+
+  // upstream URL をログ出力
+  console.log("[proxy][line-status] upstream =", upstream.toString());
+
+  // 5秒タイムアウト設定
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 5000);
+
+  try {
+    const res = await fetch(upstream.toString(), {
+      method: "GET",
+      headers: { accept: "application/json" },
+      cache: "no-store",
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    const body = await res.text();
+
+    return new NextResponse(body, {
+      status: res.status,
+      headers: {
+        "content-type": res.headers.get("content-type") ?? "application/json",
+      },
+    });
+  } catch (err) {
+    clearTimeout(timeoutId);
+    
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    const errorCode = err instanceof Error && "code" in err ? String(err.code) : "UNKNOWN";
+    const isTimeout = err instanceof Error && err.name === "AbortError";
+    
+    console.error("[proxy][line-status] fetch failed", {
+      API_BASE,
+      upstream: upstream.toString(),
+      error: errorMessage,
+      code: errorCode,
+      isTimeout,
+    });
+
+    return NextResponse.json(
+      {
+        ok: false,
+        error: isTimeout ? "UPSTREAM_TIMEOUT" : "UPSTREAM_FETCH_FAILED",
+        message: `Proxy fetch failed: API_BASE=${API_BASE}, upstream=${upstream.toString()}, error=${errorMessage}, code=${errorCode}`,
+      },
+      { status: 502 },
+    );
+  }
+}
+
+// 検証コマンド:
+// Worker直: iwr "http://127.0.0.1:8787/admin/integrations/line/status?tenantId=default"
+// Proxy経由: iwr "http://127.0.0.1:3000/api/proxy/admin/line/status?tenantId=default"
+// 両方が kind:"linked" になること。

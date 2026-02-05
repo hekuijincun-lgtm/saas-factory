@@ -1,0 +1,576 @@
+import { Hono } from "hono"
+import {
+  getIntegration,
+  upsertIntegration,
+  setNotifyEnabled,
+  disconnectIntegration,
+  insertSendLog,
+} from "./integrations/line/store"
+
+// SAAS-FACTORY API ENTRY (apps/api/src/index.ts)
+type Env = {
+  DB: D1Database
+  LINE_CLIENT_ID?: string
+  LINE_LOGIN_CHANNEL_ID?: string
+  LINE_LOGIN_CHANNEL_SECRET?: string
+  LINE_LOGIN_REDIRECT_BASE?: string
+  LINE_CHANNEL_ACCESS_TOKEN?: string
+  LINE_MESSAGING_CHANNEL_ACCESS_TOKEN?: string
+}
+
+const app = new Hono<{ Bindings: Env }>()
+
+// tenantId がなければ default
+const getTenantId = (req: Request): string => {
+  const url = new URL(req.url)
+  return url.searchParams.get("tenantId") ?? "default"
+}
+
+function resolveLineClientId(env: Env): string {
+  return env.LINE_CLIENT_ID || env.LINE_LOGIN_CHANNEL_ID || ""
+}
+
+function resolveLineChannelAccessToken(env: Env): string {
+  return env.LINE_CHANNEL_ACCESS_TOKEN || env.LINE_MESSAGING_CHANNEL_ACCESS_TOKEN || ""
+}
+
+async function pushLineMessage(env: Env, to: string, text: string): Promise<Response> {
+  const token = resolveLineChannelAccessToken(env)
+  if (!token) {
+    return new Response(JSON.stringify({ ok: false, error: "LINE channel access token missing" }), {
+      status: 500,
+      headers: { "Content-Type": "application/json" },
+    })
+  }
+
+  return fetch("https://api.line.me/v2/bot/message/push", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": "Bearer " + token,
+    },
+    body: JSON.stringify({
+      to,
+      messages: [{ type: "text", text }],
+    }),
+  })
+}
+
+// ルート: GET /
+app.get("/", (c) => c.text("Hello from SaaS Factory API!"))
+
+// ルート: GET /health
+app.get("/health", (c) => {
+  return c.json({
+    ok: true,
+    ts: new Date().toISOString(),
+    env: "development",
+    version: "1.0.0",
+  })
+})
+
+app.get("/__debug_guard", (c) => {
+  return c.json({ ok: true, guard: "vD1-GUARD-20260125" })
+})
+
+// ルート: GET /admin/integrations/line/auth-url?tenantId=xxx
+// LINE OAuth 認証URLを生成するエンドポイント
+app.get("/admin/integrations/line/auth-url", async (c) => {
+  try {
+    const tenantId = c.req.query("tenantId") ?? "default"
+    const env = c.env
+
+    // client_id 解決（既存ロジックを維持）
+    const clientId = resolveLineClientId(env)
+
+    // redirect_uri を構築（Next.js 側の callback に向ける）
+    // ★ ここがポイント：
+    //     .dev.vars の LINE_LOGIN_REDIRECT_BASE をそのまま使う
+    //     例: http://localhost:3000  または http://127.0.0.1:8787
+    const redirectBase = env.LINE_LOGIN_REDIRECT_BASE ?? "http://localhost:3000"
+    const redirectUri = `${redirectBase.replace(/\/$/, "")}/admin/integrations/line/callback`
+
+    if (!clientId) {
+      return c.json(
+        { ok: false, error: "LINE_CLIENT_ID is not configured" },
+        400,
+      )
+    }
+
+    const params = new URLSearchParams({
+      response_type: "code",
+      client_id: clientId,
+      redirect_uri: redirectUri,
+      scope: "profile openid",
+      state: tenantId,
+    })
+
+    const url = `https://access.line.me/oauth2/v2.1/authorize?${params.toString()}`
+
+    return c.json({ ok: true, url })
+  } catch (error) {
+    const errorMessage =
+      error instanceof Error ? error.message : "Unknown error"
+    console.error("[LINE OAuth] auth-url error:", errorMessage)
+
+    return c.json(
+      {
+        ok: false,
+        error: "internal_server_error",
+        message: `LINE OAuth認証URLの生成に失敗しました: ${errorMessage}`,
+      },
+      500,
+    )
+  }
+})
+
+// ルート: GET /admin/integrations/line/status
+app.get("/admin/integrations/line/status", async (c) => {
+  try {
+    const tenantId = getTenantId(c.req.raw)
+    const db = c.env.DB
+
+    const integration = await getIntegration(db, tenantId)
+
+    if (!integration) {
+      return c.json({
+        ok: true,
+        tenantId,
+        kind: "unconfigured" as const,
+      })
+    }
+
+    return c.json({
+      ok: true,
+      tenantId,
+      kind: "linked" as const,
+      line: {
+        userId: integration.user_id,
+        displayName: integration.display_name,
+        pictureUrl: integration.picture_url || undefined,
+        updatedAt: integration.updated_at,
+      },
+      notifyEnabled: integration.notify_enabled === 1,
+      linkedAt: integration.linked_at,
+    })
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "Unknown error"
+    console.error("[LINE][status] error:", errorMessage)
+    return c.json({
+      ok: false,
+      tenantId: getTenantId(c.req.raw),
+      kind: "error" as const,
+      message: "Failed to fetch LINE integration status",
+      error: errorMessage,
+    }, 500)
+  }
+})
+
+// ルート: POST /admin/integrations/line/callback
+// Next 側から code を受け取って token 交換 → profile 取得
+app.post("/admin/integrations/line/callback", async (c) => {
+  const env = c.env
+  const body = await c.req.json<{
+    code: string
+    state?: string
+    tenantId?: string
+  }>()
+
+  const tenantId = body.tenantId || getTenantId(c.req.raw)
+  const code = body.code
+
+  if (!code) {
+    return c.json({ ok: false, error: "missing_code" }, 400)
+  }
+
+  const tokenUrl = "https://api.line.me/oauth2/v2.1/token"
+
+  // auth-url で使った redirect_uri と完全一致させる
+  const redirectBase = env.LINE_LOGIN_REDIRECT_BASE ?? "http://localhost:3000"
+  const redirectUri = `${redirectBase.replace(/\/$/, "")}/admin/integrations/line/callback`
+
+  const tokenBody = new URLSearchParams({
+    grant_type: "authorization_code",
+    code,
+    redirect_uri: redirectUri,
+    client_id: env.LINE_LOGIN_CHANNEL_ID ?? "",
+    client_secret: env.LINE_LOGIN_CHANNEL_SECRET ?? "",
+  })
+
+  const tokenRes = await fetch(tokenUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: tokenBody.toString(),
+  })
+
+  if (!tokenRes.ok) {
+    const text = await tokenRes.text()
+    console.error("[LINE][token] error", tokenRes.status, text)
+    return c.json({ ok: false, error: "token_request_failed" }, 500)
+  }
+
+  const tokenJson = await tokenRes.json() as { id_token?: string }
+
+  if (!tokenJson.id_token) {
+    return c.json({ ok: false, error: "missing_id_token" }, 500)
+  }
+
+  const verifyBody = new URLSearchParams({
+    id_token: tokenJson.id_token,
+    client_id: env.LINE_LOGIN_CHANNEL_ID ?? "",
+  })
+
+  const verifyRes = await fetch("https://api.line.me/oauth2/v2.1/verify", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: verifyBody.toString(),
+  })
+
+  if (!verifyRes.ok) {
+    const text = await verifyRes.text()
+    console.error("[LINE][verify] error", verifyRes.status, text)
+    return c.json({ ok: false, error: "verify_failed" }, 500)
+  }
+
+  const profile = (await verifyRes.json()) as {
+    sub: string
+    name?: string
+    picture?: string
+    email?: string
+  }
+
+  const db = c.env.DB
+  const now = new Date().toISOString()
+
+  const saved = await upsertIntegration(db, tenantId, {
+    userId: profile.sub,
+    displayName: profile.name ?? "LINE User",
+    pictureUrl: profile.picture,
+    updatedAt: now,
+  })
+
+  return c.json({
+    ok: true,
+    tenantId,
+    kind: "linked" as const,
+    line: {
+      userId: saved.user_id,
+      displayName: saved.display_name,
+      pictureUrl: saved.picture_url || undefined,
+      updatedAt: saved.updated_at,
+    },
+  })
+})
+
+app.patch("/admin/integrations/line/notify", async (c) => {
+  const tenantId = c.req.query("tenantId") ?? "default"
+
+  try {
+    const body = await c.req.json().catch(() => ({} as any))
+    const notifyEnabled = !!body?.notifyEnabled
+
+    // D1の getIntegration を呼ぶ
+    const integration = await getIntegration(c.env.DB, tenantId)
+
+    // integration === null の場合は必ず 409 を返す
+    if (integration === null) {
+      return c.json({ ok: false, error: "not linked", tenantId, debug: "vD1-GUARD-20260125" }, 409)
+    }
+
+    // linked の場合のみ setNotifyEnabled を実行
+    await setNotifyEnabled(c.env.DB, tenantId, notifyEnabled)
+
+    // 成功レスポンス
+    return c.json({ ok: true, tenantId, notifyEnabled, debug: "vD1-GUARD-20260125" })
+  } catch (e: any) {
+    return c.json(
+      { ok: false, error: "internal_error", message: String(e?.message ?? e), tenantId, debug: "vD1-GUARD-20260125" },
+      500
+    )
+  }
+})
+
+app.post("/admin/integrations/line/test", async (c) => {
+  const tenantId = c.req.query("tenantId") ?? "default"
+
+  try {
+    // D1の getIntegration を呼ぶ
+    const integration = await getIntegration(c.env.DB, tenantId)
+
+    // integration === null の場合は必ず 409 を返す
+    if (integration === null) {
+      return c.json({ ok: false, error: "not linked", tenantId, sent: false, debug: "vD1-GUARD-20260125" }, 409)
+    }
+
+    // linked の場合のみ送信処理＆ログ insert を行う
+    const now = Math.floor(Date.now() / 1000)
+
+    // 送信処理（仮でもOK）
+    // ログ insert
+    await c.env.DB.prepare(
+      "INSERT INTO line_send_logs (tenant_id, kind, ok, message, error, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)"
+    )
+      .bind(tenantId, "test", 1, "dev test (guarded)", null, String(now))
+      .run()
+
+    // 成功レスポンス
+    return c.json({ ok: true, tenantId, sent: true, debug: "vD1-GUARD-20260125" })
+  } catch (e: any) {
+    const now = Math.floor(Date.now() / 1000)
+    try {
+      await c.env.DB.prepare(
+        "INSERT INTO line_send_logs (tenant_id, kind, ok, message, error, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)"
+      )
+        .bind(tenantId, "test", 0, "dev test (guarded)", String(e?.message ?? e), String(now))
+        .run()
+    } catch {}
+
+    return c.json(
+      { ok: false, error: "internal_error", message: String(e?.message ?? e), tenantId, sent: false, debug: "vD1-GUARD-20260125" },
+      500
+    )
+  }
+})
+
+// ルート: POST /admin/integrations/line/disconnect
+app.post("/admin/integrations/line/disconnect", async (c) => {
+  try {
+    const tenantId = c.req.query("tenantId") ?? getTenantId(c.req.raw)
+    const db = c.env.DB
+
+    await disconnectIntegration(db, tenantId)
+
+    return c.json({ ok: true, tenantId, disconnected: true })
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "Unknown error"
+    console.error("[LINE][disconnect] error:", errorMessage)
+    return c.json({
+      ok: false,
+      error: "disconnect failed",
+      tenantId: c.req.query("tenantId") ?? getTenantId(c.req.raw),
+      message: errorMessage,
+    }, 500)
+  }
+})
+
+// ルート: POST /admin/integrations/line/webhook
+app.post("/admin/integrations/line/webhook", async (c) => {
+  const tenantId = c.req.query("tenantId") ?? "default"
+  const logId = crypto.randomUUID()
+  const ts = new Date().toISOString()
+
+  // 1) まずは raw を読む（JSONが壊れてても落ちない）
+  let raw = ""
+  try {
+    raw = await c.req.text()
+  } catch {
+    raw = ""
+  }
+  const bodyLen = raw.length
+
+  // 2) 最低限だけ抜く（失敗しても null）
+  let eventType: string | null = null
+  let msgType: string | null = null
+  let replyToken: string | null = null
+  let replyTokenLen: number | null = null
+  let text: string | null = null
+
+  try {
+    const j = raw ? JSON.parse(raw) : null
+    const ev = j?.events?.[0]
+    if (ev) {
+      eventType = (ev.type ?? null) as any
+      msgType = (ev.message?.type ?? null) as any
+      replyToken = (ev.replyToken ?? null) as any
+      replyTokenLen = replyToken ? String(replyToken).length : null
+      text = (ev.message?.text ?? null) as any
+    }
+  } catch {
+    // ignore
+  }
+
+  // 3) dummy / no token / no text は reply をスキップ（0=skipped）
+  const isDummy = replyToken === "dummy"
+  const shouldSkip = !replyToken || isDummy || !text
+  const replyStatus = shouldSkip ? 0 : 1 // 0=skipped, 1=queued(後で実行)
+
+  // 4) ここが肝：DBやfetchは全部 waitUntil に投げて、HTTPは即返す
+  try {
+    const work = (async () => {
+      try {
+        // table ensure（ここが固まってもHTTPは返った後）
+        await c.env.DB.prepare(
+          "CREATE TABLE IF NOT EXISTS line_webhook_logs (" +
+            "id TEXT PRIMARY KEY," +
+            "ts TEXT NOT NULL," +
+            "tenant_id TEXT NOT NULL," +
+            "event_type TEXT," +
+            "msg_type TEXT," +
+            "reply_token_len INTEGER," +
+            "body_len INTEGER NOT NULL," +
+            "reply_status INTEGER," +
+            "reply_body TEXT" +
+          ")"
+        ).run()
+
+        await c.env.DB.prepare(
+          "CREATE INDEX IF NOT EXISTS idx_line_webhook_logs_tenant_ts " +
+          "ON line_webhook_logs(tenant_id, ts)"
+        ).run()
+
+        // まずはログを入れる（queued / skipped）
+        const initialBody =
+          shouldSkip
+            ? (isDummy ? "reply skipped (dummy replyToken)" : "no replyToken or text")
+            : "queued"
+
+        await c.env.DB.prepare(
+          "INSERT INTO line_webhook_logs (id, ts, tenant_id, event_type, msg_type, reply_token_len, body_len, reply_status, reply_body) " +
+          "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)"
+        )
+          .bind(logId, ts, tenantId, eventType, msgType, replyTokenLen, bodyLen, shouldSkip ? 0 : 1, initialBody)
+          .run()
+
+        // reply が必要な場合だけ実行
+        if (!shouldSkip) {
+          const token = resolveLineChannelAccessToken(c.env)
+          if (!token) {
+            await c.env.DB.prepare(
+              "UPDATE line_webhook_logs SET reply_status = ?2, reply_body = ?3 WHERE id = ?1"
+            ).bind(logId, -1, "LINE_CHANNEL_ACCESS_TOKEN missing").run()
+            return
+          }
+
+          // Reply API（3秒で打ち切り）
+          const ac = new AbortController()
+          const t = setTimeout(() => ac.abort(), 3000)
+
+          let status: number | null = null
+          let body: string | null = null
+
+          try {
+            const r = await fetch("https://api.line.me/v2/bot/message/reply", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "Authorization": "Bearer " + token,
+              },
+              body: JSON.stringify({
+                replyToken,
+                messages: [{ type: "text", text: "ok" }],
+              }),
+              signal: ac.signal,
+            })
+            status = r.status
+            body = await r.text()
+          } catch (e: any) {
+            body = "ffetch error: " + String(e?.message ?? e)
+            status = -2
+          } finally {
+            clearTimeout(t)
+          }
+
+          // 結果を追記
+          await c.env.DB.prepare(
+            "UPDATE line_webhook_logs SET reply_status = ?2, reply_body = ?3 WHERE id = ?1"
+          )
+            .bind(logId, status, (body ?? "").slice(0, 2000))
+            .run()
+        }
+      } catch {
+        // ignore（ログ失敗でもOK）
+      }
+    })()
+
+    // 型がうるさい時があるので any で逃がす（実運用優先）
+    ;(c as any).executionCtx?.waitUntil?.(work)
+  } catch {
+    // ignore
+  }
+
+  return c.json({ ok: true, logged: true, logId, replyStatus })
+})
+
+// ルート: GET /admin/integrations/line/webhook-logs
+// Webhookログ一覧取得
+app.get("/admin/integrations/line/webhook-logs", async (c) => {
+  try {
+    const tenantId = c.req.query("tenantId") ?? "default"
+    const limit = Math.min(parseInt(c.req.query("limit") || "30", 10), 200)
+
+    const rows = await c.env.DB.prepare(
+      "SELECT id, ts, tenant_id, event_type, msg_type, reply_status FROM line_webhook_logs WHERE tenant_id = ?1 ORDER BY ts DESC LIMIT ?2"
+    )
+      .bind(tenantId, limit)
+      .all<{
+        id: string
+        ts: string
+        tenant_id: string
+        event_type: string | null
+        msg_type: string | null
+        reply_status: number | null
+      }>()
+
+    return c.json({
+      ok: true,
+      rows: rows.results || [],
+    })
+  } catch (e: any) {
+    return c.json(
+      { ok: false, error: "internal_error", message: String(e?.message ?? e) },
+      500
+    )
+  }
+})
+
+// ルート: GET /admin/integrations/line/webhook-log
+// Webhookログ詳細取得
+app.get("/admin/integrations/line/webhook-log", async (c) => {
+  try {
+    const id = c.req.query("id")
+    if (!id) {
+      return c.json({ ok: false, error: "missing_id" }, 400)
+    }
+
+    const row = await c.env.DB.prepare(
+      "SELECT * FROM line_webhook_logs WHERE id = ?1 LIMIT 1"
+    )
+      .bind(id)
+      .first<{
+        id: string
+        ts: string
+        tenant_id: string
+        event_type: string | null
+        msg_type: string | null
+        reply_token_len: number | null
+        body_len: number
+        reply_status: number | null
+        reply_body: string | null
+      }>()
+
+    if (!row) {
+      return c.json({ ok: false, error: "not_found" }, 404)
+    }
+
+    return c.json({
+      ok: true,
+      log: row,
+    })
+  } catch (e: any) {
+    return c.json(
+      { ok: false, error: "internal_error", message: String(e?.message ?? e) },
+      500
+    )
+  }
+})
+
+// ルート: GET /ping
+app.get("/ping", (c) => c.text("pong"))
+
+export default app
+
+
+
+
+
+

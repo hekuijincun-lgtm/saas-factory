@@ -1,0 +1,13 @@
+[user]
+	name = Kazuki
+	email = your-email@example.com
+[core]
+	autocrlf = false
+[credential "https://github.com"]
+	helper = 
+	helper = !'C:\\Program Files\\GitHub CLI\\gh.exe' auth git-credential
+[credential "https://gist.github.com"]
+	helper = 
+	helper = !'C:\\Program Files\\GitHub CLI\\gh.exe' auth git-credential
+[push]
+	autoSetupRemote = true

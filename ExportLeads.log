@@ -1,0 +1,2 @@
+[33;1mWARNING: The names of some imported commands from the module 'LeadsTools' include unapproved verbs that might make them less discoverable. To find the commands with unapproved verbs, run the Import-Module command again with the Verbose parameter. For a list of approved verbs, type Get-Verb.[0m
+[31;1mException: [31;1mBaseUrl ‚ª–¢İ’èBSet-LeadsContext ‚ğæ‚ÉÀs‚µ‚Ä‚ËB[0m

@@ -1,0 +1,16 @@
+// 切り分け用。後で元に戻す
+import { Hono } from "hono"
+
+const app = new Hono()
+
+// ルート: GET /health
+app.get("/health", (c) => {
+  return c.json({
+    ok: true,
+    ts: new Date().toISOString(),
+    env: "development",
+    version: "1.0.0",
+  })
+})
+
+export default app

@@ -1,0 +1,3430 @@
+import { Hono } from 'hono';
+import { cors } from 'hono/cors';
+import { SlotLock } from './SlotLock';
+import { DEFAULT_ADMIN_SETTINGS, validateAdminSettings, mergeSettings, type AdminSettings } from './settings';
+import { getBusinessHoursForDate, generateSlots, getTodayJST, isWorkingTime, timeToMinutes, getNowMinutesJST } from './slotUtils';
+import { buildLineAuthUrl, exchangeCodeForToken, verifyAccessToken, sendLineMessage, sendLineNotification, verifyLineWebhookSignature } from './integrations/line';
+import { getLineConfig, saveLineConfig, deleteLineConfig, hasLineConfig, logAudit, getMaskedConfig, type LineConfigPlain } from './lineConfig';
+import { getLineConfigOrNull, getLineConfigRequired, jsonError } from './line/config';
+import { getLineConfigOrNull, getLineConfigRequired, jsonError } from './line/config';
+
+type Env = {
+  ENVIRONMENT?: string;
+  VERSION?: string;
+  SAAS_FACTORY: KVNamespace;
+  SLOT_LOCK: DurableObjectNamespace<SlotLock>;
+  DB: D1Database;
+  CONFIG_ENC_KEY?: string; // 暗号化マスターキー（base64 32byte）
+  LINE_CLIENT_ID?: string; // LINE Login Client ID
+  LINE_LOGIN_CHANNEL_ID?: string; // LINE Login Channel ID
+  LINE_LOGIN_CHANNEL_SECRET?: string; // LINE Login Channel Secret
+  LINE_LOGIN_REDIRECT_BASE?: string; // LINE Login Redirect Base URL (例: http://localhost:3000)
+  LINE_REDIRECT_URI?: string; // LINE OAuth Redirect URI (例: http://localhost:3000/admin/integrations/line/callback)
+  LINE_CHANNEL_ACCESS_TOKEN?: string; // 後方互換性のため残す（D1移行後は削除予定）
+  LINE_CHANNEL_SECRET?: string; // 後方互換性のため残す（D1移行後は削除予定）
+  WEB_BASE_URL?: string; // 例: http://localhost:3000
+};
+
+const app = new Hono<{ Bindings: Env }>();
+
+/**
+ * テナントIDを取得（暫定: 1テナントのみ対応）
+ * 将来的にはリクエストヘッダーやサブドメインから取得する
+ */
+function getTenantId(c: { req: { header: (name: string) => string | undefined } }): string {
+  // TODO: マルチテナント対応時に実装
+  // const tenantId = c.req.header('X-Tenant-ID') || extractFromSubdomain(c.req.url);
+  return 'default';
+}
+
+// CORS設定: 開発時のみ http://localhost:3000 を許可
+app.use('/*', cors({
+  origin: (origin, c) => {
+    const env = c.env?.ENVIRONMENT || 'development';
+    // 開発環境の場合のみCORSを許可
+    if (env === 'development' && origin === 'http://localhost:3000') {
+      return origin;
+    }
+    // 本番環境または許可されていないOriginの場合はCORSを付けない
+    return null;
+  },
+  allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowHeaders: ['Content-Type', 'Authorization'],
+  credentials: true,
+}));
+
+// GET /ping (依存ゼロの疎通確認ルート)
+app.get('/ping', (c) => c.text('pong'));
+
+// GET /
+app.get('/', (c) => {
+  return c.text('API Online');
+});
+
+// GET /health
+app.get('/health', (c) => {
+  const env = c.env;
+  return c.json({
+    ok: true,
+    ts: new Date().toISOString(),
+    env: env.ENVIRONMENT || 'development',
+    version: env.VERSION || '1.0.0',
+  });
+});
+
+// GET /meta
+app.get('/meta', (c) => {
+  const env = c.env;
+  return c.json({
+    service: 'saas-factory-api',
+    env: env.ENVIRONMENT || 'development',
+    version: env.VERSION || '1.0.0',
+    runtime: 'cloudflare-workers',
+  });
+});
+
+// GET /slots?date=YYYY-MM-DD&staffId=xxx(optional)
+app.get('/slots', async (c) => {
+  const dateStr = c.req.query('date');
+  const staffId = c.req.query('staffId'); // optional
+  const debug = c.req.query('debug');
+  
+  // デバッグモード: debug=1 で依存ゼロで即 return
+  if (debug === '1') {
+    return c.json({ ok: true, stage: 'entered', date: dateStr, staffId: staffId || null });
+  }
+  
+  // date がない/不正なら 400
+  if (!dateStr) {
+    return c.json({ ok: false, error: 'invalid date' }, 400);
+  }
+  
+  // 日付形式の検証 (YYYY-MM-DD)
+  const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+  if (!dateRegex.test(dateStr)) {
+    return c.json({ ok: false, error: 'invalid date' }, 400);
+  }
+  
+  // 日付が有効かチェック
+  const date = new Date(dateStr + 'T00:00:00+09:00'); // JSTとして解釈
+  if (isNaN(date.getTime())) {
+    return c.json({ ok: false, error: 'invalid date' }, 400);
+  }
+  
+  const kv = c.env.SAAS_FACTORY;
+  
+  // デバッグモード: debug=2 で settings を取得
+  if (debug === '2') {
+    try {
+      const settingsValue = await kv.get('settings:default');
+      const hasSettings = !!settingsValue;
+      return c.json({ 
+        ok: true, 
+        stage: 'settings_fetched', 
+        date: dateStr,
+        hasSettings,
+        settingsLength: settingsValue?.length || 0
+      });
+    } catch (e) {
+      return c.json({ 
+        ok: false, 
+        stage: 'settings_error', 
+        error: e instanceof Error ? e.message : String(e) 
+      }, 500);
+    }
+  }
+  
+  // 設定を取得
+  const settingsValue = await kv.get('settings:default');
+  const settings: AdminSettings = settingsValue
+    ? mergeSettings(DEFAULT_ADMIN_SETTINGS, JSON.parse(settingsValue))
+    : DEFAULT_ADMIN_SETTINGS;
+  
+  // デバッグモード: debug=3 で shift を読む
+  if (debug === '3') {
+    try {
+      let shiftPresent = false;
+      let staffListPresent = false;
+      
+      if (staffId) {
+        const shiftValue = await kv.get(`shift:${staffId}`);
+        shiftPresent = !!shiftValue;
+      }
+      
+      // staff list も確認
+      const staffListValue = await kv.get('staff:list');
+      staffListPresent = !!staffListValue;
+      
+      return c.json({ 
+        ok: true, 
+        stage: 'shift_fetched', 
+        date: dateStr,
+        staffId: staffId || null,
+        shiftPresent,
+        staffListPresent
+      });
+    } catch (e) {
+      return c.json({ 
+        ok: false, 
+        stage: 'error', 
+        error: e instanceof Error ? e.message : String(e) 
+      }, 500);
+    }
+  }
+  
+  // 営業時間を取得（定休日・例外日を考慮）
+  const businessHours = getBusinessHoursForDate(dateStr, settings);
+  
+  if (!businessHours) {
+    // 休業日または定休日
+    return c.json({
+      ok: true,
+      date: dateStr,
+      slots: [],
+    });
+  }
+  
+  // スロット間隔を取得（デフォルト30分）
+  const slotIntervalMin = settings.businessHours.slotIntervalMin || 30;
+  
+  // staffId がある場合、そのスタッフのシフトを取得
+  let staffShift: StaffShift | null = null;
+  if (staffId) {
+    try {
+      const shiftValue = await kv.get(`shift:${staffId}`);
+      if (shiftValue) {
+        staffShift = JSON.parse(shiftValue) as StaffShift;
+      }
+    } catch (e) {
+      console.warn(`Failed to load shift for staff ${staffId}:`, e);
+    }
+  }
+  
+  // デバッグモード: debug=4 で予約済みキーの参照まで
+  if (debug === '4') {
+    try {
+      // 最初のスロットの予約キーを参照（スロット生成はしない）
+      // 仮の時間でキーを構築して参照するだけ
+      const testKey = `rsv:${dateStr}:10:00`;
+      const existing = await kv.get(testKey);
+      const reservedPresent = !!existing;
+      return c.json({ 
+        ok: true, 
+        stage: 'reserved_key_checked', 
+        date: dateStr,
+        testKey,
+        reservedPresent
+      });
+    } catch (e) {
+      return c.json({ 
+        ok: false, 
+        stage: 'error', 
+        error: e instanceof Error ? e.message : String(e) 
+      }, 500);
+    }
+  }
+  
+  // デバッグモード: debug=5 でスロット生成ロジック直前まで
+  if (debug === '5') {
+    return c.json({ 
+      ok: true, 
+      stage: 'before_slot_generation', 
+      date: dateStr,
+      hasBusinessHours: !!businessHours,
+      slotIntervalMin,
+      hasShift: !!staffShift,
+      staffId: staffId || null
+    });
+  }
+  
+  // スロットを生成
+  const timeSlots = generateSlots(businessHours.openTime, businessHours.closeTime, slotIntervalMin);
+  
+  // デバッグモード: debug=6 でスロット生成ロジックを実行して stage=done で返す
+  if (debug === '6') {
+    try {
+      // 無限ループ検知: maxIterations ガード
+      const maxIterations = 5000;
+      let iterationCount = 0;
+      
+      // スロット生成後の処理をシミュレート（最初の数個だけ）
+      const sampleSlots = timeSlots.slice(0, Math.min(5, timeSlots.length));
+      const sampleResults = await Promise.all(
+        sampleSlots.map(async (time) => {
+          iterationCount++;
+          if (iterationCount > maxIterations) {
+            throw new Error(`Max iterations (${maxIterations}) exceeded`);
+          }
+          
+          const key = `rsv:${dateStr}:${time}`;
+          const existing = await kv.get(key);
+          return {
+            time,
+            key,
+            reserved: !!existing
+          };
+        })
+      );
+      
+      return c.json({ 
+        ok: true, 
+        stage: 'done', 
+        date: dateStr,
+        totalSlots: timeSlots.length,
+        sampleSlots: sampleResults.length,
+        iterationCount,
+        firstSlot: timeSlots[0] || null,
+        lastSlot: timeSlots[timeSlots.length - 1] || null
+      });
+    } catch (e) {
+      return c.json({ 
+        ok: false, 
+        stage: 'error', 
+        error: e instanceof Error ? e.message : String(e) 
+      }, 500);
+    }
+  }
+  
+  // KVから予約済みスロットを確認し、cutoffMinutesとshiftを適用
+  // reason の優先順位: 1) reserved, 2) cutoff, 3) closed, 4) shift
+  // 無限ループ検知: maxIterations ガード
+  const maxIterations = 5000;
+  let iterationCount = 0;
+  
+  const slots = await Promise.all(
+    timeSlots.map(async (time) => {
+      iterationCount++;
+      if (iterationCount > maxIterations) {
+        throw new Error(`Max iterations (${maxIterations}) exceeded in slot processing`);
+      }
+      // 理由を優先順位で判定
+      const reasons: string[] = [];
+      
+      // 1. closed チェック（営業時間外）
+      if (!businessHours) {
+        reasons.push('closed');
+      }
+      
+      // 2. reserved チェック（予約済み、かつstatusがactive）
+      const key = `rsv:${dateStr}:${time}`;
+      const existing = await kv.get(key);
+      if (existing) {
+        try {
+          const reservation = JSON.parse(existing);
+          // statusが"canceled"でない場合のみ予約済みとみなす
+          if (reservation.status !== 'canceled') {
+            reasons.push('reserved');
+          }
+        } catch (e) {
+          // パースエラーは無視
+        }
+      }
+      
+      // 3. cutoff チェック（当日かつcutoffMinutes以内）
+      const today = getTodayJST();
+      if (dateStr === today) {
+        const nowMin = getNowMinutesJST();
+        const slotMin = timeToMinutes(time);
+        const diffMinutes = slotMin - nowMin;
+        if (diffMinutes < settings.rules.cutoffMinutes) {
+          reasons.push('cutoff');
+        }
+      }
+      
+      // 4. shift チェック（staffIdがある場合、勤務時間外）
+      if (staffId && staffShift) {
+        const isWorking = isWorkingTime(dateStr, time, staffShift);
+        if (!isWorking) {
+          reasons.push('shift');
+        }
+      }
+      
+      // 優先順位で最初のreasonを採用: reserved > cutoff > closed > shift
+      const reasonPriority: Record<string, number> = {
+        reserved: 1,
+        cutoff: 2,
+        closed: 3,
+        shift: 4,
+      };
+      
+      let finalReason: string | undefined = undefined;
+      if (reasons.length > 0) {
+        reasons.sort((a, b) => (reasonPriority[a] || 999) - (reasonPriority[b] || 999));
+        finalReason = reasons[0];
+      }
+      
+      // available判定: いずれかの理由があればfalse
+      const available = finalReason === undefined;
+      
+      return {
+        time,
+        available,
+        ...(finalReason ? { reason: finalReason as 'cutoff' | 'reserved' | 'shift' | 'closed' } : {}),
+      };
+    })
+  );
+  
+  return c.json({
+    ok: true,
+    date: dateStr,
+    ...(staffId ? { staffId } : {}),
+    slots,
+  });
+});
+
+// POST /reserve
+app.post('/reserve', async (c) => {
+  try {
+    const body = await c.req.json();
+    const { date, time, name, phone } = body;
+    
+    // validation: date/time/name 必須。phoneは任意
+    if (!date || typeof date !== 'string') {
+      return c.json({ ok: false, error: 'date is required' }, 400);
+    }
+    if (!time || typeof time !== 'string') {
+      return c.json({ ok: false, error: 'time is required' }, 400);
+    }
+    if (!name || typeof name !== 'string' || name.trim() === '') {
+      return c.json({ ok: false, error: 'name is required' }, 400);
+    }
+    
+    // Durable Object経由で処理（ロックキー: ${date}:${time}）
+    const lockKey = `${date}:${time}`;
+    const id = c.env.SLOT_LOCK.idFromName(lockKey);
+    const stub = c.env.SLOT_LOCK.get(id);
+    
+    // Durable Objectにリクエストを転送
+    // Durable Objectは同一IDに対して同時に1つのリクエストしか処理しないため、
+    // 自然にロックがかかり、二重予約を防ぐ
+    const doRequest = new Request('http://slot-lock/reserve', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
+    
+    const response = await stub.fetch(doRequest);
+    const result = await response.json();
+    const status = response.status;
+    
+    // 予約作成成功時にLINE通知を送信（非同期、エラーは無視）
+    if (status === 200 && result.ok) {
+      try {
+        const kv = c.env.SAAS_FACTORY;
+        const tenantId = getTenantId(c);
+        
+        // settings を取得して通知ルールを確認
+        const settingsValue = await kv.get('settings:default');
+        const settings: AdminSettings = settingsValue
+          ? mergeSettings(DEFAULT_ADMIN_SETTINGS, JSON.parse(settingsValue))
+          : DEFAULT_ADMIN_SETTINGS;
+        
+        // 通知が有効で、LINE連携済みの場合のみ送信
+        if (settings.integrations?.line?.connected && settings.integrations.line.notifyOnReservation !== false) {
+          const { date, time, name, reservationId, staffId } = result;
+          
+          // スタッフ名を取得（あれば）
+          let staffName = '指名なし';
+          if (staffId) {
+            try {
+              const staffValue = await kv.get(`staff:${staffId}`);
+              if (staffValue) {
+                const staff = JSON.parse(staffValue);
+                staffName = staff.name || staffId;
+              }
+            } catch (e) {
+              // スタッフ取得失敗は無視
+            }
+          }
+          
+          // メニュー情報を取得（あれば、bodyにmenuIdがあれば）
+          let menuName = 'メニュー未指定';
+          if (body.menuId) {
+            try {
+              const menuValue = await kv.get(`menu:${body.menuId}`);
+              if (menuValue) {
+                const menu = JSON.parse(menuValue);
+                menuName = menu.name || body.menuId;
+              }
+            } catch (e) {
+              // メニュー取得失敗は無視
+            }
+          }
+          
+          const message = `予約が確定しました ✅\n日時: ${date} ${time}\nメニュー: ${menuName}\nスタッフ: ${staffName}\n予約ID: ${reservationId}`;
+          
+          // 非同期で通知を送信（エラーは無視）
+          // D1から設定を取得（なければ環境変数にフォールバック）
+          getLineConfigOrNull({ DB: c.env.DB, CONFIG_ENC_KEY: c.env.CONFIG_ENC_KEY }, tenantId).then(async (config) => {
+            let channelAccessToken: string | undefined;
+            if (config) {
+              channelAccessToken = config.channelAccessToken;
+            } else {
+              channelAccessToken = c.env.LINE_CHANNEL_ACCESS_TOKEN;
+            }
+            const userId = settings.integrations.line.userId;
+            if (channelAccessToken && userId) {
+              sendLineNotification(kv, channelAccessToken, userId, message)
+              .then(async () => {
+                // 成功時: lastSentAt を記録
+                const lastSentAtKey = `line:notify:lastSentAt:${tenantId}`;
+                await kv.put(lastSentAtKey, JSON.stringify({
+                  message,
+                  at: Date.now(),
+                }));
+              })
+              .catch(async (err) => {
+                // エラー時: lastError を記録（秘密値はログに出力しない）
+                const errorMessage = err instanceof Error ? err.message : String(err);
+                // console.error は秘密値を含む可能性があるため使用しない
+                const lastErrorKey = `line:notify:lastError:${tenantId}`;
+                await kv.put(lastErrorKey, JSON.stringify({
+                  message,
+                  error: errorMessage,
+                  at: Date.now(),
+                }));
+              });
+            }
+          }).catch(() => {
+            // エラーは無視
+          });
+        }
+      } catch (err) {
+        // 通知送信失敗は無視（予約作成は成功しているため）
+        // console.error は秘密値を含む可能性があるため使用しない
+      }
+    }
+    
+    return c.json(result, status);
+  } catch (error) {
+    return c.json({ ok: false, error: 'Invalid request body' }, 400);
+  }
+});
+
+// GET /admin/reservations?date=YYYY-MM-DD
+app.get('/admin/reservations', async (c) => {
+  const dateStr = c.req.query('date');
+  
+  // date がない/不正なら 400
+  if (!dateStr) {
+    return c.json({ ok: false, error: 'date parameter is required' }, 400);
+  }
+  
+  // 日付形式の検証 (YYYY-MM-DD)
+  const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+  if (!dateRegex.test(dateStr)) {
+    return c.json({ ok: false, error: 'invalid date format' }, 400);
+  }
+  
+  // 日付が有効かチェック
+  const date = new Date(dateStr + 'T00:00:00');
+  if (isNaN(date.getTime())) {
+    return c.json({ ok: false, error: 'invalid date' }, 400);
+  }
+  
+  const kv = c.env.SAAS_FACTORY;
+  const prefix = `rsv:${dateStr}:`;
+  
+  // KVから指定日付の予約を取得（prefix scan）
+  // 注意: Cloudflare KVはprefix scanを直接サポートしていないため、
+  // 全キーをリストしてフィルタリングする必要がある
+  // 簡易実装として、固定時間帯をスキャンする方法を使用
+  const timeSlots = ['10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00'];
+  const reservations = [];
+  
+  for (const time of timeSlots) {
+    const key = `${prefix}${time}`;
+    const value = await kv.get(key);
+    if (value) {
+      try {
+        const reservation = JSON.parse(value);
+        reservations.push(reservation);
+      } catch (e) {
+        // パースエラーは無視
+      }
+    }
+  }
+  
+  return c.json({
+    ok: true,
+    date: dateStr,
+    reservations,
+  });
+});
+
+// GET /admin/staff
+app.get('/admin/staff', async (c) => {
+  try {
+    const kv = c.env.SAAS_FACTORY;
+    const value = await kv.get('admin:staff:list');
+    
+    if (value) {
+      const staff = JSON.parse(value);
+      return c.json({ ok: true, data: staff });
+    }
+    
+    // デフォルトデータ
+    const defaultStaff = [
+      { id: 'sakura', name: 'サクラ', role: 'Top Stylist', active: true, sortOrder: 1 },
+      { id: 'kenji', name: 'ケンジ', role: 'Director', active: true, sortOrder: 2 },
+      { id: 'rookie', name: 'Rookie', role: 'Staff', active: true, sortOrder: 3 },
+    ];
+    
+    return c.json({ ok: true, data: defaultStaff });
+  } catch (error) {
+    return c.json({ ok: false, error: 'Failed to fetch staff', message: String(error) }, 500);
+  }
+});
+
+// POST /admin/staff
+app.post('/admin/staff', async (c) => {
+  try {
+    const body = await c.req.json();
+    const { name, role, active, sortOrder } = body;
+    
+    // validation
+    if (!name || typeof name !== 'string' || name.trim() === '') {
+      return c.json({ ok: false, error: 'name is required' }, 400);
+    }
+    if (active !== undefined && typeof active !== 'boolean') {
+      return c.json({ ok: false, error: 'active must be boolean' }, 400);
+    }
+    if (sortOrder !== undefined && (typeof sortOrder !== 'number' || sortOrder < 0)) {
+      return c.json({ ok: false, error: 'sortOrder must be non-negative number' }, 400);
+    }
+    
+    const kv = c.env.SAAS_FACTORY;
+    const value = await kv.get('admin:staff:list');
+    const staff = value ? JSON.parse(value) : [];
+    
+    // ID生成
+    const id = `staff_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    const newStaff = {
+      id,
+      name: name.trim(),
+      role: role?.trim() || undefined,
+      active: active !== undefined ? active : true,
+      sortOrder: sortOrder !== undefined ? sortOrder : staff.length,
+    };
+    
+    staff.push(newStaff);
+    await kv.put('admin:staff:list', JSON.stringify(staff));
+    
+    return c.json({ ok: true, data: newStaff }, 201);
+  } catch (error) {
+    return c.json({ ok: false, error: 'Failed to create staff', message: String(error) }, 500);
+  }
+});
+
+// PATCH /admin/staff/:id
+app.patch('/admin/staff/:id', async (c) => {
+  try {
+    const id = c.req.param('id');
+    const body = await c.req.json();
+    const { name, role, active, sortOrder } = body;
+    
+    const kv = c.env.SAAS_FACTORY;
+    const value = await kv.get('admin:staff:list');
+    if (!value) {
+      return c.json({ ok: false, error: 'Staff not found' }, 404);
+    }
+    
+    const staff = JSON.parse(value);
+    const index = staff.findIndex((s: any) => s.id === id);
+    if (index === -1) {
+      return c.json({ ok: false, error: 'Staff not found' }, 404);
+    }
+    
+    // 更新
+    if (name !== undefined) {
+      if (typeof name !== 'string' || name.trim() === '') {
+        return c.json({ ok: false, error: 'name must be non-empty string' }, 400);
+      }
+      staff[index].name = name.trim();
+    }
+    if (role !== undefined) {
+      staff[index].role = role === null || role === '' ? undefined : role.trim();
+    }
+    if (active !== undefined) {
+      if (typeof active !== 'boolean') {
+        return c.json({ ok: false, error: 'active must be boolean' }, 400);
+      }
+      staff[index].active = active;
+    }
+    if (sortOrder !== undefined) {
+      if (typeof sortOrder !== 'number' || sortOrder < 0) {
+        return c.json({ ok: false, error: 'sortOrder must be non-negative number' }, 400);
+      }
+      staff[index].sortOrder = sortOrder;
+    }
+    
+    await kv.put('admin:staff:list', JSON.stringify(staff));
+    
+    return c.json({ ok: true, data: staff[index] });
+  } catch (error) {
+    return c.json({ ok: false, error: 'Failed to update staff', message: String(error) }, 500);
+  }
+});
+
+// GET /admin/menu
+app.get('/admin/menu', async (c) => {
+  try {
+    const kv = c.env.SAAS_FACTORY;
+    const value = await kv.get('admin:menu:list');
+    
+    if (value) {
+      const menu = JSON.parse(value);
+      return c.json({ ok: true, data: menu });
+    }
+    
+    // デフォルトデータ
+    const defaultMenu = [
+      { id: 'cut', name: 'カット', price: 5000, durationMin: 60, active: true, sortOrder: 1 },
+      { id: 'color', name: 'カラー', price: 8000, durationMin: 90, active: true, sortOrder: 2 },
+      { id: 'perm', name: 'パーマ', price: 10000, durationMin: 120, active: true, sortOrder: 3 },
+    ];
+    
+    return c.json({ ok: true, data: defaultMenu });
+  } catch (error) {
+    return c.json({ ok: false, error: 'Failed to fetch menu', message: String(error) }, 500);
+  }
+});
+
+// POST /admin/menu
+app.post('/admin/menu', async (c) => {
+  try {
+    const body = await c.req.json();
+    const { name, price, durationMin, active, sortOrder } = body;
+    
+    // validation
+    if (!name || typeof name !== 'string' || name.trim() === '') {
+      return c.json({ ok: false, error: 'name is required' }, 400);
+    }
+    if (price === undefined || typeof price !== 'number' || price < 0) {
+      return c.json({ ok: false, error: 'price must be non-negative number' }, 400);
+    }
+    if (durationMin === undefined || typeof durationMin !== 'number' || durationMin <= 0) {
+      return c.json({ ok: false, error: 'durationMin must be positive number' }, 400);
+    }
+    if (active !== undefined && typeof active !== 'boolean') {
+      return c.json({ ok: false, error: 'active must be boolean' }, 400);
+    }
+    if (sortOrder !== undefined && (typeof sortOrder !== 'number' || sortOrder < 0)) {
+      return c.json({ ok: false, error: 'sortOrder must be non-negative number' }, 400);
+    }
+    
+    const kv = c.env.SAAS_FACTORY;
+    const value = await kv.get('admin:menu:list');
+    const menu = value ? JSON.parse(value) : [];
+    
+    // ID生成
+    const id = `menu_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    const newMenuItem = {
+      id,
+      name: name.trim(),
+      price,
+      durationMin,
+      active: active !== undefined ? active : true,
+      sortOrder: sortOrder !== undefined ? sortOrder : menu.length,
+    };
+    
+    menu.push(newMenuItem);
+    await kv.put('admin:menu:list', JSON.stringify(menu));
+    
+    return c.json({ ok: true, data: newMenuItem }, 201);
+  } catch (error) {
+    return c.json({ ok: false, error: 'Failed to create menu', message: String(error) }, 500);
+  }
+});
+
+// PATCH /admin/menu/:id
+app.patch('/admin/menu/:id', async (c) => {
+  try {
+    const id = c.req.param('id');
+    const body = await c.req.json();
+    const { name, price, durationMin, active, sortOrder } = body;
+    
+    const kv = c.env.SAAS_FACTORY;
+    const value = await kv.get('admin:menu:list');
+    if (!value) {
+      return c.json({ ok: false, error: 'Menu not found' }, 404);
+    }
+    
+    const menu = JSON.parse(value);
+    const index = menu.findIndex((m: any) => m.id === id);
+    if (index === -1) {
+      return c.json({ ok: false, error: 'Menu not found' }, 404);
+    }
+    
+    // 更新
+    if (name !== undefined) {
+      if (typeof name !== 'string' || name.trim() === '') {
+        return c.json({ ok: false, error: 'name must be non-empty string' }, 400);
+      }
+      menu[index].name = name.trim();
+    }
+    if (price !== undefined) {
+      if (typeof price !== 'number' || price < 0) {
+        return c.json({ ok: false, error: 'price must be non-negative number' }, 400);
+      }
+      menu[index].price = price;
+    }
+    if (durationMin !== undefined) {
+      if (typeof durationMin !== 'number' || durationMin <= 0) {
+        return c.json({ ok: false, error: 'durationMin must be positive number' }, 400);
+      }
+      menu[index].durationMin = durationMin;
+    }
+    if (active !== undefined) {
+      if (typeof active !== 'boolean') {
+        return c.json({ ok: false, error: 'active must be boolean' }, 400);
+      }
+      menu[index].active = active;
+    }
+    if (sortOrder !== undefined) {
+      if (typeof sortOrder !== 'number' || sortOrder < 0) {
+        return c.json({ ok: false, error: 'sortOrder must be non-negative number' }, 400);
+      }
+      menu[index].sortOrder = sortOrder;
+    }
+    
+    await kv.put('admin:menu:list', JSON.stringify(menu));
+    
+    return c.json({ ok: true, data: menu[index] });
+  } catch (error) {
+    return c.json({ ok: false, error: 'Failed to update menu', message: String(error) }, 500);
+  }
+});
+
+// GET /admin/settings
+app.get('/admin/settings', async (c) => {
+  try {
+    const kv = c.env.SAAS_FACTORY;
+    const value = await kv.get('settings:default');
+    
+    if (value) {
+      const partial = JSON.parse(value) as Partial<AdminSettings>;
+      // デフォルト値でマージして完全な設定を返す
+      const settings = mergeSettings(DEFAULT_ADMIN_SETTINGS, partial);
+      return c.json({ ok: true, data: settings });
+    }
+    
+    // デフォルト設定を返す
+    return c.json({ ok: true, data: DEFAULT_ADMIN_SETTINGS });
+  } catch (error) {
+    return c.json({ ok: false, error: 'Failed to fetch settings', message: String(error) }, 500);
+  }
+});
+
+// PUT /admin/settings
+app.put('/admin/settings', async (c) => {
+  try {
+    const body = await c.req.json() as Partial<AdminSettings>;
+    
+    // バリデーション
+    const validation = validateAdminSettings(body);
+    if (!validation.valid) {
+      return c.json({ ok: false, error: validation.error }, 400);
+    }
+    
+    const kv = c.env.SAAS_FACTORY;
+    const existingValue = await kv.get('settings:default');
+    const existing = existingValue ? (JSON.parse(existingValue) as Partial<AdminSettings>) : {};
+    
+    // 既存設定とマージ（PUTは全置換だが、欠損フィールドはデフォルトで補完）
+    const merged = mergeSettings(DEFAULT_ADMIN_SETTINGS, { ...existing, ...body });
+    
+    // 再度バリデーション（完全な設定に対して）
+    const fullValidation = validateAdminSettings(merged);
+    if (!fullValidation.valid) {
+      return c.json({ ok: false, error: fullValidation.error }, 400);
+    }
+    
+    // KVに保存
+    await kv.put('settings:default', JSON.stringify(merged));
+    
+    return c.json({ ok: true, data: merged });
+  } catch (error) {
+    return c.json({ ok: false, error: 'Failed to update settings', message: String(error) }, 500);
+  }
+});
+
+// PUT /admin/staff/:id/shift
+app.put('/admin/staff/:id/shift', async (c) => {
+  try {
+    const staffId = c.req.param('id');
+    const body = await c.req.json() as StaffShift;
+    
+    // validation
+    if (!staffId || typeof staffId !== 'string' || staffId.trim() === '') {
+      return c.json({ ok: false, error: 'staffId is required' }, 400);
+    }
+    if (!body.weekly || !Array.isArray(body.weekly)) {
+      return c.json({ ok: false, error: 'weekly is required and must be array' }, 400);
+    }
+    if (!body.exceptions || !Array.isArray(body.exceptions)) {
+      return c.json({ ok: false, error: 'exceptions is required and must be array' }, 400);
+    }
+    
+    const kv = c.env.SAAS_FACTORY;
+    const shiftData: StaffShift = {
+      staffId,
+      weekly: body.weekly,
+      exceptions: body.exceptions,
+    };
+    
+    // KVに保存
+    await kv.put(`shift:${staffId}`, JSON.stringify(shiftData));
+    
+    return c.json({ ok: true, data: shiftData });
+  } catch (error) {
+    return c.json({ ok: false, error: 'Failed to save shift', message: String(error) }, 500);
+  }
+});
+
+// GET /admin/staff/:id/shift
+app.get('/admin/staff/:id/shift', async (c) => {
+  try {
+    const staffId = c.req.param('id');
+    
+    if (!staffId || typeof staffId !== 'string' || staffId.trim() === '') {
+      return c.json({ ok: false, error: 'staffId is required' }, 400);
+    }
+    
+    const kv = c.env.SAAS_FACTORY;
+    const shiftValue = await kv.get(`shift:${staffId}`);
+    
+    if (shiftValue) {
+      const shift = JSON.parse(shiftValue) as StaffShift;
+      return c.json({ ok: true, data: shift });
+    }
+    
+    // デフォルト（空のシフト）
+    return c.json({
+      ok: true,
+      data: {
+        staffId,
+        weekly: [],
+        exceptions: [],
+      } as StaffShift,
+    });
+  } catch (error) {
+    return c.json({ ok: false, error: 'Failed to fetch shift', message: String(error) }, 500);
+  }
+});
+
+// PATCH /admin/reservations/:id/assign
+app.patch('/admin/reservations/:id', async (c) => {
+  try {
+    const reservationId = c.req.param('id');
+    const body = await c.req.json();
+    const { staffId } = body;
+    
+    // validation
+    if (staffId !== undefined && staffId !== null && typeof staffId !== 'string') {
+      return c.json({ ok: false, error: 'staffId must be string or null' }, 400);
+    }
+    
+    const kv = c.env.SAAS_FACTORY;
+    
+    // 予約を検索（全時間帯をスキャン）
+    const timeSlots = ['10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00'];
+    let foundReservation: any = null;
+    let foundKey: string | null = null;
+    
+    // 日付を推測する必要があるが、簡易実装として最近7日間をスキャン
+    const today = new Date();
+    for (let i = 0; i < 7; i++) {
+      const date = new Date(today);
+      date.setDate(date.getDate() - i);
+      const dateStr = date.toISOString().split('T')[0];
+      
+      for (const time of timeSlots) {
+        const key = `rsv:${dateStr}:${time}`;
+        const value = await kv.get(key);
+        if (value) {
+          try {
+            const reservation = JSON.parse(value);
+            if (reservation.reservationId === reservationId || reservation.id === reservationId) {
+              foundReservation = reservation;
+              foundKey = key;
+              break;
+            }
+          } catch (e) {
+            // パースエラーは無視
+          }
+        }
+      }
+      if (foundReservation) break;
+    }
+    
+    if (!foundReservation) {
+      return c.json({ ok: false, error: 'Reservation not found' }, 404);
+    }
+    
+    // staffId を更新
+    foundReservation.staffId = staffId || null;
+    
+    await kv.put(foundKey!, JSON.stringify(foundReservation));
+    
+    return c.json({ ok: true, data: foundReservation });
+  } catch (error) {
+    return c.json({ ok: false, error: 'Failed to assign staff', message: String(error) }, 500);
+  }
+});
+
+// DELETE /admin/reservations/:id
+app.delete('/admin/reservations/:id', async (c) => {
+  try {
+    const reservationId = c.req.param('id');
+    
+    // validation: reservationId 必須
+    if (!reservationId || typeof reservationId !== 'string' || reservationId.trim() === '') {
+      return c.json({ ok: false, error: 'reservationId is required' }, 400);
+    }
+    
+    const kv = c.env.SAAS_FACTORY;
+    
+    // 設定を取得してcancelMinutesをチェック
+    const settingsValue = await kv.get('settings:default');
+    const settings: AdminSettings = settingsValue
+      ? mergeSettings(DEFAULT_ADMIN_SETTINGS, JSON.parse(settingsValue))
+      : DEFAULT_ADMIN_SETTINGS;
+    
+    // O(1) 逆引き: rsv:id:${reservationId} から date/time/status を取得
+    const reverseKey = `rsv:id:${reservationId}`;
+    const reverseValue = await kv.get(reverseKey);
+    
+    let foundReservation: any = null;
+    let foundKey: string | null = null;
+    let date: string | null = null;
+    let time: string | null = null;
+    let reverseStatus: string | null = null;
+    
+    if (reverseValue) {
+      // 逆引きが存在する場合（O(1)）
+      try {
+        const reverseData = JSON.parse(reverseValue);
+        date = reverseData.date;
+        time = reverseData.time;
+        reverseStatus = reverseData.status || 'active'; // 後方互換性のためデフォルトはactive
+        
+        // 既にキャンセル済みの場合は冪等エラーを返す
+        if (reverseStatus === 'canceled') {
+          return c.json({ ok: false, error: 'already canceled' }, 409);
+        }
+        
+        if (date && time) {
+          foundKey = `rsv:${date}:${time}`;
+          const reservationValue = await kv.get(foundKey);
+          if (reservationValue) {
+            foundReservation = JSON.parse(reservationValue);
+            // 予約本体のstatusもチェック（念のため）
+            if (foundReservation.status === 'canceled') {
+              return c.json({ ok: false, error: 'already canceled' }, 409);
+            }
+          }
+        }
+      } catch (e) {
+        // パースエラーは無視してfallbackへ
+        console.warn(`Failed to parse reverse index for ${reservationId}:`, e);
+      }
+    }
+    
+    // Fallback: 逆引きが存在しない場合（古い予約）
+    if (!foundReservation) {
+      console.warn(`Reverse index not found for ${reservationId}, falling back to scan`);
+      
+      // 最近30日間をスキャン
+      const today = new Date();
+      const timeSlots = ['10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00', '19:00'];
+      
+      for (let i = 0; i < 30; i++) {
+        const scanDate = new Date(today);
+        scanDate.setDate(scanDate.getDate() - i);
+        const dateStr = scanDate.toISOString().split('T')[0];
+        
+        for (const t of timeSlots) {
+          const key = `rsv:${dateStr}:${t}`;
+          const value = await kv.get(key);
+          if (value) {
+            try {
+              const reservation = JSON.parse(value);
+              if (reservation.reservationId === reservationId || reservation.id === reservationId) {
+                foundReservation = reservation;
+                foundKey = key;
+                date = reservation.date;
+                time = reservation.time;
+                
+                // 予約本体のstatusをチェック
+                if (foundReservation.status === 'canceled') {
+                  return c.json({ ok: false, error: 'already canceled' }, 409);
+                }
+                
+                // Self-heal: 逆引きを補完作成（status: "active"）
+                await kv.put(reverseKey, JSON.stringify({ date, time, status: 'active' }));
+                // Self-healed reverse index（ログは出力しない）
+                break;
+              }
+            } catch (e) {
+              // パースエラーは無視
+            }
+          }
+        }
+        if (foundReservation) break;
+      }
+    }
+    
+    if (!foundReservation || !date || !time) {
+      return c.json({ ok: false, error: 'Reservation not found' }, 404);
+    }
+    
+    // cancelMinutesをチェック
+    const reservationDateTime = new Date(`${date}T${time}:00+09:00`);
+    const now = new Date();
+    const jstOffset = 9 * 60; // 分単位
+    const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
+    const nowJST = new Date(utc + (jstOffset * 60000));
+    
+    const diffMinutes = (reservationDateTime.getTime() - nowJST.getTime()) / (1000 * 60);
+    if (diffMinutes < settings.rules.cancelMinutes) {
+      return c.json({ ok: false, error: 'cancel cutoff passed' }, 409);
+    }
+    
+    // Durable Object経由で処理（ロックキー: ${date}:${time}）
+    const lockKey = `${date}:${time}`;
+    const id = c.env.SLOT_LOCK.idFromName(lockKey);
+    const stub = c.env.SLOT_LOCK.get(id);
+    
+    // Durable Objectにリクエストを転送
+    // Durable Objectは同一IDに対して同時に1つのリクエストしか処理しないため、
+    // 自然にロックがかかり、同時削除を防ぐ
+    const doRequest = new Request('http://slot-lock/cancel', {
+      method: 'DELETE',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        date,
+        time,
+      }),
+    });
+    
+    const response = await stub.fetch(doRequest);
+    const result = await response.json();
+    const status = response.status;
+    
+    // キャンセル成功時にLINE通知を送信（非同期、エラーは無視）
+    if (status === 200 && result.ok) {
+      try {
+        // 通知が有効で、LINE連携済みの場合のみ送信
+        if (settings.integrations?.line?.connected && settings.integrations.line.notifyOnCancel !== false) {
+          const message = `予約がキャンセルされました 🥲\n予約ID: ${reservationId}`;
+          
+          // 非同期で通知を送信（エラーは無視）
+          // D1から設定を取得（なければ環境変数にフォールバック）
+          getLineConfigOrNull({ DB: c.env.DB, CONFIG_ENC_KEY: c.env.CONFIG_ENC_KEY }, tenantId).then(async (config) => {
+            let channelAccessToken: string | undefined;
+            if (config) {
+              channelAccessToken = config.channelAccessToken;
+            } else {
+              channelAccessToken = c.env.LINE_CHANNEL_ACCESS_TOKEN;
+            }
+            const userId = settings.integrations.line.userId;
+            if (channelAccessToken && userId) {
+              sendLineNotification(kv, channelAccessToken, userId, message)
+              .then(async () => {
+                // 成功時: lastSentAt を記録
+                const lastSentAtKey = `line:notify:lastSentAt:${tenantId}`;
+                await kv.put(lastSentAtKey, JSON.stringify({
+                  message,
+                  at: Date.now(),
+                }));
+              })
+              .catch(async (err) => {
+                // エラー時: lastError を記録（秘密値はログに出力しない）
+                const errorMessage = err instanceof Error ? err.message : String(err);
+                // console.error は秘密値を含む可能性があるため使用しない
+                const lastErrorKey = `line:notify:lastError:${tenantId}`;
+                await kv.put(lastErrorKey, JSON.stringify({
+                  message,
+                  error: errorMessage,
+                  at: Date.now(),
+                }));
+              });
+            }
+          }).catch(() => {
+            // エラーは無視
+          });
+        }
+      } catch (err) {
+        // 通知送信失敗は無視（キャンセルは成功しているため）
+        // console.error は秘密値を含む可能性があるため使用しない
+      }
+    }
+    
+    return c.json(result, status);
+  } catch (error) {
+    return c.json({ ok: false, error: 'invalid request' }, 400);
+  }
+});
+
+// POST /admin/settings/test-slack
+app.post('/admin/settings/test-slack', async (c) => {
+  try {
+    const body = await c.req.json();
+    const { webhookUrl } = body;
+    
+    const kv = c.env.SAAS_FACTORY;
+    
+    // webhookUrlが指定されていない場合は設定から取得
+    let targetWebhookUrl = webhookUrl;
+    if (!targetWebhookUrl) {
+      const settingsValue = await kv.get('settings:default');
+      const settings: AdminSettings = settingsValue
+        ? mergeSettings(DEFAULT_ADMIN_SETTINGS, JSON.parse(settingsValue))
+        : DEFAULT_ADMIN_SETTINGS;
+      targetWebhookUrl = settings.notifications.slackWebhookUrl;
+    }
+    
+    if (!targetWebhookUrl || targetWebhookUrl.trim() === '') {
+      return c.json({ ok: false, error: 'webhookUrl is required' }, 400);
+    }
+    
+    // Slack Webhook URLの形式チェック
+    if (!targetWebhookUrl.startsWith('https://hooks.slack.com/services/')) {
+      return c.json({ ok: false, error: 'invalid webhook URL format' }, 400);
+    }
+    
+    // Slackにテストメッセージを送信
+    const slackResponse = await fetch(targetWebhookUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        text: 'Lumiere Admin テスト通知: 設定が正常に動作しています ✅',
+      }),
+    });
+    
+    if (!slackResponse.ok) {
+      const errorText = await slackResponse.text();
+      return c.json({
+        ok: false,
+        error: `Slack API error: ${slackResponse.status} ${errorText}`,
+      }, 500);
+    }
+    
+    return c.json({ ok: true });
+  } catch (error) {
+    return c.json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'Failed to send test notification',
+    }, 500);
+  }
+});
+
+// 404 ハンドラー
+app.notFound((c) => {
+  return c.json({
+    ok: false,
+    error: 'Not Found',
+  }, 404);
+});
+
+// LINE設定管理エンドポイント（D1暗号化保存）
+// GET /admin/line/config
+app.get('/admin/line/config', async (c) => {
+  try {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    const masterKey = c.env.CONFIG_ENC_KEY;
+
+    if (!masterKey) {
+      return c.json({
+        ok: false,
+        error: 'CONFIG_ENC_KEY is not configured',
+      }, 500);
+    }
+
+    const configured = await hasLineConfig(db, tenantId);
+    let masked = null;
+
+    if (configured) {
+      const config = await getLineConfig(db, tenantId, masterKey);
+      masked = getMaskedConfig(config);
+    } else {
+      masked = getMaskedConfig(null);
+    }
+
+    return c.json({
+      ok: true,
+      configured,
+      masked,
+    });
+  } catch (err) {
+    return c.json({
+      ok: false,
+      error: err instanceof Error ? err.message : 'Failed to get LINE config',
+    }, 500);
+  }
+});
+
+// GET /admin/line/client-id
+app.get('/admin/line/client-id', async (c) => {
+  try {
+    const tenantId = getTenantId(c);
+    
+    // D1から設定を取得（なければ環境変数にフォールバック）
+    let clientId: string | undefined;
+    const config = await getLineConfigOrNull({ DB: c.env.DB, CONFIG_ENC_KEY: c.env.CONFIG_ENC_KEY }, tenantId);
+    if (config) {
+      clientId = config.clientId;
+    } else {
+      // 後方互換性: 環境変数から取得
+      clientId = c.env.LINE_CLIENT_ID;
+    }
+
+    if (!clientId) {
+      return c.json({ ok: false, error: 'LINE_CLIENT_ID is not configured' }, 400);
+    }
+
+    return c.json({ ok: true, clientId });
+  } catch (error) {
+    return c.json({ ok: false, error: error instanceof Error ? error.message : 'Failed to get client ID' }, 500);
+  }
+});
+
+// PUT /admin/line/config
+app.put('/admin/line/config', async (c) => {
+  try {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    const masterKey = c.env.CONFIG_ENC_KEY;
+
+    if (!masterKey) {
+      return c.json({
+        ok: false,
+        error: 'CONFIG_ENC_KEY is not configured',
+      }, 500);
+    }
+
+    // TODO: RBACチェック（Owner/Adminのみ）
+    const actorUserId = 'admin'; // 暫定
+
+    const body = await c.req.json<{
+      clientId: string;
+      channelAccessToken: string;
+      channelSecret: string;
+    }>();
+
+    // バリデーション
+    if (!body.clientId || !body.channelAccessToken || !body.channelSecret) {
+      return c.json({
+        ok: false,
+        error: 'clientId, channelAccessToken, and channelSecret are required',
+      }, 400);
+    }
+
+    if (!/^\d+$/.test(body.clientId)) {
+      return c.json({
+        ok: false,
+        error: 'clientId must be numeric',
+      }, 400);
+    }
+
+    if (body.channelAccessToken.length < 10) {
+      return c.json({
+        ok: false,
+        error: 'channelAccessToken is too short',
+      }, 400);
+    }
+
+    if (body.channelSecret.length < 10) {
+      return c.json({
+        ok: false,
+        error: 'channelSecret is too short',
+      }, 400);
+    }
+
+    const config: LineConfigPlain = {
+      clientId: body.clientId,
+      channelAccessToken: body.channelAccessToken,
+      channelSecret: body.channelSecret,
+    };
+
+    const wasConfigured = await hasLineConfig(db, tenantId);
+    await saveLineConfig(db, tenantId, config, actorUserId, masterKey);
+    await logAudit(
+      db,
+      tenantId,
+      actorUserId,
+      wasConfigured ? 'line_config_updated' : 'line_config_created',
+      { clientIdLast4: body.clientId.slice(-4) }
+    );
+
+    const masked = getMaskedConfig(config);
+
+    return c.json({
+      ok: true,
+      configured: true,
+      masked,
+    });
+  } catch (err) {
+    return c.json({
+      ok: false,
+      error: err instanceof Error ? err.message : 'Failed to save LINE config',
+    }, 500);
+  }
+});
+
+// DELETE /admin/line/config
+app.delete('/admin/line/config', async (c) => {
+  try {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+
+    // TODO: RBACチェック（Owner/Adminのみ）
+    const actorUserId = 'admin'; // 暫定
+
+    const wasConfigured = await hasLineConfig(db, tenantId);
+    if (!wasConfigured) {
+      return c.json({
+        ok: false,
+        error: 'LINE config not found',
+      }, 404);
+    }
+
+    await deleteLineConfig(db, tenantId);
+    await logAudit(db, tenantId, actorUserId, 'line_config_deleted');
+
+    return c.json({
+      ok: true,
+      configured: false,
+      masked: getMaskedConfig(null),
+    });
+  } catch (err) {
+    return c.json({
+      ok: false,
+      error: err instanceof Error ? err.message : 'Failed to delete LINE config',
+    }, 500);
+  }
+});
+
+// LINE連携エンドポイント
+  // GET /admin/integrations/line/auth-url
+  // LINE連携エンドポイント: LINEログイン開始用の認可URLを返す
+  app.get('/admin/integrations/line/auth-url', async (c) => {
+    try {
+      const tenantId = getTenantId(c);
+
+      // D1から設定を取得（なければ環境変数にフォールバック）
+      let clientId: string | undefined;
+      const config = await getLineConfigOrNull(
+        { DB: c.env.DB, CONFIG_ENC_KEY: c.env.CONFIG_ENC_KEY },
+        tenantId,
+      );
+
+      if (config) {
+        clientId = config.clientId;
+      } else {
+        // 後方互換性: 環境変数から取得
+        clientId = c.env.LINE_CLIENT_ID;
+      }
+
+      if (!clientId) {
+        return c.json(
+          { ok: false, error: 'LINE_CLIENT_ID is not configured' },
+          500,
+        );
+      }
+
+      // Redirect Base URL を取得（環境変数があればそれを使用、なければリクエストから生成）
+      let redirectBase: string;
+      if (c.env.LINE_LOGIN_REDIRECT_BASE) {
+        redirectBase = c.env.LINE_LOGIN_REDIRECT_BASE.replace(/\/$/, '');
+      } else {
+        const url = new URL(c.req.url);
+        redirectBase = `${url.protocol}//${url.host}`;
+      }
+
+      // callback 先は Next /admin/integrations/line/callback に揃える
+      const redirectUri = `${redirectBase}/admin/integrations/line/callback`;
+
+      // state = tenantId:nonce を生成して KV に保存（CSRF 対策）
+      const nonce = crypto.randomUUID();
+      const state = `${tenantId}:${nonce}`;
+
+      const kv = c.env.SAAS_FACTORY;
+      await kv.put(
+        `line:state:${nonce}`,
+        JSON.stringify({ tenantId, createdAt: Date.now() }),
+        { expirationTtl: 600 },   // 10分
+      );
+
+      // LINE 認可URLを生成
+      const authUrl = buildLineAuthUrl(clientId, redirectUri, state);
+
+      return c.json({ ok: true, url: authUrl });
+    } catch (error) {
+      return c.json(jsonError(error), 500);
+    }
+  });
+export default app;
+import { Hono } from 'hono';
+import { cors } from 'hono/cors';
+import { SlotLock } from './SlotLock';
+import { DEFAULT_ADMIN_SETTINGS, validateAdminSettings, mergeSettings, type AdminSettings } from './settings';
+import { getBusinessHoursForDate, generateSlots, getTodayJST, isWorkingTime, timeToMinutes, getNowMinutesJST } from './slotUtils';
+import { buildLineAuthUrl, exchangeCodeForToken, verifyAccessToken, sendLineMessage, sendLineNotification, verifyLineWebhookSignature } from './integrations/line';
+import { getLineConfig, saveLineConfig, deleteLineConfig, hasLineConfig, logAudit, getMaskedConfig, type LineConfigPlain } from './lineConfig';
+import { getLineConfigOrNull, getLineConfigRequired, jsonError } from './line/config';
+import { getLineConfigOrNull, getLineConfigRequired, jsonError } from './line/config';
+
+type Env = {
+  ENVIRONMENT?: string;
+  VERSION?: string;
+  SAAS_FACTORY: KVNamespace;
+  SLOT_LOCK: DurableObjectNamespace<SlotLock>;
+  DB: D1Database;
+  CONFIG_ENC_KEY?: string; // 暗号化マスターキー（base64 32byte）
+  LINE_CLIENT_ID?: string; // LINE Login Client ID
+  LINE_LOGIN_CHANNEL_ID?: string; // LINE Login Channel ID
+  LINE_LOGIN_CHANNEL_SECRET?: string; // LINE Login Channel Secret
+  LINE_LOGIN_REDIRECT_BASE?: string; // LINE Login Redirect Base URL (例: http://localhost:3000)
+  LINE_REDIRECT_URI?: string; // LINE OAuth Redirect URI (例: http://localhost:3000/admin/integrations/line/callback)
+  LINE_CHANNEL_ACCESS_TOKEN?: string; // 後方互換性のため残す（D1移行後は削除予定）
+  LINE_CHANNEL_SECRET?: string; // 後方互換性のため残す（D1移行後は削除予定）
+  WEB_BASE_URL?: string; // 例: http://localhost:3000
+};
+
+const app = new Hono<{ Bindings: Env }>();
+
+/**
+ * テナントIDを取得（暫定: 1テナントのみ対応）
+ * 将来的にはリクエストヘッダーやサブドメインから取得する
+ */
+function getTenantId(c: { req: { header: (name: string) => string | undefined } }): string {
+  // TODO: マルチテナント対応時に実装
+  // const tenantId = c.req.header('X-Tenant-ID') || extractFromSubdomain(c.req.url);
+  return 'default';
+}
+
+// CORS設定: 開発時のみ http://localhost:3000 を許可
+app.use('/*', cors({
+  origin: (origin, c) => {
+    const env = c.env?.ENVIRONMENT || 'development';
+    // 開発環境の場合のみCORSを許可
+    if (env === 'development' && origin === 'http://localhost:3000') {
+      return origin;
+    }
+    // 本番環境または許可されていないOriginの場合はCORSを付けない
+    return null;
+  },
+  allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowHeaders: ['Content-Type', 'Authorization'],
+  credentials: true,
+}));
+
+// GET /ping (依存ゼロの疎通確認ルート)
+app.get('/ping', (c) => c.text('pong'));
+
+// GET /
+app.get('/', (c) => {
+  return c.text('API Online');
+});
+
+// GET /health
+app.get('/health', (c) => {
+  const env = c.env;
+  return c.json({
+    ok: true,
+    ts: new Date().toISOString(),
+    env: env.ENVIRONMENT || 'development',
+    version: env.VERSION || '1.0.0',
+  });
+});
+
+// GET /meta
+app.get('/meta', (c) => {
+  const env = c.env;
+  return c.json({
+    service: 'saas-factory-api',
+    env: env.ENVIRONMENT || 'development',
+    version: env.VERSION || '1.0.0',
+    runtime: 'cloudflare-workers',
+  });
+});
+
+// GET /slots?date=YYYY-MM-DD&staffId=xxx(optional)
+app.get('/slots', async (c) => {
+  const dateStr = c.req.query('date');
+  const staffId = c.req.query('staffId'); // optional
+  const debug = c.req.query('debug');
+  
+  // デバッグモード: debug=1 で依存ゼロで即 return
+  if (debug === '1') {
+    return c.json({ ok: true, stage: 'entered', date: dateStr, staffId: staffId || null });
+  }
+  
+  // date がない/不正なら 400
+  if (!dateStr) {
+    return c.json({ ok: false, error: 'invalid date' }, 400);
+  }
+  
+  // 日付形式の検証 (YYYY-MM-DD)
+  const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+  if (!dateRegex.test(dateStr)) {
+    return c.json({ ok: false, error: 'invalid date' }, 400);
+  }
+  
+  // 日付が有効かチェック
+  const date = new Date(dateStr + 'T00:00:00+09:00'); // JSTとして解釈
+  if (isNaN(date.getTime())) {
+    return c.json({ ok: false, error: 'invalid date' }, 400);
+  }
+  
+  const kv = c.env.SAAS_FACTORY;
+  
+  // デバッグモード: debug=2 で settings を取得
+  if (debug === '2') {
+    try {
+      const settingsValue = await kv.get('settings:default');
+      const hasSettings = !!settingsValue;
+      return c.json({ 
+        ok: true, 
+        stage: 'settings_fetched', 
+        date: dateStr,
+        hasSettings,
+        settingsLength: settingsValue?.length || 0
+      });
+    } catch (e) {
+      return c.json({ 
+        ok: false, 
+        stage: 'settings_error', 
+        error: e instanceof Error ? e.message : String(e) 
+      }, 500);
+    }
+  }
+  
+  // 設定を取得
+  const settingsValue = await kv.get('settings:default');
+  const settings: AdminSettings = settingsValue
+    ? mergeSettings(DEFAULT_ADMIN_SETTINGS, JSON.parse(settingsValue))
+    : DEFAULT_ADMIN_SETTINGS;
+  
+  // デバッグモード: debug=3 で shift を読む
+  if (debug === '3') {
+    try {
+      let shiftPresent = false;
+      let staffListPresent = false;
+      
+      if (staffId) {
+        const shiftValue = await kv.get(`shift:${staffId}`);
+        shiftPresent = !!shiftValue;
+      }
+      
+      // staff list も確認
+      const staffListValue = await kv.get('staff:list');
+      staffListPresent = !!staffListValue;
+      
+      return c.json({ 
+        ok: true, 
+        stage: 'shift_fetched', 
+        date: dateStr,
+        staffId: staffId || null,
+        shiftPresent,
+        staffListPresent
+      });
+    } catch (e) {
+      return c.json({ 
+        ok: false, 
+        stage: 'error', 
+        error: e instanceof Error ? e.message : String(e) 
+      }, 500);
+    }
+  }
+  
+  // 営業時間を取得（定休日・例外日を考慮）
+  const businessHours = getBusinessHoursForDate(dateStr, settings);
+  
+  if (!businessHours) {
+    // 休業日または定休日
+    return c.json({
+      ok: true,
+      date: dateStr,
+      slots: [],
+    });
+  }
+  
+  // スロット間隔を取得（デフォルト30分）
+  const slotIntervalMin = settings.businessHours.slotIntervalMin || 30;
+  
+  // staffId がある場合、そのスタッフのシフトを取得
+  let staffShift: StaffShift | null = null;
+  if (staffId) {
+    try {
+      const shiftValue = await kv.get(`shift:${staffId}`);
+      if (shiftValue) {
+        staffShift = JSON.parse(shiftValue) as StaffShift;
+      }
+    } catch (e) {
+      console.warn(`Failed to load shift for staff ${staffId}:`, e);
+    }
+  }
+  
+  // デバッグモード: debug=4 で予約済みキーの参照まで
+  if (debug === '4') {
+    try {
+      // 最初のスロットの予約キーを参照（スロット生成はしない）
+      // 仮の時間でキーを構築して参照するだけ
+      const testKey = `rsv:${dateStr}:10:00`;
+      const existing = await kv.get(testKey);
+      const reservedPresent = !!existing;
+      return c.json({ 
+        ok: true, 
+        stage: 'reserved_key_checked', 
+        date: dateStr,
+        testKey,
+        reservedPresent
+      });
+    } catch (e) {
+      return c.json({ 
+        ok: false, 
+        stage: 'error', 
+        error: e instanceof Error ? e.message : String(e) 
+      }, 500);
+    }
+  }
+  
+  // デバッグモード: debug=5 でスロット生成ロジック直前まで
+  if (debug === '5') {
+    return c.json({ 
+      ok: true, 
+      stage: 'before_slot_generation', 
+      date: dateStr,
+      hasBusinessHours: !!businessHours,
+      slotIntervalMin,
+      hasShift: !!staffShift,
+      staffId: staffId || null
+    });
+  }
+  
+  // スロットを生成
+  const timeSlots = generateSlots(businessHours.openTime, businessHours.closeTime, slotIntervalMin);
+  
+  // デバッグモード: debug=6 でスロット生成ロジックを実行して stage=done で返す
+  if (debug === '6') {
+    try {
+      // 無限ループ検知: maxIterations ガード
+      const maxIterations = 5000;
+      let iterationCount = 0;
+      
+      // スロット生成後の処理をシミュレート（最初の数個だけ）
+      const sampleSlots = timeSlots.slice(0, Math.min(5, timeSlots.length));
+      const sampleResults = await Promise.all(
+        sampleSlots.map(async (time) => {
+          iterationCount++;
+          if (iterationCount > maxIterations) {
+            throw new Error(`Max iterations (${maxIterations}) exceeded`);
+          }
+          
+          const key = `rsv:${dateStr}:${time}`;
+          const existing = await kv.get(key);
+          return {
+            time,
+            key,
+            reserved: !!existing
+          };
+        })
+      );
+      
+      return c.json({ 
+        ok: true, 
+        stage: 'done', 
+        date: dateStr,
+        totalSlots: timeSlots.length,
+        sampleSlots: sampleResults.length,
+        iterationCount,
+        firstSlot: timeSlots[0] || null,
+        lastSlot: timeSlots[timeSlots.length - 1] || null
+      });
+    } catch (e) {
+      return c.json({ 
+        ok: false, 
+        stage: 'error', 
+        error: e instanceof Error ? e.message : String(e) 
+      }, 500);
+    }
+  }
+  
+  // KVから予約済みスロットを確認し、cutoffMinutesとshiftを適用
+  // reason の優先順位: 1) reserved, 2) cutoff, 3) closed, 4) shift
+  // 無限ループ検知: maxIterations ガード
+  const maxIterations = 5000;
+  let iterationCount = 0;
+  
+  const slots = await Promise.all(
+    timeSlots.map(async (time) => {
+      iterationCount++;
+      if (iterationCount > maxIterations) {
+        throw new Error(`Max iterations (${maxIterations}) exceeded in slot processing`);
+      }
+      // 理由を優先順位で判定
+      const reasons: string[] = [];
+      
+      // 1. closed チェック（営業時間外）
+      if (!businessHours) {
+        reasons.push('closed');
+      }
+      
+      // 2. reserved チェック（予約済み、かつstatusがactive）
+      const key = `rsv:${dateStr}:${time}`;
+      const existing = await kv.get(key);
+      if (existing) {
+        try {
+          const reservation = JSON.parse(existing);
+          // statusが"canceled"でない場合のみ予約済みとみなす
+          if (reservation.status !== 'canceled') {
+            reasons.push('reserved');
+          }
+        } catch (e) {
+          // パースエラーは無視
+        }
+      }
+      
+      // 3. cutoff チェック（当日かつcutoffMinutes以内）
+      const today = getTodayJST();
+      if (dateStr === today) {
+        const nowMin = getNowMinutesJST();
+        const slotMin = timeToMinutes(time);
+        const diffMinutes = slotMin - nowMin;
+        if (diffMinutes < settings.rules.cutoffMinutes) {
+          reasons.push('cutoff');
+        }
+      }
+      
+      // 4. shift チェック（staffIdがある場合、勤務時間外）
+      if (staffId && staffShift) {
+        const isWorking = isWorkingTime(dateStr, time, staffShift);
+        if (!isWorking) {
+          reasons.push('shift');
+        }
+      }
+      
+      // 優先順位で最初のreasonを採用: reserved > cutoff > closed > shift
+      const reasonPriority: Record<string, number> = {
+        reserved: 1,
+        cutoff: 2,
+        closed: 3,
+        shift: 4,
+      };
+      
+      let finalReason: string | undefined = undefined;
+      if (reasons.length > 0) {
+        reasons.sort((a, b) => (reasonPriority[a] || 999) - (reasonPriority[b] || 999));
+        finalReason = reasons[0];
+      }
+      
+      // available判定: いずれかの理由があればfalse
+      const available = finalReason === undefined;
+      
+      return {
+        time,
+        available,
+        ...(finalReason ? { reason: finalReason as 'cutoff' | 'reserved' | 'shift' | 'closed' } : {}),
+      };
+    })
+  );
+  
+  return c.json({
+    ok: true,
+    date: dateStr,
+    ...(staffId ? { staffId } : {}),
+    slots,
+  });
+});
+
+// POST /reserve
+app.post('/reserve', async (c) => {
+  try {
+    const body = await c.req.json();
+    const { date, time, name, phone } = body;
+    
+    // validation: date/time/name 必須。phoneは任意
+    if (!date || typeof date !== 'string') {
+      return c.json({ ok: false, error: 'date is required' }, 400);
+    }
+    if (!time || typeof time !== 'string') {
+      return c.json({ ok: false, error: 'time is required' }, 400);
+    }
+    if (!name || typeof name !== 'string' || name.trim() === '') {
+      return c.json({ ok: false, error: 'name is required' }, 400);
+    }
+    
+    // Durable Object経由で処理（ロックキー: ${date}:${time}）
+    const lockKey = `${date}:${time}`;
+    const id = c.env.SLOT_LOCK.idFromName(lockKey);
+    const stub = c.env.SLOT_LOCK.get(id);
+    
+    // Durable Objectにリクエストを転送
+    // Durable Objectは同一IDに対して同時に1つのリクエストしか処理しないため、
+    // 自然にロックがかかり、二重予約を防ぐ
+    const doRequest = new Request('http://slot-lock/reserve', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
+    
+    const response = await stub.fetch(doRequest);
+    const result = await response.json();
+    const status = response.status;
+    
+    // 予約作成成功時にLINE通知を送信（非同期、エラーは無視）
+    if (status === 200 && result.ok) {
+      try {
+        const kv = c.env.SAAS_FACTORY;
+        const tenantId = getTenantId(c);
+        
+        // settings を取得して通知ルールを確認
+        const settingsValue = await kv.get('settings:default');
+        const settings: AdminSettings = settingsValue
+          ? mergeSettings(DEFAULT_ADMIN_SETTINGS, JSON.parse(settingsValue))
+          : DEFAULT_ADMIN_SETTINGS;
+        
+        // 通知が有効で、LINE連携済みの場合のみ送信
+        if (settings.integrations?.line?.connected && settings.integrations.line.notifyOnReservation !== false) {
+          const { date, time, name, reservationId, staffId } = result;
+          
+          // スタッフ名を取得（あれば）
+          let staffName = '指名なし';
+          if (staffId) {
+            try {
+              const staffValue = await kv.get(`staff:${staffId}`);
+              if (staffValue) {
+                const staff = JSON.parse(staffValue);
+                staffName = staff.name || staffId;
+              }
+            } catch (e) {
+              // スタッフ取得失敗は無視
+            }
+          }
+          
+          // メニュー情報を取得（あれば、bodyにmenuIdがあれば）
+          let menuName = 'メニュー未指定';
+          if (body.menuId) {
+            try {
+              const menuValue = await kv.get(`menu:${body.menuId}`);
+              if (menuValue) {
+                const menu = JSON.parse(menuValue);
+                menuName = menu.name || body.menuId;
+              }
+            } catch (e) {
+              // メニュー取得失敗は無視
+            }
+          }
+          
+          const message = `予約が確定しました ✅\n日時: ${date} ${time}\nメニュー: ${menuName}\nスタッフ: ${staffName}\n予約ID: ${reservationId}`;
+          
+          // 非同期で通知を送信（エラーは無視）
+          // D1から設定を取得（なければ環境変数にフォールバック）
+          getLineConfigOrNull({ DB: c.env.DB, CONFIG_ENC_KEY: c.env.CONFIG_ENC_KEY }, tenantId).then(async (config) => {
+            let channelAccessToken: string | undefined;
+            if (config) {
+              channelAccessToken = config.channelAccessToken;
+            } else {
+              channelAccessToken = c.env.LINE_CHANNEL_ACCESS_TOKEN;
+            }
+            const userId = settings.integrations.line.userId;
+            if (channelAccessToken && userId) {
+              sendLineNotification(kv, channelAccessToken, userId, message)
+              .then(async () => {
+                // 成功時: lastSentAt を記録
+                const lastSentAtKey = `line:notify:lastSentAt:${tenantId}`;
+                await kv.put(lastSentAtKey, JSON.stringify({
+                  message,
+                  at: Date.now(),
+                }));
+              })
+              .catch(async (err) => {
+                // エラー時: lastError を記録（秘密値はログに出力しない）
+                const errorMessage = err instanceof Error ? err.message : String(err);
+                // console.error は秘密値を含む可能性があるため使用しない
+                const lastErrorKey = `line:notify:lastError:${tenantId}`;
+                await kv.put(lastErrorKey, JSON.stringify({
+                  message,
+                  error: errorMessage,
+                  at: Date.now(),
+                }));
+              });
+            }
+          }).catch(() => {
+            // エラーは無視
+          });
+        }
+      } catch (err) {
+        // 通知送信失敗は無視（予約作成は成功しているため）
+        // console.error は秘密値を含む可能性があるため使用しない
+      }
+    }
+    
+    return c.json(result, status);
+  } catch (error) {
+    return c.json({ ok: false, error: 'Invalid request body' }, 400);
+  }
+});
+
+// GET /admin/reservations?date=YYYY-MM-DD
+app.get('/admin/reservations', async (c) => {
+  const dateStr = c.req.query('date');
+  
+  // date がない/不正なら 400
+  if (!dateStr) {
+    return c.json({ ok: false, error: 'date parameter is required' }, 400);
+  }
+  
+  // 日付形式の検証 (YYYY-MM-DD)
+  const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+  if (!dateRegex.test(dateStr)) {
+    return c.json({ ok: false, error: 'invalid date format' }, 400);
+  }
+  
+  // 日付が有効かチェック
+  const date = new Date(dateStr + 'T00:00:00');
+  if (isNaN(date.getTime())) {
+    return c.json({ ok: false, error: 'invalid date' }, 400);
+  }
+  
+  const kv = c.env.SAAS_FACTORY;
+  const prefix = `rsv:${dateStr}:`;
+  
+  // KVから指定日付の予約を取得（prefix scan）
+  // 注意: Cloudflare KVはprefix scanを直接サポートしていないため、
+  // 全キーをリストしてフィルタリングする必要がある
+  // 簡易実装として、固定時間帯をスキャンする方法を使用
+  const timeSlots = ['10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00'];
+  const reservations = [];
+  
+  for (const time of timeSlots) {
+    const key = `${prefix}${time}`;
+    const value = await kv.get(key);
+    if (value) {
+      try {
+        const reservation = JSON.parse(value);
+        reservations.push(reservation);
+      } catch (e) {
+        // パースエラーは無視
+      }
+    }
+  }
+  
+  return c.json({
+    ok: true,
+    date: dateStr,
+    reservations,
+  });
+});
+
+// GET /admin/staff
+app.get('/admin/staff', async (c) => {
+  try {
+    const kv = c.env.SAAS_FACTORY;
+    const value = await kv.get('admin:staff:list');
+    
+    if (value) {
+      const staff = JSON.parse(value);
+      return c.json({ ok: true, data: staff });
+    }
+    
+    // デフォルトデータ
+    const defaultStaff = [
+      { id: 'sakura', name: 'サクラ', role: 'Top Stylist', active: true, sortOrder: 1 },
+      { id: 'kenji', name: 'ケンジ', role: 'Director', active: true, sortOrder: 2 },
+      { id: 'rookie', name: 'Rookie', role: 'Staff', active: true, sortOrder: 3 },
+    ];
+    
+    return c.json({ ok: true, data: defaultStaff });
+  } catch (error) {
+    return c.json({ ok: false, error: 'Failed to fetch staff', message: String(error) }, 500);
+  }
+});
+
+// POST /admin/staff
+app.post('/admin/staff', async (c) => {
+  try {
+    const body = await c.req.json();
+    const { name, role, active, sortOrder } = body;
+    
+    // validation
+    if (!name || typeof name !== 'string' || name.trim() === '') {
+      return c.json({ ok: false, error: 'name is required' }, 400);
+    }
+    if (active !== undefined && typeof active !== 'boolean') {
+      return c.json({ ok: false, error: 'active must be boolean' }, 400);
+    }
+    if (sortOrder !== undefined && (typeof sortOrder !== 'number' || sortOrder < 0)) {
+      return c.json({ ok: false, error: 'sortOrder must be non-negative number' }, 400);
+    }
+    
+    const kv = c.env.SAAS_FACTORY;
+    const value = await kv.get('admin:staff:list');
+    const staff = value ? JSON.parse(value) : [];
+    
+    // ID生成
+    const id = `staff_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    const newStaff = {
+      id,
+      name: name.trim(),
+      role: role?.trim() || undefined,
+      active: active !== undefined ? active : true,
+      sortOrder: sortOrder !== undefined ? sortOrder : staff.length,
+    };
+    
+    staff.push(newStaff);
+    await kv.put('admin:staff:list', JSON.stringify(staff));
+    
+    return c.json({ ok: true, data: newStaff }, 201);
+  } catch (error) {
+    return c.json({ ok: false, error: 'Failed to create staff', message: String(error) }, 500);
+  }
+});
+
+// PATCH /admin/staff/:id
+app.patch('/admin/staff/:id', async (c) => {
+  try {
+    const id = c.req.param('id');
+    const body = await c.req.json();
+    const { name, role, active, sortOrder } = body;
+    
+    const kv = c.env.SAAS_FACTORY;
+    const value = await kv.get('admin:staff:list');
+    if (!value) {
+      return c.json({ ok: false, error: 'Staff not found' }, 404);
+    }
+    
+    const staff = JSON.parse(value);
+    const index = staff.findIndex((s: any) => s.id === id);
+    if (index === -1) {
+      return c.json({ ok: false, error: 'Staff not found' }, 404);
+    }
+    
+    // 更新
+    if (name !== undefined) {
+      if (typeof name !== 'string' || name.trim() === '') {
+        return c.json({ ok: false, error: 'name must be non-empty string' }, 400);
+      }
+      staff[index].name = name.trim();
+    }
+    if (role !== undefined) {
+      staff[index].role = role === null || role === '' ? undefined : role.trim();
+    }
+    if (active !== undefined) {
+      if (typeof active !== 'boolean') {
+        return c.json({ ok: false, error: 'active must be boolean' }, 400);
+      }
+      staff[index].active = active;
+    }
+    if (sortOrder !== undefined) {
+      if (typeof sortOrder !== 'number' || sortOrder < 0) {
+        return c.json({ ok: false, error: 'sortOrder must be non-negative number' }, 400);
+      }
+      staff[index].sortOrder = sortOrder;
+    }
+    
+    await kv.put('admin:staff:list', JSON.stringify(staff));
+    
+    return c.json({ ok: true, data: staff[index] });
+  } catch (error) {
+    return c.json({ ok: false, error: 'Failed to update staff', message: String(error) }, 500);
+  }
+});
+
+// GET /admin/menu
+app.get('/admin/menu', async (c) => {
+  try {
+    const kv = c.env.SAAS_FACTORY;
+    const value = await kv.get('admin:menu:list');
+    
+    if (value) {
+      const menu = JSON.parse(value);
+      return c.json({ ok: true, data: menu });
+    }
+    
+    // デフォルトデータ
+    const defaultMenu = [
+      { id: 'cut', name: 'カット', price: 5000, durationMin: 60, active: true, sortOrder: 1 },
+      { id: 'color', name: 'カラー', price: 8000, durationMin: 90, active: true, sortOrder: 2 },
+      { id: 'perm', name: 'パーマ', price: 10000, durationMin: 120, active: true, sortOrder: 3 },
+    ];
+    
+    return c.json({ ok: true, data: defaultMenu });
+  } catch (error) {
+    return c.json({ ok: false, error: 'Failed to fetch menu', message: String(error) }, 500);
+  }
+});
+
+// POST /admin/menu
+app.post('/admin/menu', async (c) => {
+  try {
+    const body = await c.req.json();
+    const { name, price, durationMin, active, sortOrder } = body;
+    
+    // validation
+    if (!name || typeof name !== 'string' || name.trim() === '') {
+      return c.json({ ok: false, error: 'name is required' }, 400);
+    }
+    if (price === undefined || typeof price !== 'number' || price < 0) {
+      return c.json({ ok: false, error: 'price must be non-negative number' }, 400);
+    }
+    if (durationMin === undefined || typeof durationMin !== 'number' || durationMin <= 0) {
+      return c.json({ ok: false, error: 'durationMin must be positive number' }, 400);
+    }
+    if (active !== undefined && typeof active !== 'boolean') {
+      return c.json({ ok: false, error: 'active must be boolean' }, 400);
+    }
+    if (sortOrder !== undefined && (typeof sortOrder !== 'number' || sortOrder < 0)) {
+      return c.json({ ok: false, error: 'sortOrder must be non-negative number' }, 400);
+    }
+    
+    const kv = c.env.SAAS_FACTORY;
+    const value = await kv.get('admin:menu:list');
+    const menu = value ? JSON.parse(value) : [];
+    
+    // ID生成
+    const id = `menu_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    const newMenuItem = {
+      id,
+      name: name.trim(),
+      price,
+      durationMin,
+      active: active !== undefined ? active : true,
+      sortOrder: sortOrder !== undefined ? sortOrder : menu.length,
+    };
+    
+    menu.push(newMenuItem);
+    await kv.put('admin:menu:list', JSON.stringify(menu));
+    
+    return c.json({ ok: true, data: newMenuItem }, 201);
+  } catch (error) {
+    return c.json({ ok: false, error: 'Failed to create menu', message: String(error) }, 500);
+  }
+});
+
+// PATCH /admin/menu/:id
+app.patch('/admin/menu/:id', async (c) => {
+  try {
+    const id = c.req.param('id');
+    const body = await c.req.json();
+    const { name, price, durationMin, active, sortOrder } = body;
+    
+    const kv = c.env.SAAS_FACTORY;
+    const value = await kv.get('admin:menu:list');
+    if (!value) {
+      return c.json({ ok: false, error: 'Menu not found' }, 404);
+    }
+    
+    const menu = JSON.parse(value);
+    const index = menu.findIndex((m: any) => m.id === id);
+    if (index === -1) {
+      return c.json({ ok: false, error: 'Menu not found' }, 404);
+    }
+    
+    // 更新
+    if (name !== undefined) {
+      if (typeof name !== 'string' || name.trim() === '') {
+        return c.json({ ok: false, error: 'name must be non-empty string' }, 400);
+      }
+      menu[index].name = name.trim();
+    }
+    if (price !== undefined) {
+      if (typeof price !== 'number' || price < 0) {
+        return c.json({ ok: false, error: 'price must be non-negative number' }, 400);
+      }
+      menu[index].price = price;
+    }
+    if (durationMin !== undefined) {
+      if (typeof durationMin !== 'number' || durationMin <= 0) {
+        return c.json({ ok: false, error: 'durationMin must be positive number' }, 400);
+      }
+      menu[index].durationMin = durationMin;
+    }
+    if (active !== undefined) {
+      if (typeof active !== 'boolean') {
+        return c.json({ ok: false, error: 'active must be boolean' }, 400);
+      }
+      menu[index].active = active;
+    }
+    if (sortOrder !== undefined) {
+      if (typeof sortOrder !== 'number' || sortOrder < 0) {
+        return c.json({ ok: false, error: 'sortOrder must be non-negative number' }, 400);
+      }
+      menu[index].sortOrder = sortOrder;
+    }
+    
+    await kv.put('admin:menu:list', JSON.stringify(menu));
+    
+    return c.json({ ok: true, data: menu[index] });
+  } catch (error) {
+    return c.json({ ok: false, error: 'Failed to update menu', message: String(error) }, 500);
+  }
+});
+
+// GET /admin/settings
+app.get('/admin/settings', async (c) => {
+  try {
+    const kv = c.env.SAAS_FACTORY;
+    const value = await kv.get('settings:default');
+    
+    if (value) {
+      const partial = JSON.parse(value) as Partial<AdminSettings>;
+      // デフォルト値でマージして完全な設定を返す
+      const settings = mergeSettings(DEFAULT_ADMIN_SETTINGS, partial);
+      return c.json({ ok: true, data: settings });
+    }
+    
+    // デフォルト設定を返す
+    return c.json({ ok: true, data: DEFAULT_ADMIN_SETTINGS });
+  } catch (error) {
+    return c.json({ ok: false, error: 'Failed to fetch settings', message: String(error) }, 500);
+  }
+});
+
+// PUT /admin/settings
+app.put('/admin/settings', async (c) => {
+  try {
+    const body = await c.req.json() as Partial<AdminSettings>;
+    
+    // バリデーション
+    const validation = validateAdminSettings(body);
+    if (!validation.valid) {
+      return c.json({ ok: false, error: validation.error }, 400);
+    }
+    
+    const kv = c.env.SAAS_FACTORY;
+    const existingValue = await kv.get('settings:default');
+    const existing = existingValue ? (JSON.parse(existingValue) as Partial<AdminSettings>) : {};
+    
+    // 既存設定とマージ（PUTは全置換だが、欠損フィールドはデフォルトで補完）
+    const merged = mergeSettings(DEFAULT_ADMIN_SETTINGS, { ...existing, ...body });
+    
+    // 再度バリデーション（完全な設定に対して）
+    const fullValidation = validateAdminSettings(merged);
+    if (!fullValidation.valid) {
+      return c.json({ ok: false, error: fullValidation.error }, 400);
+    }
+    
+    // KVに保存
+    await kv.put('settings:default', JSON.stringify(merged));
+    
+    return c.json({ ok: true, data: merged });
+  } catch (error) {
+    return c.json({ ok: false, error: 'Failed to update settings', message: String(error) }, 500);
+  }
+});
+
+// PUT /admin/staff/:id/shift
+app.put('/admin/staff/:id/shift', async (c) => {
+  try {
+    const staffId = c.req.param('id');
+    const body = await c.req.json() as StaffShift;
+    
+    // validation
+    if (!staffId || typeof staffId !== 'string' || staffId.trim() === '') {
+      return c.json({ ok: false, error: 'staffId is required' }, 400);
+    }
+    if (!body.weekly || !Array.isArray(body.weekly)) {
+      return c.json({ ok: false, error: 'weekly is required and must be array' }, 400);
+    }
+    if (!body.exceptions || !Array.isArray(body.exceptions)) {
+      return c.json({ ok: false, error: 'exceptions is required and must be array' }, 400);
+    }
+    
+    const kv = c.env.SAAS_FACTORY;
+    const shiftData: StaffShift = {
+      staffId,
+      weekly: body.weekly,
+      exceptions: body.exceptions,
+    };
+    
+    // KVに保存
+    await kv.put(`shift:${staffId}`, JSON.stringify(shiftData));
+    
+    return c.json({ ok: true, data: shiftData });
+  } catch (error) {
+    return c.json({ ok: false, error: 'Failed to save shift', message: String(error) }, 500);
+  }
+});
+
+// GET /admin/staff/:id/shift
+app.get('/admin/staff/:id/shift', async (c) => {
+  try {
+    const staffId = c.req.param('id');
+    
+    if (!staffId || typeof staffId !== 'string' || staffId.trim() === '') {
+      return c.json({ ok: false, error: 'staffId is required' }, 400);
+    }
+    
+    const kv = c.env.SAAS_FACTORY;
+    const shiftValue = await kv.get(`shift:${staffId}`);
+    
+    if (shiftValue) {
+      const shift = JSON.parse(shiftValue) as StaffShift;
+      return c.json({ ok: true, data: shift });
+    }
+    
+    // デフォルト（空のシフト）
+    return c.json({
+      ok: true,
+      data: {
+        staffId,
+        weekly: [],
+        exceptions: [],
+      } as StaffShift,
+    });
+  } catch (error) {
+    return c.json({ ok: false, error: 'Failed to fetch shift', message: String(error) }, 500);
+  }
+});
+
+// PATCH /admin/reservations/:id/assign
+app.patch('/admin/reservations/:id', async (c) => {
+  try {
+    const reservationId = c.req.param('id');
+    const body = await c.req.json();
+    const { staffId } = body;
+    
+    // validation
+    if (staffId !== undefined && staffId !== null && typeof staffId !== 'string') {
+      return c.json({ ok: false, error: 'staffId must be string or null' }, 400);
+    }
+    
+    const kv = c.env.SAAS_FACTORY;
+    
+    // 予約を検索（全時間帯をスキャン）
+    const timeSlots = ['10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00'];
+    let foundReservation: any = null;
+    let foundKey: string | null = null;
+    
+    // 日付を推測する必要があるが、簡易実装として最近7日間をスキャン
+    const today = new Date();
+    for (let i = 0; i < 7; i++) {
+      const date = new Date(today);
+      date.setDate(date.getDate() - i);
+      const dateStr = date.toISOString().split('T')[0];
+      
+      for (const time of timeSlots) {
+        const key = `rsv:${dateStr}:${time}`;
+        const value = await kv.get(key);
+        if (value) {
+          try {
+            const reservation = JSON.parse(value);
+            if (reservation.reservationId === reservationId || reservation.id === reservationId) {
+              foundReservation = reservation;
+              foundKey = key;
+              break;
+            }
+          } catch (e) {
+            // パースエラーは無視
+          }
+        }
+      }
+      if (foundReservation) break;
+    }
+    
+    if (!foundReservation) {
+      return c.json({ ok: false, error: 'Reservation not found' }, 404);
+    }
+    
+    // staffId を更新
+    foundReservation.staffId = staffId || null;
+    
+    await kv.put(foundKey!, JSON.stringify(foundReservation));
+    
+    return c.json({ ok: true, data: foundReservation });
+  } catch (error) {
+    return c.json({ ok: false, error: 'Failed to assign staff', message: String(error) }, 500);
+  }
+});
+
+// DELETE /admin/reservations/:id
+app.delete('/admin/reservations/:id', async (c) => {
+  try {
+    const reservationId = c.req.param('id');
+    
+    // validation: reservationId 必須
+    if (!reservationId || typeof reservationId !== 'string' || reservationId.trim() === '') {
+      return c.json({ ok: false, error: 'reservationId is required' }, 400);
+    }
+    
+    const kv = c.env.SAAS_FACTORY;
+    
+    // 設定を取得してcancelMinutesをチェック
+    const settingsValue = await kv.get('settings:default');
+    const settings: AdminSettings = settingsValue
+      ? mergeSettings(DEFAULT_ADMIN_SETTINGS, JSON.parse(settingsValue))
+      : DEFAULT_ADMIN_SETTINGS;
+    
+    // O(1) 逆引き: rsv:id:${reservationId} から date/time/status を取得
+    const reverseKey = `rsv:id:${reservationId}`;
+    const reverseValue = await kv.get(reverseKey);
+    
+    let foundReservation: any = null;
+    let foundKey: string | null = null;
+    let date: string | null = null;
+    let time: string | null = null;
+    let reverseStatus: string | null = null;
+    
+    if (reverseValue) {
+      // 逆引きが存在する場合（O(1)）
+      try {
+        const reverseData = JSON.parse(reverseValue);
+        date = reverseData.date;
+        time = reverseData.time;
+        reverseStatus = reverseData.status || 'active'; // 後方互換性のためデフォルトはactive
+        
+        // 既にキャンセル済みの場合は冪等エラーを返す
+        if (reverseStatus === 'canceled') {
+          return c.json({ ok: false, error: 'already canceled' }, 409);
+        }
+        
+        if (date && time) {
+          foundKey = `rsv:${date}:${time}`;
+          const reservationValue = await kv.get(foundKey);
+          if (reservationValue) {
+            foundReservation = JSON.parse(reservationValue);
+            // 予約本体のstatusもチェック（念のため）
+            if (foundReservation.status === 'canceled') {
+              return c.json({ ok: false, error: 'already canceled' }, 409);
+            }
+          }
+        }
+      } catch (e) {
+        // パースエラーは無視してfallbackへ
+        console.warn(`Failed to parse reverse index for ${reservationId}:`, e);
+      }
+    }
+    
+    // Fallback: 逆引きが存在しない場合（古い予約）
+    if (!foundReservation) {
+      console.warn(`Reverse index not found for ${reservationId}, falling back to scan`);
+      
+      // 最近30日間をスキャン
+      const today = new Date();
+      const timeSlots = ['10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00', '19:00'];
+      
+      for (let i = 0; i < 30; i++) {
+        const scanDate = new Date(today);
+        scanDate.setDate(scanDate.getDate() - i);
+        const dateStr = scanDate.toISOString().split('T')[0];
+        
+        for (const t of timeSlots) {
+          const key = `rsv:${dateStr}:${t}`;
+          const value = await kv.get(key);
+          if (value) {
+            try {
+              const reservation = JSON.parse(value);
+              if (reservation.reservationId === reservationId || reservation.id === reservationId) {
+                foundReservation = reservation;
+                foundKey = key;
+                date = reservation.date;
+                time = reservation.time;
+                
+                // 予約本体のstatusをチェック
+                if (foundReservation.status === 'canceled') {
+                  return c.json({ ok: false, error: 'already canceled' }, 409);
+                }
+                
+                // Self-heal: 逆引きを補完作成（status: "active"）
+                await kv.put(reverseKey, JSON.stringify({ date, time, status: 'active' }));
+                // Self-healed reverse index（ログは出力しない）
+                break;
+              }
+            } catch (e) {
+              // パースエラーは無視
+            }
+          }
+        }
+        if (foundReservation) break;
+      }
+    }
+    
+    if (!foundReservation || !date || !time) {
+      return c.json({ ok: false, error: 'Reservation not found' }, 404);
+    }
+    
+    // cancelMinutesをチェック
+    const reservationDateTime = new Date(`${date}T${time}:00+09:00`);
+    const now = new Date();
+    const jstOffset = 9 * 60; // 分単位
+    const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
+    const nowJST = new Date(utc + (jstOffset * 60000));
+    
+    const diffMinutes = (reservationDateTime.getTime() - nowJST.getTime()) / (1000 * 60);
+    if (diffMinutes < settings.rules.cancelMinutes) {
+      return c.json({ ok: false, error: 'cancel cutoff passed' }, 409);
+    }
+    
+    // Durable Object経由で処理（ロックキー: ${date}:${time}）
+    const lockKey = `${date}:${time}`;
+    const id = c.env.SLOT_LOCK.idFromName(lockKey);
+    const stub = c.env.SLOT_LOCK.get(id);
+    
+    // Durable Objectにリクエストを転送
+    // Durable Objectは同一IDに対して同時に1つのリクエストしか処理しないため、
+    // 自然にロックがかかり、同時削除を防ぐ
+    const doRequest = new Request('http://slot-lock/cancel', {
+      method: 'DELETE',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        date,
+        time,
+      }),
+    });
+    
+    const response = await stub.fetch(doRequest);
+    const result = await response.json();
+    const status = response.status;
+    
+    // キャンセル成功時にLINE通知を送信（非同期、エラーは無視）
+    if (status === 200 && result.ok) {
+      try {
+        // 通知が有効で、LINE連携済みの場合のみ送信
+        if (settings.integrations?.line?.connected && settings.integrations.line.notifyOnCancel !== false) {
+          const message = `予約がキャンセルされました 🥲\n予約ID: ${reservationId}`;
+          
+          // 非同期で通知を送信（エラーは無視）
+          // D1から設定を取得（なければ環境変数にフォールバック）
+          getLineConfigOrNull({ DB: c.env.DB, CONFIG_ENC_KEY: c.env.CONFIG_ENC_KEY }, tenantId).then(async (config) => {
+            let channelAccessToken: string | undefined;
+            if (config) {
+              channelAccessToken = config.channelAccessToken;
+            } else {
+              channelAccessToken = c.env.LINE_CHANNEL_ACCESS_TOKEN;
+            }
+            const userId = settings.integrations.line.userId;
+            if (channelAccessToken && userId) {
+              sendLineNotification(kv, channelAccessToken, userId, message)
+              .then(async () => {
+                // 成功時: lastSentAt を記録
+                const lastSentAtKey = `line:notify:lastSentAt:${tenantId}`;
+                await kv.put(lastSentAtKey, JSON.stringify({
+                  message,
+                  at: Date.now(),
+                }));
+              })
+              .catch(async (err) => {
+                // エラー時: lastError を記録（秘密値はログに出力しない）
+                const errorMessage = err instanceof Error ? err.message : String(err);
+                // console.error は秘密値を含む可能性があるため使用しない
+                const lastErrorKey = `line:notify:lastError:${tenantId}`;
+                await kv.put(lastErrorKey, JSON.stringify({
+                  message,
+                  error: errorMessage,
+                  at: Date.now(),
+                }));
+              });
+            }
+          }).catch(() => {
+            // エラーは無視
+          });
+        }
+      } catch (err) {
+        // 通知送信失敗は無視（キャンセルは成功しているため）
+        // console.error は秘密値を含む可能性があるため使用しない
+      }
+    }
+    
+    return c.json(result, status);
+  } catch (error) {
+    return c.json({ ok: false, error: 'invalid request' }, 400);
+  }
+});
+
+// POST /admin/settings/test-slack
+app.post('/admin/settings/test-slack', async (c) => {
+  try {
+    const body = await c.req.json();
+    const { webhookUrl } = body;
+    
+    const kv = c.env.SAAS_FACTORY;
+    
+    // webhookUrlが指定されていない場合は設定から取得
+    let targetWebhookUrl = webhookUrl;
+    if (!targetWebhookUrl) {
+      const settingsValue = await kv.get('settings:default');
+      const settings: AdminSettings = settingsValue
+        ? mergeSettings(DEFAULT_ADMIN_SETTINGS, JSON.parse(settingsValue))
+        : DEFAULT_ADMIN_SETTINGS;
+      targetWebhookUrl = settings.notifications.slackWebhookUrl;
+    }
+    
+    if (!targetWebhookUrl || targetWebhookUrl.trim() === '') {
+      return c.json({ ok: false, error: 'webhookUrl is required' }, 400);
+    }
+    
+    // Slack Webhook URLの形式チェック
+    if (!targetWebhookUrl.startsWith('https://hooks.slack.com/services/')) {
+      return c.json({ ok: false, error: 'invalid webhook URL format' }, 400);
+    }
+    
+    // Slackにテストメッセージを送信
+    const slackResponse = await fetch(targetWebhookUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        text: 'Lumiere Admin テスト通知: 設定が正常に動作しています ✅',
+      }),
+    });
+    
+    if (!slackResponse.ok) {
+      const errorText = await slackResponse.text();
+      return c.json({
+        ok: false,
+        error: `Slack API error: ${slackResponse.status} ${errorText}`,
+      }, 500);
+    }
+    
+    return c.json({ ok: true });
+  } catch (error) {
+    return c.json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'Failed to send test notification',
+    }, 500);
+  }
+});
+
+// 404 ハンドラー
+app.notFound((c) => {
+  return c.json({
+    ok: false,
+    error: 'Not Found',
+  }, 404);
+});
+
+// LINE設定管理エンドポイント（D1暗号化保存）
+// GET /admin/line/config
+app.get('/admin/line/config', async (c) => {
+  try {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    const masterKey = c.env.CONFIG_ENC_KEY;
+
+    if (!masterKey) {
+      return c.json({
+        ok: false,
+        error: 'CONFIG_ENC_KEY is not configured',
+      }, 500);
+    }
+
+    const configured = await hasLineConfig(db, tenantId);
+    let masked = null;
+
+    if (configured) {
+      const config = await getLineConfig(db, tenantId, masterKey);
+      masked = getMaskedConfig(config);
+    } else {
+      masked = getMaskedConfig(null);
+    }
+
+    return c.json({
+      ok: true,
+      configured,
+      masked,
+    });
+  } catch (err) {
+    return c.json({
+      ok: false,
+      error: err instanceof Error ? err.message : 'Failed to get LINE config',
+    }, 500);
+  }
+});
+
+// GET /admin/line/client-id
+app.get('/admin/line/client-id', async (c) => {
+  try {
+    const tenantId = getTenantId(c);
+    
+    // D1から設定を取得（なければ環境変数にフォールバック）
+    let clientId: string | undefined;
+    const config = await getLineConfigOrNull({ DB: c.env.DB, CONFIG_ENC_KEY: c.env.CONFIG_ENC_KEY }, tenantId);
+    if (config) {
+      clientId = config.clientId;
+    } else {
+      // 後方互換性: 環境変数から取得
+      clientId = c.env.LINE_CLIENT_ID;
+    }
+
+    if (!clientId) {
+      return c.json({ ok: false, error: 'LINE_CLIENT_ID is not configured' }, 400);
+    }
+
+    return c.json({ ok: true, clientId });
+  } catch (error) {
+    return c.json({ ok: false, error: error instanceof Error ? error.message : 'Failed to get client ID' }, 500);
+  }
+});
+
+// PUT /admin/line/config
+app.put('/admin/line/config', async (c) => {
+  try {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    const masterKey = c.env.CONFIG_ENC_KEY;
+
+    if (!masterKey) {
+      return c.json({
+        ok: false,
+        error: 'CONFIG_ENC_KEY is not configured',
+      }, 500);
+    }
+
+    // TODO: RBACチェック（Owner/Adminのみ）
+    const actorUserId = 'admin'; // 暫定
+
+    const body = await c.req.json<{
+      clientId: string;
+      channelAccessToken: string;
+      channelSecret: string;
+    }>();
+
+    // バリデーション
+    if (!body.clientId || !body.channelAccessToken || !body.channelSecret) {
+      return c.json({
+        ok: false,
+        error: 'clientId, channelAccessToken, and channelSecret are required',
+      }, 400);
+    }
+
+    if (!/^\d+$/.test(body.clientId)) {
+      return c.json({
+        ok: false,
+        error: 'clientId must be numeric',
+      }, 400);
+    }
+
+    if (body.channelAccessToken.length < 10) {
+      return c.json({
+        ok: false,
+        error: 'channelAccessToken is too short',
+      }, 400);
+    }
+
+    if (body.channelSecret.length < 10) {
+      return c.json({
+        ok: false,
+        error: 'channelSecret is too short',
+      }, 400);
+    }
+
+    const config: LineConfigPlain = {
+      clientId: body.clientId,
+      channelAccessToken: body.channelAccessToken,
+      channelSecret: body.channelSecret,
+    };
+
+    const wasConfigured = await hasLineConfig(db, tenantId);
+    await saveLineConfig(db, tenantId, config, actorUserId, masterKey);
+    await logAudit(
+      db,
+      tenantId,
+      actorUserId,
+      wasConfigured ? 'line_config_updated' : 'line_config_created',
+      { clientIdLast4: body.clientId.slice(-4) }
+    );
+
+    const masked = getMaskedConfig(config);
+
+    return c.json({
+      ok: true,
+      configured: true,
+      masked,
+    });
+  } catch (err) {
+    return c.json({
+      ok: false,
+      error: err instanceof Error ? err.message : 'Failed to save LINE config',
+    }, 500);
+  }
+});
+
+// DELETE /admin/line/config
+app.delete('/admin/line/config', async (c) => {
+  try {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+
+    // TODO: RBACチェック（Owner/Adminのみ）
+    const actorUserId = 'admin'; // 暫定
+
+    const wasConfigured = await hasLineConfig(db, tenantId);
+    if (!wasConfigured) {
+      return c.json({
+        ok: false,
+        error: 'LINE config not found',
+      }, 404);
+    }
+
+    await deleteLineConfig(db, tenantId);
+    await logAudit(db, tenantId, actorUserId, 'line_config_deleted');
+
+    return c.json({
+      ok: true,
+      configured: false,
+      masked: getMaskedConfig(null),
+    });
+  } catch (err) {
+    return c.json({
+      ok: false,
+      error: err instanceof Error ? err.message : 'Failed to delete LINE config',
+    }, 500);
+  }
+});
+
+// LINE連携エンドポイント
+// GET /admin/integrations/line/auth-url
+// LINE連携エンドポイント
+
+
+    // Redirect Base URL を取得（環境変数があればそれを使用、なければリクエストから生成）
+    let redirectBase: string;
+    if (c.env.LINE_LOGIN_REDIRECT_BASE) {
+      redirectBase = c.env.LINE_LOGIN_REDIRECT_BASE.replace(/\/$/, '');
+    } else {
+      const url = new URL(c.req.url);
+      redirectBase = `${url.protocol}//${url.host}`;
+    }
+
+    // CSRF対策: state に nonce を生成してKVに保存（TTL 10分）
+    const nonce = crypto.randomUUID();
+    const state = `${tenantId}:${nonce}`;
+    const kv = c.env.SAAS_FACTORY;
+    await kv.put(`line:state:${nonce}`, JSON.stringify({ tenantId, createdAt: Date.now() }), {
+      expirationTtl: 600, // 10分
+    });
+
+    // redirect_uri は既存の callback エンドポイントに合わせる
+    const redirectUri = `${redirectBase}/admin/integrations/line/callback`;
+
+    // state から tenantId を抽出
+    const stateParts = body.state.split(':');
+    const tenantId = stateParts[0]?.trim();
+    if (!tenantId) {
+      return c.json({ ok: false, error: 'Invalid state: tenantId is missing' }, 400);
+    }
+
+    // 環境変数から LINE 設定を取得
+    const clientId = c.env.LINE_CLIENT_ID;
+    const clientSecret = c.env.LINE_LOGIN_CHANNEL_SECRET;
+    
+    // redirect_uri を取得（環境変数があればそれを使用、なければ構築）
+    let redirectUri: string;
+    if (c.env.LINE_REDIRECT_URI) {
+      redirectUri = c.env.LINE_REDIRECT_URI;
+    } else if (c.env.LINE_LOGIN_REDIRECT_BASE) {
+      redirectUri = `${c.env.LINE_LOGIN_REDIRECT_BASE.replace(/\/$/, '')}/admin/integrations/line/callback`;
+    } else {
+      return c.json({ ok: false, error: 'LINE_REDIRECT_URI or LINE_LOGIN_REDIRECT_BASE is not configured' }, 500);
+    }
+
+    if (!clientId) {
+      return c.json({ ok: false, error: 'LINE_CLIENT_ID is not configured' }, 500);
+    }
+    if (!clientSecret) {
+      return c.json({ ok: false, error: 'LINE_LOGIN_CHANNEL_SECRET is not configured' }, 500);
+    }
+
+    // LINE token エンドポイントを叩く
+    let tokenResponse: {
+      access_token: string;
+      expires_in: number;
+      token_type: string;
+      refresh_token?: string;
+      id_token?: string;
+    };
+
+    try {
+      tokenResponse = await exchangeCodeForToken(body.code, clientId, clientSecret, redirectUri);
+    } catch (tokenError) {
+      // LINE token API のエラーをログに出力
+      const errorMessage = tokenError instanceof Error ? tokenError.message : String(tokenError);
+      console.error('[LINE OAuth Callback] Token exchange failed:', {
+        status: errorMessage.includes('status') ? errorMessage : 'unknown',
+        error: errorMessage,
+        tenantId,
+      });
+      return c.json({ ok: false, error: 'line_token_error' }, 500);
+    }
+
+    // expires_at を計算
+    const now = Math.floor(Date.now() / 1000);
+    const expiresAt = now + tokenResponse.expires_in;
+
+    // D1 に upsert
+    const db = c.env.DB;
+    const createdAt = now;
+    const updatedAt = now;
+
+    try {
+      await db
+        .prepare(
+          `INSERT INTO line_connections
+            (tenant_id, access_token, refresh_token, id_token, expires_at, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(tenant_id) DO UPDATE SET
+            access_token = excluded.access_token,
+            refresh_token = excluded.refresh_token,
+            id_token = excluded.id_token,
+            expires_at = excluded.expires_at,
+            updated_at = excluded.updated_at`
+        )
+        .bind(
+          tenantId,
+          tokenResponse.access_token,
+          tokenResponse.refresh_token || null,
+          tokenResponse.id_token || null,
+          expiresAt,
+          createdAt,
+          updatedAt
+        )
+        .run();
+    } catch (dbError) {
+      console.error('[LINE OAuth Callback] D1 upsert failed:', {
+        error: dbError instanceof Error ? dbError.message : String(dbError),
+        tenantId,
+      });
+      return c.json({ ok: false, error: 'database_error' }, 500);
+    }
+
+    // 成功レスポンス
+    return c.json({ ok: true });
+  } catch (error) {
+    // JSONパースエラーなど
+    if (error instanceof SyntaxError) {
+      return c.json({ ok: false, error: 'Invalid JSON body' }, 400);
+    }
+    console.error('[LINE OAuth Callback] Unexpected error:', error);
+    return c.json({ ok: false, error: error instanceof Error ? error.message : String(error) }, 500);
+  }
+});
+
+// GET /admin/integrations/line/callback
+app.get('/admin/integrations/line/callback', async (c) => {
+  try {
+    const code = c.req.query('code');
+    const state = c.req.query('state');
+    const error = c.req.query('error');
+
+    if (error) {
+      const webBaseUrl = c.env.WEB_BASE_URL || 'http://localhost:3000';
+      return c.redirect(`${webBaseUrl}/admin/settings?error=${encodeURIComponent(error)}`);
+    }
+
+    if (!code || !state) {
+      const webBaseUrl = c.env.WEB_BASE_URL || 'http://localhost:3000';
+      return c.redirect(`${webBaseUrl}/admin/settings?error=${encodeURIComponent('Missing code or state')}`);
+    }
+
+    // state を検証
+    const [tenantId, nonce] = state.split(':');
+    if (!tenantId || !nonce) {
+      const webBaseUrl = c.env.WEB_BASE_URL || 'http://localhost:3000';
+      return c.redirect(`${webBaseUrl}/admin/settings?error=${encodeURIComponent('Invalid state')}`);
+    }
+
+    const kv = c.env.SAAS_FACTORY;
+    const stateValue = await kv.get(`line:state:${nonce}`);
+    if (!stateValue) {
+      const webBaseUrl = c.env.WEB_BASE_URL || 'http://localhost:3000';
+      return c.redirect(`${webBaseUrl}/admin/settings?error=${encodeURIComponent('State expired or invalid')}`);
+    }
+
+    // state を削除（使い捨て）
+    await kv.delete(`line:state:${nonce}`);
+
+    // D1から設定を取得（なければ環境変数にフォールバック）
+    let clientId: string | undefined;
+    let clientSecret: string | undefined;
+    const config = await getLineConfigOrNull({ DB: c.env.DB, CONFIG_ENC_KEY: c.env.CONFIG_ENC_KEY }, tenantId);
+    if (config) {
+      clientId = config.clientId;
+      clientSecret = config.channelSecret; // OAuth用にはchannelSecretを使用
+    } else {
+      // 環境変数から取得
+      clientId = c.env.LINE_CLIENT_ID;
+      clientSecret = c.env.LINE_LOGIN_CHANNEL_SECRET;
+    }
+
+    // Redirect Base URL を取得（環境変数があればそれを使用、なければリクエストから生成）
+    let redirectBase: string;
+    if (c.env.LINE_LOGIN_REDIRECT_BASE) {
+      redirectBase = c.env.LINE_LOGIN_REDIRECT_BASE.replace(/\/$/, '');
+    } else {
+      redirectBase = c.req.url.split('/admin')[0];
+    }
+    const redirectUri = `${redirectBase}/admin/integrations/line/callback`;
+
+    if (!clientId) {
+      const webBaseUrl = c.env.WEB_BASE_URL || 'http://localhost:3000';
+      return c.redirect(`${webBaseUrl}/admin/settings?error=${encodeURIComponent('LINE_CLIENT_ID is not configured')}`);
+    }
+    if (!clientSecret) {
+      const webBaseUrl = c.env.WEB_BASE_URL || 'http://localhost:3000';
+      return c.redirect(`${webBaseUrl}/admin/settings?error=${encodeURIComponent('LINE_LOGIN_CHANNEL_SECRET is not configured')}`);
+    }
+
+    // code をトークンに交換
+    const tokenResponse = await exchangeCodeForToken(code, clientId, clientSecret, redirectUri);
+
+    // トークンでプロフィールを取得（検証）
+    const profile = await verifyAccessToken(tokenResponse.access_token);
+
+    // settings を取得
+    const settingsKey = 'settings:default';
+    const settingsValue = await kv.get(settingsKey);
+    const settings: AdminSettings = settingsValue
+      ? mergeSettings(DEFAULT_ADMIN_SETTINGS, JSON.parse(settingsValue))
+      : DEFAULT_ADMIN_SETTINGS;
+
+    // LINE連携情報を更新（secretsは保存しない）
+    settings.integrations = settings.integrations || {};
+    settings.integrations.line = {
+      connected: true,
+      userId: userId,
+      displayName: displayName,
+      connectedAt: Date.now(),
+      notifyOnReservation: settings.integrations.line?.notifyOnReservation ?? true,
+      notifyOnCancel: settings.integrations.line?.notifyOnCancel ?? true,
+      notifyOnReminder: settings.integrations.line?.notifyOnReminder ?? false,
+    };
+
+    // トークンは別のKVキーに保存（settingsには含めない）
+    await kv.put(`line:token:${tenantId}`, JSON.stringify({
+      access_token: tokenResponse.access_token,
+      refresh_token: tokenResponse.refresh_token,
+      expires_in: tokenResponse.expires_in,
+      userId: userId,
+      displayName: displayName,
+    }));
+
+    // settings を保存
+    await kv.put(settingsKey, JSON.stringify(settings));
+
+    const webBaseUrl = c.env.WEB_BASE_URL || 'http://localhost:3000';
+    return c.redirect(`${webBaseUrl}/admin/settings?success=line_connected`);
+  } catch (error) {
+    const webBaseUrl = c.env.WEB_BASE_URL || 'http://localhost:3000';
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    return c.redirect(`${webBaseUrl}/admin/settings?error=${encodeURIComponent(errorMessage)}`);
+  }
+});
+
+// POST /admin/integrations/line/disconnect
+app.post('/admin/integrations/line/disconnect', async (c) => {
+  try {
+    const tenantId = getTenantId(c);
+
+    const kv = c.env.SAAS_FACTORY;
+
+    // settings を取得
+    const settingsKey = 'settings:default';
+    const settingsValue = await kv.get(settingsKey);
+    const settings: AdminSettings = settingsValue
+      ? mergeSettings(DEFAULT_ADMIN_SETTINGS, JSON.parse(settingsValue))
+      : DEFAULT_ADMIN_SETTINGS;
+
+    // LINE連携情報を無効化
+    settings.integrations = settings.integrations || {};
+    settings.integrations.line = {
+      ...settings.integrations.line,
+      connected: false,
+      userId: undefined,
+      displayName: undefined,
+      connectedAt: undefined,
+    };
+
+    // settings を保存
+    await kv.put(settingsKey, JSON.stringify(settings));
+
+    // トークンを削除
+    await kv.delete(`line:token:${tenantId}`);
+
+    return c.json({ ok: true });
+  } catch (error) {
+    return c.json({ ok: false, error: String(error) }, 500);
+  }
+});
+
+// PATCH /admin/integrations/line/notify
+app.patch('/admin/integrations/line/notify', async (c) => {
+  try {
+    const kv = c.env.SAAS_FACTORY;
+    const body = await c.req.json();
+    const { enabled } = body;
+
+    if (typeof enabled !== 'boolean') {
+      return c.json({ ok: false, error: 'enabled must be a boolean' }, 400);
+    }
+
+    // settings を取得
+    const settingsKey = 'settings:default';
+    const settingsValue = await kv.get(settingsKey);
+    const settings: AdminSettings = settingsValue
+      ? mergeSettings(DEFAULT_ADMIN_SETTINGS, JSON.parse(settingsValue))
+      : DEFAULT_ADMIN_SETTINGS;
+
+    // 接続済みかチェック
+    if (settings.integrations?.line?.connected !== true || !settings.integrations.line.userId) {
+      return c.json({ ok: false, error: 'LINE is not connected' }, 400);
+    }
+
+    // 通知設定を更新
+    settings.integrations.line = {
+      ...settings.integrations.line,
+      notifyOnReservation: enabled,
+      notifyOnCancel: enabled,
+    };
+
+    // settings を保存
+    await kv.put(settingsKey, JSON.stringify(settings));
+
+    return c.json({ ok: true });
+  } catch (error) {
+    return c.json({ ok: false, error: String(error) }, 500);
+  }
+});
+
+// POST /admin/integrations/line/test
+app.post('/admin/integrations/line/test', async (c) => {
+  try {
+    const tenantId = getTenantId(c);
+    const kv = c.env.SAAS_FACTORY;
+
+    // D1から設定を取得（なければ環境変数にフォールバック）
+    let channelAccessToken: string | undefined;
+    const config = await getLineConfigOrNull({ DB: c.env.DB, CONFIG_ENC_KEY: c.env.CONFIG_ENC_KEY }, tenantId);
+    if (config) {
+      channelAccessToken = config.channelAccessToken;
+    } else {
+      // 後方互換性: 環境変数から取得
+      channelAccessToken = c.env.LINE_CHANNEL_ACCESS_TOKEN;
+    }
+
+    if (!channelAccessToken) {
+      return c.json({ ok: false, error: 'LINE_CHANNEL_ACCESS_TOKEN is not configured' }, 500);
+    }
+
+    // settings を取得して userId を確認
+    const settingsKey = 'settings:default';
+    const settingsValue = await kv.get(settingsKey);
+    const settings: AdminSettings = settingsValue
+      ? mergeSettings(DEFAULT_ADMIN_SETTINGS, JSON.parse(settingsValue))
+      : DEFAULT_ADMIN_SETTINGS;
+
+    const userId = settings.integrations?.line?.userId;
+
+    if (!userId) {
+      return c.json({ 
+        ok: false, 
+        error: 'LINE userId not found. Please send a message from LINE first to register your userId.' 
+      }, 400);
+    }
+
+    // 疎通テスト: Push APIで実際に通知を送信
+    try {
+      const message = 'Lumiere Admin テスト通知 ✅';
+      await sendLineMessage(channelAccessToken, userId, message);
+      
+      // 成功時: lastSentAt を記録
+      const lastSentAtKey = `line:notify:lastSentAt:${tenantId}`;
+      await kv.put(lastSentAtKey, JSON.stringify({
+        message,
+        at: Date.now(),
+      }));
+      
+      return c.json({ ok: true, message: 'LINE connection test successful' });
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      
+      // エラー時: lastError を記録
+      const lastErrorKey = `line:notify:lastError:${tenantId}`;
+      await kv.put(lastErrorKey, JSON.stringify({
+        message: 'Lumiere Admin テスト通知 ✅',
+        error: errorMessage,
+        at: Date.now(),
+      }));
+      
+      return c.json(jsonError(error), 500);
+    }
+  } catch (error) {
+    return c.json(jsonError(error), 500);
+  }
+});
+
+// GET /admin/integrations/line/status
+app.get('/admin/integrations/line/status', async (c) => {
+  try {
+    // tenantId をクエリパラメータから取得（無ければ "default"）
+    const tenantId = c.req.query('tenantId') || 'default';
+    const db = c.env.DB;
+
+    // D1 の line_connections テーブルから expires_at を取得
+    const result = await db
+      .prepare('SELECT expires_at FROM line_connections WHERE tenant_id = ?')
+      .bind(tenantId)
+      .first<{ expires_at: number | null }>();
+
+    // レコードが存在しない場合
+    if (!result || result.expires_at === null) {
+      return c.json({
+        kind: 'disconnected',
+      });
+    }
+
+    // 現在時刻を取得（Unix time seconds）
+    const now = Math.floor(Date.now() / 1000);
+    const expiresAt = result.expires_at;
+
+    // 有効期限が切れている場合
+    if (expiresAt <= now) {
+      return c.json({
+        kind: 'disconnected',
+        reason: 'expired',
+      });
+    }
+
+    // レコードが存在し、有効期限内の場合
+    return c.json({
+      kind: 'connected',
+    });
+  } catch (error) {
+    console.error('[LINE Status] Error:', error);
+    return c.json(jsonError(error), 500);
+  }
+});
+
+// POST /admin/integrations/line/webhook
+app.post('/admin/integrations/line/webhook', async (c) => {
+  try {
+    // リクエストボディを取得（raw body）
+    const body = await c.req.text();
+
+    // signature / secret の存在チェック（設定ミスが分かるように 400 を返す）
+    const signature = c.req.header('X-Line-Signature');
+    if (!signature) {
+      return c.json({ ok: false, error: 'Missing X-Line-Signature header' }, 400);
+    }
+
+    // D1から設定を取得（なければ環境変数にフォールバック）
+    let channelSecret: string | undefined;
+    const config = await getLineConfigOrNull({ DB: c.env.DB, CONFIG_ENC_KEY: c.env.CONFIG_ENC_KEY }, tenantId);
+    if (config) {
+      channelSecret = config.channelSecret;
+    } else {
+      // 後方互換性: 環境変数から取得
+      channelSecret = c.env.LINE_CHANNEL_SECRET;
+    }
+
+    if (!channelSecret) {
+      return c.json({ ok: false, error: 'LINE_CHANNEL_SECRET is not configured' }, 400);
+    }
+
+    // 署名検証（NGの時は 401）
+    const isValid = await verifyLineWebhookSignature(body, signature, channelSecret);
+    if (!isValid) {
+      return c.json({ ok: false, error: 'Invalid signature' }, 401);
+    }
+
+    // イベントをパース（try/catch で防御）
+    let events: any[] = [];
+    try {
+      const parsed = JSON.parse(body);
+      events = parsed.events || [];
+    } catch (parseError) {
+      console.error('LINE webhook JSON parse error:', parseError);
+      return c.json({ ok: false, error: 'Invalid JSON body' }, 400);
+    }
+
+    const kv = c.env.SAAS_FACTORY;
+    const tenantId = getTenantId(c);
+
+    for (const event of events) {
+      // event.type と userId をログ出力
+      const eventType = event.type || 'unknown';
+      const userId = event.source?.userId || null;
+      console.log(`LINE webhook event: type=${eventType}, userId=${userId || 'N/A'}`);
+
+      // message イベントの場合、userId を保存
+      if (event.type === 'message' && event.source?.type === 'user' && userId) {
+        // settings を取得（必ず mergeSettings を通す）
+        const settingsKey = 'settings:default';
+        const currentSettingsValue = await kv.get(settingsKey);
+        const currentSettings: Partial<AdminSettings> | null = currentSettingsValue
+          ? JSON.parse(currentSettingsValue)
+          : null;
+
+        // DEFAULT_ADMIN_SETTINGS と currentSettings をマージ（欠損フィールドを補完）
+        const merged: AdminSettings = mergeSettings(DEFAULT_ADMIN_SETTINGS, currentSettings);
+
+        const existingUserId = merged.integrations.line?.userId;
+
+        // 既存userIdが無い -> 保存して connected=true
+        if (!existingUserId) {
+          merged.integrations.line = {
+            ...merged.integrations.line,
+            connected: true,
+            userId: userId,
+            connectedAt: Date.now(),
+            notifyOnReservation: merged.integrations.line?.notifyOnReservation ?? true,
+            notifyOnCancel: merged.integrations.line?.notifyOnCancel ?? true,
+            notifyOnReminder: merged.integrations.line?.notifyOnReminder ?? false,
+            lastError: undefined, // エラーをクリア
+          };
+
+          // マージ済みの settings を保存（欠損事故をゼロ化）
+          await kv.put(settingsKey, JSON.stringify(merged));
+
+          console.log(`LINE userId registered: ${userId}`);
+        }
+        // 既存userIdがある & 同じ -> OK（何もしない）
+        else if (existingUserId === userId) {
+          // 既存のuserIdと同じなので、何もしない
+          console.log(`LINE userId already registered: ${userId}`);
+        }
+        // 既存userIdがある & 違う -> 保存しない、代わりに lastError を記録
+        else {
+          const errorMessage = `LINE userId mismatch: existing=${existingUserId} incoming=${userId}`;
+          
+          merged.integrations.line = {
+            ...merged.integrations.line,
+            lastError: errorMessage,
+          };
+
+          // マージ済みの settings を保存（lastError のみ更新）
+          await kv.put(settingsKey, JSON.stringify(merged));
+
+          console.error(errorMessage);
+        }
+      }
+    }
+
+    // 成功時も必ず 200 JSON 返す（LINEは200が超重要）
+    return c.json({ ok: true }, 200);
+  } catch (error) {
+    console.error('LINE webhook error:', error);
+    return c.json({ ok: false, error: String(error) }, 500);
+  }
+});
+
+// Durable Object の export
+export { SlotLock };
+
+export default app;
+

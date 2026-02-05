@@ -1,0 +1,342 @@
+import { Hono } from "hono"
+
+// SAAS-FACTORY API ENTRY (apps/api/src/index.ts)
+type Env = {
+  LINE_CLIENT_ID?: string
+  LINE_LOGIN_CHANNEL_ID?: string
+  LINE_LOGIN_CHANNEL_SECRET?: string
+  LINE_LOGIN_REDIRECT_BASE?: string
+}
+
+const app = new Hono<{ Bindings: Env }>()
+
+app.get("/__debug_guard", (c) => {
+  return c.json({ ok: true, guard: "vD1-GUARD-20260125" });
+});
+
+// --- LINE Login: 開発用簡易ストア（本番ではKV/D1に移行予定） ---
+type LineIntegrationState = {
+  userId: string
+  displayName: string
+  pictureUrl?: string
+  updatedAt: string
+}
+
+const lineIntegrationStore = new Map<string, LineIntegrationState>()
+
+// tenantId がなければ default
+const getTenantId = (req: Request): string => {
+  const url = new URL(req.url)
+  return url.searchParams.get("tenantId") ?? "default"
+}
+
+function resolveLineClientId(env: Env): string {
+  return env.LINE_CLIENT_ID || env.LINE_LOGIN_CHANNEL_ID || ""
+}
+
+// ルート: GET /
+app.get("/", (c) => c.text("Hello from SaaS Factory API!"))
+
+// ルート: GET /health
+app.get("/health", (c) => {
+  return c.json({
+    ok: true,
+    ts: new Date().toISOString(),
+    env: "development",
+    version: "1.0.0",
+  })
+})
+
+// デバッグ用: GET /debug-hello
+app.get("/debug-hello", (c) => {
+  return c.json({ ok: true, route: "debug-hello" })
+})
+
+// ルート: GET /admin/integrations/line/auth-url?tenantId=xxx
+// LINE OAuth 認証URLを生成するエンドポイント
+app.get("/admin/integrations/line/auth-url", async (c) => {
+  try {
+    const tenantId = c.req.query("tenantId") ?? "default"
+    const env = c.env
+
+    // client_id 解決（既存ロジックを維持）
+    const clientId = resolveLineClientId(env)
+
+    // redirect_uri を構築（Next.js 側の callback に向ける）
+    const redirectBase = env.LINE_LOGIN_REDIRECT_BASE ?? "http://localhost:3000"
+    const redirectUri = `${redirectBase.replace(/\/$/, "")}/admin/integrations/line/callback`
+
+    if (!clientId) {
+      return c.json(
+        { ok: false, error: "LINE_CLIENT_ID is not configured" },
+        400,
+      )
+    }
+
+    const params = new URLSearchParams({
+      response_type: "code",
+      client_id: clientId,
+      redirect_uri: redirectUri,
+      scope: "profile openid",
+      state: tenantId,
+    })
+
+    const url = `https://access.line.me/oauth2/v2.1/authorize?${params.toString()}`
+
+    return c.json({ ok: true, url })
+  } catch (error) {
+    const errorMessage =
+      error instanceof Error ? error.message : "Unknown error"
+    console.error("[LINE OAuth] auth-url error:", errorMessage)
+
+    return c.json(
+      {
+        ok: false,
+        error: "internal_server_error",
+        message: `LINE OAuth認証URLの生成に失敗しました: ${errorMessage}`,
+      },
+      500,
+    )
+  }
+})
+
+// ルート: GET /admin/integrations/line/status
+app.get("/admin/integrations/line/status", (c) => {
+  const tenantId = getTenantId(c.req.raw)
+  const state = lineIntegrationStore.get(tenantId)
+
+  if (!state) {
+    return c.json({
+      ok: true,
+      tenantId,
+      kind: "unconfigured" as const,
+    })
+  }
+
+  return c.json({
+    ok: true,
+    tenantId,
+    kind: "linked" as const,
+    line: state,
+  })
+})
+
+// ルート: POST /admin/integrations/line/callback
+app.post("/admin/integrations/line/callback", async (c) => {
+  const env = c.env
+  const body = await c.req.json<{
+    code: string
+    state?: string
+    tenantId?: string
+  }>()
+
+  const tenantId = body.tenantId || getTenantId(c.req.raw)
+  const code = body.code
+
+  if (!code) {
+    return c.json({ ok: false, error: "missing_code" }, 400)
+  }
+
+  const tokenUrl = "https://api.line.me/oauth2/v2.1/token"
+
+  const redirectBase = env.LINE_LOGIN_REDIRECT_BASE ?? "http://localhost:3000"
+  const redirectUri = `${redirectBase.replace(/\/$/, "")}/admin/integrations/line/callback`
+
+  const tokenBody = new URLSearchParams({
+    grant_type: "authorization_code",
+    code,
+    redirect_uri: redirectUri,
+    client_id: env.LINE_LOGIN_CHANNEL_ID ?? "",
+    client_secret: env.LINE_LOGIN_CHANNEL_SECRET ?? "",
+  })
+
+  const tokenRes = await fetch(tokenUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: tokenBody.toString(),
+  })
+
+  if (!tokenRes.ok) {
+    const text = await tokenRes.text()
+    console.error("[LINE][token] error", tokenRes.status, text)
+    return c.json({ ok: false, error: "token_request_failed" }, 500)
+  }
+
+  const tokenJson = await tokenRes.json() as { id_token?: string }
+
+  if (!tokenJson.id_token) {
+    return c.json({ ok: false, error: "missing_id_token" }, 500)
+  }
+
+  const verifyBody = new URLSearchParams({
+    id_token: tokenJson.id_token,
+    client_id: env.LINE_LOGIN_CHANNEL_ID ?? "",
+  })
+
+  const verifyRes = await fetch("https://api.line.me/oauth2/v2.1/verify", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: verifyBody.toString(),
+  })
+
+  if (!verifyRes.ok) {
+    const text = await verifyRes.text()
+    console.error("[LINE][verify] error", verifyRes.status, text)
+    return c.json({ ok: false, error: "verify_failed" }, 500)
+  }
+
+  const profile = (await verifyRes.json()) as {
+    sub: string
+    name?: string
+    picture?: string
+    email?: string
+  }
+
+  const state: LineIntegrationState = {
+    userId: profile.sub,
+    displayName: profile.name ?? "LINE User",
+    pictureUrl: profile.picture,
+    updatedAt: new Date().toISOString(),
+  }
+
+  lineIntegrationStore.set(tenantId, state)
+
+  return c.json({ ok: true, tenantId, line: state })
+})
+
+// ルート: GET /ping
+app.get("/ping", (c) => c.text("pong"))
+
+export default app
+
+
+/**
+ * ルート: PATCH /admin/integrations/line/notify
+ * body: { tenantId: string, notifyEnabled: boolean }
+ * NOTE: まずは「存在させてUIを通す」ための最小実装（後でD1/KVに永続化する）
+ */
+app.patch("/admin/integrations/line/notify", async (c) => {
+  const tenantId = c.req.query("tenantId") ?? "default";
+  const debug = "vD1-GUARD-20260125";
+  const r = await c.env.DB
+    .prepare("SELECT tenant_id FROM line_integrations WHERE tenant_id = ?1 LIMIT 1")
+    .bind(tenantId)
+    .first();
+
+  const integration = r ? { tenantId } : null;
+  if (!integration) {
+    return c.json({ ok: false, error: "not linked", tenantId, debug }, 409);
+  }
+  try {
+    const body = await c.req.json().catch(() => null) as null | { tenantId?: string; notifyEnabled?: boolean }
+    const tenantId = body?.tenantId ?? "default"
+    const notifyEnabled = !!body?.notifyEnabled
+
+    return c.json({ ok: true, tenantId, notifyEnabled })
+  } catch (e) {
+    return c.json({ ok: false, error: "notify failed" }, 500)
+  }
+})
+
+/**
+ * ルート: POST /admin/integrations/line/test?tenantId=xxx
+ * NOTE: まずはダミー応答でOK（後でMessaging API pushを入れる）
+ */
+app.post("/admin/integrations/line/test", async (c) => {
+  const tenantId = c.req.query("tenantId") ?? "default";
+  const debug = "vD1-GUARD-20260125";
+  const r = await c.env.DB
+    .prepare("SELECT tenant_id FROM line_integrations WHERE tenant_id = ?1 LIMIT 1")
+    .bind(tenantId)
+    .first();
+
+  const integration = r ? { tenantId } : null;
+  if (!integration) {
+    return c.json({ ok: false, error: "not linked", tenantId, sent: false, debug }, 409);
+  }
+  try {
+    const tenantId = c.req.query("tenantId") ?? "default"
+    return c.json({ ok: true, tenantId, sent: true })
+  } catch (e) {
+    return c.json({ ok: false, error: "test failed" }, 500)
+  }
+})
+
+
+
+
+
+
+
+
+
+
+//
+//
+// ルート: POST /admin/integrations/line/webhook
+// NOTE: まずは受信→replyで疎通確認（署名検証は後で追加）
+//
+app.post("/admin/integrations/line/webhook", async (c) => {
+  try {
+    const tenantId = c.req.query("tenantId") ?? "default";
+    const bodyText = await c.req.text();
+
+    console.log("[LINE][webhook] tenantId=", tenantId, "len=", bodyText.length);
+
+    let payload: any = null;
+    try {
+      payload = bodyText ? JSON.parse(bodyText) : null;
+    } catch (e) {
+      console.error("[LINE][webhook] JSON parse error", e);
+    }
+
+    const events = payload?.events ?? [];
+    if (!Array.isArray(events) || events.length === 0) {
+      return c.json({ ok: true });
+    }
+
+    const accessToken = c.env.LINE_CHANNEL_ACCESS_TOKEN;
+    if (!accessToken) {
+      console.error("[LINE][webhook] LINE_CHANNEL_ACCESS_TOKEN is not configured");
+      return c.json({ ok: false, error: "LINE_CHANNEL_ACCESS_TOKEN is not configured" }, 500);
+    }
+
+    for (const ev of events) {
+      const eventType = ev?.type;
+      const replyToken = ev?.replyToken;
+      const msgType = ev?.message?.type;
+      const text = ev?.message?.text;
+
+      console.log("[LINE][webhook] eventType=", eventType, "msgType=", msgType);
+
+      if (eventType === "message" && replyToken) {
+        const replyText =
+          msgType === "text"
+            ? `OK😙🤟🏻 受け取った: ${text ?? ""}`
+            : "OK😙🤟🏻 受け取った（テキスト以外）";
+
+        const res = await fetch("https://api.line.me/v2/bot/message/reply", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({
+            replyToken,
+            messages: [{ type: "text", text: replyText }],
+          }),
+        });
+
+        if (!res.ok) {
+          const t = await res.text().catch(() => "");
+          console.error("[LINE][webhook] reply failed:", res.status, t);
+        }
+      }
+    }
+
+    return c.json({ ok: true });
+  } catch (err) {
+    console.error("[LINE][webhook] error:", err);
+    return c.json({ ok: false, error: "webhook error" }, 500);
+  }
+});

@@ -1,0 +1,50 @@
+export type LineWebhookLogRow = {
+  id: string
+  ts: string
+  tenant_id: string
+  event_type: string | null
+  msg_type: string | null
+  reply_token_len: number | null
+  body_len: number
+  reply_status: number | null
+  reply_body: string | null
+}
+
+export async function insertLineWebhookLog(db: D1Database, row: LineWebhookLogRow) {
+  const sql =
+    "INSERT INTO line_webhook_logs (id, ts, tenant_id, event_type, msg_type, reply_token_len, body_len, reply_status, reply_body) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)"
+  await db
+    .prepare(sql)
+    .bind(
+      row.id,
+      row.ts,
+      row.tenant_id,
+      row.event_type,
+      row.msg_type,
+      row.reply_token_len,
+      row.body_len,
+      row.reply_status,
+      row.reply_body
+    )
+    .run()
+}
+
+export async function listLineWebhookLogs(db: D1Database, tenantId: string, limit: number) {
+  const sql =
+    "SELECT id, ts, tenant_id, event_type, msg_type, reply_status FROM line_webhook_logs WHERE tenant_id = ?1 ORDER BY ts DESC LIMIT ?2"
+  const res = await db.prepare(sql).bind(tenantId, limit).all()
+  return (res.results ?? []) as Array<{
+    id: string
+    ts: string
+    tenant_id: string
+    event_type: string | null
+    msg_type: string | null
+    reply_status: number | null
+  }>
+}
+
+export async function getLineWebhookLog(db: D1Database, id: string) {
+  const sql = "SELECT * FROM line_webhook_logs WHERE id = ?1 LIMIT 1"
+  const row = await db.prepare(sql).bind(id).first()
+  return row as any
+}

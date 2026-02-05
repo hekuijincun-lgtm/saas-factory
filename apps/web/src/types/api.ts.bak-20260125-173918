@@ -1,0 +1,4 @@
+// Auto-generated on 20260125-173812
+export type ApiResponse<T> =
+  | { ok: true; data: T }
+  | { ok: false; error: string; code?: string };

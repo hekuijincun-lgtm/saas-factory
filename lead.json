@@ -1,0 +1,9 @@
+{
+    "payload":  {
+                    "email":  "test@example.com",
+                    "channel":  "web",
+                    "name":  "テスト",
+                    "toolId":  "6bc904d0-e82b-4101-8427-36e615f6eefa"
+                },
+    "action":  "saveLead"
+}

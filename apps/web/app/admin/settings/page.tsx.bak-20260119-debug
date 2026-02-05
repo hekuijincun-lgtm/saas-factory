@@ -1,0 +1,19 @@
+// route: /admin/settings
+'use client';
+
+import AdminShell from '../../_components/ui/AdminShell';
+import AdminTopBar from '../../_components/ui/AdminTopBar';
+import AdminSidebar from '../../_components/admin/AdminSidebar';
+import SettingsForm from '../../_components/admin/SettingsForm';
+
+export default function Page() {
+  return (
+    <AdminShell
+      sidebar={<AdminSidebar />}
+      topbar={<AdminTopBar title="管理者設定" subtitle="システム設定を変更します。" />}
+    >
+      <SettingsForm />
+    </AdminShell>
+  );
+}
+
