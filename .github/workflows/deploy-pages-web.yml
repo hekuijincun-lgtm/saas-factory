@@ -28,10 +28,9 @@ jobs:
         working-directory: apps/web
         run: pnpm build:pages
 
-      - name: Deploy
+      - name: Deploy (Pages)
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CF_API_TOKEN }}
           accountId: ${{ secrets.CF_ACCOUNT_ID }}
-          command: pages deploy .vercel/output/static --project-name=saas-factory-web
-        working-directory: apps/web
+          command: pages deploy apps/web/.vercel/output/static --project-name=saas-factory-web
