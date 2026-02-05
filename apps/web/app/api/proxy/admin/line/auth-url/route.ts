@@ -1,27 +1,48 @@
-import { NextRequest, NextResponse } from "next/server";
+export const runtime = 'edge';
 
-export async function GET(req: NextRequest) {
-  const API_BASE = process.env.BOOKING_API_BASE ?? "http://127.0.0.1:8787";
-  
-  // クエリストリングをそのまま引き継ぎ
-  const queryString = req.nextUrl.search;
-  
-  const upstream =
-    `${API_BASE.replace(/\/$/, "")}` +
-    `/admin/integrations/line/auth-url${queryString}`;
+import { NextResponse } from "next/server";
 
-  const res = await fetch(upstream, {
-    method: "GET",
-    headers: { accept: "application/json" },
-    cache: "no-store",
-  });
+const UPSTREAM = process.env.WORKER_API_BASE ?? "http://127.0.0.1:8787";
 
-  const body = await res.text();
-
-  return new NextResponse(body, {
-    status: res.status,
-    headers: {
-      "content-type": res.headers.get("content-type") ?? "application/json",
-    },
-  });
+async function preflight() {
+  // Workerが死んでるときに 500 を撒かない（=UXとデバッグ体験が神になる）
+  const r = await fetch(`${UPSTREAM}/health`, { cache: "no-store" });
+  if (!r.ok) throw new Error(`upstream /health not ok: ${r.status}`);
 }
+
+export async function GET(req: Request) {
+  try {
+    await preflight();
+
+    const u = new URL(req.url);
+    const tenantId = u.searchParams.get("tenantId") ?? "default";
+
+    const upstreamUrl = `${UPSTREAM}/admin/integrations/line/auth-url?tenantId=${encodeURIComponent(tenantId)}`;
+    const r = await fetch(upstreamUrl, { cache: "no-store" });
+    const text = await r.text();
+
+    if (!r.ok) {
+      return NextResponse.json(
+        { ok: false, error: "upstream_error", status: r.status, body: text?.slice(0, 500) ?? "" },
+        { status: r.status }
+      );
+    }
+
+    // ここはそのまま返す（クライアント側が text→JSON 防御してるのでOK）
+    return new NextResponse(text, {
+      status: 200,
+      headers: { "content-type": r.headers.get("content-type") ?? "application/json; charset=utf-8" },
+    });
+  } catch (e: any) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "upstream_unavailable",
+        message: e?.message ?? String(e),
+        hint: "Start worker: pnpm wrangler dev --local --ip 127.0.0.1 --port 8787",
+      },
+      { status: 503 }
+    );
+  }
+}
+

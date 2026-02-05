@@ -1,3 +1,5 @@
+export const runtime = 'edge';
+
 /**
  * POST /api/proxy/admin/line/disconnect
  */
@@ -8,4 +10,5 @@ import { forwardJson } from '../../../_lib/proxy';
 export async function POST(req: NextRequest) {
   return forwardJson(req, '/admin/integrations/line/disconnect');
 }
+
 

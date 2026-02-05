@@ -87,8 +87,13 @@ export default function AdminSettingsClient() {
       setLineLoading(true);
       setLineError(null);
 
-      // prefer existing fetchLineStatusState() if present
-      await fetchLineStatusState(); return;// fallback: call proxy directly (tenantId defaults to "default")
+      // prefer existing fetchLineStatus() if present
+      if (typeof (fetchLineStatus as any) === "function") {
+        await (fetchLineStatus as any)();
+        return;
+      }
+
+      // fallback: call proxy directly (tenantId defaults to "default")
       const tid =
         (typeof (tenantId as any) !== "undefined" && tenantId) ? tenantId : "default";
       const res = await fetch(
@@ -104,13 +109,7 @@ export default function AdminSettingsClient() {
       setLineLoading(false);
     }
   };
-  // --- /injected ---  useEffect(() => {
-    // 初期表示でステータス取得（リンク済みならここで UI が更新される）
-    fetchLineStatusState();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-
+  // --- /injected ---
   return(
     <main className="p-6 max-w-3xl mx-auto space-y-6">
       <h1 className="text-2xl font-semibold">Admin Settings</h1>
@@ -138,7 +137,7 @@ export default function AdminSettingsClient() {
           <span className="text-xs px-2 py-1 rounded-full border bg-gray-50">
             {loadingStatus || !lineStatus
               ? "確認中..."
-              : (((lineStatus as any).kind === "linked") || ((lineStatus as any).kind === "connected"))
+              : lineStatus.kind === "connected"
               ? "連携済み"
               : lineStatus.kind === "unconfigured"
               ? "未設定"
@@ -180,11 +179,6 @@ export default function AdminSettingsClient() {
     </main>
   );
 }
-
-
-
-
-
 
 
 

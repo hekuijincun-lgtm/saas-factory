@@ -1,3 +1,5 @@
+export const runtime = 'edge';
+
 import { NextRequest, NextResponse } from "next/server";
 
 function resolveApiBase(): string {
@@ -71,3 +73,4 @@ export async function GET(req: NextRequest) {
     );
   }
 }
+

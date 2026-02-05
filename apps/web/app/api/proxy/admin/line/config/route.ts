@@ -1,3 +1,5 @@
+export const runtime = 'edge';
+
 import { NextResponse } from "next/server";
 
 async function forwardToWorker(req: Request) {
@@ -50,3 +52,4 @@ export async function POST(req: Request) {
 export async function PUT(req: Request) {
   return forwardToWorker(req);
 }
+

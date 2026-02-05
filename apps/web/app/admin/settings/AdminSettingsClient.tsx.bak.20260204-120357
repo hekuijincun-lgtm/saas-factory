@@ -80,38 +80,8 @@ export default function AdminSettingsClient() {
       setLineConnecting(false);
     }
   };
-    const [lineLoading, setLineLoading] = useState(false);
-  // --- injected: UI-safe LINE status loader (prevents ReferenceError) ---
-  const fetchLineStatusState = async () => {
-    try {
-      setLineLoading(true);
-      setLineError(null);
 
-      // prefer existing fetchLineStatusState() if present
-      await fetchLineStatusState(); return;// fallback: call proxy directly (tenantId defaults to "default")
-      const tid =
-        (typeof (tenantId as any) !== "undefined" && tenantId) ? tenantId : "default";
-      const res = await fetch(
-        `/api/proxy/admin/line/status?tenantId=${encodeURIComponent(tid)}`,
-        { method: "GET" }
-      );
-      const json = await res.json();
-      if (!res.ok || !json?.ok) throw new Error(json?.error || `status ${res.status}`);
-      setLineStatus(json);
-    } catch (e: any) {
-      setLineError(String(e?.message ?? e));
-    } finally {
-      setLineLoading(false);
-    }
-  };
-  // --- /injected ---  useEffect(() => {
-    // 初期表示でステータス取得（リンク済みならここで UI が更新される）
-    fetchLineStatusState();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-
-  return(
+  return (
     <main className="p-6 max-w-3xl mx-auto space-y-6">
       <h1 className="text-2xl font-semibold">Admin Settings</h1>
 
@@ -138,7 +108,7 @@ export default function AdminSettingsClient() {
           <span className="text-xs px-2 py-1 rounded-full border bg-gray-50">
             {loadingStatus || !lineStatus
               ? "確認中..."
-              : (((lineStatus as any).kind === "linked") || ((lineStatus as any).kind === "connected"))
+              : lineStatus.kind === "connected"
               ? "連携済み"
               : lineStatus.kind === "unconfigured"
               ? "未設定"
@@ -180,12 +150,5 @@ export default function AdminSettingsClient() {
     </main>
   );
 }
-
-
-
-
-
-
-
 
 
