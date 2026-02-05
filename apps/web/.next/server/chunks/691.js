@@ -1,1 +1,0 @@
-"use strict";exports.id=691,exports.ids=[691],exports.modules={691:(t,e,s)=>{s.r(e),s.d(e,{default:()=>a});let a=(0,s(1924).createProxy)(String.raw`C:\dev\saas-factory\apps\web\app\admin\settings\AdminSettingsClient.tsx#default`)}};
