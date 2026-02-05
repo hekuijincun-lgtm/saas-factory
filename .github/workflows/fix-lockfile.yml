@@ -1,0 +1,32 @@
+name: Fix pnpm lockfile (linux)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install pnpm
+        run: npm i -g pnpm@10
+
+      - name: Update lockfile
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Commit & push
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git checkout -b fix/lockfile-${{ github.run_id }}
+          git add pnpm-lock.yaml
+          git commit -m "chore: update pnpm lockfile" || echo "no changes"
+          git push -u origin HEAD
