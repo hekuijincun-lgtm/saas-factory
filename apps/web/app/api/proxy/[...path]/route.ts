@@ -1,3 +1,5 @@
+export const runtime = 'edge';
+
 /**
  * Catch-all proxy route for Worker API
  * 
@@ -139,6 +141,7 @@ async function forwardRequest(req: NextRequest) {
     );
   }
 }
+
 
 
 
