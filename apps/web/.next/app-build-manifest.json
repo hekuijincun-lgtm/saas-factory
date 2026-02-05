@@ -1,9 +1,9 @@
 {
   "pages": {
-    "/page": [
+    "/booking/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/page.js"
+      "static/chunks/app/booking/page.js"
     ],
     "/layout": [
       "static/chunks/webpack.js",

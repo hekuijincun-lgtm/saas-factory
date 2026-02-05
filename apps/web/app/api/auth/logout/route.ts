@@ -1,3 +1,5 @@
+export const runtime = 'edge';
+
 import { NextResponse } from "next/server";
 
 export async function POST(req: Request) {
@@ -6,3 +8,4 @@ export async function POST(req: Request) {
   res.cookies.set("kb_session", "", { httpOnly: true, path: "/", maxAge: 0 });
   return res;
 }
+

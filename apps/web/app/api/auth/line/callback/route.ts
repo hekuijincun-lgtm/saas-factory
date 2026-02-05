@@ -1,3 +1,5 @@
+export const runtime = 'edge';
+
 import { NextResponse } from "next/server";
 import crypto from "crypto";
 
@@ -54,4 +56,5 @@ export async function GET(req: Request) {
   });
   return res;
 }
+
 
