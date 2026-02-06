@@ -2,7 +2,24 @@ export const runtime = 'edge';
 
 import { NextResponse } from "next/server";
 
-const UPSTREAM = process.env.WORKER_API_BASE ?? "http://127.0.0.1:8787";
+
+import { getRequestContext } from '@cloudflare/next-on-pages';
+
+function resolveEnvVar(name: string): string | undefined {
+  try {
+    // Cloudflare Pages (next-on-pages)
+    const ctx = getRequestContext();
+    // @ts-ignore
+    const v = (ctx?.env as any)?.[name];
+    if (typeof v === 'string' && v.length) return v;
+  } catch {}
+  // Local dev / Node
+  // @ts-ignore
+  const pv = (process?.env as any)?.[name];
+  if (typeof pv === 'string' && pv.length) return pv;
+  return undefined;
+}
+const UPSTREAM = resolveEnvVar("WORKER_API_BASE") ?? resolveEnvVar("BOOKING_API_BASE") ?? resolveEnvVar("API_BASE") ?? resolveEnvVar("NEXT_PUBLIC_API_BASE") ?? "http://127.0.0.1:8787";
 
 async function preflight() {
   // Workerが死んでるときに 500 を撒かない（=UXとデバッグ体験が神になる）
@@ -45,4 +62,5 @@ export async function GET(req: Request) {
     );
   }
 }
+
 

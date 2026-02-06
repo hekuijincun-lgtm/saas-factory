@@ -5,15 +5,32 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 
+
+import { getRequestContext } from '@cloudflare/next-on-pages';
+
+function resolveEnvVar(name: string): string | undefined {
+  try {
+    // Cloudflare Pages (next-on-pages)
+    const ctx = getRequestContext();
+    // @ts-ignore
+    const v = (ctx?.env as any)?.[name];
+    if (typeof v === 'string' && v.length) return v;
+  } catch {}
+  // Local dev / Node
+  // @ts-ignore
+  const pv = (process?.env as any)?.[name];
+  if (typeof pv === 'string' && pv.length) return pv;
+  return undefined;
+}
 /**
  * API Base URL を取得（サーバー側環境変数を優先）
  */
 export function getApiBase(): string {
   // BOOKING_API_BASE を優先、なければ API_BASE、それもなければデフォルト
   const apiBase = 
-    process.env.BOOKING_API_BASE ??
-    process.env.API_BASE ?? 
-    process.env.NEXT_PUBLIC_API_BASE ?? 
+    resolveEnvVar("BOOKING_API_BASE") ??
+    resolveEnvVar("API_BASE") ?? 
+    resolveEnvVar("NEXT_PUBLIC_API_BASE") ?? 
     'http://127.0.0.1:8787';
   
   // 末尾のスラッシュを削除
@@ -116,4 +133,5 @@ export async function forwardJson(
     );
   }
 }
+
 
