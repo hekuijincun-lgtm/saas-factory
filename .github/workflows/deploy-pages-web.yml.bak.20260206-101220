@@ -1,0 +1,48 @@
+name: Deploy Web (Next on Pages)
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - "apps/web/**"
+      - ".github/workflows/deploy-pages-web.yml"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: apps/web
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # pnpm は corepack で packageManager に合わせる（version衝突しない）
+      - name: Enable pnpm via corepack
+        run: |
+          corepack enable
+          node -v
+          corepack --version
+          pnpm -v
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build (Next.js)
+        run: pnpm run build
+
+      - name: Generate Pages output (next-on-pages)
+        run: npx -y @cloudflare/next-on-pages
+
+      - name: Deploy to Cloudflare Pages
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_PAGES_PROJECT: ${{ secrets.CF_PAGES_PROJECT }}
+        run: |
+pnpm dlx wrangler@4 pages deploy .vercel/output/static --project-name "$CF_PAGES_PROJECT" --branch main
+

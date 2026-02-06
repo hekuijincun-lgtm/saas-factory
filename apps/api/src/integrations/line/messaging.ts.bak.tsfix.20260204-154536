@@ -1,0 +1,135 @@
+/* Messaging API (tenant config) - minimal, safe, local-dev friendly
+   - Encrypt access token / secret with CONFIG_ENC_KEY (base64 32 bytes)
+   - Store in D1: line_messaging_config(tenant_id PK, enc_access_token, enc_channel_secret, webhook_url, created_at, updated_at)
+   - Verify token via LINE Bot API (/v2/bot/info)
+   - Webhook check via last webhook log (if available); fallback ng
+*/
+function b64ToBytes(b64: string): Uint8Array {
+  const bin = atob(b64)
+  const out = new Uint8Array(bin.length)
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i)
+  return out
+}
+function bytesToB64(bytes: Uint8Array): string {
+  let s = ""
+  for (const b of bytes) s += String.fromCharCode(b)
+  return btoa(s)
+}
+
+async function importAesKeyFromEnv(env: any): Promise<CryptoKey> {
+  const keyB64 = String(env?.CONFIG_ENC_KEY ?? "").trim()
+  if (!keyB64) throw new Error("CONFIG_ENC_KEY is missing")
+  const raw = b64ToBytes(keyB64)
+  if (raw.byteLength !== 32) throw new Error("CONFIG_ENC_KEY must be base64(32 bytes)")
+  return crypto.subtle.importKey("raw", raw, "AES-GCM", false, ["encrypt", "decrypt"])
+}
+
+export async function encryptString(env: any, plaintext: string): Promise<string> {
+  const key = await importAesKeyFromEnv(env)
+  const iv = crypto.getRandomValues(new Uint8Array(12))
+  const pt = new TextEncoder().encode(plaintext)
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, pt))
+  // store: iv.ct (both base64)
+  return `${bytesToB64(iv)}.${bytesToB64(ct)}`
+}
+
+export async function decryptString(env: any, blob: string): Promise<string> {
+  const key = await importAesKeyFromEnv(env)
+  const parts = String(blob ?? "").split(".")
+  if (parts.length !== 2) throw new Error("invalid ciphertext format")
+  const iv = b64ToBytes(parts[0])
+  const ct = b64ToBytes(parts[1])
+  const pt = new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, ct))
+  return new TextDecoder().decode(pt)
+}
+
+type StatusKind = "unconfigured" | "partial" | "linked"
+type Check = "ok" | "ng"
+
+async function verifyToken(accessToken: string): Promise<Check> {
+  try {
+    const r = await fetch("https://api.line.me/v2/bot/info", {
+      headers: { Authorization: "Bearer " + accessToken },
+    })
+    return r.ok ? "ok" : "ng"
+  } catch {
+    return "ng"
+  }
+}
+
+async function getLastWebhookAt(db: any, tenantId: string): Promise<string | null> {
+  // STRICT: tenant-only (no fallback to other tenant)
+  try {
+    const q = await db.prepare(
+      "SELECT received_at AS t FROM line_webhook_logs WHERE tenant_id = ? ORDER BY received_at DESC LIMIT 1"
+    ).bind(tenantId).first()
+    if (q?.t) return String(q.t)
+  } catch {}
+  return null
+}
+
+export async function getMessagingStatus(env: any, db: any, tenantId: string) {
+  const row = await db.prepare(
+    "SELECT tenant_id, enc_access_token, enc_channel_secret, webhook_url, updated_at FROM line_messaging_config WHERE tenant_id = ?"
+  ).bind(tenantId).first()
+
+  if (!row) {
+    return {
+      ok: true,
+      tenantId,
+      kind: "unconfigured" as StatusKind,
+      checks: { token: "ng" as Check, webhook: "ng" as Check, lastWebhookAt: null as string | null },
+    }
+  }
+
+  const accessToken = await decryptString(env, String(row.enc_access_token))
+  const token = await verifyToken(accessToken)
+
+  const lastWebhookAt = await getLastWebhookAt(db, tenantId)
+  const webhook: Check = lastWebhookAt ? "ok" : "ng"
+
+  const kind: StatusKind = token === "ok" && webhook === "ok" ? "linked" : "partial"
+  return {
+    ok: true,
+    tenantId,
+    kind,
+    checks: { token, webhook, lastWebhookAt },
+  }
+}
+
+export async function saveMessagingConfig(env: any, db: any, tenantId: string, body: any) {
+  const channelAccessToken = String(body?.channelAccessToken ?? "").trim()
+  const channelSecret = String(body?.channelSecret ?? "").trim()
+  const webhookUrl = body?.webhookUrl ? String(body.webhookUrl).trim() : null
+
+  if (!channelAccessToken) return { ok: false, error: "missing_channelAccessToken" }
+  if (!channelSecret) return { ok: false, error: "missing_channelSecret" }
+
+  const encAccessToken = await encryptString(env, channelAccessToken)
+  const encChannelSecret = await encryptString(env, channelSecret)
+
+  const now = new Date().toISOString()
+
+  await db.prepare(
+    `INSERT INTO line_messaging_config (tenant_id, enc_access_token, enc_channel_secret, webhook_url, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(tenant_id) DO UPDATE SET
+       enc_access_token=excluded.enc_access_token,
+       enc_channel_secret=excluded.enc_channel_secret,
+       webhook_url=excluded.webhook_url,
+       updated_at=excluded.updated_at`
+  ).bind(tenantId, encAccessToken, encChannelSecret, webhookUrl, now, now).run()
+
+  return await getMessagingStatus(env, db, tenantId)
+}
+
+export async function deleteMessagingConfig(env: any, db: any, tenantId: string) {
+  await db.prepare("DELETE FROM line_messaging_config WHERE tenant_id = ?").bind(tenantId).run()
+  return {
+    ok: true,
+    tenantId,
+    kind: "unconfigured" as StatusKind,
+    checks: { token: "ng" as Check, webhook: "ng" as Check, lastWebhookAt: null as string | null },
+  }
+}
+

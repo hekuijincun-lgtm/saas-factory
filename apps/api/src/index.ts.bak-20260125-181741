@@ -204,3 +204,4 @@ app.post("/admin/integrations/line/callback", async (c) => {
 app.get("/ping", (c) => c.text("pong"))
 
 export default app
+

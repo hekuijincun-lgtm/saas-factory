@@ -1,0 +1,27 @@
+# LINE Login local-dev config
+CONFIG_ENC_KEY="vJWn9DVzdKU4Y4OJyYUjXIobgsbtE+Kbp9BtmiOxW/E="
+
+LINE_LOGIN_CHANNEL_ID="2008915612"       # ← ログイン用チャネルID
+LINE_LOGIN_CHANNEL_SECRET="1fb59b22566d43d4195ae3d0c79a3f11"  # ← ログイン用チャネルシークレット
+
+# （あれば）メッセージングAPI用の秘密鍵はそのまま残してOK
+LINE_CHANNEL_SECRET="1dbb7c54622119c27cdd486d33344a5a"
+LINE_CHANNEL_ACCESS_TOKEN="kUladxZO82Sewzh4iRJgL2E4zgsnxpq/Ehy1aGtBtTwfSpMHGxX1orD8hfYco2gfQGPIjUEBQzX2ZKWuYDzunVQsVY3KIFp+4Qfrf+WPQ/N7rB/KvuZlp/L2S0dghGZPFw2R7iaiG7AYPeoZEdP2igdB04t89/1O/w1cDnyilFU="
+
+# auth-url / token 共通で使う redirect base
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+LINE_LOGIN_REDIRECT_BASE=http://localhost:8787

@@ -1,0 +1,1552 @@
+import { Hono } from "hono"
+import { Hono } from "hono"
+import {
+  getIntegration,
+  upsertIntegration,
+  setNotifyEnabled,
+  disconnectIntegration,
+  insertSendLog,
+} from "./integrations/line/store"
+
+// SAAS-FACTORY API ENTRY (apps/api/src/index.ts)
+import { getMessagingStatus, saveMessagingConfig, deleteMessagingConfig } from "./integrations/line/messaging"
+type Env = {
+  DB: D1Database
+  LINE_CLIENT_ID?: string
+  LINE_LOGIN_CHANNEL_ID?: string
+  LINE_LOGIN_CHANNEL_SECRET?: string
+  LINE_LOGIN_REDIRECT_BASE?: string
+  LINE_CHANNEL_ACCESS_TOKEN?: string
+  LINE_MESSAGING_CHANNEL_ACCESS_TOKEN?: string
+}
+
+const app = new Hono<{ Bindings: Env }>()
+
+/* ===== TEMP DEBUG onError (auto-injected) ===== */
+app.onError((err, c) => {
+  // TEMP DEBUG: expose error details so we can fix /slots 500 quickly.
+  // TODO: revert to safe generic error after fix.
+  const e: any = err as any;
+
+
+
+
+
+
+/* ===== TEMP HOTFIX getBusinessHoursForDate (globalThis) ===== */
+;(function initGetBusinessHoursForDate(){
+  const g:any = globalThis as any;
+  if(!g.getBusinessHoursForDate){
+    g.getBusinessHoursForDate = function(...args: any[]){
+      const settings =
+        args.find(a => a && typeof a === "object" && (a.businessHours || a.closedWeekdays || a.timezone)) ??
+        g.DEFAULT_ADMIN_SETTINGS ??
+        { businessHours: { start: "09:00", end: "20:00" }, closedWeekdays: [] };
+
+      const dateArg = args.find(a => typeof a === "string" || a instanceof Date) ?? null;
+
+      try {
+        if(dateArg && settings.closedWeekdays && Array.isArray(settings.closedWeekdays) && settings.closedWeekdays.length){
+          const d = (dateArg instanceof Date) ? dateArg : new Date(String(dateArg) + "T00:00:00+09:00");
+          const wd = d.getDay(); // 0=Sun..6=Sat
+          if(settings.closedWeekdays.includes(wd)){
+            return { start: "00:00", end: "00:00", closed: true };
+          }
+        }
+      } catch {}
+
+      return settings.businessHours ?? { start: "09:00", end: "20:00" };
+    };
+  }
+})();
+/* ===== END TEMP HOTFIX getBusinessHoursForDate ===== */
+
+/* ===== TEMP HOTFIX (globalThis as any).getBusinessHoursForDate (globalThis) ===== */
+;(function initGetBusinessHoursForDate(){
+  const g:any = globalThis as any;
+  if(!g.getBusinessHoursForDate){
+    g.getBusinessHoursForDate = function(...args: any[]){
+      const settings =
+        args.find(a => a && typeof a === "object" && (a.businessHours || a.closedWeekdays || a.timezone)) ??
+        g.DEFAULT_ADMIN_SETTINGS ??
+        { businessHours: { start: "09:00", end: "20:00" }, closedWeekdays: [] };
+
+      const dateArg = args.find(a => typeof a === "string" || a instanceof Date) ?? null;
+
+      try {
+        if(dateArg && settings.closedWeekdays && Array.isArray(settings.closedWeekdays) && settings.closedWeekdays.length){
+          const d = (dateArg instanceof Date) ? dateArg : new Date(String(dateArg) + "T00:00:00+09:00");
+          const wd = d.getDay(); // 0=Sun..6=Sat
+          if(settings.closedWeekdays.includes(wd)){
+            return { start: "00:00", end: "00:00", closed: true };
+          }
+        }
+      } catch {}
+
+      return settings.businessHours ?? { start: "09:00", end: "20:00" };
+    };
+  }
+})();
+/* ===== END TEMP HOTFIX (globalThis as any).getBusinessHoursForDate ===== */
+
+/* ===== TEMP RESTORE (globalThis as any).getBusinessHoursForDate ===== */
+function (globalThis as any).getBusinessHoursForDate(...args: any[]) {
+  const g:any = globalThis as any;
+  const settings =
+    args.find(a => a && typeof a === "object" && (a.businessHours || a.closedWeekdays || a.timezone)) ??
+    g.DEFAULT_ADMIN_SETTINGS ??
+    { businessHours: { start: "09:00", end: "20:00" }, closedWeekdays: [] };
+
+  const dateArg = args.find(a => typeof a === "string" || a instanceof Date) ?? null;
+
+  try {
+    if(dateArg && settings.closedWeekdays && Array.isArray(settings.closedWeekdays) && settings.closedWeekdays.length){
+      const d = (dateArg instanceof Date) ? dateArg : new Date(String(dateArg) + "T00:00:00+09:00");
+      const wd = d.getDay(); // 0=Sun..6=Sat
+      if(settings.closedWeekdays.includes(wd)){
+        return { start: "00:00", end: "00:00", closed: true };
+      }
+    }
+  } catch {}
+
+  return settings.businessHours ?? { start: "09:00", end: "20:00" };
+}
+/* ===== END TEMP RESTORE (globalThis as any).getBusinessHoursForDate ===== */
+
+/* ===== TEMP HOTFIX DEFAULT_ADMIN_SETTINGS (globalThis) ===== */
+;(function initDefaultAdminSettings(){
+  const g:any = globalThis as any;
+  if(!g.DEFAULT_ADMIN_SETTINGS){
+    g.DEFAULT_ADMIN_SETTINGS = {
+      timezone: "Asia/Tokyo",
+      slotMinutes: 30,
+      cutoffMinutes: 0,
+      businessHours: { start: "09:00", end: "20:00" },
+      closedWeekdays: [],
+    };
+  }
+})();
+/* ===== END TEMP HOTFIX DEFAULT_ADMIN_SETTINGS ===== */
+
+  const msg = String(e?.message ?? e ?? "unknown_error");
+  
+const stack = String(e?.stack ?? "");
+  const path = c.req.path;
+
+  console.error("[onError]", { path, msg, stack });
+
+  // Return JSON for easier diagnosis (esp /slots)
+  return c.json({ ok: false, error: "internal_error", path, message: msg, stack }, 500);
+});
+/* ===== END TEMP DEBUG onError ===== */
+
+/* ===== restored booking core routes (from index.ts.bak-20260120-authurl-fix) ===== */
+// GET /slots?date=YYYY-MM-DD&staffId=xxx(optional)
+app.get('/slots', async (c) => {
+  const dateStr = c.req.query('date');
+  const staffId = c.req.query('staffId'); // optional
+  const debug = c.req.query('debug');
+  
+  // デバッグモード: debug=1 で依存ゼロで即 return
+  if (debug === '1') {
+    return c.json({ ok: true, stage: 'entered', date: dateStr, staffId: staffId || null });
+  }
+  
+  // date がない/不正なら 400
+  if (!dateStr) {
+    return c.json({ ok: false, error: 'invalid date' }, 400);
+  }
+  
+  // 日付形式の検証 (YYYY-MM-DD)
+  const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+  if (!dateRegex.test(dateStr)) {
+    return c.json({ ok: false, error: 'invalid date' }, 400);
+  }
+  
+  // 日付が有効かチェック
+  const date = new Date(dateStr + 'T00:00:00+09:00'); // JSTとして解釈
+  if (isNaN(date.getTime())) {
+    return c.json({ ok: false, error: 'invalid date' }, 400);
+  }
+  
+  const kv = c.env.SAAS_FACTORY;
+  
+  // デバッグモード: debug=2 で settings を取得
+  if (debug === '2') {
+    try {
+      const settingsValue = await kv.get('settings:default');
+      const hasSettings = !!settingsValue;
+      return c.json({ 
+        ok: true, 
+        stage: 'settings_fetched', 
+        date: dateStr,
+        hasSettings,
+        settingsLength: settingsValue?.length || 0
+      });
+    } catch (e) {
+      return c.json({ 
+        ok: false, 
+        stage: 'settings_error', 
+        error: e instanceof Error ? e.message : String(e) 
+      }, 500);
+    }
+  }
+  
+  // 設定を取得
+  const settingsValue = await kv.get('settings:default');
+  const settings: AdminSettings = settingsValue
+    ? mergeSettings((globalThis as any).DEFAULT_ADMIN_SETTINGS, JSON.parse(settingsValue))
+    : (globalThis as any).DEFAULT_ADMIN_SETTINGS;
+  
+  // デバッグモード: debug=3 で shift を読む
+  if (debug === '3') {
+    try {
+      let shiftPresent = false;
+      let staffListPresent = false;
+      
+      if (staffId) {
+        const shiftValue = await kv.get(`shift:${staffId}`);
+        shiftPresent = !!shiftValue;
+      }
+      
+      // staff list も確認
+      const staffListValue = await kv.get('staff:list');
+      staffListPresent = !!staffListValue;
+      
+      return c.json({ 
+        ok: true, 
+        stage: 'shift_fetched', 
+        date: dateStr,
+        staffId: staffId || null,
+        shiftPresent,
+        staffListPresent
+      });
+    } catch (e) {
+      return c.json({ 
+        ok: false, 
+        stage: 'error', 
+        error: e instanceof Error ? e.message : String(e) 
+      }, 500);
+    }
+  }
+  
+  // 営業時間を取得（定休日・例外日を考慮）
+  const businessHours = (globalThis as any).getBusinessHoursForDate(dateStr, settings);
+  
+  if (!businessHours) {
+    // 休業日または定休日
+    return c.json({
+      ok: true,
+      date: dateStr,
+      slots: [],
+    });
+  }
+  
+  // スロット間隔を取得（デフォルト30分）
+  const slotIntervalMin = settings.businessHours.slotIntervalMin || 30;
+  
+  // staffId がある場合、そのスタッフのシフトを取得
+  let staffShift: StaffShift | null = null;
+  if (staffId) {
+    try {
+      const shiftValue = await kv.get(`shift:${staffId}`);
+      if (shiftValue) {
+        staffShift = JSON.parse(shiftValue) as StaffShift;
+      }
+    } catch (e) {
+      console.warn(`Failed to load shift for staff ${staffId}:`, e);
+    }
+  }
+  
+  // デバッグモード: debug=4 で予約済みキーの参照まで
+  if (debug === '4') {
+    try {
+      // 最初のスロットの予約キーを参照（スロット生成はしない）
+      // 仮の時間でキーを構築して参照するだけ
+      const testKey = `rsv:${dateStr}:10:00`;
+      const existing = await kv.get(testKey);
+      const reservedPresent = !!existing;
+      return c.json({ 
+        ok: true, 
+        stage: 'reserved_key_checked', 
+        date: dateStr,
+        testKey,
+        reservedPresent
+      });
+    } catch (e) {
+      return c.json({ 
+        ok: false, 
+        stage: 'error', 
+        error: e instanceof Error ? e.message : String(e) 
+      }, 500);
+    }
+  }
+  
+  // デバッグモード: debug=5 でスロット生成ロジック直前まで
+  if (debug === '5') {
+    return c.json({ 
+      ok: true, 
+      stage: 'before_slot_generation', 
+      date: dateStr,
+      hasBusinessHours: !!businessHours,
+      slotIntervalMin,
+      hasShift: !!staffShift,
+      staffId: staffId || null
+    });
+  }
+  
+  // スロットを生成
+  const timeSlots = generateSlots(businessHours.openTime, businessHours.closeTime, slotIntervalMin);
+  
+  // デバッグモード: debug=6 でスロット生成ロジックを実行して stage=done で返す
+  if (debug === '6') {
+    try {
+      // 無限ループ検知: maxIterations ガード
+      const maxIterations = 5000;
+      let iterationCount = 0;
+      
+      // スロット生成後の処理をシミュレート（最初の数個だけ）
+      const sampleSlots = timeSlots.slice(0, Math.min(5, timeSlots.length));
+      const sampleResults = await Promise.all(
+        sampleSlots.map(async (time) => {
+          iterationCount++;
+          if (iterationCount > maxIterations) {
+            throw new Error(`Max iterations (${maxIterations}) exceeded`);
+          }
+          
+          const key = `rsv:${dateStr}:${time}`;
+          const existing = await kv.get(key);
+          return {
+            time,
+            key,
+            reserved: !!existing
+          };
+        })
+      );
+      
+      return c.json({ 
+        ok: true, 
+        stage: 'done', 
+        date: dateStr,
+        totalSlots: timeSlots.length,
+        sampleSlots: sampleResults.length,
+        iterationCount,
+        firstSlot: timeSlots[0] || null,
+        lastSlot: timeSlots[timeSlots.length - 1] || null
+      });
+    } catch (e) {
+      return c.json({ 
+        ok: false, 
+        stage: 'error', 
+        error: e instanceof Error ? e.message : String(e) 
+      }, 500);
+    }
+  }
+  
+  // KVから予約済みスロットを確認し、cutoffMinutesとshiftを適用
+  // reason の優先順位: 1) reserved, 2) cutoff, 3) closed, 4) shift
+  // 無限ループ検知: maxIterations ガード
+  const maxIterations = 5000;
+  let iterationCount = 0;
+  
+  const slots = await Promise.all(
+    timeSlots.map(async (time) => {
+      iterationCount++;
+      if (iterationCount > maxIterations) {
+        throw new Error(`Max iterations (${maxIterations}) exceeded in slot processing`);
+      }
+      // 理由を優先順位で判定
+      const reasons: string[] = [];
+      
+      // 1. closed チェック（営業時間外）
+      if (!businessHours) {
+        reasons.push('closed');
+      }
+      
+      // 2. reserved チェック（予約済み、かつstatusがactive）
+      const key = `rsv:${dateStr}:${time}`;
+      const existing = await kv.get(key);
+      if (existing) {
+        try {
+          const reservation = JSON.parse(existing);
+          // statusが"canceled"でない場合のみ予約済みとみなす
+          if (reservation.status !== 'canceled') {
+            reasons.push('reserved');
+          }
+        } catch (e) {
+          // パースエラーは無視
+        }
+      }
+      
+      // 3. cutoff チェック（当日かつcutoffMinutes以内）
+      const today = getTodayJST();
+      if (dateStr === today) {
+        const nowMin = getNowMinutesJST();
+        const slotMin = timeToMinutes(time);
+        const diffMinutes = slotMin - nowMin;
+        if (diffMinutes < settings.rules.cutoffMinutes) {
+          reasons.push('cutoff');
+        }
+      }
+      
+      // 4. shift チェック（staffIdがある場合、勤務時間外）
+      if (staffId && staffShift) {
+        const isWorking = isWorkingTime(dateStr, time, staffShift);
+        if (!isWorking) {
+          reasons.push('shift');
+        }
+      }
+      
+      // 優先順位で最初のreasonを採用: reserved > cutoff > closed > shift
+      const reasonPriority: Record<string, number> = {
+        reserved: 1,
+        cutoff: 2,
+        closed: 3,
+        shift: 4,
+      };
+      
+      let finalReason: string | undefined = undefined;
+      if (reasons.length > 0) {
+        reasons.sort((a, b) => (reasonPriority[a] || 999) - (reasonPriority[b] || 999));
+        finalReason = reasons[0];
+      }
+      
+      // available判定: いずれかの理由があればfalse
+      const available = finalReason === undefined;
+      
+      return {
+        time,
+        available,
+        ...(finalReason ? { reason: finalReason as 'cutoff' | 'reserved' | 'shift' | 'closed' } : {}),
+      };
+    })
+  );
+  
+  return c.json({
+    ok: true,
+    date: dateStr,
+    ...(staffId ? { staffId } : {}),
+    slots,
+  });
+});
+
+// POST /reserve
+app.post('/reserve', async (c) => {
+  try {
+    const body = await c.req.json();
+    const { date, time, name, phone } = body;
+    
+    // validation: date/time/name 必須。phoneは任意
+    if (!date || typeof date !== 'string') {
+      return c.json({ ok: false, error: 'date is required' }, 400);
+    }
+    if (!time || typeof time !== 'string') {
+      return c.json({ ok: false, error: 'time is required' }, 400);
+    }
+    if (!name || typeof name !== 'string' || name.trim() === '') {
+      return c.json({ ok: false, error: 'name is required' }, 400);
+    }
+    
+    // Durable Object経由で処理（ロックキー: ${date}:${time}）
+    const lockKey = `${date}:${time}`;
+    const id = c.env.SLOT_LOCK.idFromName(lockKey);
+    const stub = c.env.SLOT_LOCK.get(id);
+    
+    // Durable Objectにリクエストを転送
+    // Durable Objectは同一IDに対して同時に1つのリクエストしか処理しないため、
+    // 自然にロックがかかり、二重予約を防ぐ
+    const doRequest = new Request('http://slot-lock/reserve', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
+    
+    const response = await stub.fetch(doRequest);
+    const result = await response.json();
+    const status = response.status;
+    
+    // 予約作成成功時にLINE通知を送信（非同期、エラーは無視）
+    if (status === 200 && result.ok) {
+      try {
+        const kv = c.env.SAAS_FACTORY;
+        const tenantId = getTenantId(c);
+        
+        // settings を取得して通知ルールを確認
+        const settingsValue = await kv.get('settings:default');
+        const settings: AdminSettings = settingsValue
+          ? mergeSettings((globalThis as any).DEFAULT_ADMIN_SETTINGS, JSON.parse(settingsValue))
+          : (globalThis as any).DEFAULT_ADMIN_SETTINGS;
+        
+        // 通知が有効で、LINE連携済みの場合のみ送信
+        if (settings.integrations?.line?.connected && settings.integrations.line.notifyOnReservation !== false) {
+          const { date, time, name, reservationId, staffId } = result;
+          
+          // スタッフ名を取得（あれば）
+          let staffName = '指名なし';
+          if (staffId) {
+            try {
+              const staffValue = await kv.get(`staff:${staffId}`);
+              if (staffValue) {
+                const staff = JSON.parse(staffValue);
+                staffName = staff.name || staffId;
+              }
+            } catch (e) {
+              // スタッフ取得失敗は無視
+            }
+          }
+          
+          // メニュー情報を取得（あれば、bodyにmenuIdがあれば）
+          let menuName = 'メニュー未指定';
+          if (body.menuId) {
+            try {
+              const menuValue = await kv.get(`menu:${body.menuId}`);
+              if (menuValue) {
+                const menu = JSON.parse(menuValue);
+                menuName = menu.name || body.menuId;
+              }
+            } catch (e) {
+              // メニュー取得失敗は無視
+            }
+          }
+          
+          const message = `予約が確定しました ✅\n日時: ${date} ${time}\nメニュー: ${menuName}\nスタッフ: ${staffName}\n予約ID: ${reservationId}`;
+          
+          // 非同期で通知を送信（エラーは無視）
+          // D1から設定を取得（なければ環境変数にフォールバック）
+          getLineConfigOrNull({ DB: c.env.DB, CONFIG_ENC_KEY: c.env.CONFIG_ENC_KEY }, tenantId).then(async (config) => {
+            let channelAccessToken: string | undefined;
+            if (config) {
+              channelAccessToken = config.channelAccessToken;
+            } else {
+              channelAccessToken = c.env.LINE_CHANNEL_ACCESS_TOKEN;
+            }
+            const userId = settings.integrations.line.userId;
+            if (channelAccessToken && userId) {
+              sendLineNotification(kv, channelAccessToken, userId, message)
+              .then(async () => {
+                // 成功時: lastSentAt を記録
+                const lastSentAtKey = `line:notify:lastSentAt:${tenantId}`;
+                await kv.put(lastSentAtKey, JSON.stringify({
+                  message,
+                  at: Date.now(),
+                }));
+              })
+              .catch(async (err) => {
+                // エラー時: lastError を記録（秘密値はログに出力しない）
+                const errorMessage = err instanceof Error ? err.message : String(err);
+                // console.error は秘密値を含む可能性があるため使用しない
+                const lastErrorKey = `line:notify:lastError:${tenantId}`;
+                await kv.put(lastErrorKey, JSON.stringify({
+                  message,
+                  error: errorMessage,
+                  at: Date.now(),
+                }));
+              });
+            }
+          }).catch(() => {
+            // エラーは無視
+          });
+        }
+      } catch (err) {
+        // 通知送信失敗は無視（予約作成は成功しているため）
+        // console.error は秘密値を含む可能性があるため使用しない
+      }
+    }
+    
+    return c.json(result, status);
+  } catch (error) {
+    return c.json({ ok: false, error: 'Invalid request body' }, 400);
+  }
+});
+/* ===== end restored booking core routes ===== */
+
+
+// tenantId がなければ default
+const getTenantId = (req: Request): string => {
+  const url = new URL(req.url)
+  return url.searchParams.get("tenantId") ?? "default"
+}
+
+function resolveLineClientId(env: Env): string {
+  return env.LINE_CLIENT_ID || env.LINE_LOGIN_CHANNEL_ID || ""
+}
+
+function resolveLineChannelAccessToken(env: Env): string {
+  return env.LINE_CHANNEL_ACCESS_TOKEN || env.LINE_MESSAGING_CHANNEL_ACCESS_TOKEN || ""
+}
+
+async function pushLineMessage(env: Env, to: string, text: string): Promise<Response> {
+  const token = resolveLineChannelAccessToken(env)
+  if (!token) {
+    return new Response(JSON.stringify({ ok: false, error: "LINE channel access token missing" }), {
+      status: 500,
+      headers: { "Content-Type": "application/json" },
+    })
+  }
+
+  return fetch("https://api.line.me/v2/bot/message/push", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": "Bearer " + token,
+    },
+    body: JSON.stringify({
+      to,
+      messages: [{ type: "text", text }],
+    }),
+  })
+}
+
+// ルート: GET /
+app.get("/", (c) => c.text("Hello from SaaS Factory API!"))
+
+// ルート: GET /health
+app.get("/health", (c) => {
+  return c.json({
+    ok: true,
+    ts: new Date().toISOString(),
+    env: (c.env.ENVIRONMENT ?? "unknown"),
+    version: "1.0.0",
+  })
+})
+
+app.get("/__debug_guard", (c) => {
+  return c.json({ ok: true, guard: "vD1-GUARD-20260125" })
+})
+
+// ルート: GET /admin/integrations/line/auth-url?tenantId=xxx
+// LINE OAuth 認証URLを生成するエンドポイント
+app.get("/admin/integrations/line/auth-url", async (c) => {
+  try {
+    const tenantId = c.req.query("tenantId") ?? "default"
+    const env = c.env
+
+    // client_id 解決（既存ロジックを維持）
+    const clientId = resolveLineClientId(env)
+
+    // redirect_uri を構築（Next.js 側の callback に向ける）
+    // ★ ここがポイント：
+    //     .dev.vars の LINE_LOGIN_REDIRECT_BASE をそのまま使う
+    //     例: http://localhost:3000  または http://localhost:8787
+    const redirectBase = env.LINE_LOGIN_REDIRECT_BASE ?? "http://localhost:3000"
+    const redirectUri = `${redirectBase.replace(/\/$/, "")}/api/auth/line/callback`
+
+    if (!clientId) {
+      return c.json(
+        { ok: false, error: "LINE_CLIENT_ID is not configured" },
+        400,
+      )
+    }
+
+    const params = new URLSearchParams({
+      response_type: "code",
+      client_id: clientId,
+      redirect_uri: redirectUri,
+      scope: "profile openid",
+      state: tenantId,
+    })
+
+    const url = `https://access.line.me/oauth2/v2.1/authorize?${params.toString()}`
+
+    return c.json({ ok: true, url })
+  } catch (error) {
+    const errorMessage =
+      error instanceof Error ? error.message : "Unknown error"
+    console.error("[LINE OAuth] auth-url error:", errorMessage)
+
+    return c.json(
+      {
+        ok: false,
+        error: "internal_server_error",
+        message: `LINE OAuth認証URLの生成に失敗しました: ${errorMessage}`,
+      },
+      500,
+    )
+  }
+})
+
+// ルート: GET /admin/integrations/line/status
+app.get("/admin/integrations/line/status", async (c) => {
+  try {
+    const tenantId = getTenantId(c.req.raw)
+    const db = c.env.DB
+
+    const integration = await getIntegration(db, tenantId)
+
+    if (!integration) {
+      return c.json({
+        ok: true,
+        tenantId,
+        kind: "unconfigured" as const,
+      })
+    }
+
+    return c.json({
+      ok: true,
+      tenantId,
+      kind: "linked" as const,
+      line: {
+        userId: integration.user_id,
+        displayName: integration.display_name,
+        pictureUrl: integration.picture_url || undefined,
+        updatedAt: integration.updated_at,
+      },
+      notifyEnabled: integration.notify_enabled === 1,
+      linkedAt: integration.linked_at,
+    })
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "Unknown error"
+    console.error("[LINE][status] error:", errorMessage)
+    return c.json({
+      ok: false,
+      tenantId: getTenantId(c.req.raw),
+      kind: "error" as const,
+      message: "Failed to fetch LINE integration status",
+      error: errorMessage,
+    }, 500)
+  }
+})
+
+// GET /api/auth/line/callback
+// LINE Login は GET で code/state を返すので、既存の POST ハンドラへ橋渡しする
+app.get("/api/auth/line/callback__old", async (c) => {
+  const url = new URL(c.req.url)
+  console.log("[LINE OAuth][callback:get] url=", url.toString())
+  console.log("[LINE OAuth][callback:get] qs=", url.searchParams.toString())
+  const code = url.searchParams.get("code")
+  const state = url.searchParams.get("state") ?? "default"
+
+  if (!code) return c.json({ ok: false, error: "missing code" }, 400)
+
+  // 同一 Worker 内の POST /api/auth/line/callback に転送
+  const forwardUrl = new URL(c.req.url)
+  forwardUrl.pathname = "/api/auth/line/callback"
+  forwardUrl.search = ""
+
+  const res = await fetch(forwardUrl.toString(), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ code, state }),
+  })
+
+  const txt = await res.text().catch(() => "")
+  if (!res.ok) {
+    return c.json(
+      { ok: false, error: "callback forward failed", status: res.status, detail: txt },
+      400
+    )
+  }
+
+  // POST が JSON を返す前提。返さないなら txt を返す。
+  try {
+    return c.json(JSON.parse(txt))
+  } catch {
+    return c.text(txt)
+  }
+})
+
+app.get("/api/auth/line/callback__old", async (c) => {
+  const url = new URL(c.req.url)
+  console.log("[LINE OAuth][callback:get] url=", url.toString())
+  console.log("[LINE OAuth][callback:get] qs=", url.searchParams.toString())
+  const code = url.searchParams.get("code") ?? ""
+  const state = url.searchParams.get("state") ?? ""
+  const tenantId = url.searchParams.get("tenantId") ?? state ?? getTenantId(c.req.raw)
+
+  if (!code) {
+    return c.redirect("http://localhost:3000/admin/settings?line=error_no_code", 307)
+  }
+
+  const res = await fetch(`${new URL(c.req.url).origin}/api/auth/line/callback`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ code, state, tenantId }),
+  })
+
+  const txt = await res.text()
+  console.log("[LINE OAuth][callback:get->post] status=", res.status, "body=", txt)
+
+  if (res.ok) {
+    return c.redirect("http://localhost:3000/admin/settings?line=ok", 307)
+  }
+  return c.redirect("http://localhost:3000/admin/settings?line=error_token", 307)
+})
+/** GET /api/auth/line/callback
+ * LINE OAuth redirect endpoint (browser -> worker).
+ * Forwards to POST handler to reuse token-exchange logic.
+ */
+app.get("/api/auth/line/callback", async (c) => {
+  // SAFE MODE: handle GET callback end-to-end (no internal forward)
+  const url = new URL(c.req.url)
+  console.log("[LINE OAuth][callback:get] url=", url.toString())
+  console.log("[LINE OAuth][callback:get] qs=", url.searchParams.toString())
+  const code = url.searchParams.get("code") ?? ""
+  const state = url.searchParams.get("state") ?? ""
+  const tenantId = url.searchParams.get("tenantId") ?? state ?? getTenantId(c.req.raw)
+
+  if (!code) {
+    return c.redirect("http://localhost:3000/admin/settings?line=error_no_code", 307)
+  }
+
+  const res = await fetch(`${new URL(c.req.url).origin}/api/auth/line/callback`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ code, state, tenantId }),
+  })
+
+  const txt = await res.text()
+  console.log("[LINE OAuth][callback:get->post] status=", res.status, "body=", txt)
+
+  if (res.ok) {
+    return c.redirect("http://localhost:3000/admin/settings?line=ok", 307)
+  }
+  return c.redirect("http://localhost:3000/admin/settings?line=error_token", 307)
+})
+app.post("/api/auth/line/callback", async (c) => {
+  const env = c.env
+  const body = await c.req.json<{
+    code: string
+    state?: string
+    tenantId?: string
+  }>()
+
+  const tenantId = body.tenantId || getTenantId(c.req.raw)
+  const code = body.code
+
+  if (!code) {
+    return c.json({ ok: false, error: "missing_code" }, 400)
+  }
+
+  const tokenUrl = "https://api.line.me/oauth2/v2.1/token"
+
+  // auth-url で使った redirect_uri と完全一致させる
+  const redirectBase = env.LINE_LOGIN_REDIRECT_BASE ?? "http://localhost:3000"
+  const redirectUri = `${redirectBase.replace(/\/$/, "")}/api/auth/line/callback`
+
+  const clientId =
+  (env.LINE_CLIENT_ID ?? "").trim() ||
+  (env.LINE_LOGIN_CLIENT_ID ?? "").trim() ||
+  (env.LINE_LOGIN_CHANNEL_ID ?? "").trim();
+
+const clientSecret =
+  (env.LINE_CLIENT_SECRET ?? "").trim() ||
+  (env.LINE_LOGIN_CHANNEL_SECRET ?? "").trim();
+
+if (!clientId) {
+  return c.json({ ok: false, error: "LINE_CLIENT_ID is not configured" }, 500);
+}
+if (!clientSecret) {
+  return c.json({ ok: false, error: "LINE_CLIENT_SECRET is not configured" }, 500);
+}
+
+console.log("[LINE][token] clientId.len=", clientId.length, "redirectUri=", redirectUri);
+
+console.log("[LINE OAuth][token] clientId.len=", clientId.length, "clientSecret.len=", clientSecret.length, "redirectUri=", redirectUri);
+const tokenBody = new URLSearchParams({
+  grant_type: "authorization_code",
+  code,
+  redirect_uri: redirectUri,
+  client_id: clientId,
+  client_secret: clientSecret,
+});
+const tokenRes = await fetch(tokenUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      "Accept": "application/json",
+    },
+    body: tokenBody.toString(),
+  })
+  
+  
+  const tokenTxt = await tokenRes.clone().text()
+  console.log("[LINE OAuth][token] status=", tokenRes.status, "body=", tokenTxt)
+
+  // ✅ IMPORTANT: read tokenRes body ONLY ONCE
+  const raw = await tokenRes.text()
+
+  if (!tokenRes.ok) {
+    console.error("[LINE][token] status=", tokenRes.status)
+    console.error("[LINE][token] raw=", raw.slice(0, 800))
+    return c.json({ ok: false, error: "token_request_failed", status: tokenRes.status, detail: raw }, 500)
+  }
+
+  let tokenJson: any
+  try {
+    tokenJson = JSON.parse(raw)
+  } catch {
+    console.error("[LINE][token] parse_failed raw=", raw.slice(0, 800))
+    return c.json({ ok: false, error: "token_parse_failed", detail: raw }, 500)
+  }
+
+  if (!tokenJson?.access_token) {
+    console.error("[LINE][token] missing_access_token json=", tokenJson)
+    return c.json({ ok: false, error: "token_missing_access_token", detail: tokenJson }, 500)
+  }
+
+  if (!tokenJson.id_token) {
+    return c.json({ ok: false, error: "missing_id_token" }, 500)
+  }
+
+  const verifyBody = new URLSearchParams({
+    id_token: tokenJson.id_token,
+    client_id: clientId,
+  })
+
+  const verifyRes = await fetch("https://api.line.me/oauth2/v2.1/verify", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: verifyBody.toString(),
+  })
+
+  if (!verifyRes.ok) {
+    const text = await verifyRes.text()
+    console.error("[LINE][verify] error", verifyRes.status, text)
+    return c.json({ ok: false, error: "verify_failed" }, 500)
+  }
+
+  const v = (await verifyRes.json()) as any
+  console.log("[LINE OAuth][verify] json=", JSON.stringify(v).slice(0, 800))
+
+  const userId = (v?.sub ?? v?.userId ?? v?.user_id ?? "").toString().trim()
+  const displayName = (v?.name ?? v?.displayName ?? "LINE User").toString()
+  const pictureUrl = (v?.picture ?? v?.pictureUrl ?? v?.picture_url ?? undefined) as string | undefined
+
+  if (!userId) {
+    console.error("[LINE OAuth][verify] missing userId. json=", v)
+    return c.json({ ok: false, error: "verify_missing_userid", detail: v }, 500)
+  }
+
+  const db = c.env.DB
+  const now = new Date().toISOString()
+
+  const saved = await upsertIntegration(db, tenantId, {
+    userId: userId,
+    displayName: displayName,
+    pictureUrl: pictureUrl,
+    updatedAt: now,
+  })
+
+  return c.json({
+    ok: true,
+    tenantId,
+    kind: "linked" as const,
+    line: {
+      userId: saved.user_id,
+      displayName: saved.display_name,
+      pictureUrl: saved.picture_url || undefined,
+      updatedAt: saved.updated_at,
+    },
+  })
+})
+
+app.patch("/admin/integrations/line/notify", async (c) => {
+  const tenantId = c.req.query("tenantId") ?? "default"
+
+  try {
+    const body = await c.req.json().catch(() => ({} as any))
+    const notifyEnabled = !!body?.notifyEnabled
+
+    // D1の getIntegration を呼ぶ
+    const integration = await getIntegration(c.env.DB, tenantId)
+
+    // integration === null の場合は必ず 409 を返す
+    if (integration === null) {
+      return c.json({ ok: false, error: "not linked", tenantId, debug: "vD1-GUARD-20260125" }, 409)
+    }
+
+    // linked の場合のみ setNotifyEnabled を実行
+    await setNotifyEnabled(c.env.DB, tenantId, notifyEnabled)
+
+    // 成功レスポンス
+    return c.json({ ok: true, tenantId, notifyEnabled, debug: "vD1-GUARD-20260125" })
+  } catch (e: any) {
+    return c.json(
+      { ok: false, error: "internal_error", message: String(e?.message ?? e), tenantId, debug: "vD1-GUARD-20260125" },
+      500
+    )
+  }
+})
+
+app.post("/admin/integrations/line/test", async (c) => {
+  const tenantId = c.req.query("tenantId") ?? "default"
+
+  try {
+    // D1の getIntegration を呼ぶ
+    const integration = await getIntegration(c.env.DB, tenantId)
+
+    // integration === null の場合は必ず 409 を返す
+    if (integration === null) {
+      return c.json({ ok: false, error: "not linked", tenantId, sent: false, debug: "vD1-GUARD-20260125" }, 409)
+    }
+
+    // linked の場合のみ送信処理＆ログ insert を行う
+    const now = Math.floor(Date.now() / 1000)
+
+    // 送信処理（仮でもOK）
+    // ログ insert
+    await c.env.DB.prepare(
+      "INSERT INTO line_send_logs (tenant_id, kind, ok, message, error, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)"
+    )
+      .bind(tenantId, "test", 1, "dev test (guarded)", null, String(now))
+      .run()
+
+    // 成功レスポンス
+    return c.json({ ok: true, tenantId, sent: true, debug: "vD1-GUARD-20260125" })
+  } catch (e: any) {
+    const now = Math.floor(Date.now() / 1000)
+    try {
+      await c.env.DB.prepare(
+        "INSERT INTO line_send_logs (tenant_id, kind, ok, message, error, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)"
+      )
+        .bind(tenantId, "test", 0, "dev test (guarded)", String(e?.message ?? e), String(now))
+        .run()
+    } catch {}
+
+    return c.json(
+      { ok: false, error: "internal_error", message: String(e?.message ?? e), tenantId, sent: false, debug: "vD1-GUARD-20260125" },
+      500
+    )
+  }
+})
+
+// ルート: POST /admin/integrations/line/disconnect
+app.post("/admin/integrations/line/disconnect", async (c) => {
+  try {
+    const tenantId = c.req.query("tenantId") ?? getTenantId(c.req.raw)
+    const db = c.env.DB
+
+    await disconnectIntegration(db, tenantId)
+
+    return c.json({ ok: true, tenantId, disconnected: true })
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "Unknown error"
+    console.error("[LINE][disconnect] error:", errorMessage)
+    return c.json({
+      ok: false,
+      error: "disconnect failed",
+      tenantId: c.req.query("tenantId") ?? getTenantId(c.req.raw),
+      message: errorMessage,
+    }, 500)
+  }
+})
+
+/**
+ * ===== LINE Messaging API (official account) config =====
+ * - Separate from LINE Login
+ * - Tenant-scoped by tenantId query
+ */
+app.get("/admin/integrations/line/messaging/status", async (c) => {
+  try {
+    const tenantId = c.req.query("tenantId") ?? "default"
+    const db = (c.env as any).DB
+    const env = c.env as any
+    const r = await getMessagingStatus(env, db, tenantId)
+    return c.json(r, 200)
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "unknown"
+    return c.json({ ok: false, error: "internal_server_error", message: msg }, 500)
+  }
+})
+
+app.post("/admin/integrations/line/messaging/save", async (c) => {
+  try {
+    const tenantId = c.req.query("tenantId") ?? "default"
+    const body = await c.req.json()
+    const db = (c.env as any).DB
+    const env = c.env as any
+    const r = await saveMessagingConfig(env, db, tenantId, body)
+    if (r?.ok === false) return c.json(r, 400)
+    return c.json(r, 200)
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "unknown"
+    return c.json({ ok: false, error: "internal_server_error", message: msg }, 500)
+  }
+})
+
+app.delete("/admin/integrations/line/messaging", async (c) => {
+  try {
+    const tenantId = c.req.query("tenantId") ?? "default"
+    const db = (c.env as any).DB
+    const env = c.env as any
+    const r = await deleteMessagingConfig(env, db, tenantId)
+    return c.json(r, 200)
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "unknown"
+    return c.json({ ok: false, error: "internal_server_error", message: msg }, 500)
+  }
+})
+// ルート: POST /admin/integrations/line/webhook
+app.post("/admin/integrations/line/webhook", async (c) => {
+  const tenantId = c.req.query("tenantId") ?? "default"
+  const logId = crypto.randomUUID()
+  const ts = new Date().toISOString()
+
+  // 1) まずは raw を読む（JSONが壊れてても落ちない）
+  let raw = ""
+  try {
+    raw = await c.req.text()
+  } catch {
+    raw = ""
+  }
+  const bodyLen = raw.length
+
+  // 2) 最低限だけ抜く（失敗しても null）
+  let eventType: string | null = null
+  let msgType: string | null = null
+  let replyToken: string | null = null
+  let replyTokenLen: number | null = null
+  let text: string | null = null
+
+  try {
+    const j = raw ? JSON.parse(raw) : null
+    const ev = j?.events?.[0]
+    if (ev) {
+      eventType = (ev.type ?? null) as any
+      msgType = (ev.message?.type ?? null) as any
+      replyToken = (ev.replyToken ?? null) as any
+      replyTokenLen = replyToken ? String(replyToken).length : null
+      text = (ev.message?.text ?? null) as any
+    }
+  } catch {
+    // ignore
+  }
+
+  // 3) dummy / no token / no text は reply をスキップ（0=skipped）
+  const isDummy = replyToken === "dummy"
+    // === BOOKING_LINK_BEGIN ===
+    {
+      const t = String((text as any) ?? '').trim();
+      const norm = t.replace(/\s+/g,'');
+      const isBooking =
+        norm === '予約' ||
+        norm === 'よやく' ||
+        norm === 'reserve' ||
+        norm.startsWith('予約') ||
+        norm.includes('予約');
+
+      if (isBooking) {
+        const u = String((c.env as any).BOOKING_URL ?? '').trim();
+        const url = u || 'https://9e5cb6a9.booking-ui-4pk-3y1.pages.dev';
+
+        const accessToken = String(
+          (c.env as any).LINE_CHANNEL_ACCESS_TOKEN ??
+          (c.env as any).LINE_MESSAGING_CHANNEL_ACCESS_TOKEN ??
+          ''
+        ).trim();
+
+        if (!accessToken) {
+          console.log('[BOOKING_URL] access token missing');
+          return;
+        }
+
+        // Buttons template (best UX)
+        const payload = {
+          replyToken,
+          messages: [
+            {
+              type: 'template',
+              altText: '予約ページを開く',
+              template: {
+                type: 'buttons',
+                title: '予約ページ',
+                text: '下のボタンから予約を開始してね😙',
+                actions: [
+                  { type: 'uri', label: '予約を開始', uri: url }
+                ]
+              }
+            }
+          ]
+        };
+
+        try {
+          const r = await fetch('https://api.line.me/v2/bot/message/reply', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer ' + accessToken
+            },
+            body: JSON.stringify(payload)
+          });
+          if (!r.ok) {
+            const body = await r.text().catch(() => '');
+            console.log('[BOOKING_URL] reply failed', r.status, body);
+          }
+        } catch (e) {
+          console.log('[BOOKING_URL] reply exception', String(e));
+        }
+        return;
+      }
+    }
+    // === BOOKING_LINK_END ===
+const shouldSkip = !replyToken || isDummy || !text
+  const replyStatus = shouldSkip ? 0 : 1 // 0=skipped, 1=queued(後で実行)
+
+  // 4) ここが肝：DBやfetchは全部 waitUntil に投げて、HTTPは即返す
+  try {
+    const work = (async () => {
+      try {
+        // table ensure（ここが固まってもHTTPは返った後）
+        await c.env.DB.prepare(
+          "CREATE TABLE IF NOT EXISTS line_webhook_logs (" +
+            "id TEXT PRIMARY KEY," +
+            "ts TEXT NOT NULL," +
+            "tenant_id TEXT NOT NULL," +
+            "event_type TEXT," +
+            "msg_type TEXT," +
+            "reply_token_len INTEGER," +
+            "body_len INTEGER NOT NULL," +
+            "reply_status INTEGER," +
+            "reply_body TEXT" +
+          ")"
+        ).run()
+
+        await c.env.DB.prepare(
+          "CREATE INDEX IF NOT EXISTS idx_line_webhook_logs_tenant_ts " +
+          "ON line_webhook_logs(tenant_id, ts)"
+        ).run()
+
+        // まずはログを入れる（queued / skipped）
+        const initialBody =
+          shouldSkip
+            ? (isDummy ? "reply skipped (dummy replyToken)" : "no replyToken or text")
+            : "queued"
+
+        await c.env.DB.prepare(
+          "INSERT INTO line_webhook_logs (id, ts, tenant_id, event_type, msg_type, reply_token_len, body_len, reply_status, reply_body) " +
+          "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)"
+        )
+          .bind(logId, ts, tenantId, eventType, msgType, replyTokenLen, bodyLen, shouldSkip ? 0 : 1, initialBody)
+          .run()
+
+        // reply が必要な場合だけ実行
+        if (!shouldSkip) {
+          const token = resolveLineChannelAccessToken(c.env)
+          if (!token) {
+            await c.env.DB.prepare(
+              "UPDATE line_webhook_logs SET reply_status = ?2, reply_body = ?3 WHERE id = ?1"
+            ).bind(logId, -1, "LINE_CHANNEL_ACCESS_TOKEN missing").run()
+            return
+          }
+
+          // Reply API（3秒で打ち切り）
+          const ac = new AbortController()
+          const t = setTimeout(() => ac.abort(), 3000)
+
+          let status: number | null = null
+          let body: string | null = null
+
+          try {
+            const r = await fetch("https://api.line.me/v2/bot/message/reply", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "Authorization": "Bearer " + token,
+              },
+              body: JSON.stringify({
+                replyToken,
+                messages: [{ type: "text",
+    text: "ok" }],
+              }),
+              signal: ac.signal,
+            })
+            status = r.status
+            body = await r.text()
+          } catch (e: any) {
+            body = "fetch error: " + String(e?.message ?? e)
+            status = -2
+          } finally {
+            clearTimeout(t)
+          }
+
+          // 結果を追記
+          await c.env.DB.prepare(
+            "UPDATE line_webhook_logs SET reply_status = ?2, reply_body = ?3 WHERE id = ?1"
+          )
+            .bind(logId, status, (body ?? "").slice(0, 2000))
+            .run()
+        }
+      } catch {
+        // ignore（ログ失敗でもOK）
+      }
+    })()
+
+    // 型がうるさい時があるので any で逃がす（実運用優先）
+    ;(c as any).executionCtx?.waitUntil?.(work)
+  } catch {
+    // ignore
+  }
+
+  return c.json({ ok: true, logged: true, logId, replyStatus })
+})
+
+// ルート: GET /admin/integrations/line/webhook-logs
+// Webhookログ一覧取得
+app.get("/admin/integrations/line/webhook-logs", async (c) => {
+  try {
+    const tenantId = c.req.query("tenantId") ?? "default"
+    const limit = Math.min(parseInt(c.req.query("limit") || "30", 10), 200)
+
+    const rows = await c.env.DB.prepare(
+      "SELECT id, ts, tenant_id, event_type, msg_type, reply_status FROM line_webhook_logs WHERE tenant_id = ?1 ORDER BY ts DESC LIMIT ?2"
+    )
+      .bind(tenantId, limit)
+      .all<{
+        id: string
+        ts: string
+        tenant_id: string
+        event_type: string | null
+        msg_type: string | null
+        reply_status: number | null
+      }>()
+
+    return c.json({
+      ok: true,
+      rows: rows.results || [],
+    })
+  } catch (e: any) {
+    return c.json(
+      { ok: false, error: "internal_error", message: String(e?.message ?? e) },
+      500
+    )
+  }
+})
+
+// ルート: GET /admin/integrations/line/webhook-log
+// Webhookログ詳細取得
+app.get("/admin/integrations/line/webhook-log", async (c) => {
+  try {
+    const id = c.req.query("id")
+    if (!id) {
+      return c.json({ ok: false, error: "missing_id" }, 400)
+    }
+
+    const row = await c.env.DB.prepare(
+      "SELECT * FROM line_webhook_logs WHERE id = ?1 LIMIT 1"
+    )
+      .bind(id)
+      .first<{
+        id: string
+        ts: string
+        tenant_id: string
+        event_type: string | null
+        msg_type: string | null
+        reply_token_len: number | null
+        body_len: number
+        reply_status: number | null
+        reply_body: string | null
+      }>()
+
+    if (!row) {
+      return c.json({ ok: false, error: "not_found" }, 404)
+    }
+
+    return c.json({
+      ok: true,
+      log: row,
+    })
+  } catch (e: any) {
+    return c.json(
+      { ok: false, error: "internal_error", message: String(e?.message ?? e) },
+      500
+    )
+  }
+})
+
+// ルート: GET /ping
+app.get("/ping", (c) => c.text("pong"))
+
+
+// POST /admin/integrations/line/oauth/callback
+app.post('/admin/integrations/line/oauth/callback', async (c) => {
+  try {
+    const body = await c.req.json<{ code?: string; state?: string }>();
+
+    // code と state のバリデーション
+    if (!body.code || typeof body.code !== 'string' || body.code.trim() === '') {
+      return c.json({ ok: false, error: 'code is required' }, 400);
+    }
+    if (!body.state || typeof body.state !== 'string' || body.state.trim() === '') {
+      return c.json({ ok: false, error: 'state is required' }, 400);
+    }
+
+    // state から tenantId を抽出
+    const stateParts = body.state.split(':');
+    const tenantId = stateParts[0]?.trim();
+    if (!tenantId) {
+      return c.json({ ok: false, error: 'Invalid state: tenantId is missing' }, 400);
+    }
+
+    // 環境変数から LINE 設定を取得
+    const clientId = c.env.LINE_CLIENT_ID;
+    const clientSecret = c.env.LINE_LOGIN_CHANNEL_SECRET;
+    
+    // redirect_uri を取得（環境変数があればそれを使用、なければ構築）
+    let redirectUri: string;
+    if (c.env.LINE_REDIRECT_URI) {
+      redirectUri = c.env.LINE_REDIRECT_URI;
+    } else if (c.env.LINE_LOGIN_REDIRECT_BASE) {
+      redirectUri = `${c.env.LINE_LOGIN_REDIRECT_BASE.replace(/\/$/, '')}/admin/integrations/line/callback`;
+    } else {
+      return c.json({ ok: false, error: 'LINE_REDIRECT_URI or LINE_LOGIN_REDIRECT_BASE is not configured' }, 500);
+    }
+
+    if (!clientId) {
+      return c.json({ ok: false, error: 'LINE_CLIENT_ID is not configured' }, 500);
+    }
+    if (!clientSecret) {
+      return c.json({ ok: false, error: 'LINE_LOGIN_CHANNEL_SECRET is not configured' }, 500);
+    }
+
+    // LINE token エンドポイントを叩く
+    let tokenResponse: {
+      access_token: string;
+      expires_in: number;
+      token_type: string;
+      refresh_token?: string;
+      id_token?: string;
+    };
+
+    try {
+      tokenResponse = await exchangeCodeForToken(body.code, clientId, clientSecret, redirectUri);
+    } catch (tokenError) {
+      // LINE token API のエラーをログに出力
+      const errorMessage = tokenError instanceof Error ? tokenError.message : String(tokenError);
+      console.error('[LINE OAuth Callback] Token exchange failed:', {
+        status: errorMessage.includes('status') ? errorMessage : 'unknown',
+        error: errorMessage,
+        tenantId,
+      });
+      return c.json({ ok: false, error: 'line_token_error' }, 500);
+    }
+
+    // expires_at を計算
+    const now = Math.floor(Date.now() / 1000);
+    const expiresAt = now + tokenResponse.expires_in;
+
+    // D1 に upsert
+    const db = c.env.DB;
+    const createdAt = now;
+    const updatedAt = now;
+
+    try {
+      await db
+        .prepare(
+          `INSERT INTO line_connections
+            (tenant_id, access_token, refresh_token, id_token, expires_at, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(tenant_id) DO UPDATE SET
+            access_token = excluded.access_token,
+            refresh_token = excluded.refresh_token,
+            id_token = excluded.id_token,
+            expires_at = excluded.expires_at,
+            updated_at = excluded.updated_at`
+        )
+        .bind(
+          tenantId,
+          tokenResponse.access_token,
+          tokenResponse.refresh_token || null,
+          tokenResponse.id_token || null,
+          expiresAt,
+          createdAt,
+          updatedAt
+        )
+        .run();
+    } catch (dbError) {
+      console.error('[LINE OAuth Callback] D1 upsert failed:', {
+        error: dbError instanceof Error ? dbError.message : String(dbError),
+        tenantId,
+      });
+      return c.json({ ok: false, error: 'database_error' }, 500);
+    }
+
+    // 成功レスポンス
+    return c.json({ ok: true });
+  } catch (error) {
+    // JSONパースエラーなど
+    if (error instanceof SyntaxError) {
+      return c.json({ ok: false, error: 'Invalid JSON body' }, 400);
+    }
+    console.error('[LINE OAuth Callback] Unexpected error:', error);
+    return c.json({ ok: false, error: error instanceof Error ? error.message : String(error) }, 500);
+  }
+});
+
+//
+// LINE OAuth callback receiver (bridge endpoint)
+// - called from web /api/auth/line/callback
+// - keep defensive (accept JSON and query)
+//
+app.post("/admin/integrations/line/callback", async (c) => {
+  try {
+    let body: any = null
+    try { body = await c.req.json() } catch { body = null }
+
+    const q = c.req.query()
+    const code  = (body?.code  ?? q?.code  ?? "").toString()
+    const state = (body?.state ?? q?.state ?? "").toString()
+    const tenantId = (body?.tenantId ?? q?.tenantId ?? state ?? "default").toString() || "default"
+
+    if (!code) {
+      return c.json({ ok: false, error: "missing_code", tenantId }, 400)
+    }
+
+    // TODO: connect to existing token-exchange + D1 save logic.
+    return c.json({ ok: true, tenantId, received: { hasCode: true, hasState: !!state } }, 200)
+  } catch (e: any) {
+    return c.json({ ok: false, error: "callback_exception", message: String(e?.message ?? e) }, 500)
+  }
+})
+
+export default app
+
+import { SlotLock as SlotLockImpl } from "./durable/SlotLock";
+
+// Wrangler 判定用：entrypoint で export class SlotLock を直接見せる
+export class SlotLock extends SlotLockImpl {}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

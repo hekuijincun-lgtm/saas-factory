@@ -1,0 +1,131 @@
+import type { D1Database } from "@cloudflare/workers-types"
+
+/**
+ * LINE integration store (D1)
+ * Safe / minimal / deterministic
+ */
+
+export type LineIntegrationRow = {
+  tenant_id: string
+  user_id: string
+  display_name: string | null
+  picture_url: string | null
+  notify_enabled: number
+  created_at: string
+  updated_at: string
+}
+
+export async function ensureLineIntegrationsTable(db: D1Database) {
+  const sql = `CREATE TABLE IF NOT EXISTS line_integrations (
+    tenant_id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    display_name TEXT,
+    picture_url TEXT,
+    notify_enabled INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`
+  await db.prepare(sql).run()
+}
+
+export async function getIntegration(db: D1Database, tenantId: string) {
+  await ensureLineIntegrationsTable(db)
+  const row = await db
+    .prepare("SELECT * FROM line_integrations WHERE tenant_id = ?1 LIMIT 1")
+    .bind(tenantId)
+    .first()
+  return row ?? null
+}
+
+export async function upsertIntegration(
+  db: D1Database,
+  tenantId: string,
+  patch: {
+    userId: string
+    displayName?: string
+    pictureUrl?: string
+    notify_enabled?: number
+    updatedAt?: string
+  }
+) {
+  const userId = patch.userId?.toString().trim()
+  if (!userId) {
+    throw new Error("missing line userId")
+  }
+
+  await ensureLineIntegrationsTable(db)
+
+  const now = patch.updatedAt ?? new Date().toISOString()
+  const notifyEnabled =
+    typeof patch.notify_enabled === "number" ? patch.notify_enabled : 1
+
+  const sql = `
+    INSERT INTO line_integrations
+      (tenant_id, user_id, display_name, picture_url, notify_enabled, created_at, updated_at)
+    VALUES
+      (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+    ON CONFLICT(tenant_id) DO UPDATE SET
+      user_id = excluded.user_id,
+      display_name = excluded.display_name,
+      picture_url = excluded.picture_url,
+      notify_enabled = excluded.notify_enabled,
+      updated_at = excluded.updated_at
+  `
+  await db
+    .prepare(sql)
+    .bind(
+      tenantId,
+      userId,
+      patch.displayName ?? null,
+      patch.pictureUrl ?? null,
+      notifyEnabled,
+      now,
+      now
+    )
+    .run()
+
+  return await getIntegration(db, tenantId)
+}
+
+export async function setNotifyEnabled(
+  db: D1Database,
+  tenantId: string,
+  enabled: boolean
+) {
+  await ensureLineIntegrationsTable(db)
+
+  const sql = 
+    UPDATE line_integrations
+    SET notify_enabled = ?2,
+        updated_at = ?3
+    WHERE tenant_id = ?1
+  
+  await db.prepare(sql).bind(
+    tenantId,
+    enabled ? 1 : 0,
+    new Date().toISOString()
+  ).run()
+
+  return await getIntegration(db, tenantId)
+}
+
+export async function disconnectIntegration(
+  db: D1Database,
+  tenantId: string
+) {
+  await ensureLineIntegrationsTable(db)
+
+  const sql = 
+    UPDATE line_integrations
+    SET notify_enabled = 0,
+        updated_at = ?2
+    WHERE tenant_id = ?1
+  
+  await db.prepare(sql).bind(
+    tenantId,
+    new Date().toISOString()
+  ).run()
+
+  return { ok: true as const }
+}
+

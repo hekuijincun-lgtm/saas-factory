@@ -86,7 +86,7 @@ app.get("/admin/integrations/line/auth-url", async (c) => {
     // redirect_uri を構築（Next.js 側の callback に向ける）
     // ★ ここがポイント：
     //     .dev.vars の LINE_LOGIN_REDIRECT_BASE をそのまま使う
-    //     例: http://localhost:3000  または http://127.0.0.1:8787
+    //     例: http://localhost:3000  または http://localhost:8787
     const redirectBase = env.LINE_LOGIN_REDIRECT_BASE ?? "http://localhost:3000"
     const redirectUri = `${redirectBase.replace(/\/$/, "")}/admin/integrations/line/callback`
 
@@ -645,4 +645,5 @@ import { SlotLock as SlotLockImpl } from "./SlotLock";
 
 // Wrangler 判定用：entrypoint で export class SlotLock を直接見せる
 export class SlotLock extends SlotLockImpl {}
+
 

@@ -1,0 +1,19 @@
+name = "saas-factory-api"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+
+[[durable_objects.bindings]]
+name = "SLOT_LOCK"
+class_name = "SlotLock"
+
+
+[env.staging]
+name = "saas-factory-api-staging"
+[[env.staging.durable_objects.bindings]]
+name = "SLOT_LOCK"
+class_name = "SlotLock"
+
+[[migrations]]
+tag = "v1-sqlite-do"
+new_sqlite_classes = [ "SlotLock" ]
+

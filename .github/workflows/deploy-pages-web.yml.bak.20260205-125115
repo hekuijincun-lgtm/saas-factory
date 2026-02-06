@@ -1,0 +1,40 @@
+name: Deploy Web to Cloudflare Pages
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - "apps/web/**"
+      - ".github/workflows/deploy-pages-web.yml"
+  workflow_dispatch: {}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v2
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build (Next on Pages)
+        working-directory: apps/web
+        run: pnpm build:pages
+
+      - name: Deploy (Pages)
+        uses: cloudflare/wrangler-action@v3
+        with:
+          packageManager: npm
+          apiToken: ${{ secrets.CF_API_TOKEN }}
+          accountId: ${{ secrets.CF_ACCOUNT_ID }}
+          command: pages deploy apps/web/.vercel/output/static --project-name=saas-factory-web
+
