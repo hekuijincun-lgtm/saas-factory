@@ -2,7 +2,7 @@ name: Deploy Web (Next on Pages)
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, master ]
     paths:
       - "apps/web/**"
       - ".github/workflows/deploy-pages-web.yml"
@@ -39,3 +39,4 @@ jobs:
           CF_PAGES_PROJECT: ${{ secrets.CF_PAGES_PROJECT }}
         working-directory: apps/web
         run: pnpm dlx wrangler pages deploy .vercel/output/static --project-name "$CF_PAGES_PROJECT" --branch main
+
