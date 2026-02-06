@@ -5,6 +5,33 @@ import { NextResponse } from "next/server";
 
 import { getRequestContext } from '@cloudflare/next-on-pages';
 
+
+function resolveUpstream(): string {
+  // 1) Pages runtime env (Functions env / secrets)
+  try {
+    const ctx = getRequestContext();
+    // @ts-ignore
+    const env = (ctx?.env as any) ?? {};
+    const v =
+      env.WORKER_API_BASE ??
+      env.BOOKING_API_BASE ??
+      env.API_BASE ??
+      env.NEXT_PUBLIC_API_BASE;
+    if (typeof v === "string" && v.length) return v;
+  } catch {}
+
+  // 2) Node env (local)
+  // @ts-ignore
+  const pv =
+    process?.env?.WORKER_API_BASE ??
+    process?.env?.BOOKING_API_BASE ??
+    process?.env?.API_BASE ??
+    process?.env?.NEXT_PUBLIC_API_BASE;
+  if (typeof pv === "string" && pv.length) return pv;
+
+  // 3) FAILSAFE (prod safety): default to staging Worker (NOT localhost)
+  return "https://saas-factory-api-staging.hekuijincun.workers.dev";
+}
 function resolveEnvVar(name: string): string | undefined {
   try {
     // Cloudflare Pages (next-on-pages)
@@ -19,8 +46,7 @@ function resolveEnvVar(name: string): string | undefined {
   if (typeof pv === 'string' && pv.length) return pv;
   return undefined;
 }
-const UPSTREAM = resolveEnvVar("WORKER_API_BASE") ?? resolveEnvVar("BOOKING_API_BASE") ?? resolveEnvVar("API_BASE") ?? resolveEnvVar("NEXT_PUBLIC_API_BASE") ?? "http://127.0.0.1:8787";
-
+const UPSTREAM = resolveUpstream();
 async function preflight() {
   // Workerが死んでるときに 500 を撒かない（=UXとデバッグ体験が神になる）
   const r = await fetch(`${UPSTREAM}/health`, { cache: "no-store" });
@@ -62,5 +88,6 @@ export async function GET(req: Request) {
     );
   }
 }
+
 
 
