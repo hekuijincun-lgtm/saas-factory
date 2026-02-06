@@ -44,4 +44,5 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
           CF_PAGES_PROJECT: ${{ secrets.CF_PAGES_PROJECT }}
         run: |
-          npx -y wrangler pages deploy .vercel/output/static --project-name "$CF_PAGES_PROJECT" --branch main
+pnpm dlx wrangler@4 pages deploy .vercel/output/static --project-name "$CF_PAGES_PROJECT" --branch main
+
