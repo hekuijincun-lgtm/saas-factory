@@ -50,7 +50,7 @@ const UPSTREAM = resolveUpstream();
 async function preflight() {
   // Workerが死んでるときに 500 を撒かない（=UXとデバッグ体験が神になる）
   const r = await fetch(`${UPSTREAM}/health`, { cache: "no-store" });
-  if (!r.ok) if (typeof status === "number" && status >= 500) { throw new Error("upstream /health not ok: " + status); }
+  if (!r.ok) throw new Error(`upstream /health not ok: ${r.status}`);
 }
 
 export async function GET(req: Request) {
@@ -88,7 +88,6 @@ export async function GET(req: Request) {
     );
   }
 }
-
 
 
 
