@@ -55,7 +55,7 @@ app.use('/*', cors({
 }));
 
 // GET /ping (依存ゼロの疎通確認ルート)
-app.get('/ping', (c) => c.text('pong'));
+app.get("/ping", (c) => c.text("pong-stamp-20260205-171753"))
 
 // GET /
 app.get('/', (c) => {
@@ -71,6 +71,12 @@ app.get('/health', (c) => {
     env: env.ENVIRONMENT || 'development',
     version: env.VERSION || '1.0.0',
   });
+app.get("/__routes2", (c) => {
+  // @ts-ignore
+  const routes = (app as any).routes ?? null;
+  return c.json({ ok: true, routes });
+});
+
 });
 
 // GET /meta
@@ -1508,6 +1514,9 @@ type Env = {
   LINE_CHANNEL_SECRET?: string; // 後方互換性のため残す（D1移行後は削除予定）
   WEB_BASE_URL?: string; // 例: http://localhost:3000
 };
+
+
+
 
 
 
