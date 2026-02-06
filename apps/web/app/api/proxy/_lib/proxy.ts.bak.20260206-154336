@@ -31,7 +31,7 @@ export function getApiBase(): string {
     resolveEnvVar("BOOKING_API_BASE") ??
     resolveEnvVar("API_BASE") ?? 
     resolveEnvVar("NEXT_PUBLIC_API_BASE") ?? 
-    '(process.env.CF_PAGES ? "https://saas-factory-api-staging.hekuijincun.workers.dev" : "(process.env.CF_PAGES ? "https://saas-factory-api-staging.hekuijincun.workers.dev" : "https://saas-factory-api-staging.hekuijincun.workers.dev"):8787")';
+    '(process.env.CF_PAGES ? "https://saas-factory-api-staging.hekuijincun.workers.dev" : "(process.env.CF_PAGES ? "https://saas-factory-api-staging.hekuijincun.workers.dev" : "http://127.0.0.1:8787"):8787")';
   
   // 末尾のスラッシュを削除
   return apiBase.replace(/\/$/, '');
@@ -133,7 +133,6 @@ export async function forwardJson(
     );
   }
 }
-
 
 
 
