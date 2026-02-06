@@ -3,7 +3,7 @@ export const runtime = 'edge';
 import { NextResponse } from "next/server";
 
 export async function GET(req: Request) {
-  const API_BASE = process.env.API_BASE_URL ?? "http://127.0.0.1:8787";
+  const API_BASE = process.env.API_BASE_URL ?? "(process.env.CF_PAGES ? "https://saas-factory-api-staging.hekuijincun.workers.dev" : "(process.env.CF_PAGES ? "https://saas-factory-api-staging.hekuijincun.workers.dev" : "http://127.0.0.1:8787"):8787")";
   const url = new URL(req.url);
   const tenantId = url.searchParams.get("tenantId") ?? "default";
 
@@ -34,6 +34,7 @@ export async function GET(req: Request) {
     );
   }
 }
+
 
 
 
