@@ -9,9 +9,10 @@ on:
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: apps/web
 
     steps:
       - uses: actions/checkout@v4
@@ -19,28 +20,28 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: pnpm
 
+      # pnpm は corepack で packageManager に合わせる（version衝突しない）
+      - name: Enable pnpm via corepack
+        run: |
+          corepack enable
+          node -v
+          corepack --version
+          pnpm -v
 
-      - name: Enable Corepack (pnpm)
-        run: corepack enable
       - name: Install
-        working-directory: apps/web
         run: pnpm install --frozen-lockfile
 
       - name: Build (Next.js)
-        working-directory: apps/web
         run: pnpm run build
 
       - name: Generate Pages output (next-on-pages)
-        working-directory: apps/web
         run: npx -y @cloudflare/next-on-pages
 
       - name: Deploy to Cloudflare Pages
-        working-directory: apps/web
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_PAGES_PROJECT: ${{ secrets.CF_PAGES_PROJECT }}
         run: |
-          npx -y wrangler pages deploy .vercel/output/static --project-name "${{ secrets.CF_PAGES_PROJECT }}" --branch main
-
+          npx -y wrangler pages deploy .vercel/output/static --project-name "$CF_PAGES_PROJECT" --branch main
