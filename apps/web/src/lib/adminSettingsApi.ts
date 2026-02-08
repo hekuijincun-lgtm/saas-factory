@@ -186,7 +186,7 @@ export type LineStatus =
 export async function getLineStatus(tenantId?: string): Promise<LineStatus> {
   try {
     const qs = tenantId ? `?tenantId=${encodeURIComponent(tenantId)}` : '';
-    const response = await fetch(`https://saas-factory-api..workers.dev/admin/integrations/line/status${qs}`, {
+    const response = await fetch(`/api/proxy/admin/integrations/line/status${qs}`, {
       cache: 'no-store',
     });
     
@@ -377,6 +377,7 @@ export async function deleteLineConfig(): Promise<LineConfigResponse> {
   }
   throw new Error(response.error || 'Failed to delete LINE config');
 }
+
 
 
 
