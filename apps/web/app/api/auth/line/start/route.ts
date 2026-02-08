@@ -1,50 +1,50 @@
-export const runtime = 'edge';
+export const runtime = "edge";
+
 import { NextResponse } from "next/server";
 
-function getApiBase(): string {
-  // Pages Functions env (secret)
-  const v = (process.env.API_BASE || "").trim();
-  if (v) return v;
-  // fallback (dev only): NEXT_PUBLIC_API_BASE
-  const v2 = (process.env.NEXT_PUBLIC_API_BASE || "").trim();
-  if (v2) return v2;
-  return "";
+type AuthUrlResp = { ok: boolean; url?: string; error?: string; detail?: any };
+
+function getTenantId(req: Request): string {
+  const u = new URL(req.url);
+  return u.searchParams.get("tenantId") || "default";
 }
 
 export async function GET(req: Request) {
+  const tenantId = getTenantId(req);
+
+  // ✅ 同一オリジンで proxy を叩く（Pages / Local どっちもOK）
+  const origin = new URL(req.url).origin;
+  const u = `${origin}/api/proxy/admin/line/auth-url?tenantId=${encodeURIComponent(tenantId)}`;
+
+  let j: AuthUrlResp | null = null;
+
   try {
-    const { searchParams } = new URL(req.url);
-    const tenantId = searchParams.get("tenantId") || "default";
-
-    const apiBase = getApiBase();
-    if (!apiBase) {
-      return NextResponse.json({ ok: false, error: "API_BASE missing" }, { status: 500 });
-    }
-
-    const url = ${apiBase.replace(/\/+$/, "")}/admin/integrations/line/auth-url?tenantId=;
-    const r = await fetch(url, { headers: { "accept": "application/json" } });
+    const r = await fetch(u, { cache: "no-store" });
     const text = await r.text();
-    if (!r.ok) {
-      return NextResponse.json({ ok: false, error: "failed_to_get_auth_url", status: r.status, body: text.slice(0, 500) }, { status: 500 });
-    }
+    j = JSON.parse(text) as AuthUrlResp;
 
-    let j: any;
-    try { j = JSON.parse(text); } catch {
-      return NextResponse.json({ ok: false, error: "invalid_json", body: text.slice(0, 500) }, { status: 500 });
+    if (!r.ok || !j?.ok || !j.url) {
+      return NextResponse.json(
+        { ok: false, error: "failed_to_get_auth_url", detail: { status: r.status, body: j ?? text } },
+        { status: 500 }
+      );
     }
-
-    const target = (j?.url || "").toString();
-    if (!target) {
-      return NextResponse.json({ ok: false, error: "empty_auth_url", body: j }, { status: 500 });
-    }
-
-    // 🔒 Only allow LINE authorize redirect
-    if (!/^https:\/\/access\.line\.me\/oauth2\/v2\.1\/authorize/i.test(target)) {
-      return NextResponse.json({ ok: false, error: "refusing_redirect", target }, { status: 500 });
-    }
-
-    return NextResponse.redirect(target, 307);
   } catch (e: any) {
-    return NextResponse.json({ ok: false, error: "start_route_exception", message: String(e?.message || e) }, { status: 500 });
+    return NextResponse.json(
+      { ok: false, error: "failed_to_get_auth_url", detail: String(e?.message ?? e) },
+      { status: 500 }
+    );
   }
+
+  const target = j.url;
+
+  // 🔒 LINE以外へ飛ばない（open redirect対策）
+  if (!/^https:\/\/access\.line\.me\/oauth2\/v2\.1\/authorize/i.test(target)) {
+    return NextResponse.json(
+      { ok: false, error: "Refusing_to_redirect", target },
+      { status: 500 }
+    );
+  }
+
+  return NextResponse.redirect(target, 307);
 }
