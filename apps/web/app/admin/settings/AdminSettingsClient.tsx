@@ -46,7 +46,7 @@ export default function AdminSettingsClient() {
     try {
       const params = new URLSearchParams({ tenantId });
       const res = await fetch(
-        `/admin/integrations/line/auth-url?${params.toString()}`,
+        `/api/proxy/admin/integrations/line/auth-url?${params.toString()}`,
         {
           method: "GET",
           cache: "no-store",
@@ -180,6 +180,7 @@ export default function AdminSettingsClient() {
     </main>
   );
 }
+
 
 
 

@@ -1,0 +1,45 @@
+export const runtime = "edge";
+
+import { NextResponse } from "next/server";
+
+function getBaseUrl(req: Request) {
+  // Same-origin base (Pages/localhost)
+  const u = new URL(req.url);
+  return u.origin;
+}
+
+export async function GET(req: Request) {
+  const u = new URL(req.url);
+  const tenantId = u.searchParams.get("tenantId") ?? "default";
+
+  // ✅ IMPORTANT: call same-origin proxy (NOT workers.dev direct from browser)
+  const base = getBaseUrl(req);
+  const r = await fetch(`${base}/api/proxy/admin/line/auth-url?tenantId=${encodeURIComponent(tenantId)}`, {
+    method: "GET",
+    headers: { "accept": "application/json" },
+    // avoid caching weirdness
+    cache: "no-store",
+  });
+
+  const text = await r.text();
+  let j: any = null;
+  try { j = JSON.parse(text); } catch {}
+
+  const target = j?.url;
+  if (!target || typeof target !== "string") {
+    return NextResponse.json(
+      { ok: false, error: "auth-url response missing 'url' string", status: r.status, body: text?.slice?.(0, 400) },
+      { status: 500 }
+    );
+  }
+
+  // Guard: only allow redirect to LINE authorize
+  if (!/^https:\/\/access\.line\.me\/oauth2\/v2\.1\/authorize/i.test(target)) {
+    return NextResponse.json(
+      { ok: false, error: "Refusing to redirect (unexpected target)", target },
+      { status: 500 }
+    );
+  }
+
+  return NextResponse.redirect(target, 307);
+}

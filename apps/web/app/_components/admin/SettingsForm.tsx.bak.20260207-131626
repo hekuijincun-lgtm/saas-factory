@@ -1049,7 +1049,7 @@ export default function SettingsForm() {
                           try {
                             const tenantId = 'default';
                             const params = new URLSearchParams({ tenantId });
-                            const res = await fetch(`/api/proxy/admin/integrations/line/auth-url?${params.toString()}`, {
+                            const res = await fetch(`https://saas-factory-api..workers.dev/admin/integrations/line/auth-url?${params.toString()}`, {
                               method: 'GET',
                               cache: 'no-store',
                             });
@@ -1350,6 +1350,5 @@ export default function SettingsForm() {
     </div>
   );
 }
-
 
 
