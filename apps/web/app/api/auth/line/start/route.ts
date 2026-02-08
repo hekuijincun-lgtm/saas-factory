@@ -1,50 +1,59 @@
 export const runtime = "edge";
 
 import { NextResponse } from "next/server";
+import { getRequestContext } from "@cloudflare/next-on-pages";
 
-type AuthUrlResp = { ok: boolean; url?: string; error?: string; detail?: any };
+function getApiBase(): string {
+  // Pages runtime env (recommended)
+  try {
+    const ctx = getRequestContext();
+    // @ts-ignore
+    const v = ctx?.env?.API_BASE || ctx?.env?.WORKER_API_BASE || ctx?.env?.BOOKING_API_BASE;
+    if (v) return String(v).replace(/\/+$/, "");
+  } catch {}
 
-function getTenantId(req: Request): string {
-  const u = new URL(req.url);
-  return u.searchParams.get("tenantId") || "default";
+  // Fallback (local dev)
+  const v = process.env.API_BASE || process.env.WORKER_API_BASE || process.env.BOOKING_API_BASE;
+  if (v) return String(v).replace(/\/+$/, "");
+
+  return "http://127.0.0.1:8787";
 }
 
 export async function GET(req: Request) {
-  const tenantId = getTenantId(req);
+  const { searchParams } = new URL(req.url);
+  const tenantId = searchParams.get("tenantId") || "default";
 
-  // ✅ 同一オリジンで proxy を叩く（Pages / Local どっちもOK）
-  const origin = new URL(req.url).origin;
-  const u = `${origin}/api/proxy/admin/line/auth-url?tenantId=${encodeURIComponent(tenantId)}`;
+  const apiBase = getApiBase();
+  const u = `${apiBase}/admin/integrations/line/auth-url?tenantId=${encodeURIComponent(tenantId)}`;
 
-  let j: AuthUrlResp | null = null;
-
+  let j: any = null;
   try {
-    const r = await fetch(u, { cache: "no-store" });
-    const text = await r.text();
-    j = JSON.parse(text) as AuthUrlResp;
+    const r = await fetch(u, { method: "GET" });
+    const txt = await r.text();
+    try { j = JSON.parse(txt); } catch { j = { ok: false, raw: txt }; }
 
-    if (!r.ok || !j?.ok || !j.url) {
+    if (!r.ok || !j?.ok || !j?.url) {
       return NextResponse.json(
-        { ok: false, error: "failed_to_get_auth_url", detail: { status: r.status, body: j ?? text } },
+        { ok: false, error: "failed_to_get_auth_url", detail: j?.detail || j, status: r.status },
         { status: 500 }
       );
     }
+
+    const target = String(j.url);
+
+    // 🔒 only redirect to LINE authorize
+    if (!/^https:\/\/access\.line\.me\/oauth2\/v2\.1\/authorize/i.test(target)) {
+      return NextResponse.json(
+        { ok: false, error: "Refusing_to_redirect", target },
+        { status: 500 }
+      );
+    }
+
+    return NextResponse.redirect(target, 307);
   } catch (e: any) {
     return NextResponse.json(
-      { ok: false, error: "failed_to_get_auth_url", detail: String(e?.message ?? e) },
+      { ok: false, error: "failed_to_get_auth_url", detail: String(e?.message || e) },
       { status: 500 }
     );
   }
-
-  const target = j.url;
-
-  // 🔒 LINE以外へ飛ばない（open redirect対策）
-  if (!/^https:\/\/access\.line\.me\/oauth2\/v2\.1\/authorize/i.test(target)) {
-    return NextResponse.json(
-      { ok: false, error: "Refusing_to_redirect", target },
-      { status: 500 }
-    );
-  }
-
-  return NextResponse.redirect(target, 307);
 }
