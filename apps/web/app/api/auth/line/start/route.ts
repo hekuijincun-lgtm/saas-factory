@@ -64,9 +64,7 @@ export async function GET(req: Request) {
       apiBase,
     });
   }
-  const url = new URL(req.url);
-  const tenantId = url.searchParams.get("tenantId") || "default";
-  const debug = url.searchParams.get("debug") === "1";
+
 
   let apiBase = "";
   let upstream = "";
@@ -141,4 +139,5 @@ export async function GET(req: Request) {
     return NextResponse.json({ ok: false, error: "failed_to_get_auth_url", detail: "error code: 1003" }, { status: 500 });
   }
 }
+
 
