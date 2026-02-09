@@ -1,5 +1,35 @@
 export const runtime = "edge";
 
+
+
+/* DEBUG__LINE_START_V1 */
+function __dbgEnvSummary() {
+  const keys = Object.keys(process.env || {});
+  const pick = (re: RegExp) => keys.filter(k => re.test(k)).sort();
+  const has = (k: string) => !!(process.env as any)?.[k];
+  return {
+    keys_api: pick(/API|BOOKING|UPSTREAM/i),
+    keys_line: pick(/LINE/i),
+    keys_cf: pick(/^CF_|CLOUDFLARE/i),
+    has_API_BASE: has("API_BASE"),
+    has_BOOKING_API_BASE: has("BOOKING_API_BASE"),
+    has_NEXT_PUBLIC_API_BASE: has("NEXT_PUBLIC_API_BASE"),
+    has_LINE_CHANNEL_ID: has("LINE_CHANNEL_ID"),
+    has_LINE_CHANNEL_SECRET: has("LINE_CHANNEL_SECRET"),
+    has_LINE_LOGIN_CALLBACK_URL: has("LINE_LOGIN_CALLBACK_URL"),
+  };
+}
+async function __dbgFetch(url: string, init?: RequestInit){
+  try{
+    const r = await fetch(url, init);
+    const ct = r.headers.get("content-type") || "";
+    const t = await r.text();
+    return { ok: r.ok, status: r.status, contentType: ct, bodyHead: t.slice(0, 800) };
+  }catch(e:any){
+    return { ok: false, status: 0, contentType: "", bodyHead: "", error: String(e?.message || e) };
+  }
+}
+/* /DEBUG__LINE_START_V1 */
 import { NextResponse } from "next/server";
 import { getRequestContext } from "@cloudflare/next-on-pages";
 
@@ -30,6 +60,34 @@ function getApiBase(): string {
 }
 
 export async function GET(req: Request) {
+/* DEBUG__LINE_START_GET_V1 */  try{
+    const url = new URL((arguments as any)[0]?.url || (typeof request !== "undefined" ? (request as any).url : ""));
+    const debug = url.searchParams.get("debug")==="1";
+    if(debug){
+      const env = __dbgEnvSummary();
+      // If your code uses an upstream endpoint, set it here in env vars and we'll see failures.
+      const candidates = [
+        (process.env as any).API_BASE,
+        (process.env as any).BOOKING_API_BASE,
+        (process.env as any).NEXT_PUBLIC_API_BASE,
+      ].filter(Boolean);
+
+      // Try common endpoints (adjust later once we see what your route actually calls)
+      const probes:any[] = [];
+      for(const base of candidates){
+        for(const p of ["/admin/integrations/line/auth-url","/api/admin/integrations/line/auth-url"]){
+          const full = String(base).replace(/\/$/,"") + p;
+          probes.push({ url: full, result: await __dbgFetch(full, { method:"GET" }) });
+        }
+      }
+      return (globalThis as any).NextResponse
+        ? (NextResponse as any).json({ ok:true, debug:true, env, probes }, { status: 200 })
+        : Response.json({ ok:true, debug:true, env, probes });
+    }
+  }catch(e:any){
+    // ignore, proceed normal
+  }
+
   const url = new URL(req.url);
   const debug = url.searchParams.get("debug") === "1";
   const tenantId = url.searchParams.get("tenantId") || "default";
@@ -139,6 +197,8 @@ export async function GET(req: Request) {
     return NextResponse.json({ buildId: 'BUILD_MARKER_20260209_121647', ok: false, error: "failed_to_get_auth_url", detail: "error code: 1003" }, { status: 500 });
   }
 }
+
+
 
 
 
