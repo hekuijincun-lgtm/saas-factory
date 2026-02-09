@@ -50,7 +50,7 @@ export async function GET(req: Request) {
       v("API_BASE") || v("WORKER_API_BASE") || v("BOOKING_API_BASE") ||
       v("NEXT_PUBLIC_API_BASE_URL") || v("NEXT_PUBLIC_API_BASE");
 
-    return NextResponse.json({
+    return NextResponse.json({ buildId: 'BUILD_MARKER_20260209_121647',
       ok: true,
       debug: true,
       tenantId,
@@ -80,7 +80,7 @@ export async function GET(req: Request) {
     const text = await res.text();
     if (!res.ok) {
       if (debug) {
-        return NextResponse.json({
+        return NextResponse.json({ buildId: 'BUILD_MARKER_20260209_121647',
           ok: false,
           error: "upstream_not_ok",
           status: res.status,
@@ -96,7 +96,7 @@ export async function GET(req: Request) {
           },
         }, { status: 502 });
       }
-      return NextResponse.json({ ok: false, error: "failed_to_get_auth_url", detail: "error code: 1003" }, { status: 500 });
+      return NextResponse.json({ buildId: 'BUILD_MARKER_20260209_121647', ok: false, error: "failed_to_get_auth_url", detail: "error code: 1003" }, { status: 500 });
     }
 
     // parse
@@ -105,7 +105,7 @@ export async function GET(req: Request) {
     const authUrl = json?.url;
     if (!authUrl || typeof authUrl !== "string") {
       if (debug) {
-        return NextResponse.json({
+        return NextResponse.json({ buildId: 'BUILD_MARKER_20260209_121647',
           ok: false,
           error: "bad_upstream_payload",
           apiBase,
@@ -113,7 +113,7 @@ export async function GET(req: Request) {
           body: text.slice(0, 800),
         }, { status: 502 });
       }
-      return NextResponse.json({ ok: false, error: "failed_to_get_auth_url", detail: "error code: 1003" }, { status: 500 });
+      return NextResponse.json({ buildId: 'BUILD_MARKER_20260209_121647', ok: false, error: "failed_to_get_auth_url", detail: "error code: 1003" }, { status: 500 });
     }
 
     // Redirect to LINE OAuth
@@ -121,7 +121,7 @@ export async function GET(req: Request) {
 
   } catch (e: any) {
     if (debug) {
-      return NextResponse.json({
+      return NextResponse.json({ buildId: 'BUILD_MARKER_20260209_121647',
         ok: false,
         error: "exception",
         message: String(e?.message || e),
@@ -136,9 +136,10 @@ export async function GET(req: Request) {
         },
       }, { status: 500 });
     }
-    return NextResponse.json({ ok: false, error: "failed_to_get_auth_url", detail: "error code: 1003" }, { status: 500 });
+    return NextResponse.json({ buildId: 'BUILD_MARKER_20260209_121647', ok: false, error: "failed_to_get_auth_url", detail: "error code: 1003" }, { status: 500 });
   }
 }
+
 
 
 
