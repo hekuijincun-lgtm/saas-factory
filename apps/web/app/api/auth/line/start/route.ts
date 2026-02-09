@@ -60,6 +60,24 @@ function getApiBase(): string {
 }
 
 export async function GET(req: Request) {
+  // FORCE_DEBUG_RETURN_20260209
+  // If this does not show up, Pages is not running this code path.
+  try {
+    const u = new URL(request.url);
+    if (u.searchParams.get("debug") === "1") {
+      return new Response(JSON.stringify({
+        ok: true,
+        where: "apps/web/app/api/auth/line/start/route.ts",
+        ts: new Date().toISOString(),
+        url: request.url,
+        method: request.method,
+        headers: Object.fromEntries(request.headers),
+      }, null, 2), { status: 200, headers: { "content-type": "application/json; charset=utf-8" } });
+    }
+  } catch (e) {
+    return new Response(JSON.stringify({ ok:false, where:"FORCE_DEBUG_RETURN_20260209", error:String(e) }, null, 2), { status: 200, headers: { "content-type": "application/json; charset=utf-8" } });
+  }
+
 /* DEBUG__LINE_START_GET_V1 */  try{
     const url = new URL((arguments as any)[0]?.url || (typeof request !== "undefined" ? (request as any).url : ""));
     const debug = url.searchParams.get("debug")==="1";
@@ -197,6 +215,7 @@ export async function GET(req: Request) {
     return NextResponse.json({ buildId: 'BUILD_MARKER_20260209_121647', ok: false, error: "failed_to_get_auth_url", detail: "error code: 1003" }, { status: 500 });
   }
 }
+
 
 
 
