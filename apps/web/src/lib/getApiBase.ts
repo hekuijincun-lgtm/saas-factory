@@ -8,7 +8,7 @@ function readEnv(key: string): string | undefined {
   // Pages runtime env / secrets
   try {
     const ctx = getRequestContext();
-    // @ts-ignore
+    // @ts-expect-error
     const v = ctx?.env?.[key];
     if (typeof v === "string" && v.length > 0) return v;
   } catch {}
@@ -34,3 +34,5 @@ export function getApiBase(): string {
   // trim trailing slash
   return base.replace(/\/+$/, "");
 }
+
+
