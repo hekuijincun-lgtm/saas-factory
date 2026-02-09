@@ -14,9 +14,17 @@ function resolveApiBase(): string {
 }
 
 export async function GET(req: NextRequest) {
-  const API_BASE = resolveApiBase();
-
-  // 受信URL（クエリ含む）
+const API_BASE =
+  process.env.NEXT_PUBLIC_API_BASE ||
+  process.env.NEXT_PUBLIC_API_BASE_URL ||
+  process.env.BOOKING_API_BASE ||
+  process.env.WORKER_API_BASE ||
+  process.env.API_BASE ||
+  process.env.API_BASE_URL ||
+  (process.env.CF_PAGES
+    ? "https://saas-factory-api-staging.hekuijincun.workers.dev"
+    : "http://127.0.0.1:8787");
+// 受信URL（クエリ含む）
   const url = new URL(req.url);
 
   // tenantId が無い/空なら default を強制
@@ -73,6 +81,7 @@ export async function GET(req: NextRequest) {
     );
   }
 }
+
 
 
 

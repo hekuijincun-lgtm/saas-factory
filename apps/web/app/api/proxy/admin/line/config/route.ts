@@ -3,8 +3,17 @@ export const runtime = 'edge';
 import { NextResponse } from "next/server";
 
 async function forwardToWorker(req: Request) {
-  const API_BASE = process.env.API_BASE_URL ?? "(process.env.CF_PAGES ? "https://saas-factory-api-staging.hekuijincun.workers.dev" : "(process.env.CF_PAGES ? "https://saas-factory-api-staging.hekuijincun.workers.dev" : "https://saas-factory-api-staging.hekuijincun.workers.dev"):8787")";
-  const url = new URL(req.url);
+const API_BASE =
+  process.env.NEXT_PUBLIC_API_BASE ||
+  process.env.NEXT_PUBLIC_API_BASE_URL ||
+  process.env.BOOKING_API_BASE ||
+  process.env.WORKER_API_BASE ||
+  process.env.API_BASE ||
+  process.env.API_BASE_URL ||
+  (process.env.CF_PAGES
+    ? "https://saas-factory-api-staging.hekuijincun.workers.dev"
+    : "http://127.0.0.1:8787");
+const url = new URL(req.url);
   const tenantId = url.searchParams.get("tenantId") ?? "default";
 
   const upstream =
@@ -52,6 +61,7 @@ export async function POST(req: Request) {
 export async function PUT(req: Request) {
   return forwardToWorker(req);
 }
+
 
 
 
