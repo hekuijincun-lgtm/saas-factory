@@ -31,6 +31,40 @@ function getApiBase(): string {
 
 export async function GET(req: Request) {
   const url = new URL(req.url);
+  const debug = url.searchParams.get("debug") === "1";
+  const tenantId = url.searchParams.get("tenantId") || "default";
+
+  if (debug) {
+    const v = (name: string) => {
+      try { 
+        // @ts-ignore
+        const { env } = getRequestContext();
+        // @ts-ignore
+        return env?.[name];
+      } catch {}
+      // @ts-ignore
+      return process?.env?.[name];
+    };
+
+    const apiBase =
+      v("API_BASE") || v("WORKER_API_BASE") || v("BOOKING_API_BASE") ||
+      v("NEXT_PUBLIC_API_BASE_URL") || v("NEXT_PUBLIC_API_BASE");
+
+    return NextResponse.json({
+      ok: true,
+      debug: true,
+      tenantId,
+      envSeen: {
+        API_BASE: !!v("API_BASE"),
+        WORKER_API_BASE: !!v("WORKER_API_BASE"),
+        BOOKING_API_BASE: !!v("BOOKING_API_BASE"),
+        NEXT_PUBLIC_API_BASE_URL: !!v("NEXT_PUBLIC_API_BASE_URL"),
+        NEXT_PUBLIC_API_BASE: !!v("NEXT_PUBLIC_API_BASE"),
+      },
+      apiBase,
+    });
+  }
+  const url = new URL(req.url);
   const tenantId = url.searchParams.get("tenantId") || "default";
   const debug = url.searchParams.get("debug") === "1";
 
@@ -107,3 +141,4 @@ export async function GET(req: Request) {
     return NextResponse.json({ ok: false, error: "failed_to_get_auth_url", detail: "error code: 1003" }, { status: 500 });
   }
 }
+
