@@ -1,87 +1,60 @@
-export const runtime = 'edge';
+export const runtime = "edge";
 
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 
-function resolveApiBase(): string {
-  // 防御的：env名の揺れを全吸収（優先順）
-  return (
-    process.env.NEXT_PUBLIC_BOOKING_API_BASE ??
-    process.env.BOOKING_API_BASE ??
-    process.env.NEXT_PUBLIC_API_BASE ??
-    process.env.API_BASE ??
-    "(process.env.CF_PAGES ? "https://saas-factory-api-staging.hekuijincun.workers.dev" : "(process.env.CF_PAGES ? "https://saas-factory-api-staging.hekuijincun.workers.dev" : "https://saas-factory-api-staging.hekuijincun.workers.dev"):8787")"
-  );
+function resolveUpstreamBase(): string {
+  // Prefer explicit envs
+  const env = process.env as Record<string, string | undefined>;
+
+  // Put your canonical env keys here
+  const candidates = [
+    env.BOOKING_API_BASE,
+    env.NEXT_PUBLIC_API_BASE,
+    env.API_BASE,
+    env.BOOKING_API_BASE_URL,
+    env.NEXT_PUBLIC_API_BASE_URL,
+  ].filter(Boolean) as string[];
+
+  // If running on Pages, you usually want HTTPS to your Workers API
+  // (fallback stays localhost for dev)
+  return candidates[0] ?? "http://127.0.0.1:8787";
 }
 
-export async function GET(req: NextRequest) {
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE ||
-  process.env.NEXT_PUBLIC_API_BASE_URL ||
-  process.env.BOOKING_API_BASE ||
-  process.env.WORKER_API_BASE ||
-  process.env.API_BASE ||
-  process.env.API_BASE_URL ||
-  (process.env.CF_PAGES
-    ? "https://saas-factory-api-staging.hekuijincun.workers.dev"
-    : "http://127.0.0.1:8787");
-// 受信URL（クエリ含む）
+export async function GET(req: Request) {
   const url = new URL(req.url);
+  const debug = url.searchParams.get("debug") === "1";
+  const tenantId = url.searchParams.get("tenantId") ?? "default";
 
-  // tenantId が無い/空なら default を強制
-  const tenantId = url.searchParams.get("tenantId") || "default";
+  const upstreamBase = resolveUpstreamBase();
 
-  // upstream を組み立て（クエリは全コピー→tenantIdだけ上書き）
-  const upstream = new URL(`${API_BASE.replace(/\/$/, "")}/admin/integrations/line/status`);
-  url.searchParams.forEach((v, k) => upstream.searchParams.set(k, v));
-  upstream.searchParams.set("tenantId", tenantId);
-
-  console.log("[proxy][line-status] upstream =", upstream.toString());
-
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 5000);
-
+  // health check (best-effort)
+  let upstreamOk: boolean | null = null;
+  let upstreamStatus: number | null = null;
   try {
-    const res = await fetch(upstream.toString(), {
-      method: "GET",
-      headers: { accept: "application/json" },
-      cache: "no-store",
-      signal: controller.signal,
-    });
-
-    clearTimeout(timeoutId);
-
-    const body = await res.text();
-
-    return new NextResponse(body, {
-      status: res.status,
-      headers: {
-        "content-type": res.headers.get("content-type") ?? "application/json",
-      },
-    });
-  } catch (err) {
-    clearTimeout(timeoutId);
-
-    const errorMessage = err instanceof Error ? err.message : String(err);
-    const isTimeout = err instanceof Error && err.name === "AbortError";
-
-    console.error("[proxy][line-status] fetch failed", {
-      API_BASE,
-      upstream: upstream.toString(),
-      error: errorMessage,
-      isTimeout,
-    });
-
-    return NextResponse.json(
-      {
-        ok: false,
-        error: isTimeout ? "UPSTREAM_TIMEOUT" : "UPSTREAM_FETCH_FAILED",
-        message: `Proxy fetch failed: API_BASE=${API_BASE}, upstream=${upstream.toString()}, error=${errorMessage}`,
-      },
-      { status: 502 },
-    );
+    const healthUrl = new URL("/health", upstreamBase).toString();
+    const r = await fetch(healthUrl, { method: "GET" });
+    upstreamOk = r.ok;
+    upstreamStatus = r.status;
+  } catch {
+    upstreamOk = false;
+    upstreamStatus = null;
   }
+
+  const out: any = {
+    ok: true,
+    tenantId,
+    upstreamBase,
+    upstreamOk,
+    upstreamStatus,
+  };
+
+  if (debug) {
+    out.envSeen = {
+      BOOKING_API_BASE: !!process.env.BOOKING_API_BASE,
+      NEXT_PUBLIC_API_BASE: !!process.env.NEXT_PUBLIC_API_BASE,
+      API_BASE: !!process.env.API_BASE,
+    };
+  }
+
+  return NextResponse.json(out);
 }
-
-
-
-

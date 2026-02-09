@@ -1,15 +1,33 @@
 name = "saas-factory-api"
 main = "src/index.ts"
-compatibility_date = "2024-12-01"
+compatibility_date = "2026-02-06"
 
-[[durable_objects.bindings]]
-name = "SLOT_LOCK"
-class_name = "SlotLock"
+# ===== KV (唯一・正) =====
+[[kv_namespaces]]
+binding = "ENVIRONMENT"
+id = "b3bde2eb54cc4e91a69998c89f948b18"
+preview_id = "32db8ae0d1fb42fb93b03725997da00a"
 
+# ===== Durable Object =====
+[durable_objects]
+bindings = [
+  { name = "SLOT_LOCK", class_name = "SlotLock" }
+]
 
+[[migrations]]
+tag = "v1-sqlite-do"
+new_sqlite_classes = ["SlotLock"]
+
+# ===== STAGING =====
 [env.staging]
 name = "saas-factory-api-staging"
-[[env.staging.durable_objects.bindings]]
-name = "SLOT_LOCK"
-class_name = "SlotLock"
 
+[[env.staging.kv_namespaces]]
+binding = "ENVIRONMENT"
+id = "b3bde2eb54cc4e91a69998c89f948b18"
+preview_id = "32db8ae0d1fb42fb93b03725997da00a"
+
+[env.staging.durable_objects]
+bindings = [
+  { name = "SLOT_LOCK", class_name = "SlotLock" }
+]

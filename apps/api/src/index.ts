@@ -118,7 +118,7 @@ app.get('/slots', async (c) => {
     return c.json({ ok: false, error: 'invalid date' }, 400);
   }
   
-  const kv = c.env.SAAS_FACTORY;
+  const kv = c.env.ENVIRONMENT;
   
   // デバッグモード: debug=2 で settings を取得
   if (debug === '2') {
@@ -419,7 +419,7 @@ app.post('/reserve', async (c) => {
     // 予約作成成功時にLINE通知を送信（非同期、エラーは無視）
     if (status === 200 && result.ok) {
       try {
-        const kv = c.env.SAAS_FACTORY;
+        const kv = c.env.ENVIRONMENT;
         const tenantId = getTenantId(c);
         
         // settings を取得して通知ルールを確認
@@ -531,7 +531,7 @@ app.get('/admin/reservations', async (c) => {
     return c.json({ ok: false, error: 'invalid date' }, 400);
   }
   
-  const kv = c.env.SAAS_FACTORY;
+  const kv = c.env.ENVIRONMENT;
   const prefix = `rsv:${dateStr}:`;
   
   // KVから指定日付の予約を取得（prefix scan）
@@ -564,7 +564,7 @@ app.get('/admin/reservations', async (c) => {
 // GET /admin/staff
 app.get('/admin/staff', async (c) => {
   try {
-    const kv = c.env.SAAS_FACTORY;
+    const kv = c.env.ENVIRONMENT;
     const value = await kv.get('admin:staff:list');
     
     if (value) {
@@ -602,7 +602,7 @@ app.post('/admin/staff', async (c) => {
       return c.json({ ok: false, error: 'sortOrder must be non-negative number' }, 400);
     }
     
-    const kv = c.env.SAAS_FACTORY;
+    const kv = c.env.ENVIRONMENT;
     const value = await kv.get('admin:staff:list');
     const staff = value ? JSON.parse(value) : [];
     
@@ -632,7 +632,7 @@ app.patch('/admin/staff/:id', async (c) => {
     const body = await c.req.json();
     const { name, role, active, sortOrder } = body;
     
-    const kv = c.env.SAAS_FACTORY;
+    const kv = c.env.ENVIRONMENT;
     const value = await kv.get('admin:staff:list');
     if (!value) {
       return c.json({ ok: false, error: 'Staff not found' }, 404);
@@ -678,7 +678,7 @@ app.patch('/admin/staff/:id', async (c) => {
 // GET /admin/menu
 app.get('/admin/menu', async (c) => {
   try {
-    const kv = c.env.SAAS_FACTORY;
+    const kv = c.env.ENVIRONMENT;
     const value = await kv.get('admin:menu:list');
     
     if (value) {
@@ -722,7 +722,7 @@ app.post('/admin/menu', async (c) => {
       return c.json({ ok: false, error: 'sortOrder must be non-negative number' }, 400);
     }
     
-    const kv = c.env.SAAS_FACTORY;
+    const kv = c.env.ENVIRONMENT;
     const value = await kv.get('admin:menu:list');
     const menu = value ? JSON.parse(value) : [];
     
@@ -753,7 +753,7 @@ app.patch('/admin/menu/:id', async (c) => {
     const body = await c.req.json();
     const { name, price, durationMin, active, sortOrder } = body;
     
-    const kv = c.env.SAAS_FACTORY;
+    const kv = c.env.ENVIRONMENT;
     const value = await kv.get('admin:menu:list');
     if (!value) {
       return c.json({ ok: false, error: 'Menu not found' }, 404);
@@ -808,7 +808,7 @@ app.patch('/admin/menu/:id', async (c) => {
 // GET /admin/settings
 app.get('/admin/settings', async (c) => {
   try {
-    const kv = c.env.SAAS_FACTORY;
+    const kv = c.env.ENVIRONMENT;
     const value = await kv.get('settings:default');
     
     if (value) {
@@ -836,7 +836,7 @@ app.put('/admin/settings', async (c) => {
       return c.json({ ok: false, error: validation.error }, 400);
     }
     
-    const kv = c.env.SAAS_FACTORY;
+    const kv = c.env.ENVIRONMENT;
     const existingValue = await kv.get('settings:default');
     const existing = existingValue ? (JSON.parse(existingValue) as Partial<AdminSettings>) : {};
     
@@ -875,7 +875,7 @@ app.put('/admin/staff/:id/shift', async (c) => {
       return c.json({ ok: false, error: 'exceptions is required and must be array' }, 400);
     }
     
-    const kv = c.env.SAAS_FACTORY;
+    const kv = c.env.ENVIRONMENT;
     const shiftData: StaffShift = {
       staffId,
       weekly: body.weekly,
@@ -900,7 +900,7 @@ app.get('/admin/staff/:id/shift', async (c) => {
       return c.json({ ok: false, error: 'staffId is required' }, 400);
     }
     
-    const kv = c.env.SAAS_FACTORY;
+    const kv = c.env.ENVIRONMENT;
     const shiftValue = await kv.get(`shift:${staffId}`);
     
     if (shiftValue) {
@@ -934,7 +934,7 @@ app.patch('/admin/reservations/:id', async (c) => {
       return c.json({ ok: false, error: 'staffId must be string or null' }, 400);
     }
     
-    const kv = c.env.SAAS_FACTORY;
+    const kv = c.env.ENVIRONMENT;
     
     // 予約を検索（全時間帯をスキャン）
     const timeSlots = ['10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00'];
@@ -992,7 +992,7 @@ app.delete('/admin/reservations/:id', async (c) => {
       return c.json({ ok: false, error: 'reservationId is required' }, 400);
     }
     
-    const kv = c.env.SAAS_FACTORY;
+    const kv = c.env.ENVIRONMENT;
     
     // 設定を取得してcancelMinutesをチェック
     const settingsValue = await kv.get('settings:default');
@@ -1184,7 +1184,7 @@ app.post('/admin/settings/test-slack', async (c) => {
     const body = await c.req.json();
     const { webhookUrl } = body;
     
-    const kv = c.env.SAAS_FACTORY;
+    const kv = c.env.ENVIRONMENT;
     
     // webhookUrlが指定されていない場合は設定から取得
     let targetWebhookUrl = webhookUrl;
@@ -1464,7 +1464,7 @@ app.delete('/admin/line/config', async (c) => {
       const nonce = crypto.randomUUID();
       const state = `${tenantId}:${nonce}`;
 
-      const kv = c.env.SAAS_FACTORY;
+      const kv = c.env.ENVIRONMENT;
       await kv.put(
         `line:state:${nonce}`,
         JSON.stringify({ tenantId, createdAt: Date.now() }),
@@ -1514,6 +1514,8 @@ type Env = {
   LINE_CHANNEL_SECRET?: string; // 後方互換性のため残す（D1移行後は削除予定）
   WEB_BASE_URL?: string; // 例: http://localhost:3000
 };
+
+
 
 
 
