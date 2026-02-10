@@ -21,3 +21,6 @@ apps/web/build.err.txt*
 
 *.bak.*
 
+
+*.bak-*
+*.bak.*
