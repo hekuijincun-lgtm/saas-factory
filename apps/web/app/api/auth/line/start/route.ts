@@ -60,6 +60,28 @@ function getApiBase(): string {
 }
 
 export async function GET(req: Request) {
+  const url = new URL(req.url);
+  if (url.searchParams.get("debug") === "1") {
+    const body = {
+      ok: true,
+      where: "app:/api/auth/line/start",
+      ts: new Date().toISOString(),
+      url: req.url,
+      env: {
+        API_BASE: process.env.API_BASE ?? null,
+        BOOKING_API_BASE: process.env.BOOKING_API_BASE ?? null,
+        LINE_CHANNEL_ID: process.env.LINE_CHANNEL_ID ?? null,
+        LINE_CHANNEL_SECRET: process.env.LINE_CHANNEL_SECRET ?? null,
+        LINE_CHANNEL_ACCESS_TOKEN: process.env.LINE_CHANNEL_ACCESS_TOKEN ?? null,
+      },
+    };
+    return new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  // ↓ existing logic continues...
   // FORCE_DEBUG_RETURN_20260209
   // If this does not show up, Pages is not running this code path.
   try {
@@ -215,6 +237,7 @@ export async function GET(req: Request) {
     return NextResponse.json({ buildId: 'BUILD_MARKER_20260209_121647', ok: false, error: "failed_to_get_auth_url", detail: "error code: 1003" }, { status: 500 });
   }
 }
+
 
 
 
