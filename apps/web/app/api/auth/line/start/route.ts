@@ -82,7 +82,6 @@ export async function GET(req: Request) {
   }
 
   // ↓ existing logic continues...
-  // FORCE_DEBUG_RETURN_20260209
   // If this does not show up, Pages is not running this code path.
   try {
     const u = new URL(request.url);
@@ -97,7 +96,6 @@ export async function GET(req: Request) {
       }, null, 2), { status: 200, headers: { "content-type": "application/json; charset=utf-8" } });
     }
   } catch (e) {
-    return new Response(JSON.stringify({ ok:false, where:"FORCE_DEBUG_RETURN_20260209", error:String(e) }, null, 2), { status: 200, headers: { "content-type": "application/json; charset=utf-8" } });
   }
 
 /* DEBUG__LINE_START_GET_V1 */  try{
@@ -128,7 +126,7 @@ export async function GET(req: Request) {
     // ignore, proceed normal
   }
 
-  const url = new URL(req.url);
+# removed duplicate: const url = new URL(req.url);
   const debug = url.searchParams.get("debug") === "1";
   const tenantId = url.searchParams.get("tenantId") || "default";
 
@@ -152,7 +150,6 @@ export async function GET(req: Request) {
       ok: true,
       debug: true,
       tenantId,
-      envSeen: {
         API_BASE: !!v("API_BASE"),
         WORKER_API_BASE: !!v("WORKER_API_BASE"),
         BOOKING_API_BASE: !!v("BOOKING_API_BASE"),
@@ -180,12 +177,10 @@ export async function GET(req: Request) {
       if (debug) {
         return NextResponse.json({ buildId: 'BUILD_MARKER_20260209_121647',
           ok: false,
-          error: "upstream_not_ok",
           status: res.status,
           apiBase,
           upstream,
           body: text.slice(0, 800),
-          envSeen: {
             API_BASE: !!readEnv("API_BASE"),
             WORKER_API_BASE: !!readEnv("WORKER_API_BASE"),
             BOOKING_API_BASE: !!readEnv("BOOKING_API_BASE"),
@@ -221,11 +216,9 @@ export async function GET(req: Request) {
     if (debug) {
       return NextResponse.json({ buildId: 'BUILD_MARKER_20260209_121647',
         ok: false,
-        error: "exception",
         message: String(e?.message || e),
         apiBase,
         upstream,
-        envSeen: {
           API_BASE: !!readEnv("API_BASE"),
           WORKER_API_BASE: !!readEnv("WORKER_API_BASE"),
           BOOKING_API_BASE: !!readEnv("BOOKING_API_BASE"),
@@ -237,6 +230,8 @@ export async function GET(req: Request) {
     return NextResponse.json({ buildId: 'BUILD_MARKER_20260209_121647', ok: false, error: "failed_to_get_auth_url", detail: "error code: 1003" }, { status: 500 });
   }
 }
+
+
 
 
 
