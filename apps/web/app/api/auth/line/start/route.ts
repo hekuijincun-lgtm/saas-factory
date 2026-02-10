@@ -61,8 +61,7 @@ function getApiBase(): string {
 
 export async function GET(req: Request) {
   const url = new URL(req.url);
-
-  // ===== DEBUG: must run before any upstream fetch =====
+  // ===== DEBUG (single source of truth) =====
   if (url.searchParams.get("debug") === "1") {
     const envAny = (process.env as any);
     return NextResponse.json({
@@ -76,6 +75,8 @@ export async function GET(req: Request) {
         LINE_CHANNEL_ID: !!envAny.LINE_CHANNEL_ID,
         LINE_CHANNEL_SECRET: !!envAny.LINE_CHANNEL_SECRET,
       }
+    });
+  }
     });
   }
   if (url.searchParams.get("debug") === "1") {
@@ -247,6 +248,7 @@ export async function GET(req: Request) {
     return NextResponse.json({ buildId: 'BUILD_MARKER_20260209_121647', ok: false, error: "failed_to_get_auth_url", detail: "error code: 1003" }, { status: 500 });
   }
 }
+
 
 
 
