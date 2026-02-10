@@ -69,3 +69,5 @@ export async function onRequestGet(context: any) {
 
   return Response.redirect(authUrl, 302);
 }
+
+
