@@ -61,6 +61,23 @@ function getApiBase(): string {
 
 export async function GET(req: Request) {
   const url = new URL(req.url);
+
+  // ===== DEBUG: must run before any upstream fetch =====
+  if (url.searchParams.get("debug") === "1") {
+    const envAny = (process.env as any);
+    return NextResponse.json({
+      ok: true,
+      where: "apps/web/app/api/auth/line/start/route.ts",
+      href: url.toString(),
+      env: {
+        API_BASE: !!envAny.API_BASE,
+        BOOKING_API_BASE: !!envAny.BOOKING_API_BASE,
+        NEXT_PUBLIC_API_BASE: !!envAny.NEXT_PUBLIC_API_BASE,
+        LINE_CHANNEL_ID: !!envAny.LINE_CHANNEL_ID,
+        LINE_CHANNEL_SECRET: !!envAny.LINE_CHANNEL_SECRET,
+      }
+    });
+  }
   if (url.searchParams.get("debug") === "1") {
     const body = {
       ok: true,
@@ -126,7 +143,7 @@ export async function GET(req: Request) {
     // ignore, proceed normal
   }
 
-# removed duplicate: const url = new URL(req.url);
+// removed duplicate: const url = new URL(req.url);
   const debug = url.searchParams.get("debug") === "1";
   const tenantId = url.searchParams.get("tenantId") || "default";
 
@@ -230,6 +247,9 @@ export async function GET(req: Request) {
     return NextResponse.json({ buildId: 'BUILD_MARKER_20260209_121647', ok: false, error: "failed_to_get_auth_url", detail: "error code: 1003" }, { status: 500 });
   }
 }
+
+
+
 
 
 
