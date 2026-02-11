@@ -3,8 +3,8 @@ import { NextResponse } from "next/server";
 export const runtime = "edge";
 
 /**
- * Pages → Workers の upstream は
- * 👉 明示 env のみを見る（NEXT_PUBLIC_* は絶対に混ぜない）
+ * Pages → Workers upstream
+ * ✅ 明示 env のみを見る（NEXT_PUBLIC_* は混ぜない）
  */
 function resolveUpstreamBase(): string {
   const env = process.env as Record<string, string | undefined>;
@@ -20,11 +20,12 @@ export async function GET(req: Request) {
   const debug = url.searchParams.get("debug") === "1";
   const tenantId = url.searchParams.get("tenantId") ?? "default";
 
-  /* ===============================
-   * DEBUG: Pages が見ている env を即返す
-   * =============================== */
+  // ===== DEBUG: Pages が見ている env を即返す（最優先）=====
   if (debug) {
     return NextResponse.json({
+      ok: true,
+      debug: true,
+      tenantId,
       env: {
         LINE_CHANNEL_ID: !!process.env.LINE_CHANNEL_ID,
         LINE_CHANNEL_SECRET: !!process.env.LINE_CHANNEL_SECRET,
@@ -36,9 +37,7 @@ export async function GET(req: Request) {
 
   const upstreamBase = resolveUpstreamBase();
 
-  /* ===============================
-   * Health check（best-effort）
-   * =============================== */
+  // ===== Health check（best-effort）=====
   let upstreamOk: boolean | null = null;
   let upstreamStatus: number | null = null;
 
