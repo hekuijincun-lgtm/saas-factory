@@ -2,16 +2,10 @@ import { NextResponse } from "next/server";
 
 export const runtime = "edge";
 
-/**
- * Pages → Workers upstream
- * ✅ 明示 env のみを見る（NEXT_PUBLIC_* は混ぜない）
- */
 function resolveUpstreamBase(): string {
   const env = process.env as Record<string, string | undefined>;
-
   if (env.API_BASE) return env.API_BASE;
   if (env.BOOKING_API_BASE) return env.BOOKING_API_BASE;
-
   throw new Error("API_BASE / BOOKING_API_BASE is not set on Pages");
 }
 
@@ -20,11 +14,11 @@ export async function GET(req: Request) {
   const debug = url.searchParams.get("debug") === "1";
   const tenantId = url.searchParams.get("tenantId") ?? "default";
 
-  // ===== DEBUG: Pages が見ている env を即返す（最優先）=====
+  // ✅ STAMP: この route.ts が本当に実行されてるかを確定させる印
   if (debug) {
     return NextResponse.json({
       ok: true,
-      debug: true,
+      stamp: "HIT_STATUS_ROUTE_V1",
       tenantId,
       env: {
         LINE_CHANNEL_ID: !!process.env.LINE_CHANNEL_ID,
@@ -37,7 +31,6 @@ export async function GET(req: Request) {
 
   const upstreamBase = resolveUpstreamBase();
 
-  // ===== Health check（best-effort）=====
   let upstreamOk: boolean | null = null;
   let upstreamStatus: number | null = null;
 
@@ -53,6 +46,7 @@ export async function GET(req: Request) {
 
   return NextResponse.json({
     ok: true,
+    stamp: "HIT_STATUS_ROUTE_V1",
     tenantId,
     upstreamBase,
     upstreamOk,
