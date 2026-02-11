@@ -3,6 +3,19 @@ export const runtime = 'edge';
 import { NextResponse } from "next/server";
 
 export async function GET(req: Request) {
+export async function GET(req: Request) {
+  // ==== line-start-debug (FORCE RETURN) ====
+  const u = new URL(req.url);
+  if (u.searchParams.get("debug") === "1") {
+    return new Response(JSON.stringify({
+      ok: true,
+      where: "line-start-debug",
+      env: {
+        API_BASE: process.env.API_BASE ?? null,
+        BOOKING_API_BASE: process.env.BOOKING_API_BASE ?? null
+      }
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  }
   const url = new URL(req.url);
   const tenantId = url.searchParams.get("tenantId") ?? "default";
 
@@ -23,4 +36,5 @@ export async function GET(req: Request) {
 
   return NextResponse.redirect(j.url);
 }
+
 
