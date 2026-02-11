@@ -17,7 +17,20 @@ async function readJsonSafe(r: Response): Promise<any> {
 }
 
 export async function GET(req: Request) {
-  const url = new URL(req.url);
+    const url = new URL(req.url);
+  if (url.searchParams.get("debug") === "1") {
+    return NextResponse.json({
+      ok: true,
+      marker: "LINE_START_DEBUG_MARKER_V1",
+      url: req.url,
+      env: {
+        BOOKING_API_BASE: process.env.BOOKING_API_BASE ?? null,
+        NEXT_PUBLIC_API_BASE: process.env.NEXT_PUBLIC_API_BASE ?? null,
+        WORKER_API_BASE: process.env.WORKER_API_BASE ?? null
+      }
+    });
+  }
+const url = new URL(req.url);
 
   // ===== DEBUG (single source of truth) =====
   if (url.searchParams.get("debug") === "1") {
@@ -87,3 +100,4 @@ export async function GET(req: Request) {
 
   return NextResponse.redirect(authUrl, { status: 302 });
 }
+
