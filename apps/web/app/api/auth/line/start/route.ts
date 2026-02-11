@@ -45,7 +45,7 @@ if (__url.searchParams.get("debug") === "1") {
       }
     });
   }
-const url = new URL(req.url);
+// removed duplicate url\n
 
   // ===== DEBUG (single source of truth) =====
   if (url.searchParams.get("debug") === "1") {
@@ -115,5 +115,6 @@ const url = new URL(req.url);
 
   return NextResponse.redirect(authUrl, { status: 302 });
 }
+
 
 
