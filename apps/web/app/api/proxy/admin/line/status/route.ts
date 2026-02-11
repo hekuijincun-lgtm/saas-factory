@@ -1,23 +1,18 @@
-export const runtime = "edge";
-
 import { NextResponse } from "next/server";
 
+export const runtime = "edge";
+
+/**
+ * Pages → Workers の upstream は
+ * 👉 明示 env のみを見る（NEXT_PUBLIC_* は絶対に混ぜない）
+ */
 function resolveUpstreamBase(): string {
-  // Prefer explicit envs
   const env = process.env as Record<string, string | undefined>;
 
-  // Put your canonical env keys here
-  const candidates = [
-    env.BOOKING_API_BASE,
-    env.NEXT_PUBLIC_API_BASE,
-    env.API_BASE,
-    env.BOOKING_API_BASE_URL,
-    env.NEXT_PUBLIC_API_BASE_URL,
-  ].filter(Boolean) as string[];
+  if (env.API_BASE) return env.API_BASE;
+  if (env.BOOKING_API_BASE) return env.BOOKING_API_BASE;
 
-  // If running on Pages, you usually want HTTPS to your Workers API
-  // (fallback stays localhost for dev)
-  return candidates[0] ?? "http://127.0.0.1:8787";
+  throw new Error("API_BASE / BOOKING_API_BASE is not set on Pages");
 }
 
 export async function GET(req: Request) {
@@ -25,11 +20,28 @@ export async function GET(req: Request) {
   const debug = url.searchParams.get("debug") === "1";
   const tenantId = url.searchParams.get("tenantId") ?? "default";
 
+  /* ===============================
+   * DEBUG: Pages が見ている env を即返す
+   * =============================== */
+  if (debug) {
+    return NextResponse.json({
+      env: {
+        LINE_CHANNEL_ID: !!process.env.LINE_CHANNEL_ID,
+        LINE_CHANNEL_SECRET: !!process.env.LINE_CHANNEL_SECRET,
+        API_BASE: process.env.API_BASE ?? null,
+        BOOKING_API_BASE: process.env.BOOKING_API_BASE ?? null,
+      },
+    });
+  }
+
   const upstreamBase = resolveUpstreamBase();
 
-  // health check (best-effort)
+  /* ===============================
+   * Health check（best-effort）
+   * =============================== */
   let upstreamOk: boolean | null = null;
   let upstreamStatus: number | null = null;
+
   try {
     const healthUrl = new URL("/health", upstreamBase).toString();
     const r = await fetch(healthUrl, { method: "GET" });
@@ -40,21 +52,11 @@ export async function GET(req: Request) {
     upstreamStatus = null;
   }
 
-  const out: any = {
+  return NextResponse.json({
     ok: true,
     tenantId,
     upstreamBase,
     upstreamOk,
     upstreamStatus,
-  };
-
-  if (debug) {
-    out.envSeen = {
-      BOOKING_API_BASE: !!process.env.BOOKING_API_BASE,
-      NEXT_PUBLIC_API_BASE: !!process.env.NEXT_PUBLIC_API_BASE,
-      API_BASE: !!process.env.API_BASE,
-    };
-  }
-
-  return NextResponse.json(out);
+  });
 }
