@@ -26,6 +26,28 @@ async function readJsonSafe(r: Response): Promise<any> {
 }
 
 export async function GET(request: Request) {
+  // ===== DEBUG FORCE RETURN (safe, no secrets) =====
+  try {
+    const u = new URL(request.url);
+    if (u.searchParams.get("debug") === "1") {
+      return new Response(JSON.stringify({
+        ok: true,
+        where: "line-start-debug",
+        ts: new Date().toISOString(),
+        envSeen: {
+          API_BASE: process.env.API_BASE ?? null,
+          BOOKING_API_BASE: process.env.BOOKING_API_BASE ?? null,
+          NEXT_PUBLIC_API_BASE: process.env.NEXT_PUBLIC_API_BASE ?? null
+        }
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+  } catch (e) {
+    return new Response(JSON.stringify({ ok: false, where: "line-start-debug", error: String(e) }), {
+      status: 200, headers: { "content-type": "application/json" }
+    });
+  }
+  // ===== DEBUG FORCE RETURN END =====
+
   const url = new URL(request.url);
 
   // ===== DEBUG: ALWAYS return JSON BEFORE any other logic =====
@@ -123,3 +145,4 @@ export async function GET(request: Request) {
 
   return NextResponse.redirect(authUrl, { status: 302 });
 }
+
