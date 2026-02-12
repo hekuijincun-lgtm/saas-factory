@@ -1533,7 +1533,7 @@ type Env = {
 app.get("/auth/line/start", async (c: any) => {
   const url = new URL(c.req.url);
   const tenantId = url.searchParams.get("tenantId") || "default";
-  const returnTo = url.searchParams.get("returnTo") || "https://main.saas-factory-web.pages.dev/admin";
+  const returnTo = url.searchParams.get("returnTo") || "https://saas-factory-a0y.pages.dev/admin";
   const state = `${tenantId}.${Math.random().toString(36).slice(2)}`;
 
   const LINE_CHANNEL_ID = c.env.LINE_CHANNEL_ID;
@@ -1603,7 +1603,8 @@ app.get("/auth/line/callback", async (c: any) => {
   // まずは導線確認で returnTo へ戻す
   const cookies = c.req.header("cookie") || "";
   const m = /sf_returnTo=([^;]+)/.exec(cookies);
-  const returnTo = m ? decodeURIComponent(m[1]) : "https://main.saas-factory-web.pages.dev/admin";
+  const returnTo = m ? decodeURIComponent(m[1]) : "https://saas-factory-a0y.pages.dev/admin";
 
   return new Response(null, { status: 302, headers: { Location: returnTo } });
 });
+
