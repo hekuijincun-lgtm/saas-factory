@@ -21,12 +21,8 @@ if (!API_BASE) {
     }),
     { status: 500, headers: { "content-type": "application/json" } }
   );
-}if (!API_BASE) {
-  return new Response(JSON.stringify({ ok: false, error: "missing_api_base", detail: "Set NEXT_PUBLIC_API_BASE (or API_BASE/BOOKING_API_BASE) in Pages env" }), {
-    status: 500,
-    headers: { "content-type": "application/json" },
-  });
 }
+
 const url = new URL(req.url);
   const tenantId = url.searchParams.get("tenantId") ?? "default";
 
@@ -57,6 +53,7 @@ const url = new URL(req.url);
     );
   }
 }
+
 
 
 
