@@ -20,7 +20,7 @@ export async function GET(req: Request) {
   
   // === DEBUG_ENV_DUMP (temporary) ===
   try {
-    const u = new URL(request.url);
+    const u = new URL(req.url);
     if (u.searchParams.get("debug") === "1") {
       const pick = (k: string) => (process.env as any)?.[k] ?? null;
 
@@ -40,7 +40,7 @@ export async function GET(req: Request) {
         ok: true,
         debug: true,
         at: new Date().toISOString(),
-        requestUrl: request.url,
+        requestUrl: req.url,
         env,
       }, { status: 200 });
     }
@@ -119,4 +119,5 @@ const url = new URL(req.url);
   // ✅ ここが本命：LINEに飛ばす
   return NextResponse.redirect(authUrl, 302);
 }
+
 
