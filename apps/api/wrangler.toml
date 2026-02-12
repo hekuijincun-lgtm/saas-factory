@@ -48,5 +48,6 @@ bindings = [
 
 # ===== AUTO-ADDED production env (cloned from staging) =====
 [env.production]
-name = "saas-factory-api-staging"
+name = "saas-factory-api"
+
 
