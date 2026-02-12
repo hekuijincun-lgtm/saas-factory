@@ -19,7 +19,7 @@ export async function GET() {
   let pagesEnv: any = null;
   try {
     const ctx = getRequestContext();
-    // @ts-ignore
+// @ts-expect-error -- cf
     pagesEnv = (ctx?.env as any) ?? null;
   } catch (e: any) {
     pagesEnv = { __error: String(e?.message ?? e) };
@@ -35,3 +35,4 @@ export async function GET() {
     pagesEnvKeysSample: pagesEnv ? Object.keys(pagesEnv).slice(0, 30) : null,
   });
 }
+
