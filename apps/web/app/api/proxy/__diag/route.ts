@@ -1,3 +1,5 @@
+export const runtime = 'edge';
+
 import { NextResponse } from "next/server";
 import { getRequestContext } from "@cloudflare/next-on-pages";
 
@@ -35,4 +37,5 @@ export async function GET() {
     pagesEnvKeysSample: pagesEnv ? Object.keys(pagesEnv).slice(0, 30) : null,
   });
 }
+
 
