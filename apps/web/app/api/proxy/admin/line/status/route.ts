@@ -1,3 +1,5 @@
+export const runtime = 'edge';
+
 // ===== WORKERS DEBUG STAMP BLOCK (copy-paste) =====
 function json(data: unknown, status = 200) {
   return new Response(JSON.stringify(data, null, 2), {
@@ -52,3 +54,4 @@ export function debugStamp(request: Request, env: Record<string, any>) {
   });
 }
 // ===== /WORKERS DEBUG STAMP BLOCK =====
+
