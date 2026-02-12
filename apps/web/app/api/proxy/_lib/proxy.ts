@@ -178,4 +178,40 @@ export async function proxyJson<T = any>(
 // Backward-compatible aliases (in case other files import these names)
 export const getApiBase = resolveUpstreamBase;
 export const getBookingApiBase = resolveBookingBase;
+/**
+ * forwardJson: minimal fetch forwarder (no dependency on other helpers)
+ * - clones method/headers/body from incoming Request
+ * - allows overriding via init (optional)
+ */
+export async function forwardJson(req: Request, url: string, init: RequestInit = {}) {
+  const h = new Headers(req.headers);
+
+  // allow init headers override/merge
+  if (init.headers) {
+    const ih = new Headers(init.headers as HeadersInit);
+    ih.forEach((v, k) => h.set(k, v));
+  }
+
+  // body: keep streaming where possible
+  const method = (init.method ?? req.method).toUpperCase();
+  const bodyAllowed = !(method === "GET" || method === "HEAD");
+
+  const upstreamReq = new Request(url, {
+    method,
+    headers: h,
+    body: bodyAllowed ? (init.body ?? (req as any).body) : undefined,
+    redirect: "manual",
+  });
+
+  const res = await fetch(upstreamReq);
+
+  // ensure JSON-ish content-type if upstream forgets
+  if (!res.headers.get("content-type")) {
+    const rh = new Headers(res.headers);
+    rh.set("content-type", "application/json; charset=utf-8");
+    return new Response(res.body, { status: res.status, headers: rh });
+  }
+
+  return res;
+}
 
