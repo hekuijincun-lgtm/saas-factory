@@ -12,12 +12,12 @@ function resolveEnvVar(name: string): string | undefined {
   try {
     // Cloudflare Pages (next-on-pages)
     const ctx = getRequestContext();
-    // @ts-ignore
+// @ts-expect-error -- shim
     const v = (ctx?.env as any)?.[name];
     if (typeof v === 'string' && v.length) return v;
   } catch {}
   // Local dev / Node
-  // @ts-ignore
+// @ts-expect-error -- shim
   const pv = (process?.env as any)?.[name];
   if (typeof pv === 'string' && pv.length) return pv;
   return undefined;
@@ -133,6 +133,7 @@ export async function forwardJson(
     );
   }
 }
+
 
 
 
