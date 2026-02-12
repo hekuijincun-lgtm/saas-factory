@@ -1,55 +1,54 @@
-import { NextResponse } from "next/server";
-
-export const runtime = "edge";
-
-function resolveUpstreamBase(): string {
-  const env = process.env as Record<string, string | undefined>;
-  if (env.API_BASE) return env.API_BASE;
-  if (env.BOOKING_API_BASE) return env.BOOKING_API_BASE;
-  throw new Error("API_BASE / BOOKING_API_BASE is not set on Pages");
+// ===== WORKERS DEBUG STAMP BLOCK (copy-paste) =====
+function json(data: unknown, status = 200) {
+  return new Response(JSON.stringify(data, null, 2), {
+    status,
+    headers: { "content-type": "application/json; charset=utf-8" },
+  });
 }
 
-export async function GET(req: Request) {
-  const url = new URL(req.url);
+function boolEnv(env: Record<string, any>, key: string) {
+  return !!env?.[key];
+}
+
+function valEnv(env: Record<string, any>, key: string) {
+  const v = env?.[key];
+  return v === undefined ? null : v;
+}
+
+// ルートの一番最初（1003返すより前）に入れる
+export function debugStamp(request: Request, env: Record<string, any>) {
+  const url = new URL(request.url);
   const debug = url.searchParams.get("debug") === "1";
   const tenantId = url.searchParams.get("tenantId") ?? "default";
 
-  // ✅ STAMP: この route.ts が本当に実行されてるかを確定させる印
-  if (debug) {
-    return NextResponse.json({
-      ok: true,
-      stamp: "HIT_STATUS_ROUTE_V1",
-      tenantId,
-      env: {
-        LINE_CHANNEL_ID: !!process.env.LINE_CHANNEL_ID,
-        LINE_CHANNEL_SECRET: !!process.env.LINE_CHANNEL_SECRET,
-        API_BASE: process.env.API_BASE ?? null,
-        BOOKING_API_BASE: process.env.BOOKING_API_BASE ?? null,
-      },
-    });
-  }
+  if (!debug) return null;
 
-  const upstreamBase = resolveUpstreamBase();
-
-  let upstreamOk: boolean | null = null;
-  let upstreamStatus: number | null = null;
-
-  try {
-    const healthUrl = new URL("/health", upstreamBase).toString();
-    const r = await fetch(healthUrl, { method: "GET" });
-    upstreamOk = r.ok;
-    upstreamStatus = r.status;
-  } catch {
-    upstreamOk = false;
-    upstreamStatus = null;
-  }
-
-  return NextResponse.json({
+  return json({
     ok: true,
-    stamp: "HIT_STATUS_ROUTE_V1",
+    stamp: "HIT_WORKERS_ROUTE_V1",
+    path: url.pathname,
     tenantId,
-    upstreamBase,
-    upstreamOk,
-    upstreamStatus,
+    envSeen: {
+      // LINE
+      LINE_CHANNEL_ID: boolEnv(env, "LINE_CHANNEL_ID"),
+      LINE_CHANNEL_SECRET: boolEnv(env, "LINE_CHANNEL_SECRET"),
+      LINE_LOGIN_CALLBACK_URL: boolEnv(env, "LINE_LOGIN_CALLBACK_URL"),
+      LINE_REDIRECT_URI: boolEnv(env, "LINE_REDIRECT_URI"),
+
+      // Upstream
+      API_BASE: boolEnv(env, "API_BASE"),
+      BOOKING_API_BASE: boolEnv(env, "BOOKING_API_BASE"),
+
+      // If you have KV bindings etc.
+      LINE_OAUTH_KV: boolEnv(env, "LINE_OAUTH_KV"),
+    },
+    values: {
+      // 値も見たい場合（秘密なら null にしてOK）
+      LINE_LOGIN_CALLBACK_URL: valEnv(env, "LINE_LOGIN_CALLBACK_URL"),
+      LINE_REDIRECT_URI: valEnv(env, "LINE_REDIRECT_URI"),
+      API_BASE: valEnv(env, "API_BASE"),
+      BOOKING_API_BASE: valEnv(env, "BOOKING_API_BASE"),
+    },
   });
 }
+// ===== /WORKERS DEBUG STAMP BLOCK =====

@@ -1524,3 +1524,86 @@ type Env = {
 
 
 
+
+
+/** =========================
+ * LINE OAuth (Workers side)
+ * PagesはUI専念にするため、OAuthは全部こっちへ集約
+ * ========================= */
+app.get("/auth/line/start", async (c: any) => {
+  const url = new URL(c.req.url);
+  const tenantId = url.searchParams.get("tenantId") || "default";
+  const returnTo = url.searchParams.get("returnTo") || "https://main.saas-factory-web.pages.dev/admin";
+  const state = `${tenantId}.${Math.random().toString(36).slice(2)}`;
+
+  const LINE_CHANNEL_ID = c.env.LINE_CHANNEL_ID;
+  const LINE_CHANNEL_SECRET = c.env.LINE_CHANNEL_SECRET;
+  const LINE_REDIRECT_URI = c.env.LINE_REDIRECT_URI; // 例: https://saas-factory-api....workers.dev/auth/line/callback
+
+  if(!LINE_CHANNEL_ID || !LINE_CHANNEL_SECRET || !LINE_REDIRECT_URI){
+    return c.json({ ok:false, error:"missing_line_env", env:{
+      LINE_CHANNEL_ID:!!LINE_CHANNEL_ID,
+      LINE_CHANNEL_SECRET:!!LINE_CHANNEL_SECRET,
+      LINE_REDIRECT_URI:!!LINE_REDIRECT_URI
+    }}, 500);
+  }
+
+  // TODO: state/returnTo を保存（D1/KV/DO）したいならここで保存
+  // まずは導線確認のため、returnTo を state に埋めず cookie に置く（暫定）
+  const auth = new URL("https://access.line.me/oauth2/v2.1/authorize");
+  auth.searchParams.set("response_type","code");
+  auth.searchParams.set("client_id", LINE_CHANNEL_ID);
+  auth.searchParams.set("redirect_uri", LINE_REDIRECT_URI);
+  auth.searchParams.set("state", state);
+  auth.searchParams.set("scope", "profile openid");
+  auth.searchParams.set("prompt","consent");
+
+  const res = new Response(null, { status: 302, headers: { Location: auth.toString() } });
+  res.headers.append("Set-Cookie", `sf_returnTo=${encodeURIComponent(returnTo)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=600`);
+  res.headers.append("Set-Cookie", `sf_tenantId=${encodeURIComponent(tenantId)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=600`);
+  return res;
+});
+
+app.get("/auth/line/callback", async (c: any) => {
+  const url = new URL(c.req.url);
+  const code = url.searchParams.get("code");
+  const state = url.searchParams.get("state") || "";
+
+  const LINE_CHANNEL_ID = c.env.LINE_CHANNEL_ID;
+  const LINE_CHANNEL_SECRET = c.env.LINE_CHANNEL_SECRET;
+  const LINE_REDIRECT_URI = c.env.LINE_REDIRECT_URI;
+
+  if(!code){
+    return c.json({ ok:false, error:"missing_code", href:url.toString() }, 400);
+  }
+  if(!LINE_CHANNEL_ID || !LINE_CHANNEL_SECRET || !LINE_REDIRECT_URI){
+    return c.json({ ok:false, error:"missing_line_env" }, 500);
+  }
+
+  // トークン交換
+  const tokenRes = await fetch("https://api.line.me/oauth2/v2.1/token", {
+    method: "POST",
+    headers: { "content-type":"application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type:"authorization_code",
+      code,
+      redirect_uri: LINE_REDIRECT_URI,
+      client_id: LINE_CHANNEL_ID,
+      client_secret: LINE_CHANNEL_SECRET,
+    })
+  });
+
+  const tokenJson = await tokenRes.json().catch(()=>null);
+
+  if(!tokenRes.ok){
+    return c.json({ ok:false, error:"token_exchange_failed", status:tokenRes.status, body:tokenJson }, 500);
+  }
+
+  // TODO: tokenJson を D1/KV/DO に保存して「ログインセッション」作る
+  // まずは導線確認で returnTo へ戻す
+  const cookies = c.req.header("cookie") || "";
+  const m = /sf_returnTo=([^;]+)/.exec(cookies);
+  const returnTo = m ? decodeURIComponent(m[1]) : "https://main.saas-factory-web.pages.dev/admin";
+
+  return new Response(null, { status: 302, headers: { Location: returnTo } });
+});

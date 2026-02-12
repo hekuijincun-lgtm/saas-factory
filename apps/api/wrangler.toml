@@ -31,3 +31,22 @@ preview_id = "32db8ae0d1fb42fb93b03725997da00a"
 bindings = [
   { name = "SLOT_LOCK", class_name = "SlotLock" }
 ]
+
+
+# DUP_REMOVED [env.staging]
+# DUP_REMOVED name = "saas-factory-api-staging"
+# DUP_REMOVED 
+# DUP_REMOVED 
+# DUP_REMOVED 
+# DUP_REMOVED 
+# DUP_REMOVED 
+# DUP_REMOVED [env.staging]
+# DUP_REMOVED name = "saas-factory-api-staging"
+# DUP_REMOVED 
+# DUP_REMOVED 
+# DUP_REMOVED
+
+# ===== AUTO-ADDED production env (cloned from staging) =====
+[env.production]
+name = "saas-factory-api-staging"
+
