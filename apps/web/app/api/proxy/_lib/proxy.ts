@@ -1,143 +1,181 @@
-/**
- * API Proxy ユーティリティ
- * Workers API へのリクエストを転送して CORS を回避
- */
+// apps/web/app/api/proxy/_lib/proxy.ts
+// ✅ single source of truth for upstream base (Pages/Preview/Local)
+// ✅ avoids hard-coded staging domains (ERR_NAME_NOT_RESOLVED killer)
 
-import { NextRequest, NextResponse } from 'next/server';
+export const runtime = 'edge';
 
+type Dict = Record<string, string>;
 
-import { getRequestContext } from '@cloudflare/next-on-pages';
-
-function resolveEnvVar(name: string): string | undefined {
-  try {
-    // Cloudflare Pages (next-on-pages)
-    const ctx = getRequestContext();
-// @ts-expect-error -- shim
-    const v = (ctx?.env as any)?.[name];
-    if (typeof v === 'string' && v.length) return v;
-  } catch {}
-  // Local dev / Node
-// @ts-expect-error -- shim
-  const pv = (process?.env as any)?.[name];
-  if (typeof pv === 'string' && pv.length) return pv;
+function pickFirst(...vals: Array<string | undefined | null>): string | undefined {
+  for (const v of vals) {
+    if (typeof v === 'string' && v.trim().length > 0) return v.trim();
+  }
   return undefined;
 }
-/**
- * API Base URL を取得（サーバー側環境変数を優先）
- */
-export function getApiBase(): string {
-  // BOOKING_API_BASE を優先、なければ API_BASE、それもなければデフォルト
-  const apiBase = 
-    resolveEnvVar("BOOKING_API_BASE") ??
-    resolveEnvVar("API_BASE") ?? 
-    resolveEnvVar("NEXT_PUBLIC_API_BASE") ?? 
-    '(process.env.CF_PAGES ? "https://saas-factory-api-staging.hekuijincun.workers.dev" : "(process.env.CF_PAGES ? "https://saas-factory-api-staging.hekuijincun.workers.dev" : "https://saas-factory-api-staging.hekuijincun.workers.dev"):8787")';
-  
-  // 末尾のスラッシュを削除
-  return apiBase.replace(/\/$/, '');
+
+function normalizeBase(base: string): string {
+  // remove trailing slash
+  return base.replace(/\/+$/, '');
 }
 
-/**
- * JSON リクエストを転送
- */
-export async function forwardJson(
-  req: NextRequest,
-  path: string
+export function resolveUpstreamBase(): string {
+  // Priority:
+  // 1) Explicit public base (Next.js client/server unified)
+  // 2) Explicit server-only base
+  // 3) Vite style (if ever used)
+  // 4) Local dev fallback
+  const env = (globalThis as any)?.process?.env ?? {};
+
+  const base =
+    pickFirst(
+      env.NEXT_PUBLIC_API_BASE,
+      env.API_BASE,
+      env.VITE_API_BASE,
+      env.BOOKING_API_BASE, // last resort (some setups reuse same)
+    ) ?? 'http://127.0.0.1:8787';
+
+  return normalizeBase(base);
+}
+
+export function resolveBookingBase(): string {
+  const env = (globalThis as any)?.process?.env ?? {};
+  const base =
+    pickFirst(
+      env.NEXT_PUBLIC_BOOKING_API_BASE,
+      env.BOOKING_API_BASE,
+      env.NEXT_PUBLIC_API_BASE,
+      env.API_BASE,
+      env.VITE_API_BASE,
+    ) ?? resolveUpstreamBase();
+
+  return normalizeBase(base);
+}
+
+function safeJoin(base: string, path: string): string {
+  const b = normalizeBase(base);
+  const p = path.startsWith('/') ? path : `/${path}`;
+  return `${b}${p}`;
+}
+
+function copyHeaders(src: Headers, extra?: Dict): Headers {
+  const h = new Headers();
+
+  // Forward only what we want (avoid hop-by-hop headers)
+  const allow = new Set([
+    'accept',
+    'accept-language',
+    'content-type',
+    'authorization',
+    'cookie',
+    'user-agent',
+    'x-forwarded-for',
+    'x-real-ip',
+    'cf-connecting-ip',
+    'cf-ipcountry',
+    'referer',
+    'origin',
+  ]);
+
+  src.forEach((v, k) => {
+    const key = k.toLowerCase();
+    if (allow.has(key)) h.set(k, v);
+  });
+
+  if (extra) {
+    for (const [k, v] of Object.entries(extra)) {
+      if (v != null) h.set(k, String(v));
+    }
+  }
+
+  return h;
+}
+
+export type ProxyTarget = 'api' | 'booking';
+
+export function resolveTargetBase(target: ProxyTarget): string {
+  return target === 'booking' ? resolveBookingBase() : resolveUpstreamBase();
+}
+
+export async function proxyFetch(
+  req: Request,
+  upstreamPath: string,
+  opts?: {
+    target?: ProxyTarget;
+    method?: string;
+    headers?: Dict;
+    body?: BodyInit | null;
+    // pass-through: if true, do not force json headers
+    passthrough?: boolean;
+  }
 ): Promise<Response> {
-  const apiBase = getApiBase();
-  const url = `${apiBase}${path.startsWith('/') ? path : `/${path}`}`;
+  const target: ProxyTarget = opts?.target ?? 'api';
+  const base = resolveTargetBase(target);
+  const url = safeJoin(base, upstreamPath);
 
-  // リクエストボディを取得（GET/HEAD の場合は不要）
-  let body: string | undefined;
-  if (req.method !== 'GET' && req.method !== 'HEAD') {
-    try {
-      body = await req.text();
-    } catch {
-      // body がない場合は undefined のまま
-    }
+  const method = (opts?.method ?? req.method ?? 'GET').toUpperCase();
+
+  const headers = copyHeaders(req.headers, opts?.headers);
+
+  // If we send body, ensure content-type exists (caller may override)
+  const body = opts?.body ?? (method === 'GET' || method === 'HEAD' ? null : await req.arrayBuffer().catch(() => null));
+
+  // Avoid cache surprises in auth flows
+  headers.set('cache-control', 'no-store');
+
+  const res = await fetch(url, {
+    method,
+    headers,
+    body: body as any,
+    redirect: 'manual',
+  });
+
+  // Optionally pass through raw response
+  if (opts?.passthrough) return res;
+
+  // Default: just return upstream response as-is (status/headers/body)
+  // But ensure CORS for browser calls if you use this from client
+  const outHeaders = new Headers(res.headers);
+  if (!outHeaders.has('access-control-allow-origin')) {
+    outHeaders.set('access-control-allow-origin', '*');
+  }
+  if (!outHeaders.has('access-control-allow-headers')) {
+    outHeaders.set('access-control-allow-headers', '*');
+  }
+  if (!outHeaders.has('access-control-allow-methods')) {
+    outHeaders.set('access-control-allow-methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
   }
 
-  // ヘッダーを構築（重要でないものは除外、必要なら追加）
-  const headers: HeadersInit = {
-    'Content-Type': 'application/json',
-  };
-
-  // Authorization ヘッダーがあれば引き継ぎ
-  const authHeader = req.headers.get('authorization');
-  if (authHeader) {
-    headers['Authorization'] = authHeader;
-  }
-
-  // Cookie があれば引き継ぎ
-  const cookie = req.headers.get('cookie');
-  if (cookie) {
-    headers['Cookie'] = cookie;
-  }
-
-  // リクエストを転送
-  try {
-    // デバッグ用: URLをログ出力（秘密値は含まない）
-    console.log(`[proxy] ${req.method} ${url}`);
-
-    const response = await fetch(url, {
-      method: req.method,
-      headers,
-      body: body || undefined,
-    });
-
-    // レスポンスボディを取得
-    let responseBody: unknown;
-    try {
-      const text = await response.text();
-      responseBody = text ? JSON.parse(text) : null;
-    } catch (parseError) {
-      // JSONパース失敗時は空オブジェクト
-      responseBody = { ok: false, error: 'Invalid JSON response' };
-    }
-
-    // ステータスコードとヘッダーをそのまま返す
-    return NextResponse.json(responseBody, {
-      status: response.status,
-      statusText: response.statusText,
-    });
-  } catch (error) {
-    // エラー時は JSON レスポンスを返す（デバッグ可能にする）
-    const errorMessage = error instanceof Error ? error.message : 'Proxy request failed';
-    const errorName = error instanceof Error ? error.name : 'UnknownError';
-    
-    console.error(`[proxy] Error: ${errorName} - ${errorMessage}`, {
-      method: req.method,
-      path,
-      url,
-    });
-
-    // LINE status の場合は kind: "error" を返す
-    if (path.includes('/line/status')) {
-      return NextResponse.json(
-        {
-          kind: 'error',
-          message: `Proxy failed: ${errorMessage}`,
-        },
-        { status: 500 }
-      );
-    }
-
-    // その他のエンドポイントは ok: false を返す
-    return NextResponse.json(
-      {
-        ok: false,
-        error: errorMessage,
-        url,
-      },
-      { status: 500 }
-    );
-  }
+  return new Response(res.body, {
+    status: res.status,
+    headers: outHeaders,
+  });
 }
 
+export async function proxyJson<T = any>(
+  req: Request,
+  upstreamPath: string,
+  opts?: {
+    target?: ProxyTarget;
+    method?: string;
+    headers?: Dict;
+    bodyJson?: any;
+  }
+): Promise<Response> {
+  const headers: Dict = {
+    ...(opts?.headers ?? {}),
+    'content-type': 'application/json',
+  };
+  const body = opts?.bodyJson == null ? null : JSON.stringify(opts.bodyJson);
 
+  return proxyFetch(req, upstreamPath, {
+    target: opts?.target ?? 'api',
+    method: opts?.method ?? 'POST',
+    headers,
+    body,
+  });
+}
 
-
-
-
-
+// Backward-compatible aliases (in case other files import these names)
+export const getApiBase = resolveUpstreamBase;
+export const getBookingApiBase = resolveBookingBase;
 
