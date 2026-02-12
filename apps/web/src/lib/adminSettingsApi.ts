@@ -266,7 +266,7 @@ export async function getLineAuthUrl(): Promise<{ ok: boolean; url?: string; err
     }
 
     // auth-url エンドポイントを呼び出す（clientId は既に Worker 側で取得済み）
-    const response = await apiGet<{ ok: boolean; url?: string; error?: string }>('${process.env.NEXT_PUBLIC_API_BASE}/admin/integrations/line/auth-url');
+    const response = await apiGet<{ ok: boolean; url?: string; error?: string }>('/api/proxy/admin/integrations/line/auth-url');
     return response;
   } catch (error) {
     if (error instanceof ApiClientError) {
@@ -377,6 +377,7 @@ export async function deleteLineConfig(): Promise<LineConfigResponse> {
   }
   throw new Error(response.error || 'Failed to delete LINE config');
 }
+
 
 
 

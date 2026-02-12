@@ -17,7 +17,38 @@ async function safeReadText(res: Response) {
 }
 
 export async function GET(req: Request) {
-  const url = new URL(req.url);
+  
+  // === DEBUG_ENV_DUMP (temporary) ===
+  try {
+    const u = new URL(request.url);
+    if (u.searchParams.get("debug") === "1") {
+      const pick = (k: string) => (process.env as any)?.[k] ?? null;
+
+      const keys = [
+        "API_BASE","API_BASE_URL","API_ORIGIN",
+        "BOOKING_API_BASE","BOOKING_API_BASE_URL","BOOKING_API_ORIGIN",
+        "NEXT_PUBLIC_API_BASE","NEXT_PUBLIC_API_ORIGIN",
+        "UPSTREAM_BASE","UPSTREAM_ORIGIN",
+        "LINE_CHANNEL_ID","LINE_CHANNEL_SECRET","LINE_LOGIN_CHANNEL_ID","LINE_LOGIN_CHANNEL_SECRET",
+        "CF_PAGES","CF_PAGES_BRANCH","CF_PAGES_URL","CF_PAGES_COMMIT_SHA"
+      ];
+
+      const env: Record<string, any> = {};
+      for (const k of keys) env[k] = pick(k);
+
+      return NextResponse.json({
+        ok: true,
+        debug: true,
+        at: new Date().toISOString(),
+        requestUrl: request.url,
+        env,
+      }, { status: 200 });
+    }
+  } catch (e: any) {
+    return NextResponse.json({ ok:false, debug:true, error:"debug_exception", detail: String(e?.message ?? e) }, { status: 500 });
+  }
+  // === /DEBUG_ENV_DUMP ===
+const url = new URL(req.url);
   const debug = url.searchParams.get("debug") === "1";
 
   const apiBase = pickApiBase();
@@ -88,3 +119,4 @@ export async function GET(req: Request) {
   // ✅ ここが本命：LINEに飛ばす
   return NextResponse.redirect(authUrl, 302);
 }
+

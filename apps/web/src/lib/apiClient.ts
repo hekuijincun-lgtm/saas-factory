@@ -42,7 +42,10 @@ const DEFAULT_TIMEOUT = 30000; // 30秒（スロット取得など重い処理�
  */
 function getBaseURL(): string {
   // Next.js の環境変数から取得
-  const baseURL = process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8787';
+  const baseURL =
+  typeof window !== 'undefined'
+    ? '' // ✅ browser: always relative (avoid workers.dev DNS/CORS issues)
+    : (process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8787');
   const normalizedURL = baseURL.replace(/\/$/, ''); // 末尾のスラッシュを削除
 
   // 開発時のみ Console に出力（1回だけ）
@@ -230,4 +233,5 @@ export async function updateLineConfig(payload: unknown, tenantId?: string): Pro
     cache: 'no-store',
   });
 }
+
 
