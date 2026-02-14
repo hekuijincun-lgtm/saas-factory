@@ -36,8 +36,8 @@ export async function GET(req: Request) {
       redirectTo: w.toString(),
       at: new Date().toISOString(),
     });
-  }
-
-  return NextResponse.redirect(w.toString(), 302);
+  }  const res = NextResponse.redirect(w.toString(), 302);
+  // keep returnTo across LINE roundtrip
+  res.headers.set("Set-Cookie", `line_return_to=${encodeURIComponent(returnTo)}; Path=/; HttpOnly; Secure; SameSite=Lax`);
+  return res;
 }
-

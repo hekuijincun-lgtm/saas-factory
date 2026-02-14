@@ -54,19 +54,32 @@ try {
     }
 
     const token = await signSession({ code, state, ts: Date.now() }, secret);  // ✅ decide post-login redirect target
-  const returnTo = url.searchParams.get("returnTo");
-  let target = (returnTo && returnTo.startsWith("/")) ? returnTo : "/admin/line-setup";
-if (target === "/admin") target = "/admin/line-setup";
+    const returnToQ = url.searchParams.get("returnTo");
+
+  // fallback to cookie saved at /api/auth/line/start
+  const cookie = req.headers.get("cookie") ?? "";
+  const m = cookie.match(/(?:^|;\s*)line_return_to=([^;]+)/);
+  const returnToC = m ? decodeURIComponent(m[1]) : null;
+
+  const returnTo = returnToQ ?? returnToC;
+
+    let target = (returnTo && returnTo.startsWith("/")) ? returnTo : "/admin/line-setup";
+  if (target === "/admin") target = "/admin/line-setup";
 
 
 
     const res = NextResponse.redirect(new URL(target, url.origin));
-    res.headers.set("Set-Cookie", `line_session=${token}; Path=/; HttpOnly; Secure; SameSite=Lax`);
-    return res;
+    res.headers.append("Set-Cookie", `line_session=${token}; Path=/; HttpOnly; Secure; SameSite=Lax`);
+    
+    // clear one-time returnTo cookie
+    res.headers.append("Set-Cookie", `line_return_to=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly; Secure; SameSite=Lax`);return res;
   } catch (e: any) {
     return NextResponse.redirect(new URL("/admin/line-setup?reason=unknown", new URL(req.url).origin));
   }
 }
+
+
+
 
 
 
