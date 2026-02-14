@@ -45,17 +45,17 @@ try {
     // いったん “Edgeでビルドが通る” ことを最優先で止血する。
 
     if (!code || !state) {
-      return NextResponse.redirect(new URL("/admin/settings?line=error_missing", url.origin));
+      return NextResponse.redirect(new URL("/admin/line-setup?reason=missing_env", url.origin));
     }
 
     const secret = (process.env.LINE_SESSION_SECRET ?? "").trim();
     if (!secret) {
-      return NextResponse.redirect(new URL("/admin/settings?line=error_secret", url.origin));
+      return NextResponse.redirect(new URL("/admin/line-setup?reason=secret", url.origin));
     }
 
     const token = await signSession({ code, state, ts: Date.now() }, secret);  // ✅ decide post-login redirect target
   const returnTo = url.searchParams.get("returnTo");
-  const target = (returnTo && returnTo.startsWith("/")) ? returnTo : "/admin/settings?line=ok";
+  const target = (returnTo && returnTo.startsWith("/")) ? returnTo : "/admin";
 
 
 
@@ -63,7 +63,7 @@ try {
     res.headers.set("Set-Cookie", `line_session=${token}; Path=/; HttpOnly; Secure; SameSite=Lax`);
     return res;
   } catch (e: any) {
-    return NextResponse.redirect(new URL("/admin/settings?line=error", new URL(req.url).origin));
+    return NextResponse.redirect(new URL("/admin/line-setup?reason=unknown", new URL(req.url).origin));
   }
 }
 

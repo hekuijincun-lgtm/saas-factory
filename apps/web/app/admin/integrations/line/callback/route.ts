@@ -30,14 +30,14 @@ export async function GET(req: NextRequest) {
 
   if (error) {
     return NextResponse.redirect(
-      new URL(`/admin/settings?line=error&tenantId=${encodeURIComponent(tenantId)}`, url.origin),
+      new URL(`/admin/line-setup?reason=error&tenantId=${encodeURIComponent(tenantId)}`, url.origin),
       307,
     );
   }
 
   if (!code) {
     return NextResponse.redirect(
-      new URL(`/admin/settings?line=missing_code&tenantId=${encodeURIComponent(tenantId)}`, url.origin),
+      new URL(`/admin/line-setup?reason=missing_code&tenantId=${encodeURIComponent(tenantId)}`, url.origin),
       307,
     );
   }
@@ -57,7 +57,7 @@ export async function GET(req: NextRequest) {
   console.log("[line-callback] proxy result", { status: res.status, body: text.slice(0, 800) });
 
   return NextResponse.redirect(
-    new URL(`/admin/settings?line=${res.ok ? "linked" : "error_exchange"}&tenantId=${encodeURIComponent(tenantId)}`, url.origin),
+    new URL(`/admin/line-setup?reason=${res.ok ? "linked" : "error_exchange"}&tenantId=${encodeURIComponent(tenantId)}`, url.origin),
     307,
   );
 }
