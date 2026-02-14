@@ -4,6 +4,8 @@ export function middleware(req: NextRequest) {
   
   const u = new URL(request.url);
   if (u.pathname === '/api/auth/line/start') return NextResponse.next();
+
+  if (u.pathname === '/api/auth/line/callback') return NextResponse.next();
 // BYPASS_AUTH_MIDDLEWARE (stop redirect loops / 522)
   const url = new URL(req.url);
   const pathname = url.pathname;
@@ -33,6 +35,7 @@ export function middleware(req: NextRequest) {
 export const config = {
   matcher: "/:path*",
 };
+
 
 
 
