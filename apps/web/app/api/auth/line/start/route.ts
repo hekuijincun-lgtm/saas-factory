@@ -49,6 +49,11 @@ export async function GET(req: Request) {
   }
   // === /DEBUG_ENV_DUMP ===
 const url = new URL(req.url);
+  // debug stamp
+  if (url.searchParams.get("debug") === "stamp") {
+    return NextResponse.json({ ok: true, stamp: "STAMP_APP_ROUTE_LINE_START" }, { status: 200 });
+  }
+
   const debug = url.searchParams.get("debug") === "1";
 
   const apiBase = pickApiBase();
@@ -104,8 +109,17 @@ const url = new URL(req.url);
   // JSON parse（Workersが { ok:true, url } とか { authUrl } を返す想定）
   let data: any = null;
   try { data = JSON.parse(bodyText); } catch { data = null; }
+  // ✅ embed returnTo into state (base64url) so Workers callback can restore it
+  const returnTo = url.searchParams.get("returnTo") ?? "";
+  const b64url = (s: string) =>
+    Buffer.from(s, "utf8").toString("base64")
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=+$/g, "");
 
-  const authUrl =
+  const state = `${tenantId}:${crypto.randomUUID()}${returnTo ? `:${b64url(returnTo)}` : ""}`;
+
+const authUrl =
     (data && (data.authUrl || data.url || data.redirectUrl)) ||
     null;
 
@@ -119,5 +133,7 @@ const url = new URL(req.url);
   // ✅ ここが本命：LINEに飛ばす
   return NextResponse.redirect(authUrl, 302);
 }
+
+
 
 
