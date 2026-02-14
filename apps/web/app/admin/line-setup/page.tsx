@@ -1,3 +1,6 @@
+export const runtime = "edge";
+export const dynamic = "force-dynamic";
+
 export default function LineSetupPage({ searchParams }: any) {
   const reason = searchParams?.reason ?? null;
   const tenantId = searchParams?.tenantId ?? "default";
