@@ -14,7 +14,7 @@ export default function Page() {
       null;
 
     const target = reason
-      ? /admin/line-setup?reason=\
+      ? ("/admin/line-setup?reason=" + encodeURIComponent(reason))
       : "/admin";
 
     window.location.replace(target);
@@ -23,8 +23,7 @@ export default function Page() {
   return (
     <div style={{ fontFamily: "system-ui", padding: 24 }}>
       <h1>Redirecting…</h1>
-      <p style={{ opacity: 0.7 }}>REDIR_20260214_151904</p>
-      <p>もし自動で移動しない場合は、少し待ってから更新してね。</p>
+      <p style={{ opacity: 0.7 }}>REDIR_SAFE</p>
       <p><a href="/admin/line-setup?reason=unknown">手動でセットアップへ</a></p>
     </div>
   );
