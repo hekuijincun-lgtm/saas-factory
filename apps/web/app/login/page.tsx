@@ -3,7 +3,7 @@ export const runtime = "edge";
 export default function LoginPage({ searchParams }: any) {
   
   const tenantId = searchParams?.tenantId ?? "default";
-return (
+  return (
     <main style={{minHeight:"100vh",display:"grid",placeItems:"center",padding:"24px"}}>
       <div style={{maxWidth:420,width:"100%",display:"grid",gap:12}}>
         <h1 style={{fontSize:24,fontWeight:700}}>ログイン</h1>
@@ -31,6 +31,7 @@ return (
     </main>
   );
 }
+
 
 
 
