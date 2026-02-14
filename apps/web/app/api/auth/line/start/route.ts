@@ -17,7 +17,7 @@ export async function GET(req: Request) {
     return NextResponse.json({ ok:false, error:"missing_api_base" }, { status: 500 });
   }
 
-  const returnTo = url.searchParams.get("returnTo") || `${url.origin}/admin`;
+  const returnTo = url.searchParams.get("returnTo") || `${url.origin}/admin/line-setup`;
 
   // ✅ Pages → Workers /auth/line/start に丸投げ（cookie + LINE authorize は Workers 側でやる）
   const w = new URL("/auth/line/start", apiBase);
@@ -40,3 +40,4 @@ export async function GET(req: Request) {
 
   return NextResponse.redirect(w.toString(), 302);
 }
+

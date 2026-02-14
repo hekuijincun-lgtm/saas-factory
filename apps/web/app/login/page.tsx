@@ -7,7 +7,7 @@ export default function LoginPage() {
         <h1 style={{fontSize:24,fontWeight:700}}>ログイン</h1>
 
         <a
-          href="/api/auth/line/start"
+          href={`/api/auth/line/start?tenantId=${tenantId}`}`
           style={{
             display:"inline-flex",
             justifyContent:"center",
@@ -29,3 +29,4 @@ export default function LoginPage() {
     </main>
   );
 }
+
