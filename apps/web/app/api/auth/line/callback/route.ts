@@ -31,7 +31,12 @@ async function signSession(payload: object, secret: string) {
 }
 
 export async function GET(req: Request) {
-  try {
+  
+  const url = new URL(req.url);
+  if (url.searchParams.get('debug') === '1') {
+    return new Response(JSON.stringify({ ok:true, where:'DEBUG_FORCE_CALLBACK_1175112530', href:req.url }), { status: 200, headers:{'content-type':'application/json'} });
+  }
+try {
     const url = new URL(req.url);
     const code = url.searchParams.get("code");
     const state = url.searchParams.get("state");
@@ -61,4 +66,5 @@ export async function GET(req: Request) {
     return NextResponse.redirect(new URL("/admin/settings?line=error", new URL(req.url).origin));
   }
 }
+
 
