@@ -1458,7 +1458,7 @@ app.delete('/admin/line/config', async (c) => {
       }
 
       // callback 先は Next /admin/integrations/line/callback に揃える
-      const redirectUri = `${redirectBase}/auth/line/callback`;
+      let redirectUri = `${redirectBase}/auth/line/callback`;
 
       
     // ✅ FORCE redirect_uri to Pages callback (staging)
@@ -1710,6 +1710,7 @@ if(!code){
 
   return new Response(null, { status: 302, headers: { Location: returnTo } });
 });
+
 
 
 
