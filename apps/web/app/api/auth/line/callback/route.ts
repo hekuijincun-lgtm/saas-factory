@@ -55,7 +55,7 @@ try {
 
     const token = await signSession({ code, state, ts: Date.now() }, secret);  // ✅ decide post-login redirect target
   const returnTo = url.searchParams.get("returnTo");
-  const target = (returnTo && returnTo.startsWith("/")) ? returnTo : "/admin";
+  const target = (returnTo && returnTo.startsWith("/")) ? returnTo : "/admin/line-setup";
 
 
 
@@ -66,5 +66,6 @@ try {
     return NextResponse.redirect(new URL("/admin/line-setup?reason=unknown", new URL(req.url).origin));
   }
 }
+
 
 
