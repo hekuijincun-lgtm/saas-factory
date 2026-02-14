@@ -1,42 +1,12 @@
-import { NextResponse, type NextRequest } from "next/server";
+import { NextResponse } from "next/server";
 
-export function middleware(req: NextRequest) {
-  
-  const u = new URL(request.url);
-  if (u.pathname === '/api/auth/line/start') return NextResponse.next();
-
-  if (u.pathname === '/api/auth/line/callback') return NextResponse.next();
-// BYPASS_AUTH_MIDDLEWARE (stop redirect loops / 522)
-  const url = new URL(req.url);
-  const pathname = url.pathname;
-
-  // ✅ Never touch API / Next internals / static assets
-  if (
-    pathname.startsWith("/api") ||
-    pathname.startsWith("/_next") ||
-    pathname === "/favicon.ico" ||
-    pathname.endsWith(".png") ||
-    pathname.endsWith(".jpg") ||
-    pathname.endsWith(".jpeg") ||
-    pathname.endsWith(".webp") ||
-    pathname.endsWith(".svg") ||
-    pathname.endsWith(".css") ||
-    pathname.endsWith(".js")
-  ) {
-    return NextResponse.next();
-  }
-
-  // ✅ Keep your existing behavior below (if you had one)
-  // If you previously redirected based on some condition, re-add it safely here.
-  // For now, do nothing special:
+// DEBUG: disable middleware to diagnose 500(/500) on Pages
+export function middleware(_req: Request) {
   return NextResponse.next();
 }
 
+// Match nothing (extra safety). If your Next version ignores empty matcher,
+// this still won't break because middleware() is a no-op.
 export const config = {
-  matcher: "/:path*",
+  matcher: ["/__mw_disabled__"],
 };
-
-
-
-
-
