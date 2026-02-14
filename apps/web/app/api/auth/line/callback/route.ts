@@ -72,11 +72,13 @@ try {
     res.headers.append("Set-Cookie", `line_session=${token}; Path=/; HttpOnly; Secure; SameSite=Lax`);
     
     // clear one-time returnTo cookie
-    res.headers.append("Set-Cookie", `line_return_to=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly; Secure; SameSite=Lax`);return res;
+    res.headers.append("Set-Cookie", `line_return_to=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly; Secure; SameSite=Lax`);
+    return res;
   } catch (e: any) {
     return NextResponse.redirect(new URL("/admin/line-setup?reason=unknown", new URL(req.url).origin));
   }
 }
+
 
 
 
