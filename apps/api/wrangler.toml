@@ -20,8 +20,8 @@ new_sqlite_classes = ["SlotLock"]
 
 # ===== STAGING =====
 [env.staging]
+vars = { WEB_BASE = "https://saas-factory-web-v2.pages.dev",  LINE_LOGIN_CHANNEL_ID = "2008915612", LINE_REDIRECT_URI = "https://saas-factory-api-staging.hekuijincun.workers.dev/auth/line/callback" }
 name = "saas-factory-api-staging"
-
 [[env.staging.kv_namespaces]]
 binding = "ENVIRONMENT"
 id = "b3bde2eb54cc4e91a69998c89f948b18"
@@ -49,5 +49,8 @@ bindings = [
 # ===== AUTO-ADDED production env (cloned from staging) =====
 [env.production]
 name = "saas-factory-api"
+
+
+
 
 
