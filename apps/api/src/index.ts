@@ -1458,7 +1458,7 @@ app.delete('/admin/line/config', async (c) => {
       }
 
       // callback 先は Next /admin/integrations/line/callback に揃える
-      const redirectUri = `${redirectBase}/admin/integrations/line/callback`;
+      const redirectUri = `${redirectBase}/auth/line/callback`;
 
       // state = tenantId:nonce を生成して KV に保存（CSRF 対策）
       const nonce = crypto.randomUUID();
@@ -1477,6 +1477,22 @@ app.delete('/admin/line/config', async (c) => {
       return c.json({ ok: true, url: authUrl });
       
 
+
+/**
+ * LINE Login callback (GET)
+ * LINE redirects as GET with ?code=...&state=...
+ * NOTE: keep this path to match redirect_uri used by Pages start route
+ */
+app.get("/admin/integrations/line/callback", async (c:any) => {
+  const url = new URL(c.req.url);
+  const code = url.searchParams.get("code") || "";
+  const state = url.searchParams.get("state") || "";
+  if(!code){
+    return c.json({ ok:false, error:"missing_code", state }, 400);
+  }
+  // TODO: exchange token + persist per tenant/state
+  return c.json({ ok:true, route:"/admin/integrations/line/callback", codePresent:true, state, at:new Date().toISOString() }, 200);
+});
 } catch (error) {
       return c.json(jsonError(error), 500);
     }
@@ -1535,9 +1551,8 @@ app.get("/auth/line/start", async (c: any) => {
   const tenantId = url.searchParams.get("tenantId") || "default";
   const returnTo = url.searchParams.get("returnTo") || "https://saas-factory-a0y.pages.dev/admin";
   const state = `${tenantId}.${Math.random().toString(36).slice(2)}`;
-
-  const LINE_CHANNEL_ID = c.env.LINE_CHANNEL_ID;
-  const LINE_CHANNEL_SECRET = c.env.LINE_CHANNEL_SECRET;
+const LINE_CHANNEL_ID = c.env.LINE_LOGIN_CHANNEL_ID || c.env.LINE_CHANNEL_ID;
+const LINE_CHANNEL_SECRET = c.env.LINE_LOGIN_CHANNEL_SECRET || c.env.LINE_CHANNEL_SECRET;
   const LINE_REDIRECT_URI = c.env.LINE_REDIRECT_URI; // 例: https://saas-factory-api....workers.dev/auth/line/callback
 
   if(!LINE_CHANNEL_ID || !LINE_CHANNEL_SECRET || !LINE_REDIRECT_URI){
@@ -1568,10 +1583,66 @@ app.get("/auth/line/callback", async (c: any) => {
   const url = new URL(c.req.url);
   const code = url.searchParams.get("code");
   const state = url.searchParams.get("state") || "";
-
-  const LINE_CHANNEL_ID = c.env.LINE_CHANNEL_ID;
-  const LINE_CHANNEL_SECRET = c.env.LINE_CHANNEL_SECRET;
+const LINE_CHANNEL_ID = c.env.LINE_LOGIN_CHANNEL_ID || c.env.LINE_CHANNEL_ID;
+const LINE_CHANNEL_SECRET = c.env.LINE_LOGIN_CHANNEL_SECRET || c.env.LINE_CHANNEL_SECRET;
   const LINE_REDIRECT_URI = c.env.LINE_REDIRECT_URI;
+  // DEBUG: inspect redirect_uri used for token exchange (no network call)
+  try {
+    const u = new URL(c.req.url);
+    if (u.searchParams.get("debug") === "1") {
+      return c.json({
+        ok: true,
+        debug: true,
+        route: "/auth/line/callback",
+        requestUrl: u.toString(),
+        origin: u.origin,
+        redirect_uri_used: LINE_REDIRECT_URI,
+        note: "LINE token exchange requires redirect_uri to EXACTLY match authorize redirect_uri",
+        at: new Date().toISOString(),
+      }, 200);
+    }
+      if (u.searchParams.get("debug") === "2") {
+      return c.json({
+        ok: true,
+        debug: true,
+        level: 2,
+        route: "/auth/line/callback",
+        requestUrl: u.toString(),
+        code_present: !!u.searchParams.get("code"),
+        state: u.searchParams.get("state"),
+        redirect_uri_used: LINE_REDIRECT_URI,
+        hint: "If code_present is false, you opened callback without completing LINE consent. If invalid_grant persists with fresh code, verify channel secret/id + token endpoint params.",
+        at: new Date().toISOString(),
+      }, 200);
+    }
+    if (u.searchParams.get("debug") === "3") {
+      const code = u.searchParams.get("code");
+      const state = u.searchParams.get("state");
+
+      // NOTE: do NOT reveal secrets; only lengths / booleans
+      return c.json({
+        ok: true,
+        debug: true,
+        level: 3,
+        route: "/auth/line/callback",
+        requestUrl: u.toString(),
+        code_present: !!code,
+        state,
+        redirect_uri_used: LINE_REDIRECT_URI,
+        client_id: LINE_CHANNEL_ID,
+        client_secret_present: !!LINE_CHANNEL_SECRET,
+        client_secret_len: LINE_CHANNEL_SECRET ? String(LINE_CHANNEL_SECRET).length : 0,
+        // If you also have LINE_LOGIN_* vars, reveal which one is used
+        line_login_channel_id_present: !!(c.env.LINE_LOGIN_CHANNEL_ID),
+        line_login_channel_secret_present: !!(c.env.LINE_LOGIN_CHANNEL_SECRET),
+        line_login_channel_secret_len: c.env.LINE_LOGIN_CHANNEL_SECRET ? String(c.env.LINE_LOGIN_CHANNEL_SECRET).length : 0,
+        note: "If invalid_grant persists with fresh code and matching redirect_uri, mismatch is usually client_id/client_secret (wrong channel) or code already used/expired.",
+        at: new Date().toISOString(),
+      }, 200);
+    }
+} catch (e: any) {
+    // ignore debug failures
+  }
 
   if(!code){
     return c.json({ ok:false, error:"missing_code", href:url.toString() }, 400);
@@ -1607,4 +1678,10 @@ app.get("/auth/line/callback", async (c: any) => {
 
   return new Response(null, { status: 302, headers: { Location: returnTo } });
 });
+
+
+
+
+
+
 
