@@ -1,24 +1,31 @@
-export const dynamic = "force-dynamic";
-export const revalidate = 0;
+"use client";
+import { useEffect } from "react";
 
-import dynamic from "next/dynamic";
-import { redirect } from "next/navigation";
+export default function Page() {
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    const line = url.searchParams.get("line");
 
-const AdminSettingsClient = dynamic(() => import("./AdminSettingsClient"), { ssr: false });
-
-export default function Page({ searchParams }: { searchParams?: Record<string, string | string[] | undefined> }) {
-  const lineRaw = searchParams?.line;
-  const line = Array.isArray(lineRaw) ? lineRaw[0] : lineRaw;
-
-  if (line) {
     const reason =
       line === "error_secret" ? "secret" :
       line === "error_missing" ? "missing_env" :
       line === "ok" ? "ok" :
-      "unknown";
+      line ? "unknown" :
+      null;
 
-    redirect(`/admin/line-setup?reason=${encodeURIComponent(reason)}`);
-  }
+    const target = reason
+      ? /admin/line-setup?reason=\
+      : "/admin";
 
-  return <AdminSettingsClient />;
+    window.location.replace(target);
+  }, []);
+
+  return (
+    <div style={{ fontFamily: "system-ui", padding: 24 }}>
+      <h1>Redirecting…</h1>
+      <p style={{ opacity: 0.7 }}>REDIR_20260214_151904</p>
+      <p>もし自動で移動しない場合は、少し待ってから更新してね。</p>
+      <p><a href="/admin/line-setup?reason=unknown">手動でセットアップへ</a></p>
+    </div>
+  );
 }
