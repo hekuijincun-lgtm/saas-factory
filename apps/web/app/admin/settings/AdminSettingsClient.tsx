@@ -144,6 +144,7 @@ export default function AdminSettingsClient() {
   return(
     <main className="p-6 max-w-3xl mx-auto space-y-6">
       <h1 className="text-2xl font-semibold">Admin Settings</h1>
+<div className="text-xs opacity-60">STAMP_20260214_145830</div>
 
       {successMessage && (
         <div className="rounded-md border border-green-200 bg-green-50 px-4 py-2 text-sm text-green-800">
