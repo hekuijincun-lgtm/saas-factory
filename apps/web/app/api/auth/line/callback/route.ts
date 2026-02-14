@@ -48,12 +48,17 @@ export async function GET(req: Request) {
       return NextResponse.redirect(new URL("/admin/settings?line=error_secret", url.origin));
     }
 
-    const token = await signSession({ code, state, ts: Date.now() }, secret);
+    const token = await signSession({ code, state, ts: Date.now() }, secret);  // ✅ decide post-login redirect target
+  const returnTo = url.searchParams.get("returnTo");
+  const target = (returnTo && returnTo.startsWith("/")) ? returnTo : "/admin/settings?line=ok";
 
-    const res = NextResponse.redirect(new URL("/admin/settings?line=ok", url.origin));
+
+
+    const res = NextResponse.redirect(new URL(target, url.origin));
     res.headers.set("Set-Cookie", `line_session=${token}; Path=/; HttpOnly; Secure; SameSite=Lax`);
     return res;
   } catch (e: any) {
     return NextResponse.redirect(new URL("/admin/settings?line=error", new URL(req.url).origin));
   }
 }
+

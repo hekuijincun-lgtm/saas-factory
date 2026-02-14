@@ -5,19 +5,6 @@ export function middleware(req: NextRequest) {
   const url = new URL(req.url);
   const pathname = url.pathname;
 
-  // ✅ allow public routes
-  if (
-    pathname === "/login" ||
-    pathname.startsWith("/login/") ||
-    pathname.startsWith("/api/auth/line") ||
-    pathname.startsWith("/admin/integrations/line/callback") ||  // 念のため
-    pathname.startsWith("/_next") ||
-    pathname === "/favicon.ico" ||
-    pathname.startsWith("/assets") ||
-    pathname.startsWith("/public")
-  ) {
-    return NextResponse.next();
-  }
   // ✅ Never touch API / Next internals / static assets
   if (
     pathname.startsWith("/api") ||
@@ -43,5 +30,6 @@ export function middleware(req: NextRequest) {
 export const config = {
   matcher: "/:path*",
 };
+
 
 
