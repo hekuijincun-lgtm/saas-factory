@@ -1,27 +1,22 @@
-"use client";
-
 import dynamic from "next/dynamic";
-import { useEffect } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { redirect } from "next/navigation";
 
+// /app/admin/settings/AdminSettingsClient.tsx（client component）を動的インポート
 const AdminSettingsClient = dynamic(() => import("./AdminSettingsClient"), { ssr: false });
 
-export default function Page() {
-  const router = useRouter();
-  const searchParams = useSearchParams();
+export default function Page({ searchParams }: { searchParams?: Record<string, string | string[] | undefined> }) {
+  const lineRaw = searchParams?.line;
+  const line = Array.isArray(lineRaw) ? lineRaw[0] : lineRaw;
 
-  useEffect(() => {
-    const line = searchParams.get("line");
-    if (!line) return;
-
+  if (line) {
     const reason =
       line === "error_secret" ? "secret" :
       line === "error_missing" ? "missing_env" :
       line === "ok" ? "ok" :
       "unknown";
 
-    router.replace(`/admin/line-setup?reason=${encodeURIComponent(reason)}`);
-  }, [searchParams, router]);
+    redirect(`/admin/line-setup?reason=${encodeURIComponent(reason)}`);
+  }
 
   return <AdminSettingsClient />;
 }
