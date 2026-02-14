@@ -1,79 +1,50 @@
-export const runtime = "edge";
-export const dynamic = "force-dynamic";
-
-export default function LineSetupPage({ searchParams }: any) {
-  const reason = searchParams?.reason ?? null;
-  const tenantId = searchParams?.tenantId ?? "default";
-
-  const startUrl = `/api/auth/line/start?tenantId=${encodeURIComponent(tenantId)}&returnTo=${encodeURIComponent("/admin/line-setup")}`;
+export default function LineSetupPage({
+  searchParams,
+}: {
+  searchParams?: Record<string, string | string[] | undefined>;
+}) {
+  const stamp = "LINE_SETUP_MESSAGING_ONLY_V3";
+  const tenantId =
+    typeof searchParams?.tenantId === "string" && searchParams.tenantId
+      ? searchParams.tenantId
+      : "default";
+  const reason = typeof searchParams?.reason === "string" ? searchParams.reason : null;
 
   return (
-    <div style={{ maxWidth: 760, margin: "40px auto", padding: 16, fontFamily: "system-ui" }}>
-      <h1 style={{ fontSize: 28, fontWeight: 800 }}>LINE 連携セットアップ</h1>
+    <main className="p-6">
+      <div className="max-w-3xl mx-auto space-y-6">
+        <header>
+          <h1 className="text-2xl font-bold">LINE Messaging API セットアップ</h1>
+          <p className="text-sm text-gray-600 mt-1">（Loginステップはこのページに存在しません）</p>
+          <p className="text-xs text-gray-500 mt-1">stamp: {stamp}</p>
+          <p className="text-xs text-gray-500 mt-1">tenantId: {tenantId}</p>
+        </header>
 
-      {reason && (
-        <div style={{ marginTop: 16, padding: 12, borderRadius: 12, border: "1px solid #ddd", background: "#fafafa" }}>
-          <b>ステータス:</b> {String(reason)}
-          {reason === "secret" && (
-            <div style={{ marginTop: 8, padding: 12, border: "1px solid #f5c2c7", background: "#f8d7da", borderRadius: 12 }}>
-              <b>Channel Secret 不一致っぽい</b><br />
-              Workers の LINE_CHANNEL_SECRET（staging/prod）を見直してね。
-            </div>
-          )}
-        </div>
-      )}
+        {reason === "secret" && (
+          <div className="border border-yellow-200 bg-yellow-50 rounded-lg p-4">
+            <div className="font-semibold text-yellow-800">Channel Secret 不一致の可能性</div>
+            <div className="text-sm text-yellow-700 mt-1">Workers の LINE_CHANNEL_SECRET（staging/prod）を確認してね。</div>
+          </div>
+        )}
 
-      <div style={{ marginTop: 20, padding: 16, border: "1px solid #ddd", borderRadius: 16 }}>
-        <h2 style={{ fontSize: 18, fontWeight: 800, margin: 0 }}>ステップ 1：LINE Login（必須）</h2>
-        <p style={{ marginTop: 8, opacity: 0.85 }}>
-          まずは LINEログインで「許可」まで完走させて、連携状態を作るよ。
-        </p>
+        {reason === "missing_env" && (
+          <div className="border border-red-200 bg-red-50 rounded-lg p-4">
+            <div className="font-semibold text-red-800">環境変数が不足しています</div>
+            <div className="text-sm text-red-700 mt-1">Workers / Pages の env を確認してね。</div>
+          </div>
+        )}
 
-        <a
-          href={startUrl}
-          style={{
-            display: "inline-block",
-            marginTop: 10,
-            padding: "12px 16px",
-            borderRadius: 12,
-            border: "1px solid #111",
-            textDecoration: "none",
-            fontWeight: 700,
-          }}
-        >
-          LINEと連携する（ログインへ）
-        </a>
+        <section className="border rounded-lg p-4">
+          <h2 className="font-semibold">ステップ1: Messaging API</h2>
+          <ul className="list-disc pl-5 mt-2 text-sm space-y-1">
+            <li>Channel Access Token（長期）を発行して保存</li>
+            <li>Webhook URL を登録</li>
+            <li>Webhook 検証（Verify）</li>
+          </ul>
+        </section>
 
-        <div style={{ marginTop: 10, fontSize: 12, opacity: 0.7 }}>
-          ※ returnTo は /admin/line-setup に固定（settings 経由は封印）
-        </div>
+        <a className="text-sm underline" href="/admin">管理画面へ戻る</a>
       </div>
-
-      <div style={{ marginTop: 16, padding: 16, border: "1px solid #ddd", borderRadius: 16 }}>
-        <h2 style={{ fontSize: 18, fontWeight: 800, margin: 0 }}>ステップ 2：Messaging API（未実装OK）</h2>
-        <p style={{ marginTop: 8, opacity: 0.85 }}>
-          ここはまだ作ってなくてOK。作る時はこの画面で
-          「Webhook URL」「Channel Access Token」「Webhook検証」まで案内する💅
-        </p>
-
-        <button
-          disabled
-          style={{
-            marginTop: 8,
-            padding: "12px 16px",
-            borderRadius: 12,
-            border: "1px solid #ccc",
-            opacity: 0.6,
-            cursor: "not-allowed",
-          }}
-        >
-          （未実装）Messaging API を設定する
-        </button>
-      </div>
-
-      <div style={{ marginTop: 18 }}>
-        <a href="/admin" style={{ textDecoration: "underline" }}>管理画面へ戻る</a>
-      </div>
-    </div>
+    </main>
   );
 }
