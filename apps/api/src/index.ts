@@ -1487,7 +1487,19 @@ app.get("/admin/integrations/line/callback", async (c:any) => {
   const url = new URL(c.req.url);
   const code = url.searchParams.get("code") || "";
   const state = url.searchParams.get("state") || "";
-  if(!code){
+  // ✅ test bypass: allow redirect without token exchange (debug=redir or code=DUMMY)
+  const dbg = url.searchParams.get("debug") || "";
+  if (dbg === "redir" || code === "DUMMY") {
+    const cookies = c.req.header("cookie") || "";
+    const m = /sf_returnTo=([^;]+)/.exec(cookies);
+    const rtRaw = m ? decodeURIComponent(m[1]) : "/admin/settings";
+
+    // allow only relative path
+    const rt = (rtRaw && rtRaw.startsWith("/")) ? rtRaw : "/admin/settings";
+
+    return new Response(null, { status: 302, headers: { Location: `${WEB_BASE}${rt}` } });
+  }
+if(!code){
     return c.json({ ok:false, error:"missing_code", state }, 400);
   }
   // TODO: exchange token + persist per tenant/state
@@ -1581,6 +1593,7 @@ const LINE_CHANNEL_SECRET = c.env.LINE_LOGIN_CHANNEL_SECRET || c.env.LINE_CHANNE
 
 app.get("/auth/line/callback", async (c: any) => {
   const url = new URL(c.req.url);
+  const WEB_BASE = (c.env.WEB_BASE || "").replace(/\/+$/, "") || "https://saas-factory-web-v2.pages.dev";
   const code = url.searchParams.get("code");
   const state = url.searchParams.get("state") || "";
 const LINE_CHANNEL_ID = c.env.LINE_LOGIN_CHANNEL_ID || c.env.LINE_CHANNEL_ID;
@@ -1643,8 +1656,19 @@ const LINE_CHANNEL_SECRET = c.env.LINE_LOGIN_CHANNEL_SECRET || c.env.LINE_CHANNE
 } catch (e: any) {
     // ignore debug failures
   }
+  // ✅ test bypass: allow redirect without token exchange (debug=redir or code=DUMMY)
+  const dbg = url.searchParams.get("debug") || "";
+  if (dbg === "redir" || code === "DUMMY") {
+    const cookies = c.req.header("cookie") || "";
+    const m = /sf_returnTo=([^;]+)/.exec(cookies);
+    const rtRaw = m ? decodeURIComponent(m[1]) : "/admin/settings";
 
-  if(!code){
+    // allow only relative path
+    const rt = (rtRaw && rtRaw.startsWith("/")) ? rtRaw : "/admin/settings";
+
+    return new Response(null, { status: 302, headers: { Location: `${WEB_BASE}${rt}` } });
+  }
+if(!code){
     return c.json({ ok:false, error:"missing_code", href:url.toString() }, 400);
   }
   if(!LINE_CHANNEL_ID || !LINE_CHANNEL_SECRET || !LINE_REDIRECT_URI){
@@ -1678,6 +1702,7 @@ const LINE_CHANNEL_SECRET = c.env.LINE_LOGIN_CHANNEL_SECRET || c.env.LINE_CHANNE
 
   return new Response(null, { status: 302, headers: { Location: returnTo } });
 });
+
 
 
 
