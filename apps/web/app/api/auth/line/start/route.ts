@@ -49,6 +49,7 @@ export async function GET(req: Request) {
   }
   // === /DEBUG_ENV_DUMP ===
 const url = new URL(req.url);
+  const tenantId = url.searchParams.get("tenantId") ?? "default";
   // debug stamp
   if (url.searchParams.get("debug") === "stamp") {
     return NextResponse.json({ ok: true, stamp: "STAMP_APP_ROUTE_LINE_START" }, { status: 200 });
@@ -85,8 +86,12 @@ const url = new URL(req.url);
 
   // Workersに「LINEの認可URL作って」って聞く（必要ならcallbackを渡す）
   // ※ Workers側が callback を自前で計算する設計なら、callback は無視されてもOK
-  const upstream = `${apiBase}/admin/integrations/line/auth-url?callback=${encodeURIComponent(callbackUrl)}`;
-
+  const upstreamUrl = new URL("/admin/integrations/line/auth-url", apiBase);
+  upstreamUrl.searchParams.set("callback", callbackUrl);
+  upstreamUrl.searchParams.set("tenantId", tenantId);
+  const returnTo = url.searchParams.get("returnTo");
+  if (returnTo) upstreamUrl.searchParams.set("returnTo", returnTo);
+  const upstream = upstreamUrl.toString();
   let res: Response;
   try {
     res = await fetch(upstream, { method: "GET" });
@@ -109,16 +114,6 @@ const url = new URL(req.url);
   // JSON parse（Workersが { ok:true, url } とか { authUrl } を返す想定）
   let data: any = null;
   try { data = JSON.parse(bodyText); } catch { data = null; }
-  // ✅ embed returnTo into state (base64url) so Workers callback can restore it
-  const returnTo = url.searchParams.get("returnTo") ?? "";
-  const b64url = (s: string) =>
-    Buffer.from(s, "utf8").toString("base64")
-      .replace(/\+/g, "-")
-      .replace(/\//g, "_")
-      .replace(/=+$/g, "");
-
-  const state = `${tenantId}:${crypto.randomUUID()}${returnTo ? `:${b64url(returnTo)}` : ""}`;
-
 const authUrl =
     (data && (data.authUrl || data.url || data.redirectUrl)) ||
     null;
@@ -133,6 +128,7 @@ const authUrl =
   // ✅ ここが本命：LINEに飛ばす
   return NextResponse.redirect(authUrl, 302);
 }
+
 
 
 
