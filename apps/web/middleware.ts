@@ -1,35 +1,31 @@
-import { NextResponse, type NextRequest } from "next/server";
+import { NextResponse } from "next/server";
+import type { NextRequest } from "next/server";
 
 export function middleware(req: NextRequest) {
-  const url = new URL(req.url);
-  const pathname = url.pathname;
+  const url = req.nextUrl;
 
-  // ✅ Never touch API / Next internals / static assets
-  if (
-    pathname.startsWith("/api") ||
-    pathname.startsWith("/_next") ||
-    pathname === "/favicon.ico" ||
-    pathname.endsWith(".png") ||
-    pathname.endsWith(".jpg") ||
-    pathname.endsWith(".jpeg") ||
-    pathname.endsWith(".webp") ||
-    pathname.endsWith(".svg") ||
-    pathname.endsWith(".css") ||
-    pathname.endsWith(".js")
-  ) {
-    return NextResponse.next();
+  // /admin/settings?line=... を /admin/line-setup?reason=... に強制移動
+  if (url.pathname === "/admin/settings") {
+    const line = url.searchParams.get("line");
+    if (line) {
+      const reason =
+        line === "error_secret" ? "secret" :
+        line === "error_missing" ? "missing_env" :
+        line === "ok" ? "ok" :
+        "unknown";
+
+      const to = new URL(req.url);
+      to.pathname = "/admin/line-setup";
+      to.search = "";
+      to.searchParams.set("reason", reason);
+
+      return NextResponse.redirect(to, 307);
+    }
   }
 
-  // ✅ For now, ONLY guard admin (avoid global 500 incidents)
-  if (!pathname.startsWith("/admin")) {
-    return NextResponse.next();
-  }
-
-  // TODO: ここで cookie/session のチェックを入れる（次フェーズ）
-  // いったん admin も通す（=安定化優先）
   return NextResponse.next();
 }
 
 export const config = {
-  matcher: "/:path*",
+  matcher: ["/admin/settings"],
 };
