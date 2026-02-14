@@ -4,7 +4,6 @@ import dynamic from "next/dynamic";
 import { useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
-// /app/admin/settings/AdminSettingsClient.tsx（client component）を動的インポート
 const AdminSettingsClient = dynamic(() => import("./AdminSettingsClient"), { ssr: false });
 
 export default function Page() {
