@@ -2,7 +2,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 
 type LineStatus =
   | { kind: "connected" }
@@ -11,6 +11,21 @@ type LineStatus =
 
 export default function AdminSettingsClient() {
   const searchParams = useSearchParams();
+
+  const router = useRouter();
+
+  useEffect(() => {
+    const line = searchParams.get("line");
+    if (!line) return;
+
+    const reason =
+      line === "error_secret" ? "secret" :
+      line === "error_missing" ? "missing_env" :
+      line === "ok" ? "ok" :
+      "unknown";
+
+    router.replace(`/admin/line-setup?reason=${encodeURIComponent(reason)}`);
+  }, [searchParams, router]);
 
   const [lineStatus, setLineStatus] = useState<LineStatus | null>(null);
   const [loadingStatus, setLoadingStatus] = useState(false);
