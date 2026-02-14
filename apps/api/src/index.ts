@@ -1460,7 +1460,15 @@ app.delete('/admin/line/config', async (c) => {
       // callback 先は Next /admin/integrations/line/callback に揃える
       const redirectUri = `${redirectBase}/auth/line/callback`;
 
-      // state = tenantId:nonce を生成して KV に保存（CSRF 対策）
+      
+    // ✅ FORCE redirect_uri to Pages callback (staging)
+    // NOTE: LINE requires redirect_uri to exactly match token exchange redirect_uri
+    const forcedRedirectUri = (c.env.LINE_REDIRECT_URI || "").trim();
+    if (forcedRedirectUri) {
+      // @ts-ignore
+      redirectUri = forcedRedirectUri;
+    }
+// state = tenantId:nonce を生成して KV に保存（CSRF 対策）
       const nonce = crypto.randomUUID();
       const state = `${tenantId}:${nonce}`;
 
@@ -1702,6 +1710,7 @@ if(!code){
 
   return new Response(null, { status: 302, headers: { Location: returnTo } });
 });
+
 
 
 
