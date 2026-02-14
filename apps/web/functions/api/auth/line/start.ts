@@ -1,73 +1,97 @@
-export async function onRequestGet(context: any) {
-  const req: Request = context.request;
-  const url = new URL(req.url);
+export const onRequestGet: PagesFunction = async (context) => {
+  const { request, env } = context as any;
+  const url = new URL(request.url);
 
-  const env = context.env || {};
+  const debug = url.searchParams.get("debug") === "1";
+  const tenantId = url.searchParams.get("tenantId") ?? "default";
 
-  const pickBase = (): string | null => {
-    return env.API_BASE || env.BOOKING_API_BASE || env.NEXT_PUBLIC_API_BASE || null;
-  };
+  // ここはあなたの既存 env 名に合わせる（今の debug 出力に合わせてる）
+  const apiBase =
+    env?.BOOKING_API_BASE ||
+    env?.API_BASE ||
+    env?.UPSTREAM_BASE ||
+    env?.API_ORIGIN ||
+    env?.UPSTREAM_ORIGIN;
 
-  const json = (obj: any, status = 200) =>
-    new Response(JSON.stringify(obj, null, 2), {
-      status,
-      headers: { "content-type": "application/json; charset=utf-8" },
-    });
+  const channelId =
+    env?.LINE_LOGIN_CHANNEL_ID || env?.LINE_CHANNEL_ID;
 
-  // ===== DEBUG: must always run before upstream =====
-  if (url.searchParams.get("debug") === "1") {
-    return json({
-      ok: true,
-      where: "apps/web/functions/api/auth/line/start.ts",
-      href: url.toString(),
-      env: {
-        API_BASE: !!env.API_BASE,
-        BOOKING_API_BASE: !!env.BOOKING_API_BASE,
-        NEXT_PUBLIC_API_BASE: !!env.NEXT_PUBLIC_API_BASE,
-        LINE_CHANNEL_ID: !!env.LINE_CHANNEL_ID,
-        LINE_CHANNEL_SECRET: !!env.LINE_CHANNEL_SECRET,
-      },
+  const channelSecret =
+    env?.LINE_LOGIN_CHANNEL_SECRET || env?.LINE_CHANNEL_SECRET;
+
+  if (!apiBase || !channelId || !channelSecret) {
+    const body = {
+      ok: false,
+      error: "missing_env",
+      apiBase: apiBase ?? null,
+      channelId: channelId ?? null,
+      channelSecret: channelSecret ? "***" : null,
+      tenantId,
+    };
+    return new Response(JSON.stringify(body), {
+      status: 500,
+      headers: { "content-type": "application/json" },
     });
   }
 
-  const tenantId = url.searchParams.get("tenantId") || "default";
-  const base = pickBase();
-  if (!base) {
-    return json(
-      { ok: false, error: "missing_api_base", detail: "API_BASE / BOOKING_API_BASE / NEXT_PUBLIC_API_BASE not set" },
-      500
+  // ✅ 本来は Workers 側の auth-url を叩いて authUrl を取る想定
+  const authUrlEndpoint = new URL("/admin/integrations/line/auth-url", apiBase);
+  authUrlEndpoint.searchParams.set("tenantId", tenantId);
+  authUrlEndpoint.searchParams.set("v", crypto.randomUUID().replaceAll("-", ""));
+
+  const resp = await fetch(authUrlEndpoint.toString(), {
+    method: "GET",
+    headers: { "accept": "application/json" },
+  });
+
+  const txt = await resp.text();
+
+  if (debug) {
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        debug: true,
+        at: new Date().toISOString(),
+        requestUrl: request.url,
+        tenantId,
+        upstream: authUrlEndpoint.toString(),
+        upstreamStatus: resp.status,
+        upstreamBodyHead: txt.slice(0, 500),
+        env: {
+          API_BASE: env?.API_BASE ?? null,
+          API_ORIGIN: env?.API_ORIGIN ?? null,
+          BOOKING_API_BASE: env?.BOOKING_API_BASE ?? null,
+          UPSTREAM_BASE: env?.UPSTREAM_BASE ?? null,
+          LINE_LOGIN_CHANNEL_ID: env?.LINE_LOGIN_CHANNEL_ID ?? null,
+          LINE_CHANNEL_ID: env?.LINE_CHANNEL_ID ?? null,
+          CF_PAGES: env?.CF_PAGES ?? null,
+          CF_PAGES_BRANCH: env?.CF_PAGES_BRANCH ?? null,
+          CF_PAGES_URL: env?.CF_PAGES_URL ?? null,
+          CF_PAGES_COMMIT_SHA: env?.CF_PAGES_COMMIT_SHA ?? null,
+        },
+      }),
+      { status: 200, headers: { "content-type": "application/json" } }
     );
   }
 
-  const upstream = new URL("/admin/integrations/line/auth-url", base);
-  upstream.searchParams.set("tenantId", tenantId);
-
-  let r: Response;
+  // debug 以外は 302 でLINEへ
+  let authUrl: string | null = null;
   try {
-    r = await fetch(upstream.toString(), { method: "GET", headers: { accept: "application/json" } });
-  } catch (e: any) {
-    return json(
-      { ok: false, error: "failed_to_fetch_upstream", upstream: upstream.toString(), detail: String(e?.message || e) },
-      500
+    const j = JSON.parse(txt);
+    authUrl = j?.authUrl || j?.url || j?.result?.authUrl || null;
+  } catch {}
+
+  if (!resp.ok || !authUrl) {
+    return new Response(
+      JSON.stringify({
+        ok: false,
+        error: "failed_to_get_auth_url",
+        upstreamStatus: resp.status,
+        upstreamBodyHead: txt.slice(0, 500),
+      }),
+      { status: 500, headers: { "content-type": "application/json" } }
     );
-  }
-
-  let body: any = null;
-  try { body = await r.json(); } catch {}
-
-  if (!r.ok) {
-    return json(
-      { ok: false, error: "upstream_not_ok", upstream: upstream.toString(), status: r.status, body },
-      500
-    );
-  }
-
-  const authUrl = body?.authUrl || body?.url || body?.result?.authUrl || body?.result?.url || null;
-  if (!authUrl || typeof authUrl !== "string") {
-    return json({ ok: false, error: "missing_auth_url", upstream: upstream.toString(), body }, 500);
   }
 
   return Response.redirect(authUrl, 302);
-}
-
-
+};
