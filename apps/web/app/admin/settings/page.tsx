@@ -1,7 +1,6 @@
 import dynamic from "next/dynamic";
 import { redirect } from "next/navigation";
 
-// /app/admin/settings/AdminSettingsClient.tsx（client component）を動的インポート
 const AdminSettingsClient = dynamic(() => import("./AdminSettingsClient"), { ssr: false });
 
 export default function Page({ searchParams }: { searchParams?: Record<string, string | string[] | undefined> }) {
