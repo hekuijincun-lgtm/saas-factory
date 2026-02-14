@@ -1,3 +1,5 @@
+export const runtime = "edge";
+
 export default function LineSetupPage({
   searchParams,
 }: {
@@ -48,3 +50,4 @@ export default function LineSetupPage({
     </main>
   );
 }
+
