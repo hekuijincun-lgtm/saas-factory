@@ -28,6 +28,16 @@ type Env = {
 
 const app = new Hono<{ Bindings: Env }>();
 
+app.get("/__debug/env", (c) => {
+  const e: any = (c as any).env;
+  return c.json({
+    ok: true,
+    hasEnv: !!e,
+    hasDB: !!(e && e.DB),
+    envKeys: e ? Object.keys(e) : [],
+  });
+});
+
 /**
  * テナントIDを取得（暫定: 1テナントのみ対応）
  * 将来的にはリクエストヘッダーやサブドメインから取得する
@@ -1899,3 +1909,10 @@ export default {
     return app.fetch(request, env, ctx);
   },
 };
+
+export default {
+  fetch(request: Request, env: Env, ctx: ExecutionContext) {
+    return app.fetch(request, env, ctx);
+  },
+};
+
