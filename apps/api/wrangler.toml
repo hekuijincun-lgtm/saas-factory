@@ -74,20 +74,7 @@ tag = "v1-sqlite-do"
 binding = "DB"
 database_id = "cf28ae30-8e52-4a73-8d74-36dab188fa74"
 
-
 [[env.production.d1_databases]]
 binding = "DB"
 database_id = "cf28ae30-8e52-4a73-8d74-36dab188fa74"
-
-
-
-[[env.staging.d1_databases]]
-binding = "DB"
-database_id = "cf28ae30-8e52-4a73-8d74-36dab188fa74"
-
-[[env.production.d1_databases]]
-binding = "DB"
-database_id = "cf28ae30-8e52-4a73-8d74-36dab188fa74"
-
-
 
