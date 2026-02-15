@@ -35,8 +35,35 @@ export async function GET(req: Request) {
   
   const url = new URL(req.url);
   if (url.searchParams.get('debug') === '1') {
-    return new Response(JSON.stringify({ ok:true, where:'DEBUG_FORCE_CALLBACK_1175112530', href:req.url }), { status: 200, headers:{'content-type':'application/json'} });
+  let ctxSeen = false;
+  let envSeen = null as any;
+  try {
+    const ctx = getRequestContext();
+    ctxSeen = true;
+    // @ts-ignore
+    envSeen = (ctx as any)?.env ? Object.keys((ctx as any).env) : null;
+  } catch (e: any) {
+    return new Response(JSON.stringify({ ok:false, where:'DEBUG_CALLBACK_CTX_FAIL', err: String(e?.message ?? e) }), {
+      status: 200, headers:{'content-type':'application/json'}
+    });
   }
+
+  // @ts-ignore
+  const v = (getRequestContext() as any)?.env?.LINE_SESSION_SECRET;
+  const pv = (process.env.LINE_SESSION_SECRET ?? null);
+
+  return new Response(JSON.stringify({
+    ok:true,
+    where:'DEBUG_CALLBACK_ENV_CHECK',
+    href:req.url,
+    ctxSeen,
+    envKeys: envSeen,
+    ctxSecretPresent: typeof v === 'string' && v.trim().length > 0,
+    ctxSecretLen: typeof v === 'string' ? v.trim().length : null,
+    processSecretPresent: typeof pv === 'string' && pv.trim().length > 0,
+    processSecretLen: typeof pv === 'string' ? pv.trim().length : null
+  }), { status: 200, headers:{'content-type':'application/json'} });
+}
 try {
     const url = new URL(req.url);
     const code = url.searchParams.get("code");
@@ -87,6 +114,7 @@ try {
     return NextResponse.redirect(new URL("/admin/line-setup?reason=unknown", new URL(req.url).origin));
   }
 }
+
 
 
 
