@@ -13,7 +13,39 @@ export default function LineSetupPage() {
   const tenantId = "default";
   const connected = false;
 
-  return (
+  
+  const [accessToken, setAccessToken] = useState("");
+  const [channelSecret, setChannelSecret] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  async function saveLineCreds() {
+    setSaving(true);
+    setMsg(null);
+    try {
+      const res = await fetch("/api/proxy/admin/integrations/line/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tenantId,
+          channelAccessToken: accessToken,
+          channelSecret,
+        }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok || !j?.ok) {
+        throw new Error(j?.error || "save_failed");
+      }
+      setMsg("✅ 保存しました");
+      setAccessToken("");
+      setChannelSecret("");
+    } catch (e: any) {
+      setMsg("❌ 保存に失敗: " + (e?.message || "unknown"));
+    } finally {
+      setSaving(false);
+    }
+  }
+return (
     <div className="min-h-screen bg-slate-50 px-6 py-10">
       <div className="mx-auto max-w-3xl overflow-hidden rounded-3xl bg-white shadow-xl ring-1 ring-black/5">
 
@@ -74,8 +106,8 @@ export default function LineSetupPage() {
               <a href="/admin" className="rounded-full bg-slate-100 px-5 py-2 text-sm font-semibold text-slate-700">
                 管理画面へ戻る
               </a>
-              <button className="rounded-full bg-blue-600 px-5 py-2 text-sm font-semibold text-white opacity-60 cursor-not-allowed">
-                接続情報を登録（準備中）
+              <button className="rounded-full bg-blue-600 px-5 py-2 text-sm font-semibold text-white hover:opacity-90 active:opacity-80" onClick={saveLineCreds} disabled={saving || !accessToken || !channelSecret}>
+                接続情報を登録
               </button>
             </div>
 
@@ -88,3 +120,4 @@ export default function LineSetupPage() {
     </div>
   );
 }
+
