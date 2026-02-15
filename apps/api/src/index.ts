@@ -2403,7 +2403,7 @@ app.post("/admin/integrations/line/save", async (c) => {
   const keyB64 = (c.env as any).LINE_CRED_KEY_B64;
   if (!keyB64) return c.json({ ok: false, error: "missing_env_LINE_CRED_KEY_B64" }, 500);
 
-  const db = (c.env as any).; // ← binding名が違うならここだけ変える
+  const db = (c.env as any).DB; // ← binding名が違うならここだけ変える
   if (!db) return c.json({ ok: false, error: "missing_d1_binding_DB" }, 500);
 
   const key = await importAesKeyFromB64(keyB64);
@@ -2418,6 +2418,7 @@ app.post("/admin/integrations/line/save", async (c) => {
 
   return c.json({ ok: true, tenantId, updated_at: now });
 });
+
 
 
 
