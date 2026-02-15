@@ -45,7 +45,7 @@ try {
     // いったん “Edgeでビルドが通る” ことを最優先で止血する。
 
     if (!code || !state) {
-      return NextResponse.redirect(new URL("/admin/line-setup?reason=missing_env", url.origin));
+      return NextResponse.redirect(new URL("/admin/line-setup?reason=missing_code", url.origin));
     }
 
     const secret = (process.env.LINE_SESSION_SECRET ?? "").trim();
@@ -78,6 +78,7 @@ try {
     return NextResponse.redirect(new URL("/admin/line-setup?reason=unknown", new URL(req.url).origin));
   }
 }
+
 
 
 
