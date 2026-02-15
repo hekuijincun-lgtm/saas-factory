@@ -74,7 +74,9 @@ function buildBookingFlex(bookingUrl: string) {
 
 // --- GET debug (no-store) ---
 export async function GET() {
-  const secret = process.env.LINE_CHANNEL_SECRET ?? "";
+  
+const isDebug = (process.env.LINE_DEBUG === "1");
+const secret = process.env.LINE_CHANNEL_SECRET ?? "";
   const accessToken = process.env.LINE_CHANNEL_ACCESS_TOKEN ?? "";
   const allowBadSig = (process.env.LINE_WEBHOOK_ALLOW_BAD_SIGNATURE ?? "0") === "1";
   const bookingUrl = process.env.LINE_BOOKING_URL_DEFAULT ?? "";
@@ -102,7 +104,9 @@ export async function GET() {
 
 // --- POST webhook ---
 export async function POST(req: Request) {
-  const sig = req.headers.get("x-line-signature") ?? "";
+  
+const isDebug = (process.env.LINE_DEBUG === "1");
+const sig = req.headers.get("x-line-signature") ?? "";
   const secret = process.env.LINE_CHANNEL_SECRET ?? "";
   const accessToken = process.env.LINE_CHANNEL_ACCESS_TOKEN ?? "";
   const allowBadSig = (process.env.LINE_WEBHOOK_ALLOW_BAD_SIGNATURE ?? "0") === "1";
@@ -179,4 +183,5 @@ export async function POST(req: Request) {
     mode: messages[0]?.type ?? "unknown",
   });
 }
+
 
