@@ -3,21 +3,13 @@ import { NextResponse } from "next/server";
 export const runtime = "edge";
 const stamp = "LINE_WEBHOOK_V2";
 
-/* =========================
-   utils
-========================= */
-
 function base64FromBytes(bytes: Uint8Array) {
   let s = "";
   for (const b of bytes) s += String.fromCharCode(b);
   return btoa(s);
 }
 
-async function verifyLineSignature(
-  rawBody: ArrayBuffer,
-  signature: string,
-  secret: string
-) {
+async function verifyLineSignature(rawBody: ArrayBuffer, signature: string, secret: string) {
   const key = await crypto.subtle.importKey(
     "raw",
     new TextEncoder().encode(secret),
@@ -25,73 +17,82 @@ async function verifyLineSignature(
     false,
     ["sign"]
   );
-
   const mac = await crypto.subtle.sign("HMAC", key, rawBody);
   const expected = base64FromBytes(new Uint8Array(mac));
-
   return expected === signature;
 }
 
-/* =========================
-   GET (health / debug)
-========================= */
-
 export async function GET() {
   const secret = process.env.LINE_CHANNEL_SECRET ?? "";
+  const allowBadSig = (process.env.LINE_WEBHOOK_ALLOW_BAD_SIGNATURE ?? "") === "1";
   return NextResponse.json({
     ok: true,
     where: "api/line/webhook",
     method: "GET",
     stamp,
-    secretLen: secret.length, // 0じゃなければenv入ってる
+    secretLen: secret.length,
+    allowBadSig,
   });
 }
 
-/* =========================
-   POST (LINE Webhook)
-========================= */
-
 export async function POST(req: Request) {
+  const where = "api/line/webhook";
   const sig = req.headers.get("x-line-signature") ?? "";
   const secret = process.env.LINE_CHANNEL_SECRET ?? "";
+  const allowBadSig = (process.env.LINE_WEBHOOK_ALLOW_BAD_SIGNATURE ?? "") === "1";
 
   if (!secret) {
-    return NextResponse.json(
-      { ok: false, stamp, error: "missing_LINE_CHANNEL_SECRET" },
-      { status: 500 }
-    );
+    return NextResponse.json({ ok: false, stamp, where, error: "missing_LINE_CHANNEL_SECRET" }, { status: 500 });
   }
 
-  // 🔑 raw body（署名検証用）
-  const rawBuf = await req.arrayBuffer();
+  const raw = await req.arrayBuffer();
+  const verified = sig ? await verifyLineSignature(raw, sig, secret) : false;
+  const bodyText = new TextDecoder().decode(raw);
 
-  const valid =
-    sig && (await verifyLineSignature(rawBuf, sig, secret));
+  console.log("[LINE_WEBHOOK]", JSON.stringify({
+    stamp,
+    verified,
+    hasSig: !!sig,
+    bodyLen: raw.byteLength,
+    allowBadSig,
+  }));
+  console.log("[LINE_WEBHOOK_RAW]", bodyText);
 
-  if (!valid) {
-    return NextResponse.json(
-      {
-        ok: false,
+  if (!verified) {
+    if (allowBadSig) {
+      return NextResponse.json({
+        ok: true,
         stamp,
-        error: "bad_signature",
+        where,
+        note: "signature_failed_but_allowed",
+        verified,
         hasSig: !!sig,
-        bodyLen: rawBuf.byteLength,
-      },
+        bodyLen: raw.byteLength,
+      });
+    }
+    return NextResponse.json(
+      { ok: false, stamp, where, error: "bad_signature", verified, hasSig: !!sig, bodyLen: raw.byteLength },
       { status: 401 }
     );
   }
 
-  // 👀 ログ用（ここは text に変換してOK）
-  const rawText = new TextDecoder().decode(rawBuf);
-  console.log("[LINE_WEBHOOK_RAW]", rawText);
+  let parsed: any = null;
+  try {
+    parsed = JSON.parse(bodyText);
+  } catch (e: any) {
+    return NextResponse.json(
+      { ok: false, stamp, where, error: "invalid_json", message: String(e?.message ?? e) },
+      { status: 400 }
+    );
+  }
 
-  // TODO: ここで events を parse して処理していく
-  // const payload = JSON.parse(rawText);
+  const events = Array.isArray(parsed?.events) ? parsed.events : [];
+  const summary = events.map((ev: any) => ({
+    type: ev?.type ?? null,
+    replyToken: ev?.replyToken ? "present" : null,
+    userId: ev?.source?.userId ?? null,
+    timestamp: ev?.timestamp ?? null,
+  }));
 
-  return NextResponse.json({
-    ok: true,
-    stamp,
-    where: "api/line/webhook",
-    method: "POST",
-  });
+  return NextResponse.json({ ok: true, stamp, where, verified, eventCount: events.length, summary });
 }
