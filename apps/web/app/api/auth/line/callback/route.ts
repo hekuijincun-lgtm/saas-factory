@@ -1,6 +1,7 @@
 export const runtime = "edge";
 
 import { NextResponse } from "next/server";
+import { getRequestContext } from "@cloudflare/next-on-pages";
 
 function b64urlFromBytes(bytes: Uint8Array) {
   let s = "";
@@ -48,7 +49,15 @@ try {
       return NextResponse.redirect(new URL("/admin/line-setup?reason=missing_code", url.origin));
     }
 
-    const secret = (process.env.LINE_SESSION_SECRET ?? "").trim();
+    const secret = (() => {
+  try {
+    const ctx = getRequestContext();
+    // @ts-ignore
+    const v = (ctx as any)?.env?.LINE_SESSION_SECRET;
+    if (typeof v === "string" && v.trim()) return v.trim();
+  } catch {}
+  return (process.env.LINE_SESSION_SECRET ?? "").trim();
+})();
     if (!secret) {
       return NextResponse.redirect(new URL("/admin/line-setup?reason=secret", url.origin));
     }
@@ -78,6 +87,7 @@ try {
     return NextResponse.redirect(new URL("/admin/line-setup?reason=unknown", new URL(req.url).origin));
   }
 }
+
 
 
 
