@@ -1653,8 +1653,6 @@ if(!code){
     const tenantId = getTenantId(c);
     return c.json({ ok: true, tenantId, kind: 'unconfigured' });
   });
-
-export default app;
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { DEFAULT_ADMIN_SETTINGS, validateAdminSettings, mergeSettings, type AdminSettings } from './settings';
@@ -1896,8 +1894,8 @@ app.post("/admin/integrations/line/save", async (c) => {
   return c.json({ ok: true, tenantId, updated_at: now });
 });
 
-
-
-
-
-
+export default {
+  fetch(request: Request, env: Env, ctx: ExecutionContext) {
+    return app.fetch(request, env, ctx);
+  },
+};
