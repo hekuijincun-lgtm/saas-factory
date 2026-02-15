@@ -131,7 +131,7 @@ export async function POST(req: Request) {
   const textIn = String(ev.message.text ?? "");
   const replyToken = String(ev.replyToken);
 
-  const bookingUrl = "https://YOUR-BOOKING-URL-HERE";
+  const bookingUrl = "https://YOUR-REAL-BOOKING-URL-HERE";
 
   const normalized = textIn
     .normalize("NFKC")
@@ -139,12 +139,12 @@ export async function POST(req: Request) {
     .toLowerCase();
 
   // ✅ DBG: まず必ず stamp + normalized を返して「当たってるか」確定させる
-  let messages: any[] = [{ type: "text", text: `DBG stamp=${stamp} n=${normalized}` }];
+  let messages: any[];
 
   if (normalized.includes("予約") || normalized.includes("よやく")) {
-    messages.push(buildBookingFlex(bookingUrl));
+    messages = [buildBookingFlex(bookingUrl)];
   } else {
-    messages.push({ type: "text", text: `ECHO: ${textIn}` });
+    messages = [{ type: "text", text: `ECHO: ${textIn}` }];
   }
 
   const rep = await replyLine(accessToken, replyToken, messages);
@@ -162,3 +162,4 @@ export async function POST(req: Request) {
     mode: messages[0]?.type ?? "unknown",
   });
 }
+
