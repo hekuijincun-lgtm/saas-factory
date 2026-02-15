@@ -74,16 +74,36 @@ function buildBookingFlex(bookingUrl: string) {
 export async function GET() {
   const secret = process.env.LINE_CHANNEL_SECRET ?? "";
   const accessToken = process.env.LINE_CHANNEL_ACCESS_TOKEN ?? "";
-  const allowBadSig = (process.env.LINE_WEBHOOK_ALLOW_BAD_SIGNATURE ?? "0") === "1";
+
+  const allowBadSig_process =
+    (process.env.LINE_WEBHOOK_ALLOW_BAD_SIGNATURE ?? "0") === "1";
+
+  // Pages runtime env (Functions env / secrets)
+  let allowBadSig_ctx: boolean | null = null;
+  let ctxSeen = false;
+  let commit = process.env.CF_PAGES_COMMIT_SHA ?? null;
+
+  try {
+    const ctx = getRequestContext();
+    ctxSeen = true;
+    // @ts-ignore
+    const v = (ctx?.env?.LINE_WEBHOOK_ALLOW_BAD_SIGNATURE ?? null) as any;
+    allowBadSig_ctx = v === null ? null : String(v) === "1";
+    // @ts-ignore
+    commit = (ctx?.env?.CF_PAGES_COMMIT_SHA ?? commit) as any;
+  } catch {}
 
   return NextResponse.json({
     ok: true,
     where,
     method: "GET",
     stamp,
+    commit,
+    ctxSeen,
+    allowBadSig_process,
+    allowBadSig_ctx,
     secretLen: secret.length,
     accessTokenLen: accessToken.length,
-    allowBadSig,
   });
 }
 
@@ -162,4 +182,5 @@ export async function POST(req: Request) {
     mode: messages[0]?.type ?? "unknown",
   });
 }
+
 
