@@ -30,7 +30,7 @@ async function replyLine(accessToken: string, replyToken: string, messages: any[
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${accessToken}`,
+      Authorization: Bearer \,
     },
     body: JSON.stringify({ replyToken, messages }),
   });
@@ -70,40 +70,20 @@ function buildBookingFlex(bookingUrl: string) {
   };
 }
 
-// --- GET debug ---
+// --- GET debug（本番は最小情報） ---
 export async function GET() {
   const secret = process.env.LINE_CHANNEL_SECRET ?? "";
   const accessToken = process.env.LINE_CHANNEL_ACCESS_TOKEN ?? "";
-
-  const allowBadSig_process =
-    (process.env.LINE_WEBHOOK_ALLOW_BAD_SIGNATURE ?? "0") === "1";
-
-  // Pages runtime env (Functions env / secrets)
-  let allowBadSig_ctx: boolean | null = null;
-  let ctxSeen = false;
-  let commit = process.env.CF_PAGES_COMMIT_SHA ?? null;
-
-  try {
-    const ctx = getRequestContext();
-    ctxSeen = true;
-    // @ts-ignore
-    const v = (ctx?.env?.LINE_WEBHOOK_ALLOW_BAD_SIGNATURE ?? null) as any;
-    allowBadSig_ctx = v === null ? null : String(v) === "1";
-    // @ts-ignore
-    commit = (ctx?.env?.CF_PAGES_COMMIT_SHA ?? commit) as any;
-  } catch {}
+  const allowBadSig = (process.env.LINE_WEBHOOK_ALLOW_BAD_SIGNATURE ?? "0") === "1";
 
   return NextResponse.json({
     ok: true,
     where,
     method: "GET",
     stamp,
-    commit,
-    ctxSeen,
-    allowBadSig_process,
-    allowBadSig_ctx,
     secretLen: secret.length,
     accessTokenLen: accessToken.length,
+    allowBadSig,
   });
 }
 
@@ -158,13 +138,12 @@ export async function POST(req: Request) {
     .replace(/[\s\u200B-\u200D\uFEFF]/g, "")
     .toLowerCase();
 
-  // ✅ DBG: まず必ず stamp + normalized を返して「当たってるか」確定させる
   let messages: any[];
 
   if (normalized.includes("予約") || normalized.includes("よやく")) {
     messages = [buildBookingFlex(bookingUrl)];
   } else {
-    messages = [{ type: "text", text: `ECHO: ${textIn}` }];
+    messages = [{ type: "text", text: ECHO: \ }];
   }
 
   const rep = await replyLine(accessToken, replyToken, messages);
@@ -182,5 +161,3 @@ export async function POST(req: Request) {
     mode: messages[0]?.type ?? "unknown",
   });
 }
-
-
