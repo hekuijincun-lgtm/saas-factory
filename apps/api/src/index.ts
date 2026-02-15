@@ -1914,10 +1914,8 @@ app.post("/admin/integrations/line/save", async (c) => {
   },
 };
 
-
 export default {
-  fetch(request: Request, env: Env, ctx: ExecutionContext) {
+  fetch(request, env, ctx) {
     return app.fetch(request, env, ctx);
   },
 };
-
