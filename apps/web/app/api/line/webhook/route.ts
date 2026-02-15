@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 
 export const runtime = "edge";
 
+const isDebug = (process.env.LINE_DEBUG === "1");
+
 const where = "api/line/webhook";
 const stamp = "LINE_WEBHOOK_V4_20260215_202858";
 
@@ -74,8 +76,6 @@ function buildBookingFlex(bookingUrl: string) {
 
 // --- GET debug (no-store) ---
 export async function GET() {
-  
-const isDebug = (process.env.LINE_DEBUG === "1");
 const secret = process.env.LINE_CHANNEL_SECRET ?? "";
   const accessToken = process.env.LINE_CHANNEL_ACCESS_TOKEN ?? "";
   const allowBadSig = (process.env.LINE_WEBHOOK_ALLOW_BAD_SIGNATURE ?? "0") === "1";
@@ -104,8 +104,6 @@ const secret = process.env.LINE_CHANNEL_SECRET ?? "";
 
 // --- POST webhook ---
 export async function POST(req: Request) {
-  
-const isDebug = (process.env.LINE_DEBUG === "1");
 const sig = req.headers.get("x-line-signature") ?? "";
   const secret = process.env.LINE_CHANNEL_SECRET ?? "";
   const accessToken = process.env.LINE_CHANNEL_ACCESS_TOKEN ?? "";
@@ -161,7 +159,7 @@ const sig = req.headers.get("x-line-signature") ?? "";
 
   if (normalized.includes("予約") || normalized.includes("よやく")) {
     messages = [
-      { type: "text", text: `DBG stamp=${stamp} url=${bookingUrl}` },
+      ...(isDebug ? [{ type: "text", text: `DBG stamp=${stamp} url=${bookingUrl}` }] : []),
       buildBookingFlex(bookingUrl),
     ];
   } else {
@@ -183,5 +181,6 @@ const sig = req.headers.get("x-line-signature") ?? "";
     mode: messages[0]?.type ?? "unknown",
   });
 }
+
 
 
