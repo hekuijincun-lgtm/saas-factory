@@ -69,12 +69,12 @@ bindings = [
 [[migrations]]
 tag = "v1-sqlite-do"
 
-
 [[env.staging.d1_databases]]
 binding = "DB"
+database_name = "saas-factory-staging"
 database_id = "cf28ae30-8e52-4a73-8d74-36dab188fa74"
 
 [[env.production.d1_databases]]
 binding = "DB"
+database_name = "saas-factory-staging"
 database_id = "cf28ae30-8e52-4a73-8d74-36dab188fa74"
-
