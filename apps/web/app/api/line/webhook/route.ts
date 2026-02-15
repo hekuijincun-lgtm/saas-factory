@@ -31,7 +31,7 @@ async function replyLine(accessToken: string, replyToken: string, messages: any[
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${accessToken}`,
+      Authorization: "Bearer " + accessToken,
     },
     body: JSON.stringify({ replyToken, messages }),
   });
@@ -43,7 +43,7 @@ async function replyLine(accessToken: string, replyToken: string, messages: any[
 function buildBookingFlex(bookingUrl: string) {
   return {
     type: "flex",
-    altText: `予約ページを開く (${stamp})`,
+    altText: "予約ページを開く (" + stamp + ")",
     contents: {
       type: "bubble",
       body: {
@@ -179,3 +179,4 @@ export async function POST(req: Request) {
     mode: messages[0]?.type ?? "unknown",
   });
 }
+
