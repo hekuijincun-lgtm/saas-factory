@@ -15,7 +15,7 @@ bindings = [
 ]
 
 [[migrations]]
-tag = "v1-sqlite-do"
+tag = "v1"
 new_sqlite_classes = ["SlotLock"]
 
 # ===== STAGING =====
@@ -55,3 +55,13 @@ name = "saas-factory-api"
 
 
 
+
+[[env.production.kv_namespaces]]
+binding = "ENVIRONMENT"
+id = "b3bde2eb54cc4e91a69998c89f948b18"
+preview_id = "32db8ae0d1fb42fb93b03725997da00a"
+
+[env.production.durable_objects]
+bindings = [
+  { name = "SLOT_LOCK", class_name = "SlotLock" }
+]
