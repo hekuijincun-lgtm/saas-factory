@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 
 export const runtime = "edge";
-const stamp = "LINE_WEBHOOK_V2";
+const stamp = "LINE_WEBHOOK_V3";
+const where = "api/line/webhook";
 
 function base64FromBytes(bytes: Uint8Array) {
   let s = "";
@@ -24,61 +25,30 @@ async function verifyLineSignature(rawBody: ArrayBuffer, signature: string, secr
 
 export async function GET() {
   const secret = process.env.LINE_CHANNEL_SECRET ?? "";
-  const allowBadSig = (process.env.LINE_WEBHOOK_ALLOW_BAD_SIGNATURE ?? "") === "1";
-  return NextResponse.json({
-    ok: true,
-    where: "api/line/webhook",
-    method: "GET",
-    stamp,
-    secretLen: secret.length,
-    allowBadSig,
-  });
+  const allowBadSig = process.env.LINE_WEBHOOK_ALLOW_BAD_SIGNATURE === "1";
+  return NextResponse.json({ ok: true, where, method: "GET", stamp, secretLen: secret.length, allowBadSig });
 }
 
 export async function POST(req: Request) {
-  const where = "api/line/webhook";
   const sig = req.headers.get("x-line-signature") ?? "";
   const secret = process.env.LINE_CHANNEL_SECRET ?? "";
-  const allowBadSig = (process.env.LINE_WEBHOOK_ALLOW_BAD_SIGNATURE ?? "") === "1";
-
-  if (!secret) {
-    return NextResponse.json({ ok: false, stamp, where, error: "missing_LINE_CHANNEL_SECRET" }, { status: 500 });
-  }
-
+  const allowBadSig = process.env.LINE_WEBHOOK_ALLOW_BAD_SIGNATURE === "1";
   const raw = await req.arrayBuffer();
-  const verified = sig ? await verifyLineSignature(raw, sig, secret) : false;
-  const bodyText = new TextDecoder().decode(raw);
 
-  console.log("[LINE_WEBHOOK]", JSON.stringify({
-    stamp,
-    verified,
-    hasSig: !!sig,
-    bodyLen: raw.byteLength,
-    allowBadSig,
-  }));
-  console.log("[LINE_WEBHOOK_RAW]", bodyText);
+  let verified = false;
+  if (secret && sig) verified = await verifyLineSignature(raw, sig, secret);
 
-  if (!verified) {
-    if (allowBadSig) {
-      return NextResponse.json({
-        ok: true,
-        stamp,
-        where,
-        note: "signature_failed_but_allowed",
-        verified,
-        hasSig: !!sig,
-        bodyLen: raw.byteLength,
-      });
-    }
+  if (!verified && !allowBadSig) {
     return NextResponse.json(
       { ok: false, stamp, where, error: "bad_signature", verified, hasSig: !!sig, bodyLen: raw.byteLength },
       { status: 401 }
     );
   }
 
-  let parsed: any = null;
+  let events: any[] = [];
   try {
-    parsed = JSON.parse(bodyText);
+    const json = JSON.parse(new TextDecoder().decode(raw));
+    events = json.events ?? [];
   } catch (e: any) {
     return NextResponse.json(
       { ok: false, stamp, where, error: "invalid_json", message: String(e?.message ?? e) },
@@ -86,12 +56,11 @@ export async function POST(req: Request) {
     );
   }
 
-  const events = Array.isArray(parsed?.events) ? parsed.events : [];
-  const summary = events.map((ev: any) => ({
-    type: ev?.type ?? null,
-    replyToken: ev?.replyToken ? "present" : null,
-    userId: ev?.source?.userId ?? null,
-    timestamp: ev?.timestamp ?? null,
+  const summary = events.map((ev) => ({
+    type: ev.type,
+    replyToken: ev.replyToken ?? null,
+    text: ev.message?.text ?? null,
+    timestamp: ev.timestamp ?? null,
   }));
 
   return NextResponse.json({ ok: true, stamp, where, verified, eventCount: events.length, summary });
