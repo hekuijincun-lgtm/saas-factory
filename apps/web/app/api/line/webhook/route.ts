@@ -131,7 +131,7 @@ export async function POST(req: Request) {
   const textIn = String(ev.message.text ?? "");
   const replyToken = String(ev.replyToken);
 
-  const bookingUrl = "https://YOUR-REAL-BOOKING-URL-HERE";
+  const bookingUrl = process.env.LINE_BOOKING_URL_DEFAULT ?? "";
 
   const normalized = textIn
     .normalize("NFKC")
@@ -161,3 +161,4 @@ export async function POST(req: Request) {
     mode: messages[0]?.type ?? "unknown",
   });
 }
+
