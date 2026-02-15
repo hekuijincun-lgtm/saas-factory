@@ -69,3 +69,13 @@ bindings = [
 [[migrations]]
 tag = "v1-sqlite-do"
 
+
+[[env.staging.d1_databases]]
+binding = "DB"
+database_id = "PASTE_D1_UUID_HERE"
+
+
+[[env.production.d1_databases]]
+binding = "DB"
+database_id = "PASTE_D1_UUID_HERE"
+
