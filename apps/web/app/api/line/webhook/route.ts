@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 export const runtime = "edge";
 
 const where = "api/line/webhook";
-const stamp = "LINE_WEBHOOK_V4_20260215_201604";
+const stamp = "LINE_WEBHOOK_V4_20260215_202858";
 
 // --- utils ---
 function base64FromBytes(bytes: Uint8Array) {
@@ -31,7 +31,7 @@ async function replyLine(accessToken: string, replyToken: string, messages: any[
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: Bearer \,
+      Authorization: `Bearer ${accessToken}`,
     },
     body: JSON.stringify({ replyToken, messages }),
   });
@@ -43,8 +43,7 @@ async function replyLine(accessToken: string, replyToken: string, messages: any[
 function buildBookingFlex(bookingUrl: string) {
   return {
     type: "flex",
-    // altText に stamp を混ぜて「今のコード」判定できるようにする
-    altText: 予約ページを開く (\LINE_WEBHOOK_V4_20260215_201604),
+    altText: `予約ページを開く (${stamp})`,
     contents: {
       type: "bubble",
       body: {
@@ -54,7 +53,7 @@ function buildBookingFlex(bookingUrl: string) {
         contents: [
           { type: "text", text: "予約ページ", weight: "bold", size: "xl" },
           { type: "text", text: "下のボタンから予約を開始してね😉", wrap: true, color: "#666666" },
-          { type: "text", text: stamp: \LINE_WEBHOOK_V4_20260215_201604, size: "xs", color: "#999999", wrap: true },
+          { type: "text", text: `stamp: ${stamp}`, size: "xs", color: "#999999", wrap: true },
         ],
       },
       footer: {
@@ -73,7 +72,7 @@ function buildBookingFlex(bookingUrl: string) {
   };
 }
 
-// --- GET debug (no-storeでキャッシュ殺し) ---
+// --- GET debug (no-store) ---
 export async function GET() {
   const secret = process.env.LINE_CHANNEL_SECRET ?? "";
   const accessToken = process.env.LINE_CHANNEL_ACCESS_TOKEN ?? "";
@@ -108,7 +107,6 @@ export async function POST(req: Request) {
   const accessToken = process.env.LINE_CHANNEL_ACCESS_TOKEN ?? "";
   const allowBadSig = (process.env.LINE_WEBHOOK_ALLOW_BAD_SIGNATURE ?? "0") === "1";
 
-  // bookingUrl: env -> fallback
   const bookingUrl =
     process.env.LINE_BOOKING_URL_DEFAULT ??
     "https://saas-factory-web-v2.pages.dev/booking";
@@ -159,11 +157,11 @@ export async function POST(req: Request) {
 
   if (normalized.includes("予約") || normalized.includes("よやく")) {
     messages = [
-      { type: "text", text: DBG stamp=\LINE_WEBHOOK_V4_20260215_201604 url=\ },
+      { type: "text", text: `DBG stamp=${stamp} url=${bookingUrl}` },
       buildBookingFlex(bookingUrl),
     ];
   } else {
-    messages = [{ type: "text", text: ECHO: \ (stamp=\LINE_WEBHOOK_V4_20260215_201604) }];
+    messages = [{ type: "text", text: `ECHO: ${textIn} (stamp=${stamp})` }];
   }
 
   const rep = await replyLine(accessToken, replyToken, messages);
