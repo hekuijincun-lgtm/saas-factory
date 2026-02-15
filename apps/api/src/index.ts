@@ -39,6 +39,28 @@ function getTenantId(c: { req: { header: (name: string) => string | undefined } 
 }
 
 // CORS設定: 開発時のみ http://localhost:3000 を許可
+function b64ToBytes(b64: string) {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+function bytesToB64(bytes: Uint8Array) {
+  let s = "";
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s);
+}
+async function importAesKeyFromB64(b64: string) {
+  const raw = b64ToBytes(b64);
+  return crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+}
+async function aesGcmEncrypt(key: CryptoKey, plain: string) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const pt = new TextEncoder().encode(plain);
+  const ctBuf = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, pt);
+  const ct = new Uint8Array(ctBuf);
+  return bytesToB64(iv) + "." + bytesToB64(ct);
+}
 app.use('/*', cors({
   origin: (origin, c) => {
     const env = c.env?.ENVIRONMENT || 'development';
@@ -55,14 +77,80 @@ app.use('/*', cors({
 }));
 
 // GET /ping (依存ゼロの疎通確認ルート)
+function b64ToBytes(b64: string) {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+function bytesToB64(bytes: Uint8Array) {
+  let s = "";
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s);
+}
+async function importAesKeyFromB64(b64: string) {
+  const raw = b64ToBytes(b64);
+  return crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+}
+async function aesGcmEncrypt(key: CryptoKey, plain: string) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const pt = new TextEncoder().encode(plain);
+  const ctBuf = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, pt);
+  const ct = new Uint8Array(ctBuf);
+  return bytesToB64(iv) + "." + bytesToB64(ct);
+}
 app.get("/ping", (c) => c.text("pong-stamp-20260205-171753"))
 
 // GET /
+function b64ToBytes(b64: string) {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+function bytesToB64(bytes: Uint8Array) {
+  let s = "";
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s);
+}
+async function importAesKeyFromB64(b64: string) {
+  const raw = b64ToBytes(b64);
+  return crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+}
+async function aesGcmEncrypt(key: CryptoKey, plain: string) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const pt = new TextEncoder().encode(plain);
+  const ctBuf = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, pt);
+  const ct = new Uint8Array(ctBuf);
+  return bytesToB64(iv) + "." + bytesToB64(ct);
+}
 app.get('/', (c) => {
   return c.text('API Online');
 });
 
 // GET /health
+function b64ToBytes(b64: string) {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+function bytesToB64(bytes: Uint8Array) {
+  let s = "";
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s);
+}
+async function importAesKeyFromB64(b64: string) {
+  const raw = b64ToBytes(b64);
+  return crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+}
+async function aesGcmEncrypt(key: CryptoKey, plain: string) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const pt = new TextEncoder().encode(plain);
+  const ctBuf = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, pt);
+  const ct = new Uint8Array(ctBuf);
+  return bytesToB64(iv) + "." + bytesToB64(ct);
+}
 app.get('/health', (c) => {
   const env = c.env;
   return c.json({
@@ -71,6 +159,28 @@ app.get('/health', (c) => {
     env: env.ENVIRONMENT || 'development',
     version: env.VERSION || '1.0.0',
   });
+function b64ToBytes(b64: string) {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+function bytesToB64(bytes: Uint8Array) {
+  let s = "";
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s);
+}
+async function importAesKeyFromB64(b64: string) {
+  const raw = b64ToBytes(b64);
+  return crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+}
+async function aesGcmEncrypt(key: CryptoKey, plain: string) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const pt = new TextEncoder().encode(plain);
+  const ctBuf = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, pt);
+  const ct = new Uint8Array(ctBuf);
+  return bytesToB64(iv) + "." + bytesToB64(ct);
+}
 app.get("/__routes2", (c) => {
   // @ts-ignore
   const routes = (app as any).routes ?? null;
@@ -80,6 +190,28 @@ app.get("/__routes2", (c) => {
 });
 
 // GET /meta
+function b64ToBytes(b64: string) {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+function bytesToB64(bytes: Uint8Array) {
+  let s = "";
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s);
+}
+async function importAesKeyFromB64(b64: string) {
+  const raw = b64ToBytes(b64);
+  return crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+}
+async function aesGcmEncrypt(key: CryptoKey, plain: string) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const pt = new TextEncoder().encode(plain);
+  const ctBuf = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, pt);
+  const ct = new Uint8Array(ctBuf);
+  return bytesToB64(iv) + "." + bytesToB64(ct);
+}
 app.get('/meta', (c) => {
   const env = c.env;
   return c.json({
@@ -91,6 +223,28 @@ app.get('/meta', (c) => {
 });
 
 // GET /slots?date=YYYY-MM-DD&staffId=xxx(optional)
+function b64ToBytes(b64: string) {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+function bytesToB64(bytes: Uint8Array) {
+  let s = "";
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s);
+}
+async function importAesKeyFromB64(b64: string) {
+  const raw = b64ToBytes(b64);
+  return crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+}
+async function aesGcmEncrypt(key: CryptoKey, plain: string) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const pt = new TextEncoder().encode(plain);
+  const ctBuf = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, pt);
+  const ct = new Uint8Array(ctBuf);
+  return bytesToB64(iv) + "." + bytesToB64(ct);
+}
 app.get('/slots', async (c) => {
   const dateStr = c.req.query('date');
   const staffId = c.req.query('staffId'); // optional
@@ -380,6 +534,28 @@ app.get('/slots', async (c) => {
 });
 
 // POST /reserve
+function b64ToBytes(b64: string) {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+function bytesToB64(bytes: Uint8Array) {
+  let s = "";
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s);
+}
+async function importAesKeyFromB64(b64: string) {
+  const raw = b64ToBytes(b64);
+  return crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+}
+async function aesGcmEncrypt(key: CryptoKey, plain: string) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const pt = new TextEncoder().encode(plain);
+  const ctBuf = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, pt);
+  const ct = new Uint8Array(ctBuf);
+  return bytesToB64(iv) + "." + bytesToB64(ct);
+}
 app.post('/reserve', async (c) => {
   try {
     const body = await c.req.json();
@@ -511,6 +687,28 @@ app.post('/reserve', async (c) => {
 });
 
 // GET /admin/reservations?date=YYYY-MM-DD
+function b64ToBytes(b64: string) {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+function bytesToB64(bytes: Uint8Array) {
+  let s = "";
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s);
+}
+async function importAesKeyFromB64(b64: string) {
+  const raw = b64ToBytes(b64);
+  return crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+}
+async function aesGcmEncrypt(key: CryptoKey, plain: string) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const pt = new TextEncoder().encode(plain);
+  const ctBuf = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, pt);
+  const ct = new Uint8Array(ctBuf);
+  return bytesToB64(iv) + "." + bytesToB64(ct);
+}
 app.get('/admin/reservations', async (c) => {
   const dateStr = c.req.query('date');
   
@@ -562,6 +760,28 @@ app.get('/admin/reservations', async (c) => {
 });
 
 // GET /admin/staff
+function b64ToBytes(b64: string) {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+function bytesToB64(bytes: Uint8Array) {
+  let s = "";
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s);
+}
+async function importAesKeyFromB64(b64: string) {
+  const raw = b64ToBytes(b64);
+  return crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+}
+async function aesGcmEncrypt(key: CryptoKey, plain: string) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const pt = new TextEncoder().encode(plain);
+  const ctBuf = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, pt);
+  const ct = new Uint8Array(ctBuf);
+  return bytesToB64(iv) + "." + bytesToB64(ct);
+}
 app.get('/admin/staff', async (c) => {
   try {
     const kv = c.env.ENVIRONMENT;
@@ -586,6 +806,28 @@ app.get('/admin/staff', async (c) => {
 });
 
 // POST /admin/staff
+function b64ToBytes(b64: string) {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+function bytesToB64(bytes: Uint8Array) {
+  let s = "";
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s);
+}
+async function importAesKeyFromB64(b64: string) {
+  const raw = b64ToBytes(b64);
+  return crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+}
+async function aesGcmEncrypt(key: CryptoKey, plain: string) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const pt = new TextEncoder().encode(plain);
+  const ctBuf = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, pt);
+  const ct = new Uint8Array(ctBuf);
+  return bytesToB64(iv) + "." + bytesToB64(ct);
+}
 app.post('/admin/staff', async (c) => {
   try {
     const body = await c.req.json();
@@ -626,6 +868,28 @@ app.post('/admin/staff', async (c) => {
 });
 
 // PATCH /admin/staff/:id
+function b64ToBytes(b64: string) {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+function bytesToB64(bytes: Uint8Array) {
+  let s = "";
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s);
+}
+async function importAesKeyFromB64(b64: string) {
+  const raw = b64ToBytes(b64);
+  return crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+}
+async function aesGcmEncrypt(key: CryptoKey, plain: string) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const pt = new TextEncoder().encode(plain);
+  const ctBuf = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, pt);
+  const ct = new Uint8Array(ctBuf);
+  return bytesToB64(iv) + "." + bytesToB64(ct);
+}
 app.patch('/admin/staff/:id', async (c) => {
   try {
     const id = c.req.param('id');
@@ -676,6 +940,28 @@ app.patch('/admin/staff/:id', async (c) => {
 });
 
 // GET /admin/menu
+function b64ToBytes(b64: string) {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+function bytesToB64(bytes: Uint8Array) {
+  let s = "";
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s);
+}
+async function importAesKeyFromB64(b64: string) {
+  const raw = b64ToBytes(b64);
+  return crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+}
+async function aesGcmEncrypt(key: CryptoKey, plain: string) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const pt = new TextEncoder().encode(plain);
+  const ctBuf = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, pt);
+  const ct = new Uint8Array(ctBuf);
+  return bytesToB64(iv) + "." + bytesToB64(ct);
+}
 app.get('/admin/menu', async (c) => {
   try {
     const kv = c.env.ENVIRONMENT;
@@ -700,6 +986,28 @@ app.get('/admin/menu', async (c) => {
 });
 
 // POST /admin/menu
+function b64ToBytes(b64: string) {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+function bytesToB64(bytes: Uint8Array) {
+  let s = "";
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s);
+}
+async function importAesKeyFromB64(b64: string) {
+  const raw = b64ToBytes(b64);
+  return crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+}
+async function aesGcmEncrypt(key: CryptoKey, plain: string) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const pt = new TextEncoder().encode(plain);
+  const ctBuf = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, pt);
+  const ct = new Uint8Array(ctBuf);
+  return bytesToB64(iv) + "." + bytesToB64(ct);
+}
 app.post('/admin/menu', async (c) => {
   try {
     const body = await c.req.json();
@@ -747,6 +1055,28 @@ app.post('/admin/menu', async (c) => {
 });
 
 // PATCH /admin/menu/:id
+function b64ToBytes(b64: string) {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+function bytesToB64(bytes: Uint8Array) {
+  let s = "";
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s);
+}
+async function importAesKeyFromB64(b64: string) {
+  const raw = b64ToBytes(b64);
+  return crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+}
+async function aesGcmEncrypt(key: CryptoKey, plain: string) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const pt = new TextEncoder().encode(plain);
+  const ctBuf = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, pt);
+  const ct = new Uint8Array(ctBuf);
+  return bytesToB64(iv) + "." + bytesToB64(ct);
+}
 app.patch('/admin/menu/:id', async (c) => {
   try {
     const id = c.req.param('id');
@@ -806,6 +1136,28 @@ app.patch('/admin/menu/:id', async (c) => {
 });
 
 // GET /admin/settings
+function b64ToBytes(b64: string) {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+function bytesToB64(bytes: Uint8Array) {
+  let s = "";
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s);
+}
+async function importAesKeyFromB64(b64: string) {
+  const raw = b64ToBytes(b64);
+  return crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+}
+async function aesGcmEncrypt(key: CryptoKey, plain: string) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const pt = new TextEncoder().encode(plain);
+  const ctBuf = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, pt);
+  const ct = new Uint8Array(ctBuf);
+  return bytesToB64(iv) + "." + bytesToB64(ct);
+}
 app.get('/admin/settings', async (c) => {
   try {
     const kv = c.env.ENVIRONMENT;
@@ -826,6 +1178,28 @@ app.get('/admin/settings', async (c) => {
 });
 
 // PUT /admin/settings
+function b64ToBytes(b64: string) {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+function bytesToB64(bytes: Uint8Array) {
+  let s = "";
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s);
+}
+async function importAesKeyFromB64(b64: string) {
+  const raw = b64ToBytes(b64);
+  return crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+}
+async function aesGcmEncrypt(key: CryptoKey, plain: string) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const pt = new TextEncoder().encode(plain);
+  const ctBuf = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, pt);
+  const ct = new Uint8Array(ctBuf);
+  return bytesToB64(iv) + "." + bytesToB64(ct);
+}
 app.put('/admin/settings', async (c) => {
   try {
     const body = await c.req.json() as Partial<AdminSettings>;
@@ -859,6 +1233,28 @@ app.put('/admin/settings', async (c) => {
 });
 
 // PUT /admin/staff/:id/shift
+function b64ToBytes(b64: string) {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+function bytesToB64(bytes: Uint8Array) {
+  let s = "";
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s);
+}
+async function importAesKeyFromB64(b64: string) {
+  const raw = b64ToBytes(b64);
+  return crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+}
+async function aesGcmEncrypt(key: CryptoKey, plain: string) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const pt = new TextEncoder().encode(plain);
+  const ctBuf = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, pt);
+  const ct = new Uint8Array(ctBuf);
+  return bytesToB64(iv) + "." + bytesToB64(ct);
+}
 app.put('/admin/staff/:id/shift', async (c) => {
   try {
     const staffId = c.req.param('id');
@@ -892,6 +1288,28 @@ app.put('/admin/staff/:id/shift', async (c) => {
 });
 
 // GET /admin/staff/:id/shift
+function b64ToBytes(b64: string) {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+function bytesToB64(bytes: Uint8Array) {
+  let s = "";
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s);
+}
+async function importAesKeyFromB64(b64: string) {
+  const raw = b64ToBytes(b64);
+  return crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+}
+async function aesGcmEncrypt(key: CryptoKey, plain: string) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const pt = new TextEncoder().encode(plain);
+  const ctBuf = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, pt);
+  const ct = new Uint8Array(ctBuf);
+  return bytesToB64(iv) + "." + bytesToB64(ct);
+}
 app.get('/admin/staff/:id/shift', async (c) => {
   try {
     const staffId = c.req.param('id');
@@ -923,6 +1341,28 @@ app.get('/admin/staff/:id/shift', async (c) => {
 });
 
 // PATCH /admin/reservations/:id/assign
+function b64ToBytes(b64: string) {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+function bytesToB64(bytes: Uint8Array) {
+  let s = "";
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s);
+}
+async function importAesKeyFromB64(b64: string) {
+  const raw = b64ToBytes(b64);
+  return crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+}
+async function aesGcmEncrypt(key: CryptoKey, plain: string) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const pt = new TextEncoder().encode(plain);
+  const ctBuf = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, pt);
+  const ct = new Uint8Array(ctBuf);
+  return bytesToB64(iv) + "." + bytesToB64(ct);
+}
 app.patch('/admin/reservations/:id', async (c) => {
   try {
     const reservationId = c.req.param('id');
@@ -983,6 +1423,28 @@ app.patch('/admin/reservations/:id', async (c) => {
 });
 
 // DELETE /admin/reservations/:id
+function b64ToBytes(b64: string) {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+function bytesToB64(bytes: Uint8Array) {
+  let s = "";
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s);
+}
+async function importAesKeyFromB64(b64: string) {
+  const raw = b64ToBytes(b64);
+  return crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+}
+async function aesGcmEncrypt(key: CryptoKey, plain: string) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const pt = new TextEncoder().encode(plain);
+  const ctBuf = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, pt);
+  const ct = new Uint8Array(ctBuf);
+  return bytesToB64(iv) + "." + bytesToB64(ct);
+}
 app.delete('/admin/reservations/:id', async (c) => {
   try {
     const reservationId = c.req.param('id');
@@ -1179,6 +1641,28 @@ app.delete('/admin/reservations/:id', async (c) => {
 });
 
 // POST /admin/settings/test-slack
+function b64ToBytes(b64: string) {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+function bytesToB64(bytes: Uint8Array) {
+  let s = "";
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s);
+}
+async function importAesKeyFromB64(b64: string) {
+  const raw = b64ToBytes(b64);
+  return crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+}
+async function aesGcmEncrypt(key: CryptoKey, plain: string) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const pt = new TextEncoder().encode(plain);
+  const ctBuf = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, pt);
+  const ct = new Uint8Array(ctBuf);
+  return bytesToB64(iv) + "." + bytesToB64(ct);
+}
 app.post('/admin/settings/test-slack', async (c) => {
   try {
     const body = await c.req.json();
@@ -1234,6 +1718,28 @@ app.post('/admin/settings/test-slack', async (c) => {
 });
 
 // 404 ハンドラー
+function b64ToBytes(b64: string) {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+function bytesToB64(bytes: Uint8Array) {
+  let s = "";
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s);
+}
+async function importAesKeyFromB64(b64: string) {
+  const raw = b64ToBytes(b64);
+  return crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+}
+async function aesGcmEncrypt(key: CryptoKey, plain: string) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const pt = new TextEncoder().encode(plain);
+  const ctBuf = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, pt);
+  const ct = new Uint8Array(ctBuf);
+  return bytesToB64(iv) + "." + bytesToB64(ct);
+}
 app.notFound((c) => {
   return c.json({
     ok: false,
@@ -1243,6 +1749,28 @@ app.notFound((c) => {
 
 // LINE設定管理エンドポイント（D1暗号化保存）
 // GET /admin/line/config
+function b64ToBytes(b64: string) {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+function bytesToB64(bytes: Uint8Array) {
+  let s = "";
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s);
+}
+async function importAesKeyFromB64(b64: string) {
+  const raw = b64ToBytes(b64);
+  return crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+}
+async function aesGcmEncrypt(key: CryptoKey, plain: string) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const pt = new TextEncoder().encode(plain);
+  const ctBuf = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, pt);
+  const ct = new Uint8Array(ctBuf);
+  return bytesToB64(iv) + "." + bytesToB64(ct);
+}
 app.get('/admin/line/config', async (c) => {
   try {
     const tenantId = getTenantId(c);
@@ -1280,6 +1808,28 @@ app.get('/admin/line/config', async (c) => {
 });
 
 // GET /admin/line/client-id
+function b64ToBytes(b64: string) {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+function bytesToB64(bytes: Uint8Array) {
+  let s = "";
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s);
+}
+async function importAesKeyFromB64(b64: string) {
+  const raw = b64ToBytes(b64);
+  return crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+}
+async function aesGcmEncrypt(key: CryptoKey, plain: string) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const pt = new TextEncoder().encode(plain);
+  const ctBuf = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, pt);
+  const ct = new Uint8Array(ctBuf);
+  return bytesToB64(iv) + "." + bytesToB64(ct);
+}
 app.get('/admin/line/client-id', async (c) => {
   try {
     const tenantId = getTenantId(c);
@@ -1305,6 +1855,28 @@ app.get('/admin/line/client-id', async (c) => {
 });
 
 // PUT /admin/line/config
+function b64ToBytes(b64: string) {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+function bytesToB64(bytes: Uint8Array) {
+  let s = "";
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s);
+}
+async function importAesKeyFromB64(b64: string) {
+  const raw = b64ToBytes(b64);
+  return crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+}
+async function aesGcmEncrypt(key: CryptoKey, plain: string) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const pt = new TextEncoder().encode(plain);
+  const ctBuf = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, pt);
+  const ct = new Uint8Array(ctBuf);
+  return bytesToB64(iv) + "." + bytesToB64(ct);
+}
 app.put('/admin/line/config', async (c) => {
   try {
     const tenantId = getTenantId(c);
@@ -1388,6 +1960,28 @@ app.put('/admin/line/config', async (c) => {
 });
 
 // DELETE /admin/line/config
+function b64ToBytes(b64: string) {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+function bytesToB64(bytes: Uint8Array) {
+  let s = "";
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s);
+}
+async function importAesKeyFromB64(b64: string) {
+  const raw = b64ToBytes(b64);
+  return crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+}
+async function aesGcmEncrypt(key: CryptoKey, plain: string) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const pt = new TextEncoder().encode(plain);
+  const ctBuf = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, pt);
+  const ct = new Uint8Array(ctBuf);
+  return bytesToB64(iv) + "." + bytesToB64(ct);
+}
 app.delete('/admin/line/config', async (c) => {
   try {
     const tenantId = getTenantId(c);
@@ -1491,6 +2085,28 @@ app.delete('/admin/line/config', async (c) => {
  * LINE redirects as GET with ?code=...&state=...
  * NOTE: keep this path to match redirect_uri used by Pages start route
  */
+function b64ToBytes(b64: string) {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+function bytesToB64(bytes: Uint8Array) {
+  let s = "";
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s);
+}
+async function importAesKeyFromB64(b64: string) {
+  const raw = b64ToBytes(b64);
+  return crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+}
+async function aesGcmEncrypt(key: CryptoKey, plain: string) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const pt = new TextEncoder().encode(plain);
+  const ctBuf = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, pt);
+  const ct = new Uint8Array(ctBuf);
+  return bytesToB64(iv) + "." + bytesToB64(ct);
+}
 app.get("/admin/integrations/line/callback", async (c:any) => {
   const url = new URL(c.req.url);
   const code = url.searchParams.get("code") || "";
@@ -1566,6 +2182,28 @@ type Env = {
  * LINE OAuth (Workers side)
  * PagesはUI専念にするため、OAuthは全部こっちへ集約
  * ========================= */
+function b64ToBytes(b64: string) {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+function bytesToB64(bytes: Uint8Array) {
+  let s = "";
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s);
+}
+async function importAesKeyFromB64(b64: string) {
+  const raw = b64ToBytes(b64);
+  return crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+}
+async function aesGcmEncrypt(key: CryptoKey, plain: string) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const pt = new TextEncoder().encode(plain);
+  const ctBuf = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, pt);
+  const ct = new Uint8Array(ctBuf);
+  return bytesToB64(iv) + "." + bytesToB64(ct);
+}
 app.get("/auth/line/start", async (c: any) => {
   const url = new URL(c.req.url);
   const tenantId = url.searchParams.get("tenantId") || "default";
@@ -1599,6 +2237,28 @@ const LINE_CHANNEL_SECRET = c.env.LINE_LOGIN_CHANNEL_SECRET || c.env.LINE_CHANNE
   return res;
 });
 
+function b64ToBytes(b64: string) {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+function bytesToB64(bytes: Uint8Array) {
+  let s = "";
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s);
+}
+async function importAesKeyFromB64(b64: string) {
+  const raw = b64ToBytes(b64);
+  return crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+}
+async function aesGcmEncrypt(key: CryptoKey, plain: string) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const pt = new TextEncoder().encode(plain);
+  const ctBuf = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, pt);
+  const ct = new Uint8Array(ctBuf);
+  return bytesToB64(iv) + "." + bytesToB64(ct);
+}
 app.get("/auth/line/callback", async (c: any) => {
   const url = new URL(c.req.url);
   const WEB_BASE = (c.env.WEB_BASE || "").replace(/\/+$/, "") || "https://saas-factory-web-v2.pages.dev";
@@ -1723,4 +2383,39 @@ if(!code){
 
 
 
+
+
+
+/**
+ * POST /admin/integrations/line/save
+ * body: { tenantId, channelAccessToken, channelSecret }
+ */
+app.post("/admin/integrations/line/save", async (c) => {
+  const body = await c.req.json().catch(() => null) as any;
+  const tenantId = body?.tenantId ?? "default";
+  const channelAccessToken = body?.channelAccessToken;
+  const channelSecret = body?.channelSecret;
+
+  if (!channelAccessToken || !channelSecret) {
+    return c.json({ ok: false, error: "missing_token_or_secret" }, 400);
+  }
+
+  const keyB64 = (c.env as any).LINE_CRED_KEY_B64;
+  if (!keyB64) return c.json({ ok: false, error: "missing_env_LINE_CRED_KEY_B64" }, 500);
+
+  const db = (c.env as any).DB; // ← binding名が違うならここだけ変える
+  if (!db) return c.json({ ok: false, error: "missing_d1_binding_DB" }, 500);
+
+  const key = await importAesKeyFromB64(keyB64);
+  const accessEnc = await aesGcmEncrypt(key, String(channelAccessToken));
+  const secretEnc = await aesGcmEncrypt(key, String(channelSecret));
+  const now = new Date().toISOString();
+
+  await db.prepare(
+    "INSERT INTO line_credentials (tenant_id, access_token_enc, channel_secret_enc, updated_at) VALUES (?, ?, ?, ?) " +
+    "ON CONFLICT(tenant_id) DO UPDATE SET access_token_enc=excluded.access_token_enc, channel_secret_enc=excluded.channel_secret_enc, updated_at=excluded.updated_at"
+  ).bind(tenantId, accessEnc, secretEnc, now).run();
+
+  return c.json({ ok: true, tenantId, updated_at: now });
+});
 
