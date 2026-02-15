@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 
 export const runtime = "edge";
+
 const where = "api/line/webhook";
-const stamp = "LINE_WEBHOOK_V3_201259";
+const stamp = "LINE_WEBHOOK_V4_20260215_201604";
 
 // --- utils ---
 function base64FromBytes(bytes: Uint8Array) {
@@ -42,7 +43,8 @@ async function replyLine(accessToken: string, replyToken: string, messages: any[
 function buildBookingFlex(bookingUrl: string) {
   return {
     type: "flex",
-    altText: "予約ページを開く",
+    // altText に stamp を混ぜて「今のコード」判定できるようにする
+    altText: 予約ページを開く (\LINE_WEBHOOK_V4_20260215_201604),
     contents: {
       type: "bubble",
       body: {
@@ -52,6 +54,7 @@ function buildBookingFlex(bookingUrl: string) {
         contents: [
           { type: "text", text: "予約ページ", weight: "bold", size: "xl" },
           { type: "text", text: "下のボタンから予約を開始してね😉", wrap: true, color: "#666666" },
+          { type: "text", text: stamp: \LINE_WEBHOOK_V4_20260215_201604, size: "xs", color: "#999999", wrap: true },
         ],
       },
       footer: {
@@ -70,21 +73,32 @@ function buildBookingFlex(bookingUrl: string) {
   };
 }
 
-// --- GET debug（本番は最小情報） ---
+// --- GET debug (no-storeでキャッシュ殺し) ---
 export async function GET() {
   const secret = process.env.LINE_CHANNEL_SECRET ?? "";
   const accessToken = process.env.LINE_CHANNEL_ACCESS_TOKEN ?? "";
   const allowBadSig = (process.env.LINE_WEBHOOK_ALLOW_BAD_SIGNATURE ?? "0") === "1";
+  const bookingUrl = process.env.LINE_BOOKING_URL_DEFAULT ?? "";
 
-  return NextResponse.json({
-    ok: true,
-    where,
-    method: "GET",
-    stamp,
-    secretLen: secret.length,
-    accessTokenLen: accessToken.length,
-    allowBadSig,
-  });
+  return NextResponse.json(
+    {
+      ok: true,
+      where,
+      method: "GET",
+      stamp,
+      secretLen: secret.length,
+      accessTokenLen: accessToken.length,
+      allowBadSig,
+      bookingUrl,
+    },
+    {
+      headers: {
+        "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+        "Pragma": "no-cache",
+        "Expires": "0",
+      },
+    }
+  );
 }
 
 // --- POST webhook ---
@@ -93,6 +107,11 @@ export async function POST(req: Request) {
   const secret = process.env.LINE_CHANNEL_SECRET ?? "";
   const accessToken = process.env.LINE_CHANNEL_ACCESS_TOKEN ?? "";
   const allowBadSig = (process.env.LINE_WEBHOOK_ALLOW_BAD_SIGNATURE ?? "0") === "1";
+
+  // bookingUrl: env -> fallback
+  const bookingUrl =
+    process.env.LINE_BOOKING_URL_DEFAULT ??
+    "https://saas-factory-web-v2.pages.dev/booking";
 
   const raw = await req.arrayBuffer();
 
@@ -131,8 +150,6 @@ export async function POST(req: Request) {
   const textIn = String(ev.message.text ?? "");
   const replyToken = String(ev.replyToken);
 
-  const bookingUrl = process.env.LINE_BOOKING_URL_DEFAULT ?? "";
-
   const normalized = textIn
     .normalize("NFKC")
     .replace(/[\s\u200B-\u200D\uFEFF]/g, "")
@@ -141,9 +158,12 @@ export async function POST(req: Request) {
   let messages: any[];
 
   if (normalized.includes("予約") || normalized.includes("よやく")) {
-    messages = [buildBookingFlex(bookingUrl)];
+    messages = [
+      { type: "text", text: DBG stamp=\LINE_WEBHOOK_V4_20260215_201604 url=\ },
+      buildBookingFlex(bookingUrl),
+    ];
   } else {
-    messages = [{ type: "text", text: ECHO: \ }];
+    messages = [{ type: "text", text: ECHO: \ (stamp=\LINE_WEBHOOK_V4_20260215_201604) }];
   }
 
   const rep = await replyLine(accessToken, replyToken, messages);
@@ -161,6 +181,3 @@ export async function POST(req: Request) {
     mode: messages[0]?.type ?? "unknown",
   });
 }
-
-
-
