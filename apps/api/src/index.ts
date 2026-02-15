@@ -1903,13 +1903,7 @@ app.post("/admin/integrations/line/save", async (c) => {
 
   return c.json({ ok: true, tenantId, updated_at: now });
 });
-
-  fetch(request, env, ctx) {
-    return app.fetch(request, env, ctx);
-  },
-};
-
-  fetch(request, env, ctx) {
+fetch(request, env, ctx) {
     return app.fetch(request, env, ctx);
   },
 };
