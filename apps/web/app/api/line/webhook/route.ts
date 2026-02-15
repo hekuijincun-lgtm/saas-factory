@@ -23,45 +23,116 @@ async function verifyLineSignature(rawBody: ArrayBuffer, signature: string, secr
   return expected === signature;
 }
 
+async function lineReply(accessToken: string, replyToken: string, text: string) {
+  const res = await fetch("https://api.line.me/v2/bot/message/reply", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify({
+      replyToken,
+      messages: [{ type: "text", text }],
+    }),
+  });
+
+  const body = await res.text();
+  return { ok: res.ok, status: res.status, body };
+}
+
 export async function GET() {
   const secret = process.env.LINE_CHANNEL_SECRET ?? "";
-  const allowBadSig = process.env.LINE_WEBHOOK_ALLOW_BAD_SIGNATURE === "1";
-  return NextResponse.json({ ok: true, where, method: "GET", stamp, secretLen: secret.length, allowBadSig });
+  const accessToken = process.env.LINE_CHANNEL_ACCESS_TOKEN ?? "";
+  const allowBadSig = (process.env.LINE_WEBHOOK_ALLOW_BAD_SIGNATURE ?? "0") === "1";
+
+  return NextResponse.json(
+    {
+      ok: true,
+      where,
+      method: "GET",
+      stamp,
+      secretLen: secret.length,
+      accessTokenLen: accessToken.length,
+      allowBadSig,
+    },
+    { headers: { "Cache-Control": "no-store" } }
+  );
 }
 
 export async function POST(req: Request) {
   const sig = req.headers.get("x-line-signature") ?? "";
   const secret = process.env.LINE_CHANNEL_SECRET ?? "";
-  const allowBadSig = process.env.LINE_WEBHOOK_ALLOW_BAD_SIGNATURE === "1";
-  const raw = await req.arrayBuffer();
+  const accessToken = process.env.LINE_CHANNEL_ACCESS_TOKEN ?? "";
+  const allowBadSig = (process.env.LINE_WEBHOOK_ALLOW_BAD_SIGNATURE ?? "0") === "1";
 
-  let verified = false;
-  if (secret && sig) verified = await verifyLineSignature(raw, sig, secret);
+  const rawBuf = await req.arrayBuffer();
+  const rawText = new TextDecoder().decode(rawBuf);
 
+  if (!secret) {
+    return NextResponse.json({ ok: false, stamp, where, error: "missing_LINE_CHANNEL_SECRET" }, { status: 500 });
+  }
+
+  const verified = !!sig && (await verifyLineSignature(rawBuf, sig, secret));
   if (!verified && !allowBadSig) {
     return NextResponse.json(
-      { ok: false, stamp, where, error: "bad_signature", verified, hasSig: !!sig, bodyLen: raw.byteLength },
+      { ok: false, stamp, where, error: "bad_signature", verified, hasSig: !!sig, bodyLen: rawBuf.byteLength },
       { status: 401 }
     );
   }
 
-  let events: any[] = [];
+  let payload: any;
   try {
-    const json = JSON.parse(new TextDecoder().decode(raw));
-    events = json.events ?? [];
+    payload = JSON.parse(rawText);
   } catch (e: any) {
     return NextResponse.json(
-      { ok: false, stamp, where, error: "invalid_json", message: String(e?.message ?? e) },
+      {
+        ok: false,
+        stamp,
+        where,
+        error: "invalid_json",
+        verified,
+        message: String(e?.message ?? e),
+        rawHead: rawText.slice(0, 200),
+      },
       { status: 400 }
     );
   }
 
-  const summary = events.map((ev) => ({
-    type: ev.type,
-    replyToken: ev.replyToken ?? null,
-    text: ev.message?.text ?? null,
-    timestamp: ev.timestamp ?? null,
+  const events = Array.isArray(payload?.events) ? payload.events : [];
+  const summary = events.slice(0, 3).map((ev: any) => ({
+    type: ev?.type ?? null,
+    messageType: ev?.message?.type ?? null,
+    text: ev?.message?.text ?? null,
+    replyToken: ev?.replyToken ? "present" : "none",
   }));
 
-  return NextResponse.json({ ok: true, stamp, where, verified, eventCount: events.length, summary });
+  let replyResult: any = null;
+  let replied = false;
+
+  // text のときだけ ECHO 返信
+  if (accessToken && events.length > 0) {
+    const ev = events.find((x: any) => x?.replyToken && x?.message?.type === "text");
+    if (ev?.replyToken) {
+      const text = String(ev.message.text ?? "");
+      replyResult = await lineReply(accessToken, ev.replyToken, `ECHO: ${text}`);
+      replied = true;
+    }
+  }
+
+  return NextResponse.json(
+    {
+      ok: true,
+      stamp,
+      where,
+      verified,
+      allowBadSig,
+      secretLen: secret.length,
+      accessTokenLen: accessToken.length,
+      eventCount: events.length,
+      summary,
+      replied,
+      replyResult,
+    },
+    { headers: { "Cache-Control": "no-store" } }
+  );
 }
