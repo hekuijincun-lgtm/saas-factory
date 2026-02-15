@@ -65,3 +65,7 @@ preview_id = "32db8ae0d1fb42fb93b03725997da00a"
 bindings = [
   { name = "SLOT_LOCK", class_name = "SlotLock" }
 ]
+
+[[migrations]]
+tag = "v1-sqlite-do"
+
