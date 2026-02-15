@@ -1904,12 +1904,12 @@ app.post("/admin/integrations/line/save", async (c) => {
   return c.json({ ok: true, tenantId, updated_at: now });
 });
 
-  fetch(request: Request, env: Env, ctx: ExecutionContext) {
+  fetch(request, env, ctx) {
     return app.fetch(request, env, ctx);
   },
 };
 
-  fetch(request: Request, env: Env, ctx: ExecutionContext) {
+  fetch(request, env, ctx) {
     return app.fetch(request, env, ctx);
   },
 };
@@ -1919,3 +1919,4 @@ export default {
     return app.fetch(request, env, ctx);
   },
 };
+
