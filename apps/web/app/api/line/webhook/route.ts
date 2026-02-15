@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 export const runtime = "edge";
 const where = "api/line/webhook";
-const stamp = "LINE_WEBHOOK_V3";
+const stamp = "LINE_WEBHOOK_V3_201259";
 
 // --- utils ---
 function base64FromBytes(bytes: Uint8Array) {
@@ -161,5 +161,6 @@ export async function POST(req: Request) {
     mode: messages[0]?.type ?? "unknown",
   });
 }
+
 
 
