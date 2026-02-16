@@ -119,7 +119,7 @@ app.get('/health', (c) => {
 app.get("/__routes2", (c) => {
   // @ts-ignore
   const routes = (app as any).routes ?? null;
-  return c.json({ ok: true, routes });});
+  return c.json({ ok: true, routes });
 
 // GET /meta
 
@@ -1689,7 +1689,9 @@ if(!code){
   } catch (err) {
     return c.json({ ok: false, error: err instanceof Error ? err.message : "status_failed" }, 500);
   }
-});import { Hono } from 'hono';
+});
+
+import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { DEFAULT_ADMIN_SETTINGS, validateAdminSettings, mergeSettings, type AdminSettings } from './settings';
 import { getBusinessHoursForDate, generateSlots, getTodayJST, isWorkingTime, timeToMinutes, getNowMinutesJST } from './slotUtils';
@@ -1917,6 +1919,7 @@ app.post("/admin/integrations/line/save", async (c) => {
     return app.fetch(request, env, ctx);
   },
 };
+
 
 
 
