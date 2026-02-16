@@ -21,17 +21,7 @@ export default function LineSetupPage() {
       const s = await fetch("/api/admin/line/status", { cache: "no-store" }).then((r) => r.json());
       setStatus(s);
 
-      const c = await fetch("/api/proxy/admin/line/config", { cache: "no-store" }).then((r) => r.json());
-      setCfg(c);
-    })().catch((e) => setMsg(String(e)));
-  }, []);
-
-  async function save() {
-    setSaving(true);
-    setMsg("");
-    try {
-      const res = await fetch("/api/proxy/admin/line/config", {
-        method: "POST",
+      const c = await ,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           clientId: cfg.channelId ?? "",
@@ -138,6 +128,9 @@ export default function LineSetupPage() {
 </div>
 );
 }
+
+
+
 
 
 
