@@ -1,4 +1,7 @@
 import { NextResponse } from "next/server";
+
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 export const runtime = "edge";
 
 function resolveUpstreamBase(): string {
@@ -39,3 +42,4 @@ export async function PUT(req: Request, ctx: any) { return forward(req, ctx.para
 export async function PATCH(req: Request, ctx: any) { return forward(req, ctx.params); }
 export async function DELETE(req: Request, ctx: any) { return forward(req, ctx.params); }
 export async function OPTIONS() { return NextResponse.json({ ok: true }); }
+
