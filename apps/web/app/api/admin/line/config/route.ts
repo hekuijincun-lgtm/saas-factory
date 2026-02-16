@@ -56,25 +56,6 @@ out.stamp = STAMP;
 return NextResponse.json(out, { status: r.status });
 }
 
-export async function POST(req: Request) {
-  return NextResponse.json({ ok: true, where: "pages:/api/admin/line/config", method: "POST" });
-  const upstream = resolveUpstreamBase();
-  const inUrl = new URL(req.url);
-  const tenantId = inUrl.searchParams.get("tenantId") ?? "default";
 
-  const body = await req.json().catch(() => ({}));
-
-  // まずは “そのまま” Workersへ（キー名は後で既存実装に合わせて調整）
-  const u = new URL(`${upstream}/admin/line/config`);
-  u.searchParams.set("tenantId", tenantId);
-
-  const r = await fetch(u.toString(), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const j = await r.json().catch(() => ({}));
-  return NextResponse.json(j, { status: r.status });
-}
 
 
