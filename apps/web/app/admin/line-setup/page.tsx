@@ -61,8 +61,17 @@ export default function LineSetupPage() {
     }
   }
 
-  return (
-    <div style={{ padding: 24, maxWidth: 920 }}>
+  
+{/* ADMIN_LINE_SETUP_CARD_V1 */}
+<div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
+  <div className="w-full max-w-xl">
+    <div className="overflow-hidden rounded-3xl bg-white shadow-lg">
+      <div className="bg-slate-700 px-8 py-6">
+        <div className="text-xs tracking-widest text-slate-200">ADMIN</div>
+        <h1 className="mt-1 text-2xl font-bold text-white">LINE 連携設定</h1>
+      </div>
+      <div className="px-8 py-8">
+<div style={{ padding: 24, maxWidth: 920 }}>
       <h1>Messaging API 設定</h1>
 
       <div style={{ border: "1px solid #ddd", borderRadius: 12, padding: 16, marginTop: 16 }}>
@@ -122,7 +131,13 @@ export default function LineSetupPage() {
 
       {msg && <div style={{ marginTop: 16 }}>{msg}</div>}
     </div>
-  );
+  
+      </div>
+    </div>
+  </div>
+</div>
+);
 }
+
 
 
