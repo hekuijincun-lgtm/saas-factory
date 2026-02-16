@@ -1395,7 +1395,29 @@ app.get('/admin/line/config', async (c) => {
       configured,
       masked,
     });
-  } catch (err) {
+  
+
+// alias: integrations API compatibility
+app.get('/admin/integrations/line/masked', async (c) => {
+  // /admin/line/config と同じレスポンスを返す
+  // （フロントが integrations/* を叩く想定の救済）
+  return await (async () => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    const masterKey = c.env.CONFIG_ENC_KEY;
+
+    if (!masterKey) {
+      return c.json({ ok: false, error: 'CONFIG_ENC_KEY is not configured' }, 500);
+    }
+
+    const configured = await hasLineConfig(db, tenantId);
+    const masked = configured
+      ? getMaskedConfig(await getLineConfig(db, tenantId, masterKey))
+      : getMaskedConfig(null);
+
+    return c.json({ ok: true, configured, masked });
+  })();
+});} catch (err) {
     return c.json({
       ok: false,
       error: err instanceof Error ? err.message : 'Failed to get LINE config',
@@ -1659,10 +1681,30 @@ if(!code){
   });
 
   // GET /admin/integrations/line/status
-  app.get('/admin/integrations/line/status', (c) => {
+  app.get('/admin/integrations/line/status', async (c) => {
+  try {
     const tenantId = getTenantId(c);
-    return c.json({ ok: true, tenantId, kind: 'unconfigured' });
-  });
+    const db = c.env.DB;
+
+    // line_credentials に1行でもあれば “configured” 扱い（Messaging API 設定済み）
+    const row = await db
+      .prepare("SELECT tenant_id, updated_at FROM line_credentials WHERE tenant_id = ? LIMIT 1")
+      .bind(tenantId)
+      .first();
+
+    const messagingConfigured = !!row;
+
+    return c.json({
+      ok: true,
+      tenantId,
+      kind: messagingConfigured ? "configured" : "unconfigured",
+      messagingConfigured,
+      messagingUpdatedAt: row?.updated_at ?? null,
+    });
+  } catch (err) {
+    return c.json({ ok: false, error: err instanceof Error ? err.message : "status_failed" }, 500);
+  }
+});});
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { DEFAULT_ADMIN_SETTINGS, validateAdminSettings, mergeSettings, type AdminSettings } from './settings';
@@ -1895,11 +1937,14 @@ app.post("/admin/integrations/line/save", async (c) => {
   const accessEnc = await aesGcmEncrypt(key, String(channelAccessToken));
   const secretEnc = await aesGcmEncrypt(key, String(channelSecret));
   const now = new Date().toISOString();
-
-  await db.prepare(
-    "INSERT INTO line_credentials (tenant_id, access_token_enc, channel_secret_enc, updated_at) VALUES (?, ?, ?, ?) " +
-    "ON CONFLICT(tenant_id) DO UPDATE SET access_token_enc=excluded.access_token_enc, channel_secret_enc=excluded.channel_secret_enc, updated_at=excluded.updated_at"
-  ).bind(tenantId, accessEnc, secretEnc, now).run();
+  try {
+    await db.prepare(
+      "INSERT INTO line_credentials (tenant_id, access_token_enc, channel_secret_enc, updated_at) VALUES (?, ?, ?, ?) " +
+      "ON CONFLICT(tenant_id) DO UPDATE SET access_token_enc=excluded.access_token_enc, channel_secret_enc=excluded.channel_secret_enc, updated_at=excluded.updated_at"
+    ).bind(tenantId, accessEnc, secretEnc, now).run();
+  } catch (e: any) {
+    return c.json({ ok: false, error: "save_failed", detail: String(e?.message ?? e) }, 500);
+  }
 
   return c.json({ ok: true, tenantId, updated_at: now });
 });
@@ -1909,4 +1954,7 @@ export default {
     return app.fetch(request, env, ctx);
   },
 };
+
+
+
 
