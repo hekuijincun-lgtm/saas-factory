@@ -1,80 +1,45 @@
-export const runtime = 'edge';
-
 import { NextResponse } from "next/server";
+export const runtime = "edge";
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
-async function forwardToWorker(req: Request) {
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE ||
-  process.env.NEXT_PUBLIC_API_BASE_URL ||
-  process.env.BOOKING_API_BASE ||
-  process.env.WORKER_API_BASE ||
-  process.env.API_BASE ||
-  process.env.API_BASE_URL ||
-  "";
-
-if (!API_BASE) {
-  return new Response(
-    JSON.stringify({
-      ok: false,
-      error: "missing_api_base",
-      detail: "Set NEXT_PUBLIC_API_BASE (or API_BASE/BOOKING_API_BASE) in Pages env",
-    }),
-    { status: 500, headers: { "content-type": "application/json" } }
-  );
+function resolveUpstreamBase(): string {
+  const env = process.env as Record<string, string | undefined>;
+  const base = env.BOOKING_API_BASE || env.API_BASE;
+  if (!base) throw new Error("API_BASE/BOOKING_API_BASE is missing");
+  return base.replace(/\/+$/, "");
 }
 
-const url = new URL(req.url);
-  const tenantId = url.searchParams.get("tenantId") ?? "default";
+async function forward(req: Request) {
+  const upstream = resolveUpstreamBase();
+  const inUrl = new URL(req.url);
 
-  const upstream =
-    `${API_BASE.replace(/\/$/, "")}` +
-    `/admin/line/config?tenantId=${encodeURIComponent(tenantId)}`;
+  // upstream 先は固定（Workersの /admin/line/config）
+  const u = new URL(upstream + "/admin/line/config");
 
-  try {
-    const raw = await req.text();
-    let payload: any = raw ? JSON.parse(raw) : {};
+  // query を丸ごと転送（tenantId, nocache など）
+  inUrl.searchParams.forEach((v, k) => u.searchParams.set(k, v));
 
-    // UI → Worker キー変換
-    if (payload?.loginChannelId && !payload.clientId) {
-      payload.clientId = payload.loginChannelId;
-    }
+  const headers = new Headers(req.headers);
+  headers.delete("host");
+  headers.delete("content-length");
 
-    const res = await fetch(upstream, {
-      method: "PUT",
-      headers: {
-        "content-type": "application/json",
-        "accept": "application/json",
-      },
-      body: JSON.stringify(payload),
-      cache: "no-store",
-    });
+  const init: RequestInit = { method: req.method, headers };
 
-    const text = await res.text();
-    return new NextResponse(text, {
-      status: res.status,
-      headers: {
-        "content-type": res.headers.get("content-type") ?? "application/json",
-      },
-    });
-  } catch (e: any) {
-    return NextResponse.json(
-      { ok: false, error: e?.message ?? String(e) },
-      { status: 500 }
-    );
+  if (req.method !== "GET" && req.method !== "HEAD") {
+    init.body = req.body;
+    // @ts-ignore
+    init.duplex = "half";
   }
+
+  const r = await fetch(u.toString(), init);
+
+  // 透過して返す（＋stampをヘッダに付ける）
+  const outHeaders = new Headers(r.headers);
+  outHeaders.set("x-proxy-stamp", "STAMP_PROXY_LINECFG_20260216_111607");
+  return new Response(r.body, { status: r.status, headers: outHeaders });
 }
 
-export async function POST(req: Request) {
-  return forwardToWorker(req);
-}
-
-export async function PUT(req: Request) {
-  return forwardToWorker(req);
-}
-
-
-
-
-
-
-
+export async function GET(req: Request) { return forward(req); }
+export async function POST(req: Request) { return forward(req); }
+export async function OPTIONS() { return NextResponse.json({ ok: true }); }
