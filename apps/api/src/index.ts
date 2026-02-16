@@ -1691,14 +1691,6 @@ if(!code){
   }
 });
 
-import { Hono } from 'hono';
-import { cors } from 'hono/cors';
-import { DEFAULT_ADMIN_SETTINGS, validateAdminSettings, mergeSettings, type AdminSettings } from './settings';
-import { getBusinessHoursForDate, generateSlots, getTodayJST, isWorkingTime, timeToMinutes, getNowMinutesJST } from './slotUtils';
-import { buildLineAuthUrl, exchangeCodeForToken, verifyAccessToken, sendLineMessage, sendLineNotification, verifyLineWebhookSignature } from './integrations/line';
-import { getLineConfig, saveLineConfig, deleteLineConfig, hasLineConfig, logAudit, getMaskedConfig, type LineConfigPlain } from './lineConfig';
-import { getLineConfigOrNull, getLineConfigRequired, jsonError } from './line/config';
-import { getLineConfigOrNull, getLineConfigRequired, jsonError } from './line/config';
 
 type Env = {
   ENVIRONMENT?: string;
