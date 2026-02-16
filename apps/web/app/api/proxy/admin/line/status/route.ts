@@ -28,7 +28,7 @@ export async function GET(req: Request) {
   const tenantId = url.searchParams.get("tenantId") ?? "default";
 
   const up = new URL(upstreamBase());
-  up.pathname = "/admin/line/status";
+  up.pathname = "/admin/integrations/line/status";
   up.searchParams.set("tenantId", tenantId);
 
   const r = await fetch(up.toString(), { method: "GET" });
@@ -39,3 +39,4 @@ export async function GET(req: Request) {
     headers: { ...corsHeaders(req), "content-type": r.headers.get("content-type") ?? "application/json", "x-proxy-stamp": "STAMP_PROXY_LINESTATUS_V1" },
   });
 }
+

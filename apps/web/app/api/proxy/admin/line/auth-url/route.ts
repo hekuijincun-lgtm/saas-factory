@@ -29,7 +29,7 @@ export async function GET(req: Request) {
   const returnTo = url.searchParams.get("returnTo") ?? "";
 
   const up = new URL(upstreamBase());
-  up.pathname = "/admin/line/auth-url";
+  up.pathname = "/admin/integrations/line/auth-url";
   up.searchParams.set("tenantId", tenantId);
   if (returnTo) up.searchParams.set("returnTo", returnTo);
 
@@ -41,3 +41,4 @@ export async function GET(req: Request) {
     headers: { ...corsHeaders(req), "content-type": r.headers.get("content-type") ?? "application/json", "x-proxy-stamp": "STAMP_PROXY_LINEAUTHURL_V1" },
   });
 }
+
