@@ -1,57 +1,41 @@
-export const runtime = 'edge';
+import { NextResponse } from "next/server";
 
-// ===== WORKERS DEBUG STAMP BLOCK (copy-paste) =====
-function json(data: unknown, status = 200) {
-  return new Response(JSON.stringify(data, null, 2), {
-    status,
-    headers: { "content-type": "application/json; charset=utf-8" },
-  });
+export const runtime = "edge";
+
+function upstreamBase(): string {
+  const env = process.env as Record<string, string | undefined>;
+  const b = env.BOOKING_API_BASE || env.API_BASE;
+  if (!b) throw new Error("BOOKING_API_BASE/API_BASE is missing on Pages env");
+  return b;
 }
 
-function boolEnv(env: Record<string, any>, key: string) {
-  return !!env?.[key];
+function corsHeaders(req: Request) {
+  const origin = req.headers.get("origin") ?? "*";
+  return {
+    "access-control-allow-origin": origin,
+    "access-control-allow-credentials": "true",
+    "access-control-allow-headers": "content-type",
+    "access-control-allow-methods": "GET,POST,OPTIONS",
+  };
 }
 
-function valEnv(env: Record<string, any>, key: string) {
-  const v = env?.[key];
-  return v === undefined ? null : v;
+export async function OPTIONS(req: Request) {
+  return new NextResponse(null, { status: 204, headers: corsHeaders(req) });
 }
 
-// ルートの一番最初（1003返すより前）に入れる
-export function debugStamp(request: Request, env: Record<string, any>) {
-  const url = new URL(request.url);
-  const debug = url.searchParams.get("debug") === "1";
+export async function GET(req: Request) {
+  const url = new URL(req.url);
   const tenantId = url.searchParams.get("tenantId") ?? "default";
 
-  if (!debug) return null;
+  const up = new URL(upstreamBase());
+  up.pathname = "/admin/line/status";
+  up.searchParams.set("tenantId", tenantId);
 
-  return json({
-    ok: true,
-    stamp: "HIT_WORKERS_ROUTE_V1",
-    path: url.pathname,
-    tenantId,
-    envSeen: {
-      // LINE
-      LINE_CHANNEL_ID: boolEnv(env, "LINE_CHANNEL_ID"),
-      LINE_CHANNEL_SECRET: boolEnv(env, "LINE_CHANNEL_SECRET"),
-      LINE_LOGIN_CALLBACK_URL: boolEnv(env, "LINE_LOGIN_CALLBACK_URL"),
-      LINE_REDIRECT_URI: boolEnv(env, "LINE_REDIRECT_URI"),
+  const r = await fetch(up.toString(), { method: "GET" });
+  const body = await r.text();
 
-      // Upstream
-      API_BASE: boolEnv(env, "API_BASE"),
-      BOOKING_API_BASE: boolEnv(env, "BOOKING_API_BASE"),
-
-      // If you have KV bindings etc.
-      LINE_OAUTH_KV: boolEnv(env, "LINE_OAUTH_KV"),
-    },
-    values: {
-      // 値も見たい場合（秘密なら null にしてOK）
-      LINE_LOGIN_CALLBACK_URL: valEnv(env, "LINE_LOGIN_CALLBACK_URL"),
-      LINE_REDIRECT_URI: valEnv(env, "LINE_REDIRECT_URI"),
-      API_BASE: valEnv(env, "API_BASE"),
-      BOOKING_API_BASE: valEnv(env, "BOOKING_API_BASE"),
-    },
+  return new NextResponse(body, {
+    status: r.status,
+    headers: { ...corsHeaders(req), "content-type": r.headers.get("content-type") ?? "application/json", "x-proxy-stamp": "STAMP_PROXY_LINESTATUS_V1" },
   });
 }
-// ===== /WORKERS DEBUG STAMP BLOCK =====
-

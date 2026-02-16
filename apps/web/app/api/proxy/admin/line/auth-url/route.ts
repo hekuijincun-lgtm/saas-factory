@@ -1,19 +1,43 @@
-export const runtime = "edge";
-
 import { NextResponse } from "next/server";
 
-// Minimal safe module to unblock build.
-// TODO: implement real proxy later.
-export async function GET() {
-  return NextResponse.json(
-    { ok:false, where:"app/api/proxy/[...path]/route.ts", error:"proxy_not_implemented" },
-    { status: 501 }
-  );
+export const runtime = "edge";
+
+function upstreamBase(): string {
+  const env = process.env as Record<string, string | undefined>;
+  const b = env.BOOKING_API_BASE || env.API_BASE;
+  if (!b) throw new Error("BOOKING_API_BASE/API_BASE is missing on Pages env");
+  return b;
 }
 
-export async function POST() {
-  return NextResponse.json(
-    { ok:false, where:"app/api/proxy/[...path]/route.ts", error:"proxy_not_implemented" },
-    { status: 501 }
-  );
+function corsHeaders(req: Request) {
+  const origin = req.headers.get("origin") ?? "*";
+  return {
+    "access-control-allow-origin": origin,
+    "access-control-allow-credentials": "true",
+    "access-control-allow-headers": "content-type",
+    "access-control-allow-methods": "GET,POST,OPTIONS",
+  };
+}
+
+export async function OPTIONS(req: Request) {
+  return new NextResponse(null, { status: 204, headers: corsHeaders(req) });
+}
+
+export async function GET(req: Request) {
+  const url = new URL(req.url);
+  const tenantId = url.searchParams.get("tenantId") ?? "default";
+  const returnTo = url.searchParams.get("returnTo") ?? "";
+
+  const up = new URL(upstreamBase());
+  up.pathname = "/admin/line/auth-url";
+  up.searchParams.set("tenantId", tenantId);
+  if (returnTo) up.searchParams.set("returnTo", returnTo);
+
+  const r = await fetch(up.toString(), { method: "GET" });
+  const body = await r.text();
+
+  return new NextResponse(body, {
+    status: r.status,
+    headers: { ...corsHeaders(req), "content-type": r.headers.get("content-type") ?? "application/json", "x-proxy-stamp": "STAMP_PROXY_LINEAUTHURL_V1" },
+  });
 }
