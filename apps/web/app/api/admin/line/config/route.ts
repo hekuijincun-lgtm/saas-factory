@@ -40,6 +40,7 @@ function normalize(j: any, origin: string){
 }
 
 export async function GET(req: Request) {
+  const STAMP = "STAMP_WEB_LINECFG_20260216_110501";
   const upstream = resolveUpstreamBase();
   const origin = originOf(req);
 
@@ -50,7 +51,9 @@ export async function GET(req: Request) {
 
   const r = await fetch(u.toString(), { headers: { "Accept": "application/json" } });
   const j = await r.json().catch(() => ({}));
-  return NextResponse.json(normalize(j, origin), { status: r.status });
+  const out = normalize(j, origin) as any;
+out.stamp = STAMP;
+return NextResponse.json(out, { status: r.status });
 }
 
 export async function POST(req: Request) {
@@ -72,3 +75,4 @@ export async function POST(req: Request) {
   const j = await r.json().catch(() => ({}));
   return NextResponse.json(j, { status: r.status });
 }
+
