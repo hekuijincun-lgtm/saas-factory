@@ -34,7 +34,10 @@ async function forward(req: Request, params: { path: string[] }, methodOverride?
   }
 
   const r = await fetch(u.toString(), init);
-  return new Response(r.body, { status: r.status, headers: new Headers(r.headers) });
+const outHeaders = new Headers(r.headers);
+outHeaders.set("x-proxy-upstream-url", u.toString());
+outHeaders.set("x-proxy-upstream-method", (methodOverride ?? req.method));
+return new Response(r.body, { status: r.status, headers: outHeaders });
 }
 
 export async function GET(req: Request, ctx: any) { return forward(req, ctx.params); }
@@ -50,5 +53,6 @@ export async function PUT(req: Request, ctx: any) { return forward(req, ctx.para
 export async function PATCH(req: Request, ctx: any) { return forward(req, ctx.params); }
 export async function DELETE(req: Request, ctx: any) { return forward(req, ctx.params); }
 export async function OPTIONS() { return NextResponse.json({ ok: true }); }
+
 
 
