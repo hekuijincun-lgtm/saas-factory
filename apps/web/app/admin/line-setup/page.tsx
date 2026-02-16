@@ -34,7 +34,7 @@ export default function LineSetupPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          channelId: cfg.channelId ?? "",
+          clientId: cfg.channelId ?? "",
           channelSecret: cfg.channelSecret ?? "",
           channelAccessToken: cfg.channelAccessToken ?? "",
         }),
@@ -124,3 +124,4 @@ export default function LineSetupPage() {
     </div>
   );
 }
+
