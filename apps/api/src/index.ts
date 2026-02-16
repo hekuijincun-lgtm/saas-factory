@@ -35,10 +35,7 @@ app.get("/__debug/env", (c) => {
     hasEnv: !!e,
     hasDB: !!(e && e.DB),
     envKeys: e ? Object.keys(e) : [],
-  });
-});
-
-/**
+  });/**
  * テナントIDを取得（暫定: 1テナントのみ対応）
  * 将来的にはリクエストヘッダーやサブドメインから取得する
  */
@@ -122,10 +119,7 @@ app.get('/health', (c) => {
 app.get("/__routes2", (c) => {
   // @ts-ignore
   const routes = (app as any).routes ?? null;
-  return c.json({ ok: true, routes });
-});
-
-});
+  return c.json({ ok: true, routes });});
 
 // GET /meta
 
@@ -139,10 +133,7 @@ app.get('/meta', (c) => {
     env: env.ENVIRONMENT || 'development',
     version: env.VERSION || '1.0.0',
     runtime: 'cloudflare-workers',
-  });
-});
-
-// GET /slots?date=YYYY-MM-DD&staffId=xxx(optional)
+  });// GET /slots?date=YYYY-MM-DD&staffId=xxx(optional)
 
 
 
@@ -432,10 +423,7 @@ app.get('/slots', async (c) => {
     date: dateStr,
     ...(staffId ? { staffId } : {}),
     slots,
-  });
-});
-
-// POST /reserve
+  });// POST /reserve
 
 
 
@@ -622,10 +610,7 @@ app.get('/admin/reservations', async (c) => {
     ok: true,
     date: dateStr,
     reservations,
-  });
-});
-
-// GET /admin/staff
+  });// GET /admin/staff
 
 
 
@@ -1704,8 +1689,7 @@ if(!code){
   } catch (err) {
     return c.json({ ok: false, error: err instanceof Error ? err.message : "status_failed" }, 500);
   }
-});});
-import { Hono } from 'hono';
+});import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { DEFAULT_ADMIN_SETTINGS, validateAdminSettings, mergeSettings, type AdminSettings } from './settings';
 import { getBusinessHoursForDate, generateSlots, getTodayJST, isWorkingTime, timeToMinutes, getNowMinutesJST } from './slotUtils';
@@ -1895,25 +1879,7 @@ if(!code){
   const m = /sf_returnTo=([^;]+)/.exec(cookies);
   const returnTo = m ? decodeURIComponent(m[1]) : "https://saas-factory-a0y.pages.dev/admin";
 
-  return new Response(null, { status: 302, headers: { Location: returnTo } });
-});
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-/**
+  return new Response(null, { status: 302, headers: { Location: returnTo } });/**
  * POST /admin/integrations/line/save
  * body: { tenantId, channelAccessToken, channelSecret }
  */
@@ -1946,14 +1912,12 @@ app.post("/admin/integrations/line/save", async (c) => {
     return c.json({ ok: false, error: "save_failed", detail: String(e?.message ?? e) }, 500);
   }
 
-  return c.json({ ok: true, tenantId, updated_at: now });
-});
-
-export default {
+  return c.json({ ok: true, tenantId, updated_at: now });export default {
   fetch(request, env, ctx) {
     return app.fetch(request, env, ctx);
   },
 };
+
 
 
 
