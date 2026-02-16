@@ -57,6 +57,7 @@ return NextResponse.json(out, { status: r.status });
 }
 
 export async function POST(req: Request) {
+  return NextResponse.json({ ok: true, where: "pages:/api/admin/line/config", method: "POST" });
   const upstream = resolveUpstreamBase();
   const inUrl = new URL(req.url);
   const tenantId = inUrl.searchParams.get("tenantId") ?? "default";
@@ -75,4 +76,5 @@ export async function POST(req: Request) {
   const j = await r.json().catch(() => ({}));
   return NextResponse.json(j, { status: r.status });
 }
+
 
