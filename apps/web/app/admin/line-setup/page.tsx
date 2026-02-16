@@ -21,7 +21,7 @@ export default function LineSetupPage() {
       const s = await fetch("/api/admin/line/status", { cache: "no-store" }).then((r) => r.json());
       setStatus(s);
 
-      const c = await fetch("/api/admin/line/config", { cache: "no-store" }).then((r) => r.json());
+      const c = await fetch("/api/proxy/admin/line/config", { cache: "no-store" }).then((r) => r.json());
       setCfg(c);
     })().catch((e) => setMsg(String(e)));
   }, []);
@@ -30,7 +30,7 @@ export default function LineSetupPage() {
     setSaving(true);
     setMsg("");
     try {
-      const res = await fetch("/api/admin/line/config", {
+      const res = await fetch("/api/proxy/admin/line/config", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -124,4 +124,5 @@ export default function LineSetupPage() {
     </div>
   );
 }
+
 
