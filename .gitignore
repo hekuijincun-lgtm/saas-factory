@@ -27,3 +27,10 @@ apps/web/build.err.txt*
 
 .turbo
 
+.pages_build_failure_*.log
+.pages_buildfail_*.json
+.pages_buildfail_*.txt
+.pages_logs_*.json
+.pages_logs_*.txt
+*.bak
+*.bak_*
