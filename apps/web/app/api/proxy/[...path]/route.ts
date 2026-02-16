@@ -42,17 +42,44 @@ return new Response(r.body, { status: r.status, headers: outHeaders });
 
 export async function GET(req: Request, ctx: any) { return forward(req, ctx.params); }
 export async function POST(req: Request, ctx: any) {
-  const p = "/" + ((ctx?.params?.path || []) as string[]).join("/");
-  // Pages 側が PUT を弾く前提で、POST で受けて upstream だけ PUT に変換する
+  const url = new URL(req.url);
+  const debug = url.searchParams.get("debug") === "1";
+
+  const segs = ((ctx?.params?.path || []) as string[]);
+
+  // proxy 側が認識してる path を確実に見える化
+  const p = "/" + segs.join("/");
+
+  // ✅ デバッグ：proxy 内で止まってるか / path が何かを確認する
+  if (debug) {
+    return new Response(JSON.stringify({
+      ok: true,
+      where: "proxy.POST.debug",
+      path: p,
+      segs,
+      method: req.method,
+    }), {
+      status: 200,
+      headers: {
+        "content-type": "application/json",
+        "x-proxy-stamp": "STAMP_PROXY_POSTDBG_20260216_1245"
+      }
+    });
+  }
+
+  // ✅ /admin/line/config は upstream 側 PUT へ変換して forward
   if (p === "/admin/line/config") {
+    // forward の第3引数(methodOverride) がある前提（前に入れたやつ）
     return forward(req, ctx.params, "PUT");
   }
+
+  // それ以外は通常 forward（ここで 404 返さない）
   return forward(req, ctx.params);
-}
-export async function PUT(req: Request, ctx: any) { return forward(req, ctx.params); }
+}export async function PUT(req: Request, ctx: any) { return forward(req, ctx.params); }
 export async function PATCH(req: Request, ctx: any) { return forward(req, ctx.params); }
 export async function DELETE(req: Request, ctx: any) { return forward(req, ctx.params); }
 export async function OPTIONS() { return NextResponse.json({ ok: true }); }
+
 
 
 
