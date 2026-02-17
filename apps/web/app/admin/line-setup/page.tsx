@@ -5,8 +5,9 @@ import * as React from "react";
 // ===============================
 // 🔧 API Endpoints（必要ならここだけ変更）
 // ===============================
-const STATUS_URL = "/api/proxy/admin/line/status";
-const CREDS_URL  = "/api/proxy/admin/line/credentials";
+const STATUS_URL = "/api/proxy/admin/integrations/line/status";
+const CREDS_GET_URL  = "/api/proxy/admin/integrations/line/credentials";
+const CREDS_SAVE_URL = "/api/proxy/admin/integrations/line/save";
 // ===============================
 // ✅ Booking 風 Shell（同梱で安全）
 // ===============================
@@ -372,7 +373,7 @@ export default function LineSetupPage() {
 
   async function loadCredsIfAvailable() {
     try {
-      const u = new URL(CREDS_URL, window.location.origin);
+      const u = new URL(CREDS_GET_URL, window.location.origin);
       u.searchParams.set("nocache", crypto.randomUUID());
       const r = await fetch(u.toString(), { method: "GET", cache: "no-store" });
       if (!r.ok) return;
@@ -397,7 +398,7 @@ export default function LineSetupPage() {
         channelAccessToken: (creds.channelAccessToken ?? "").trim(),
       };
 
-      const r = await fetch(CREDS_URL, {
+      const r = await fetch(CREDS_SAVE_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -428,6 +429,7 @@ export default function LineSetupPage() {
     </BookingLikeShell>
   );
 }
+
 
 
 
