@@ -34,11 +34,6 @@ app.get("/__debug/env", (c) => {
     hasDB: !!(e && e.DB),
     envKeys: e ? Object.keys(e) : [],
   });
-app.get("/__debug/tenant", (c) => {
-  const qTenantId = c.req.query("tenantId") ?? null;
-  const hTenantId = c.req.header("X-Tenant-ID") ?? null;
-  const tenantId = getTenantId(c);
-  return c.json({ ok: true, tenantId, qTenantId, hTenantId });
 });
 
 });
@@ -1947,6 +1942,12 @@ app.post("/admin/integrations/line/save", async (c) => {
 // * / (removed)
 // ✅ Module Worker entry (required for Durable Objects)
 
+app.get("/__debug/tenant", (c) => {
+  const qTenantId = c.req.query("tenantId") ?? null;
+  const hTenantId = c.req.header("X-Tenant-ID") ?? null;
+  const tenantId = getTenantId(c);
+  return c.json({ ok: true, tenantId, qTenantId, hTenantId });
+});
 
 export default {
   fetch(request: Request, env: Env, ctx: ExecutionContext) {
