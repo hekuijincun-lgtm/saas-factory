@@ -35,6 +35,7 @@ app.get("/__debug/env", (c) => {
     envKeys: e ? Object.keys(e) : [],
 
 });
+});
 /**
  * テナントIDを取得（暫定: 1テナントのみ対応）
  * 将来的にはリクエストヘッダーやサブドメインから取得する
@@ -1963,7 +1964,6 @@ export default {
     return app.fetch(request, env as any, ctx as any);
   },
 };
-
 
 
 
