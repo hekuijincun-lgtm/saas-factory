@@ -642,7 +642,7 @@ app.get('/admin/staff', async (c) => {
     const value = await kv.get(`admin:staff:list:${tenantId}`);
     
     if (value) {
-return c.json({ ok: true, data: staff });
+return c.json({ ok: true, tenantId, data: staff });
     }
     
     // デフォルトデータ
@@ -664,7 +664,9 @@ return c.json({ ok: true, data: staff });
 
 
 app.post('/admin/staff', async (c) => {
-  try {
+  
+    const tenantId = getTenantId(c);
+try {
     const body = await c.req.json();
     const { name, role, active, sortOrder } = body;
     
@@ -696,7 +698,7 @@ app.post('/admin/staff', async (c) => {
     staff.push(newStaff);
     await kv.put(`admin:staff:list:${tenantId}`, JSON.stringify(staff));
     
-    return c.json({ ok: true, data: newStaff }, 201);
+    return c.json({ ok: true, tenantId, data: newStaff }, 201);
   } catch (error) {
     return c.json({ ok: false, error: 'Failed to create staff', message: String(error) }, 500);
   }
@@ -754,7 +756,7 @@ const index = staff.findIndex((s: any) => s.id === id);
     
     await kv.put(`admin:staff:list:${tenantId}`, JSON.stringify(staff));
     
-    return c.json({ ok: true, data: staff[index] });
+    return c.json({ ok: true, tenantId, data: staff[index] });
   } catch (error) {
     return c.json({ ok: false, error: 'Failed to update staff', message: String(error) }, 500);
   }
