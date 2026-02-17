@@ -6,8 +6,7 @@ import * as React from "react";
 // 🔧 API Endpoints（必要ならここだけ変更）
 // ===============================
 const STATUS_URL = "/api/proxy/admin/line/status";
-const CREDS_URL  = "/api/proxy/api/proxy/admin/integrations/line/credentials";
-
+const CREDS_URL  = "/api/proxy/admin/line/credentials";
 // ===============================
 // ✅ Booking 風 Shell（同梱で安全）
 // ===============================
@@ -429,6 +428,7 @@ export default function LineSetupPage() {
     </BookingLikeShell>
   );
 }
+
 
 
 
