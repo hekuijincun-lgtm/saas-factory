@@ -12,8 +12,24 @@ type LineConfig = {
 };
 
 export default function LineSetupPage() {
-  const [status, setStatus] = useState<any>(null);
-  const [cfg, setCfg] = useState<LineConfig>({});
+  const [status, setStatus
+
+<div className="space-y-3">
+  <div className="flex items-center gap-2">
+    <span className="h-2.5 w-2.5 rounded-full bg-green-500"></span>
+    <span className="text-sm font-medium text-slate-800">Connected</span>
+  </div>
+
+  <div className="flex items-center gap-2">
+    <span className="h-2.5 w-2.5 rounded-full bg-green-500"></span>
+    <span className="text-sm font-medium text-slate-800">Session Active</span>
+  </div>
+
+  <div className="flex items-center gap-2">
+    <span className="h-2.5 w-2.5 rounded-full bg-slate-400"></span>
+    <span className="text-sm text-slate-600">Debug: Off</span>
+  </div>
+</div>);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<string>("");
 
@@ -21,10 +37,24 @@ export default function LineSetupPage() {
     (async () => {
       try {
         const s = await fetch("/api/admin/line/status", { cache: "no-store" }).then((r) => r.json());
-        setStatus(s);
+        setStatus
 
-        // 設定の表示用（masked を返すやつ）
-        const c = await fetch("/api/proxy/admin/line/config", { cache: "no-store" }).then((r) => r.json());
+<div className="space-y-3">
+  <div className="flex items-center gap-2">
+    <span className="h-2.5 w-2.5 rounded-full bg-green-500"></span>
+    <span className="text-sm font-medium text-slate-800">Connected</span>
+  </div>
+
+  <div className="flex items-center gap-2">
+    <span className="h-2.5 w-2.5 rounded-full bg-green-500"></span>
+    <span className="text-sm font-medium text-slate-800">Session Active</span>
+  </div>
+
+  <div className="flex items-center gap-2">
+    <span className="h-2.5 w-2.5 rounded-full bg-slate-400"></span>
+    <span className="text-sm text-slate-600">Debug: Off</span>
+  </div>
+</div>).then((r) => r.json());
         // masked は secret/token そのものは返らない想定なので、入力は空のままにする
         setCfg((prev) => ({
           ...prev,
@@ -76,16 +106,32 @@ export default function LineSetupPage() {
 
   return (`r`n    <BookingLikeShell label="ADMIN" title="LINE 連携設定">`r`n<div className="min-h-screen bg-slate-50 flex items-start justify-center p-6">
       <div className="w-full max-w-3xl">
-        <div className="overflow-hidden rounded-[32px] bg-white shadow-[0_20px_60px_rgba(15,23,42,0.12)]">
+        <div className="space-y-6">
           <div className="bg-slate-700 px-10 py-8">
             <div className="text-xs tracking-widest text-slate-200">ADMIN</div>
             <h1 className="mt-1 text-2xl font-bold text-white">LINE 連携設定</h1>
           </div>
 
-          <div className="px-10 py-10">
+          <div className="px-10 py-10 space-y-10">
             <div style={{ border: "1px solid #ddd", borderRadius: 12, padding: 16 }}>
-              <h2>Status</h2>
-              <pre style={{ whiteSpace: "pre-wrap" }}>{JSON.stringify(status, null, 2)}</pre>
+              <h2>Status
+
+<div className="space-y-3">
+  <div className="flex items-center gap-2">
+    <span className="h-2.5 w-2.5 rounded-full bg-green-500"></span>
+    <span className="text-sm font-medium text-slate-800">Connected</span>
+  </div>
+
+  <div className="flex items-center gap-2">
+    <span className="h-2.5 w-2.5 rounded-full bg-green-500"></span>
+    <span className="text-sm font-medium text-slate-800">Session Active</span>
+  </div>
+
+  <div className="flex items-center gap-2">
+    <span className="h-2.5 w-2.5 rounded-full bg-slate-400"></span>
+    <span className="text-sm text-slate-600">Debug: Off</span>
+  </div>
+</div>}>{JSON.stringify(status, null, 2)}</pre>
             </div>
 
             <div style={{ border: "1px solid #ddd", borderRadius: 12, padding: 16, marginTop: 16 }}>
@@ -112,6 +158,8 @@ export default function LineSetupPage() {
     </div>
   );
 }
+
+
 
 
 
