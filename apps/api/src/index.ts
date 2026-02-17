@@ -1905,7 +1905,9 @@ app.post("/admin/integrations/line/save", async (c) => {
     return c.json({ ok: false, error: "save_failed", detail: String(e?.message ?? e) }, 500);
   }
 
-  return c.json({ ok: true, tenantId, updated_at: now });export default {
+  return c.json({ ok: true, tenantId, updated_at: now });
+
+export default {
   fetch(request, env, ctx) {
     return app.fetch(request, env, ctx);
   },
@@ -1984,4 +1986,5 @@ app.post("/admin/line/credentials", async (c: any) => {
   const env = c.env;
   return await handleLineCredentials(req, env);
 });
+
 
