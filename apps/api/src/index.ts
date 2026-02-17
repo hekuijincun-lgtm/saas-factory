@@ -34,6 +34,13 @@ app.get("/__debug/env", (c) => {
     hasDB: !!(e && e.DB),
     envKeys: e ? Object.keys(e) : [],
   });
+app.get("/__debug/tenant", (c) => {
+  const qTenantId = c.req.query("tenantId") ?? null;
+  const hTenantId = c.req.header("X-Tenant-ID") ?? null;
+  const tenantId = getTenantId(c);
+  return c.json({ ok: true, tenantId, qTenantId, hTenantId });
+});
+
 });
 /**
  * テナントIDを取得（暫定: 1テナントのみ対応）
@@ -716,8 +723,6 @@ if (!Array.isArray(staff) || staff.length === 0) {
     { id: 'rookie', name: 'Rookie', role: 'Staff',       active: true, sortOrder: 3 },
   ];
 }
-    , 404);
-    }
 const index = staff.findIndex((s: any) => s.id === id);
     if (index === -1) {
       return c.json({ ok: false, error: 'Staff not found' }, 404);
@@ -855,8 +860,6 @@ if (!Array.isArray(menu) || menu.length === 0) {
     { id: 'perm',  name: 'パーマ', price: 10000, durationMin: 120, active: true, sortOrder: 3 },
   ];
 }
-    , 404);
-    }
 const index = menu.findIndex((m: any) => m.id === id);
     if (index === -1) {
       return c.json({ ok: false, error: 'Menu not found' }, 404);
