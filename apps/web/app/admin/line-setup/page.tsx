@@ -74,15 +74,15 @@ export default function LineSetupPage() {
     }
   }
 
-  return (`r`n    <BookingLikeShell label="ADMIN" title="LINE 連携設定">`r`n<div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
-      <div className="w-full max-w-xl">
-        <div className="overflow-hidden rounded-3xl bg-white shadow-lg">
-          <div className="bg-slate-700 px-8 py-6">
+  return (`r`n    <BookingLikeShell label="ADMIN" title="LINE 連携設定">`r`n<div className="min-h-screen bg-slate-50 flex items-start justify-center p-6">
+      <div className="w-full max-w-3xl">
+        <div className="overflow-hidden rounded-[32px] bg-white shadow-[0_20px_60px_rgba(15,23,42,0.12)]">
+          <div className="bg-slate-700 px-10 py-8">
             <div className="text-xs tracking-widest text-slate-200">ADMIN</div>
             <h1 className="mt-1 text-2xl font-bold text-white">LINE 連携設定</h1>
           </div>
 
-          <div className="px-8 py-8">
+          <div className="px-10 py-10">
             <div style={{ border: "1px solid #ddd", borderRadius: 12, padding: 16 }}>
               <h2>Status</h2>
               <pre style={{ whiteSpace: "pre-wrap" }}>{JSON.stringify(status, null, 2)}</pre>
@@ -112,6 +112,7 @@ export default function LineSetupPage() {
     </div>
   );
 }
+
 
 
 
