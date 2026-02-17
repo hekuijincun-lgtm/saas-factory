@@ -4,7 +4,7 @@ compatibility_date = "2026-02-06"
 
 # ===== KV (唯一・正) =====
 [[kv_namespaces]]
-binding = "ENVIRONMENT"
+binding = "SAAS_FACTORY"
 id = "b3bde2eb54cc4e91a69998c89f948b18"
 preview_id = "32db8ae0d1fb42fb93b03725997da00a"
 
@@ -20,10 +20,10 @@ new_sqlite_classes = ["SlotLock"]
 
 # ===== STAGING =====
 [env.staging]
-vars = { WEB_BASE = "https://saas-factory-web-v2.pages.dev",  LINE_LOGIN_CHANNEL_ID = "2008915612", LINE_REDIRECT_URI = "https://saas-factory-web-v2.pages.dev/api/auth/line/callback" }
+vars = { ENVIRONMENT = "staging", WEB_BASE = "https://saas-factory-web-v2.pages.dev",  LINE_LOGIN_CHANNEL_ID = "2008915612", LINE_REDIRECT_URI = "https://saas-factory-web-v2.pages.dev/api/auth/line/callback" }
 name = "saas-factory-api-staging"
 [[env.staging.kv_namespaces]]
-binding = "ENVIRONMENT"
+binding = "SAAS_FACTORY"
 id = "b3bde2eb54cc4e91a69998c89f948b18"
 preview_id = "32db8ae0d1fb42fb93b03725997da00a"
 
@@ -57,7 +57,7 @@ name = "saas-factory-api"
 
 
 [[env.production.kv_namespaces]]
-binding = "ENVIRONMENT"
+binding = "SAAS_FACTORY"
 id = "b3bde2eb54cc4e91a69998c89f948b18"
 preview_id = "32db8ae0d1fb42fb93b03725997da00a"
 
@@ -81,4 +81,5 @@ database_id = "cf28ae30-8e52-4a73-8d74-36dab188fa74"
 
 [build.upload]
 format = "modules"
+
 
