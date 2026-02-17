@@ -627,6 +627,8 @@ app.get('/admin/reservations', async (c) => {
     reservations,
   });
 // GET /admin/staff
+});
+
 app.get('/admin/staff', async (c) => {
   try {
     const tenantId = getTenantId(c);
@@ -1958,7 +1960,6 @@ export default {
     return app.fetch(request, env as any, ctx as any);
   },
 };
-
 
 
 
