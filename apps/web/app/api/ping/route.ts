@@ -4,8 +4,8 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   return NextResponse.json({
     ok: true,
-    where: "/api/__ping",
+    where: "/api/ping",
     debug: url.searchParams.get("debug"),
     now: new Date().toISOString(),
-  }, { headers: { "x-ping-stamp": "PING_20260217_0930" }});
+  }, { headers: { "x-ping-stamp": "PING_20260217_1100" }});
 }
