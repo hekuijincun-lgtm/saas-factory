@@ -419,8 +419,8 @@ export default function LineSetupPage() {
 
   React.useEffect(() => {
     loadStatus();
-    loadCredsIfAvailable();
-  }, []);
+    // loadCredsIfAvailable(); // disabled: GET endpoint currently broken
+}, []);
 
   return (
     <BookingLikeShell label="ADMIN" title="LINE 連携設定">
@@ -429,6 +429,7 @@ export default function LineSetupPage() {
     </BookingLikeShell>
   );
 }
+
 
 
 
