@@ -122,7 +122,7 @@ export default function LineSetupPage() {
             <div style={{ border: "1px solid #ddd", borderRadius: 12, padding: 16, marginTop: 16 }}>
               <h2>Webhook</h2>
               <div>Webhook URL（LINE Developers に貼る）👇</div>
-              <pre style={{ whiteSpace: "pre-wrap" }}>{cfg.webhookUrl ?? "(loading...)"}</pre>
+              <pre style={{ whiteSpace: "pre-wrap" }}>{cfg.webhookUrl ?? "{typeof window==="undefined" ? "" : new URL("/api/line/webhook", window.location.origin).toString()}"}</pre>
 
               <button onClick={verifyWebhook} style={{ padding: "10px 16px" }}>
                 Webhook を検証
@@ -136,3 +136,5 @@ export default function LineSetupPage() {
     </div>
   );
 }
+
+
