@@ -164,7 +164,7 @@ app.get('/slots', async (c) => {
     return c.json({ ok: false, error: 'invalid date' }, 400);
   }
   
-  const kv = c.env.ENVIRONMENT;
+  const kv = c.env.SAAS_FACTORY;
   
   // デバッグモード: debug=2 で settings を取得
   if (debug === '2') {
@@ -466,7 +466,7 @@ app.post('/reserve', async (c) => {
     // 予約作成成功時にLINE通知を送信（非同期、エラーは無視）
     if (status === 200 && result.ok) {
       try {
-        const kv = c.env.ENVIRONMENT;
+        const kv = c.env.SAAS_FACTORY;
         const tenantId = getTenantId(c);
         
         // settings を取得して通知ルールを確認
@@ -582,7 +582,7 @@ app.get('/admin/reservations', async (c) => {
     return c.json({ ok: false, error: 'invalid date' }, 400);
   }
   
-  const kv = c.env.ENVIRONMENT;
+  const kv = c.env.SAAS_FACTORY;
   const prefix = `rsv:${dateStr}:`;
   
   // KVから指定日付の予約を取得（prefix scan）
@@ -616,7 +616,7 @@ app.get('/admin/reservations', async (c) => {
 
 app.get('/admin/staff', async (c) => {
   try {
-    const kv = c.env.ENVIRONMENT;
+    const kv = c.env.SAAS_FACTORY;
     const value = await kv.get('admin:staff:list');
     
     if (value) {
@@ -658,7 +658,7 @@ app.post('/admin/staff', async (c) => {
       return c.json({ ok: false, error: 'sortOrder must be non-negative number' }, 400);
     }
     
-    const kv = c.env.ENVIRONMENT;
+    const kv = c.env.SAAS_FACTORY;
     const value = await kv.get('admin:staff:list');
     const staff = value ? JSON.parse(value) : [];
     
@@ -692,7 +692,7 @@ app.patch('/admin/staff/:id', async (c) => {
     const body = await c.req.json();
     const { name, role, active, sortOrder } = body;
     
-    const kv = c.env.ENVIRONMENT;
+    const kv = c.env.SAAS_FACTORY;
     const value = await kv.get('admin:staff:list');
     if (!value) {
       return c.json({ ok: false, error: 'Staff not found' }, 404);
@@ -742,7 +742,7 @@ app.patch('/admin/staff/:id', async (c) => {
 
 app.get('/admin/menu', async (c) => {
   try {
-    const kv = c.env.ENVIRONMENT;
+    const kv = c.env.SAAS_FACTORY;
     const value = await kv.get('admin:menu:list');
     
     if (value) {
@@ -790,7 +790,7 @@ app.post('/admin/menu', async (c) => {
       return c.json({ ok: false, error: 'sortOrder must be non-negative number' }, 400);
     }
     
-    const kv = c.env.ENVIRONMENT;
+    const kv = c.env.SAAS_FACTORY;
     const value = await kv.get('admin:menu:list');
     const menu = value ? JSON.parse(value) : [];
     
@@ -825,7 +825,7 @@ app.patch('/admin/menu/:id', async (c) => {
     const body = await c.req.json();
     const { name, price, durationMin, active, sortOrder } = body;
     
-    const kv = c.env.ENVIRONMENT;
+    const kv = c.env.SAAS_FACTORY;
     const value = await kv.get('admin:menu:list');
     if (!value) {
       return c.json({ ok: false, error: 'Menu not found' }, 404);
@@ -884,7 +884,7 @@ app.patch('/admin/menu/:id', async (c) => {
 
 app.get('/admin/settings', async (c) => {
   try {
-    const kv = c.env.ENVIRONMENT;
+    const kv = c.env.SAAS_FACTORY;
     const value = await kv.get('settings:default');
     
     if (value) {
@@ -916,7 +916,7 @@ app.put('/admin/settings', async (c) => {
       return c.json({ ok: false, error: validation.error }, 400);
     }
     
-    const kv = c.env.ENVIRONMENT;
+    const kv = c.env.SAAS_FACTORY;
     const existingValue = await kv.get('settings:default');
     const existing = existingValue ? (JSON.parse(existingValue) as Partial<AdminSettings>) : {};
     
@@ -959,7 +959,7 @@ app.put('/admin/staff/:id/shift', async (c) => {
       return c.json({ ok: false, error: 'exceptions is required and must be array' }, 400);
     }
     
-    const kv = c.env.ENVIRONMENT;
+    const kv = c.env.SAAS_FACTORY;
     const shiftData: StaffShift = {
       staffId,
       weekly: body.weekly,
@@ -988,7 +988,7 @@ app.get('/admin/staff/:id/shift', async (c) => {
       return c.json({ ok: false, error: 'staffId is required' }, 400);
     }
     
-    const kv = c.env.ENVIRONMENT;
+    const kv = c.env.SAAS_FACTORY;
     const shiftValue = await kv.get(`shift:${staffId}`);
     
     if (shiftValue) {
@@ -1026,7 +1026,7 @@ app.patch('/admin/reservations/:id', async (c) => {
       return c.json({ ok: false, error: 'staffId must be string or null' }, 400);
     }
     
-    const kv = c.env.ENVIRONMENT;
+    const kv = c.env.SAAS_FACTORY;
     
     // 予約を検索（全時間帯をスキャン）
     const timeSlots = ['10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00'];
@@ -1088,7 +1088,7 @@ app.delete('/admin/reservations/:id', async (c) => {
       return c.json({ ok: false, error: 'reservationId is required' }, 400);
     }
     
-    const kv = c.env.ENVIRONMENT;
+    const kv = c.env.SAAS_FACTORY;
     
     // 設定を取得してcancelMinutesをチェック
     const settingsValue = await kv.get('settings:default');
@@ -1284,7 +1284,7 @@ app.post('/admin/settings/test-slack', async (c) => {
     const body = await c.req.json();
     const { webhookUrl } = body;
     
-    const kv = c.env.ENVIRONMENT;
+    const kv = c.env.SAAS_FACTORY;
     
     // webhookUrlが指定されていない場合は設定から取得
     let targetWebhookUrl = webhookUrl;
@@ -1614,7 +1614,7 @@ app.delete('/admin/line/config', async (c) => {
       const nonce = crypto.randomUUID();
       const state = `${tenantId}:${nonce}`;
 
-      const kv = c.env.ENVIRONMENT;
+      const kv = c.env.SAAS_FACTORY;
       await kv.put(
         `line:state:${nonce}`,
         JSON.stringify({ tenantId, createdAt: Date.now() }),
@@ -1879,23 +1879,41 @@ if(!code){
 app.post("/admin/integrations/line/save", async (c) => {
   const body = await c.req.json().catch(() => null) as any;
   const tenantId = body?.tenantId ?? "default";
-  const channelAccessToken = body?.channelAccessToken;
-  const channelSecret = body?.channelSecret;
 
-  if (!channelAccessToken || !channelSecret) {
-    return c.json({ ok: false, error: "missing_token_or_secret" }, 400);
+  // UI互換: channelId/clientId/LINE_CHANNEL_ID のどれでもOK
+  const clientId =
+    body?.channelId ??
+    body?.clientId ??
+    body?.LINE_CHANNEL_ID ??
+    null;
+
+  // UI互換: channelAccessToken / LINE_CHANNEL_ACCESS_TOKEN
+  const channelAccessToken =
+    body?.channelAccessToken ??
+    body?.LINE_CHANNEL_ACCESS_TOKEN ??
+    null;
+
+  // UI互換: channelSecret / LINE_CHANNEL_SECRET
+  const channelSecret =
+    body?.channelSecret ??
+    body?.LINE_CHANNEL_SECRET ??
+    null;
+
+  if (!clientId || !channelAccessToken || !channelSecret) {
+    return c.json({ ok: false, error: "missing_id_token_or_secret" }, 400);
   }
 
   const keyB64 = (c.env as any).LINE_CRED_KEY_B64;
   if (!keyB64) return c.json({ ok: false, error: "missing_env_LINE_CRED_KEY_B64" }, 500);
 
-  const db = c.env.DB; // ← binding名が違うならここだけ変える
+  const db = c.env.DB;
   if (!db) return c.json({ ok: false, error: "missing_d1_binding_DB" }, 500);
 
   const key = await importAesKeyFromB64(keyB64);
   const accessEnc = await aesGcmEncrypt(key, String(channelAccessToken));
   const secretEnc = await aesGcmEncrypt(key, String(channelSecret));
   const now = new Date().toISOString();
+
   try {
     await db.prepare(
       "INSERT INTO line_credentials (tenant_id, access_token_enc, channel_secret_enc, updated_at) VALUES (?, ?, ?, ?) " +
@@ -1905,86 +1923,15 @@ app.post("/admin/integrations/line/save", async (c) => {
     return c.json({ ok: false, error: "save_failed", detail: String(e?.message ?? e) }, 500);
   }
 
-  return c.json({ ok: true, tenantId, updated_at: now });
-
-export default {
-  fetch(request, env, ctx) {
-    return app.fetch(request, env, ctx);
-  },
-};
-
-async function readJsonBody(req: Request): Promise<any> {
-  const ct = req.headers.get("content-type") || "";
-  if (!ct.includes("application/json")) return {};
-  try { return await req.json(); } catch { return {}; }
-}
-function maskSecret(s: unknown) {
-  if (typeof s !== "string") return null;
-  if (s.length <= 6) return "***";
-  return s.slice(0,2) + "***" + s.slice(-2);
-}
-const LINE_CREDS_KEY = "admin:line:credentials:v1";
-
-async function handleLineCredentials(req: Request, env: any): Promise<Response> {
-  const stamp = "STAMP_LINE_CREDS_V1";
-  const kv = (env as any).SLOT_LOCK;
-
-  if (!kv || typeof kv.get !== "function" || typeof kv.put !== "function") {
-    return new Response(JSON.stringify({
-      ok:false, error:"kv_binding_missing",
-      detail:"Expected env.SLOT_LOCK KVNamespace with get/put",
-      stamp
-    }), { status: 500, headers: { "content-type":"application/json" } });
-  }
-
-  if (req.method === "GET") {
-    const saved = await kv.get(LINE_CREDS_KEY, "json");
-    return new Response(JSON.stringify({ ok:true, stamp, saved: saved ?? null }), {
-      status: 200, headers: { "content-type":"application/json" }
-    });
-  }
-
-  if (req.method === "POST") {
-    const body = await readJsonBody(req);
-    const toSave = {
-      updatedAt: new Date().toISOString(),
-      LINE_CHANNEL_ID: body.LINE_CHANNEL_ID ?? body.lineChannelId ?? null,
-      LINE_CHANNEL_SECRET: body.LINE_CHANNEL_SECRET ?? body.lineChannelSecret ?? null,
-      LINE_CHANNEL_ACCESS_TOKEN: body.LINE_CHANNEL_ACCESS_TOKEN ?? body.lineChannelAccessToken ?? null,
-      LINE_LOGIN_CHANNEL_ID: body.LINE_LOGIN_CHANNEL_ID ?? body.lineLoginChannelId ?? null,
-      LINE_LOGIN_CHANNEL_SECRET: body.LINE_LOGIN_CHANNEL_SECRET ?? body.lineLoginChannelSecret ?? null,
-      LINE_SESSION_SECRET: body.LINE_SESSION_SECRET ?? body.lineSessionSecret ?? null
-    };
-    await kv.put(LINE_CREDS_KEY, JSON.stringify(toSave));
-    return new Response(JSON.stringify({
-      ok:true, stamp,
-      saved: {
-        ...toSave,
-        LINE_CHANNEL_SECRET: maskSecret(toSave.LINE_CHANNEL_SECRET),
-        LINE_CHANNEL_ACCESS_TOKEN: maskSecret(toSave.LINE_CHANNEL_ACCESS_TOKEN),
-        LINE_LOGIN_CHANNEL_SECRET: maskSecret(toSave.LINE_LOGIN_CHANNEL_SECRET),
-        LINE_SESSION_SECRET: maskSecret(toSave.LINE_SESSION_SECRET)
-      }
-    }), { status: 200, headers: { "content-type":"application/json" } });
-  }
-
-  if (req.method === "OPTIONS") return new Response("", { status: 204 });
-
-  return new Response(JSON.stringify({ ok:false, error:"method_not_allowed", stamp }), {
-    status: 405, headers: { "content-type":"application/json" }
-  });
-}
-
-// --- LINE credentials route ---
-app.get("/admin/line/credentials", async (c: any) => {
+  return c.json({ ok: true, tenantId, clientIdLast4: String(clientId).slice(-4), updated_at: now });
+});app.post("/admin/line/credentials", async (c: any) => {
   const req = c.req.raw;
   const env = c.env;
   return await handleLineCredentials(req, env);
 });
-app.post("/admin/line/credentials", async (c: any) => {
-  const req = c.req.raw;
-  const env = c.env;
-  return await handleLineCredentials(req, env);
-});
+
+
+
+
 
 
