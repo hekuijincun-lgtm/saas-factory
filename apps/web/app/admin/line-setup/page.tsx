@@ -1,3 +1,4 @@
+import { BookingLikeShell } from "@/components/BookingLikeShell";
 "use client";
 
 import { useEffect, useState } from "react";
@@ -73,8 +74,7 @@ export default function LineSetupPage() {
     }
   }
 
-  return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
+  return (`r`n    <BookingLikeShell label="ADMIN" title="LINE 連携設定">`r`n<div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
       <div className="w-full max-w-xl">
         <div className="overflow-hidden rounded-3xl bg-white shadow-lg">
           <div className="bg-slate-700 px-8 py-6">
@@ -91,31 +91,7 @@ export default function LineSetupPage() {
             <div style={{ border: "1px solid #ddd", borderRadius: 12, padding: 16, marginTop: 16 }}>
               <h2>Credentials</h2>
 
-              <label>Channel ID（必須：数字）</label>
-              <input
-                value={cfg.channelId ?? ""}
-                onChange={(e) => setCfg({ ...cfg, channelId: e.target.value })}
-                style={{ width: "100%", padding: 10, margin: "8px 0 16px" }}
-              />
-
-              <label>Channel Secret（必須）</label>
-              <input
-                value={cfg.channelSecret ?? ""}
-                onChange={(e) => setCfg({ ...cfg, channelSecret: e.target.value })}
-                placeholder="LINE Developers の Channel Secret"
-                style={{ width: "100%", padding: 10, margin: "8px 0 16px" }}
-              />
-
-              <label>Channel Access Token（必須）</label>
-              <input
-                value={cfg.channelAccessToken ?? ""}
-                onChange={(e) => setCfg({ ...cfg, channelAccessToken: e.target.value })}
-                placeholder="LINE Developers の Messaging API アクセストークン"
-                style={{ width: "100%", padding: 10, margin: "8px 0 16px" }}
-              />
-
-              <button onClick={save} disabled={saving} style={{ padding: "10px 16px" }}>
-                {saving ? "保存中..." : "保存"}
+              <label>中..." : "保存"}
               </button>
             </div>
 
@@ -136,5 +112,7 @@ export default function LineSetupPage() {
     </div>
   );
 }
+
+
 
 
