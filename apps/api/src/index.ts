@@ -627,32 +627,24 @@ app.get('/admin/reservations', async (c) => {
     reservations,
   });
 // GET /admin/staff
-
-
-
-
-
-  // AUTO-FIX: close missing route block
-});
-
 app.get('/admin/staff', async (c) => {
   try {
     const tenantId = getTenantId(c);
     const kv = c.env.SAAS_FACTORY;
-    const value = await kv.get(`admin:staff:list:${tenantId}`);
-    
+    const value = await kv.get(dmin:staff:list:);
+
     if (value) {
-return c.json({ ok: true, tenantId, data: staff });
+      const data = JSON.parse(value);
+      return c.json({ ok: true, tenantId, data });
     }
-    
-    // デフォルトデータ
+// デフォルトデータ
     const defaultStaff = [
       { id: 'sakura', name: 'サクラ', role: 'Top Stylist', active: true, sortOrder: 1 },
       { id: 'kenji', name: 'ケンジ', role: 'Director', active: true, sortOrder: 2 },
       { id: 'rookie', name: 'Rookie', role: 'Staff', active: true, sortOrder: 3 },
     ];
     
-    return c.json({ ok: true, data: defaultStaff });
+    return c.json({ ok: true, tenantId, data: defaultStaff });
   } catch (error) {
     return c.json({ ok: false, error: 'Failed to fetch staff', message: String(error) }, 500);
   }
@@ -769,7 +761,7 @@ const index = staff.findIndex((s: any) => s.id === id);
 
 app.get('/admin/menu', async (c) => {
   try {
-    const tenantId = getTenantId(c);
+    const tenantId = body?.tenantId ?? getTenantId(c);
     const kv = c.env.SAAS_FACTORY;
     const value = await kv.get(`admin:menu:list:${tenantId}`);
     
@@ -916,7 +908,7 @@ const index = menu.findIndex((m: any) => m.id === id);
 app.get('/admin/settings', async (c) => {
   try {
     const kv = c.env.SAAS_FACTORY;
-    const tenantId = getTenantId(c);
+    const tenantId = body?.tenantId ?? getTenantId(c);
     const settingsKey = `settings:${tenantId}`;
     const value = (await kv.get(settingsKey)) ?? (await kv.get('settings:default'));
     
