@@ -1,18 +1,17 @@
-export { SlotLock };
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import { SlotLock } from './durable/SlotLock';
+import type { SlotLock as SlotLockDO } from './durable/SlotLock';
 import { DEFAULT_ADMIN_SETTINGS, validateAdminSettings, mergeSettings, type AdminSettings } from './settings';
 import { getBusinessHoursForDate, generateSlots, getTodayJST, isWorkingTime, timeToMinutes, getNowMinutesJST } from './slotUtils';
 import { buildLineAuthUrl, exchangeCodeForToken, verifyAccessToken, sendLineMessage, sendLineNotification, verifyLineWebhookSignature } from './integrations/line';
 import { getLineConfig, saveLineConfig, deleteLineConfig, hasLineConfig, logAudit, getMaskedConfig, type LineConfigPlain } from './lineConfig';
 import { getLineConfigOrNull, getLineConfigRequired, jsonError } from './line/config';
-import { getLineConfigOrNull, getLineConfigRequired, jsonError } from './line/config';
+export { SlotLock } from './durable/SlotLock';
 type Env = {
   ENVIRONMENT?: string;
   VERSION?: string;
   SAAS_FACTORY: KVNamespace;
-  SLOT_LOCK: DurableObjectNamespace<SlotLock>;
+  SLOT_LOCK: DurableObjectNamespace<SlotLockDO>;
   DB: D1Database;
   CONFIG_ENC_KEY?: string; // 暗号化マスターキー（base64 32byte）
   LINE_CLIENT_ID?: string; // LINE Login Client ID
@@ -34,10 +33,12 @@ app.get("/__debug/env", (c) => {
     hasEnv: !!e,
     hasDB: !!(e && e.DB),
     envKeys: e ? Object.keys(e) : [],
-  });/**
+  });
+});
+/**
  * テナントIDを取得（暫定: 1テナントのみ対応）
  * 将来的にはリクエストヘッダーやサブドメインから取得する
- */
+*/
 function getTenantId(c: { req: { header: (name: string) => string | undefined } }): string {
   // TODO: マルチテナント対応時に実装
   // const tenantId = c.req.header('X-Tenant-ID') || extractFromSubdomain(c.req.url);
@@ -111,15 +112,12 @@ app.get('/health', (c) => {
     env: env.ENVIRONMENT || 'development',
     version: env.VERSION || '1.0.0',
   });
-
-
-
-
+});
 app.get("/__routes2", (c) => {
   // @ts-ignore
   const routes = (app as any).routes ?? null;
   return c.json({ ok: true, routes });
-
+});
 // GET /meta
 
 
@@ -132,11 +130,9 @@ app.get('/meta', (c) => {
     env: env.ENVIRONMENT || 'development',
     version: env.VERSION || '1.0.0',
     runtime: 'cloudflare-workers',
-  });// GET /slots?date=YYYY-MM-DD&staffId=xxx(optional)
-
-
-
-
+  });
+});
+// GET /slots?date=YYYY-MM-DD&staffId=xxx(optional)
 app.get('/slots', async (c) => {
   const dateStr = c.req.query('date');
   const staffId = c.req.query('staffId'); // optional
@@ -200,12 +196,14 @@ app.get('/slots', async (c) => {
       let staffListPresent = false;
       
       if (staffId) {
-        const shiftValue = await kv.get(`shift:${staffId}`);
+        const shiftKeyNew = `shift:${tenantId}:${staffId}`;
+const shiftKeyOld = `shift:${staffId}`;
+const shiftValue = (await kv.get(shiftKeyNew)) ?? (await kv.get(shiftKeyOld));
         shiftPresent = !!shiftValue;
       }
       
       // staff list も確認
-      const staffListValue = await kv.get('staff:list');
+      const staffListValue = await kv.get(`admin:staff:list:${tenantId}`);
       staffListPresent = !!staffListValue;
       
       return c.json({ 
@@ -244,7 +242,9 @@ app.get('/slots', async (c) => {
   let staffShift: StaffShift | null = null;
   if (staffId) {
     try {
-      const shiftValue = await kv.get(`shift:${staffId}`);
+      const shiftKeyNew = `shift:${tenantId}:${staffId}`;
+const shiftKeyOld = `shift:${staffId}`;
+const shiftValue = (await kv.get(shiftKeyNew)) ?? (await kv.get(shiftKeyOld));
       if (shiftValue) {
         staffShift = JSON.parse(shiftValue) as StaffShift;
       }
@@ -427,6 +427,10 @@ app.get('/slots', async (c) => {
 
 
 
+
+  // FIX: close /slots route
+});
+
 app.post('/reserve', async (c) => {
   try {
     const body = await c.req.json();
@@ -444,7 +448,7 @@ app.post('/reserve', async (c) => {
     }
     
     // Durable Object経由で処理（ロックキー: ${date}:${time}）
-    const lockKey = `${date}:${time}`;
+    const lockKey = `${tenantId}:${date}:${time}`;
     const id = c.env.SLOT_LOCK.idFromName(lockKey);
     const stub = c.env.SLOT_LOCK.get(id);
     
@@ -483,7 +487,9 @@ app.post('/reserve', async (c) => {
           let staffName = '指名なし';
           if (staffId) {
             try {
-              const staffValue = await kv.get(`staff:${staffId}`);
+              const staffKeyNew = `staff:${tenantId}:${staffId}`;
+const staffKeyOld = `staff:${staffId}`;
+const staffValue = (await kv.get(staffKeyNew)) ?? (await kv.get(staffKeyOld));
               if (staffValue) {
                 const staff = JSON.parse(staffValue);
                 staffName = staff.name || staffId;
@@ -497,7 +503,9 @@ app.post('/reserve', async (c) => {
           let menuName = 'メニュー未指定';
           if (body.menuId) {
             try {
-              const menuValue = await kv.get(`menu:${body.menuId}`);
+              const menuKeyNew = `menu:${tenantId}:${body.menuId}`;
+const menuKeyOld = `menu:${body.menuId}`;
+const menuValue = (await kv.get(menuKeyNew)) ?? (await kv.get(menuKeyOld));
               if (menuValue) {
                 const menu = JSON.parse(menuValue);
                 menuName = menu.name || body.menuId;
@@ -609,19 +617,24 @@ app.get('/admin/reservations', async (c) => {
     ok: true,
     date: dateStr,
     reservations,
-  });// GET /admin/staff
+  });
+// GET /admin/staff
 
 
 
+
+
+  // AUTO-FIX: close missing route block
+});
 
 app.get('/admin/staff', async (c) => {
   try {
+    const tenantId = getTenantId(c);
     const kv = c.env.SAAS_FACTORY;
-    const value = await kv.get('admin:staff:list');
+    const value = await kv.get(`admin:staff:list:${tenantId}`);
     
     if (value) {
-      const staff = JSON.parse(value);
-      return c.json({ ok: true, data: staff });
+return c.json({ ok: true, data: staff });
     }
     
     // デフォルトデータ
@@ -659,7 +672,7 @@ app.post('/admin/staff', async (c) => {
     }
     
     const kv = c.env.SAAS_FACTORY;
-    const value = await kv.get('admin:staff:list');
+    const value = await kv.get(`admin:staff:list:${tenantId}`);
     const staff = value ? JSON.parse(value) : [];
     
     // ID生成
@@ -673,7 +686,7 @@ app.post('/admin/staff', async (c) => {
     };
     
     staff.push(newStaff);
-    await kv.put('admin:staff:list', JSON.stringify(staff));
+    await kv.put(`admin:staff:list:${tenantId}`, JSON.stringify(staff));
     
     return c.json({ ok: true, data: newStaff }, 201);
   } catch (error) {
@@ -688,18 +701,24 @@ app.post('/admin/staff', async (c) => {
 
 app.patch('/admin/staff/:id', async (c) => {
   try {
+    const tenantId = (getTenantId(c) || 'default');
     const id = c.req.param('id');
     const body = await c.req.json();
     const { name, role, active, sortOrder } = body;
     
     const kv = c.env.SAAS_FACTORY;
-    const value = await kv.get('admin:staff:list');
-    if (!value) {
-      return c.json({ ok: false, error: 'Staff not found' }, 404);
+    const value = await kv.get(`admin:staff:list:${tenantId}`);
+let staff = value ? JSON.parse(value) : null;
+if (!Array.isArray(staff) || staff.length === 0) {
+  staff = [
+    { id: 'sakura', name: 'サクラ', role: 'Top Stylist', active: true, sortOrder: 1 },
+    { id: 'kenji',  name: 'ケンジ', role: 'Director',    active: true, sortOrder: 2 },
+    { id: 'rookie', name: 'Rookie', role: 'Staff',       active: true, sortOrder: 3 },
+  ];
+}
+    , 404);
     }
-    
-    const staff = JSON.parse(value);
-    const index = staff.findIndex((s: any) => s.id === id);
+const index = staff.findIndex((s: any) => s.id === id);
     if (index === -1) {
       return c.json({ ok: false, error: 'Staff not found' }, 404);
     }
@@ -727,7 +746,7 @@ app.patch('/admin/staff/:id', async (c) => {
       staff[index].sortOrder = sortOrder;
     }
     
-    await kv.put('admin:staff:list', JSON.stringify(staff));
+    await kv.put(`admin:staff:list:${tenantId}`, JSON.stringify(staff));
     
     return c.json({ ok: true, data: staff[index] });
   } catch (error) {
@@ -742,12 +761,12 @@ app.patch('/admin/staff/:id', async (c) => {
 
 app.get('/admin/menu', async (c) => {
   try {
+    const tenantId = getTenantId(c);
     const kv = c.env.SAAS_FACTORY;
-    const value = await kv.get('admin:menu:list');
+    const value = await kv.get(`admin:menu:list:${tenantId}`);
     
     if (value) {
-      const menu = JSON.parse(value);
-      return c.json({ ok: true, data: menu });
+return c.json({ ok: true, data: menu });
     }
     
     // デフォルトデータ
@@ -791,7 +810,7 @@ app.post('/admin/menu', async (c) => {
     }
     
     const kv = c.env.SAAS_FACTORY;
-    const value = await kv.get('admin:menu:list');
+    const value = await kv.get(`admin:menu:list:${tenantId}`);
     const menu = value ? JSON.parse(value) : [];
     
     // ID生成
@@ -806,7 +825,7 @@ app.post('/admin/menu', async (c) => {
     };
     
     menu.push(newMenuItem);
-    await kv.put('admin:menu:list', JSON.stringify(menu));
+    await kv.put(`admin:menu:list:${tenantId}`, JSON.stringify(menu));
     
     return c.json({ ok: true, data: newMenuItem }, 201);
   } catch (error) {
@@ -821,18 +840,24 @@ app.post('/admin/menu', async (c) => {
 
 app.patch('/admin/menu/:id', async (c) => {
   try {
+    const tenantId = (getTenantId(c) || 'default');
     const id = c.req.param('id');
     const body = await c.req.json();
     const { name, price, durationMin, active, sortOrder } = body;
     
     const kv = c.env.SAAS_FACTORY;
-    const value = await kv.get('admin:menu:list');
-    if (!value) {
-      return c.json({ ok: false, error: 'Menu not found' }, 404);
+    const value = await kv.get(`admin:menu:list:${tenantId}`);
+let menu = value ? JSON.parse(value) : null;
+if (!Array.isArray(menu) || menu.length === 0) {
+  menu = [
+    { id: 'cut',   name: 'カット', price: 5000,  durationMin: 60,  active: true, sortOrder: 1 },
+    { id: 'color', name: 'カラー', price: 8000,  durationMin: 90,  active: true, sortOrder: 2 },
+    { id: 'perm',  name: 'パーマ', price: 10000, durationMin: 120, active: true, sortOrder: 3 },
+  ];
+}
+    , 404);
     }
-    
-    const menu = JSON.parse(value);
-    const index = menu.findIndex((m: any) => m.id === id);
+const index = menu.findIndex((m: any) => m.id === id);
     if (index === -1) {
       return c.json({ ok: false, error: 'Menu not found' }, 404);
     }
@@ -869,7 +894,7 @@ app.patch('/admin/menu/:id', async (c) => {
       menu[index].sortOrder = sortOrder;
     }
     
-    await kv.put('admin:menu:list', JSON.stringify(menu));
+    await kv.put(`admin:menu:list:${tenantId}`, JSON.stringify(menu));
     
     return c.json({ ok: true, data: menu[index] });
   } catch (error) {
@@ -885,7 +910,9 @@ app.patch('/admin/menu/:id', async (c) => {
 app.get('/admin/settings', async (c) => {
   try {
     const kv = c.env.SAAS_FACTORY;
-    const value = await kv.get('settings:default');
+    const tenantId = getTenantId(c);
+    const settingsKey = `settings:${tenantId}`;
+    const value = (await kv.get(settingsKey)) ?? (await kv.get('settings:default'));
     
     if (value) {
       const partial = JSON.parse(value) as Partial<AdminSettings>;
@@ -917,7 +944,9 @@ app.put('/admin/settings', async (c) => {
     }
     
     const kv = c.env.SAAS_FACTORY;
-    const existingValue = await kv.get('settings:default');
+    const tenantId = getTenantId(c);
+    const settingsKey = `settings:${tenantId}`;
+    const existingValue = (await kv.get(settingsKey)) ?? (await kv.get('settings:default'));
     const existing = existingValue ? (JSON.parse(existingValue) as Partial<AdminSettings>) : {};
     
     // 既存設定とマージ（PUTは全置換だが、欠損フィールドはデフォルトで補完）
@@ -930,7 +959,7 @@ app.put('/admin/settings', async (c) => {
     }
     
     // KVに保存
-    await kv.put('settings:default', JSON.stringify(merged));
+    await kv.put(settingsKey, JSON.stringify(merged));
     
     return c.json({ ok: true, data: merged });
   } catch (error) {
@@ -967,7 +996,7 @@ app.put('/admin/staff/:id/shift', async (c) => {
     };
     
     // KVに保存
-    await kv.put(`shift:${staffId}`, JSON.stringify(shiftData));
+    await kv.put(`shift:${tenantId}:${staffId}`, JSON.stringify(shiftData));
     
     return c.json({ ok: true, data: shiftData });
   } catch (error) {
@@ -989,7 +1018,9 @@ app.get('/admin/staff/:id/shift', async (c) => {
     }
     
     const kv = c.env.SAAS_FACTORY;
-    const shiftValue = await kv.get(`shift:${staffId}`);
+    const shiftKeyNew = `shift:${tenantId}:${staffId}`;
+const shiftKeyOld = `shift:${staffId}`;
+const shiftValue = (await kv.get(shiftKeyNew)) ?? (await kv.get(shiftKeyOld));
     
     if (shiftValue) {
       const shift = JSON.parse(shiftValue) as StaffShift;
@@ -1197,7 +1228,7 @@ app.delete('/admin/reservations/:id', async (c) => {
     }
     
     // Durable Object経由で処理（ロックキー: ${date}:${time}）
-    const lockKey = `${date}:${time}`;
+    const lockKey = `${tenantId}:${date}:${time}`;
     const id = c.env.SLOT_LOCK.idFromName(lockKey);
     const stub = c.env.SLOT_LOCK.get(id);
     
@@ -1565,77 +1596,63 @@ app.delete('/admin/line/config', async (c) => {
 // LINE連携エンドポイント
   // GET /admin/integrations/line/auth-url
   // LINE連携エンドポイント: LINEログイン開始用の認可URLを返す
-  app.get('/admin/integrations/line/auth-url', async (c) => {
-    try {
-      const tenantId = getTenantId(c);
+app.get('/admin/integrations/line/auth-url', async (c) => {
+  try {
+    const tenantId = getTenantId(c);
 
-      // D1から設定を取得（なければ環境変数にフォールバック）
-      let clientId: string | undefined;
-      const config = await getLineConfigOrNull(
-        { DB: c.env.DB, CONFIG_ENC_KEY: c.env.CONFIG_ENC_KEY },
-        tenantId,
-      );
+    // D1から設定を取得（なければ環境変数にフォールバック）
+    let clientId: string | undefined;
+    const config = await getLineConfigOrNull(
+      { DB: c.env.DB, CONFIG_ENC_KEY: c.env.CONFIG_ENC_KEY },
+      tenantId,
+    );
 
-      if (config) {
-        clientId = config.clientId;
-      } else {
-        // 後方互換性: 環境変数から取得
-        clientId = c.env.LINE_CLIENT_ID;
-      }
+    if (config) {
+      clientId = config.clientId;
+    } else {
+      clientId = c.env.LINE_CLIENT_ID;
+    }
 
-      if (!clientId) {
-        return c.json(
-          { ok: false, error: 'LINE_CLIENT_ID is not configured' },
-          500,
-        );
-      }
+    if (!clientId) {
+      return c.json({ ok: false, error: 'LINE_CLIENT_ID is not configured' }, 500);
+    }
 
-      // Redirect Base URL を取得（環境変数があればそれを使用、なければリクエストから生成）
-      let redirectBase: string;
-      if (c.env.LINE_LOGIN_REDIRECT_BASE) {
-        redirectBase = c.env.LINE_LOGIN_REDIRECT_BASE.replace(/\/$/, '');
-      } else {
-        const url = new URL(c.req.url);
-        redirectBase = `${url.protocol}//${url.host}`;
-      }
+    // Redirect Base URL を取得（環境変数があればそれを使用、なければリクエストから生成）
+    let redirectBase: string;
+    if (c.env.LINE_LOGIN_REDIRECT_BASE) {
+      redirectBase = c.env.LINE_LOGIN_REDIRECT_BASE.replace(/\/$/, '');
+    } else {
+      const url = new URL(c.req.url);
+      redirectBase = `${url.protocol}//${url.host}`;
+    }
 
-      // callback 先は Next /admin/integrations/line/callback に揃える
-      let redirectUri = `${redirectBase}/auth/line/callback`;
+    // callback 先は Pages/Workers 側の callback と整合させる（基本は /auth/line/callback）
+    let redirectUri = `${redirectBase}/auth/line/callback`;
 
-      
-    // ✅ FORCE redirect_uri to Pages callback (staging)
-    // NOTE: LINE requires redirect_uri to exactly match token exchange redirect_uri
-    const forcedRedirectUri = (c.env.LINE_REDIRECT_URI || "").trim();
+    // ✅ FORCE redirect_uri (envがあれば最優先)
+    const forcedRedirectUri = (c.env.LINE_REDIRECT_URI || '').trim();
     if (forcedRedirectUri) {
-      // @ts-ignore
       redirectUri = forcedRedirectUri;
     }
-// state = tenantId:nonce を生成して KV に保存（CSRF 対策）
-      const nonce = crypto.randomUUID();
-      const state = `${tenantId}:${nonce}`;
 
-      const kv = c.env.SAAS_FACTORY;
-      await kv.put(
-        `line:state:${nonce}`,
-        JSON.stringify({ tenantId, createdAt: Date.now() }),
-        { expirationTtl: 600 },   // 10分
-      );
+    // state = tenantId:nonce を生成して KV に保存（CSRF 対策）
+    const nonce = crypto.randomUUID();
+    const state = `${tenantId}:${nonce}`;
 
-      // LINE 認可URLを生成
-      const authUrl = buildLineAuthUrl(clientId, redirectUri, state);
+    const kv = c.env.SAAS_FACTORY;
+    await kv.put(
+      `line:state:${nonce}`,
+      JSON.stringify({ tenantId, createdAt: Date.now() }),
+      { expirationTtl: 600 },
+    );
 
-      return c.json({ ok: true, url: authUrl });
-      
-
-
-/**
- * LINE Login callback (GET)
- * LINE redirects as GET with ?code=...&state=...
- * NOTE: keep this path to match redirect_uri used by Pages start route
- */
-
-
-
+    // LINE 認可URLを生成
+    const authUrl = buildLineAuthUrl(clientId, redirectUri, state);
+    return c.json({ ok: true, url: authUrl });
+  } catch (error) {
+    return c.json({ ok: false, error: 'internal_error', message: String(error) }, 500);
+  }
+});
 
 app.get("/admin/integrations/line/callback", async (c:any) => {
   const url = new URL(c.req.url);
@@ -1651,7 +1668,9 @@ app.get("/admin/integrations/line/callback", async (c:any) => {
     // allow only relative path
     const rt = (rtRaw && rtRaw.startsWith("/")) ? rtRaw : "/admin/settings";
 
-    return new Response(null, { status: 302, headers: { Location: `${WEB_BASE}${rt}` } });
+    const webBase = String((c.env?.WEB_BASE || c.env?.APP_BASE || "")).replace(/\/$/, "");
+const loc = webBase ? `${webBase}${rt}` : rt; // env無ければ相対パスでOK
+return new Response(null, { status: 302, headers: { Location: loc } });
   }
 if(!code){
     return c.json({ ok:false, error:"missing_code", state }, 400);
@@ -1659,11 +1678,6 @@ if(!code){
   // TODO: exchange token + persist per tenant/state
   return c.json({ ok:true, route:"/admin/integrations/line/callback", codePresent:true, state, at:new Date().toISOString() }, 200);
 });
-} catch (error) {
-      return c.json(jsonError(error), 500);
-    }
-  });
-
   // GET /admin/integrations/line/status
   app.get('/admin/integrations/line/status', async (c) => {
   try {
@@ -1695,7 +1709,7 @@ type Env = {
   ENVIRONMENT?: string;
   VERSION?: string;
   SAAS_FACTORY: KVNamespace;
-  SLOT_LOCK: DurableObjectNamespace<SlotLock>;
+  SLOT_LOCK: DurableObjectNamespace<SlotLockDO>;
   DB: D1Database;
   CONFIG_ENC_KEY?: string; // 暗号化マスターキー（base64 32byte）
   LINE_CLIENT_ID?: string; // LINE Login Client ID
@@ -1759,10 +1773,6 @@ const LINE_CHANNEL_SECRET = c.env.LINE_LOGIN_CHANNEL_SECRET || c.env.LINE_CHANNE
   res.headers.append("Set-Cookie", `sf_tenantId=${encodeURIComponent(tenantId)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=600`);
   return res;
 });
-
-
-
-
 app.get("/auth/line/callback", async (c: any) => {
   const url = new URL(c.req.url);
   const WEB_BASE = (c.env.WEB_BASE || "").replace(/\/+$/, "") || "https://saas-factory-web-v2.pages.dev";
@@ -1838,7 +1848,9 @@ const LINE_CHANNEL_SECRET = c.env.LINE_LOGIN_CHANNEL_SECRET || c.env.LINE_CHANNE
     // allow only relative path
     const rt = (rtRaw && rtRaw.startsWith("/")) ? rtRaw : "/admin/settings";
 
-    return new Response(null, { status: 302, headers: { Location: `${WEB_BASE}${rt}` } });
+    const webBase = String((c.env?.WEB_BASE || c.env?.APP_BASE || "")).replace(/\/$/, "");
+const loc = webBase ? `${webBase}${rt}` : rt; // env無ければ相対パスでOK
+return new Response(null, { status: 302, headers: { Location: loc } });
   }
 if(!code){
     return c.json({ ok:false, error:"missing_code", href:url.toString() }, 400);
@@ -1866,16 +1878,19 @@ if(!code){
     return c.json({ ok:false, error:"token_exchange_failed", status:tokenRes.status, body:tokenJson }, 500);
   }
 
-  // TODO: tokenJson を D1/KV/DO に保存して「ログインセッション」作る
+  // TODO: tokenJson を D1/KV/DO に保存して「ログインセッション」作る  // TODO: tokenJson を D1/KV/DO に保存して「ログインセッション」作る
   // まずは導線確認で returnTo へ戻す
   const cookies = c.req.header("cookie") || "";
   const m = /sf_returnTo=([^;]+)/.exec(cookies);
   const returnTo = m ? decodeURIComponent(m[1]) : "https://saas-factory-a0y.pages.dev/admin";
 
-  return new Response(null, { status: 302, headers: { Location: returnTo } });/**
- * POST /admin/integrations/line/save
- * body: { tenantId, channelAccessToken, channelSecret }
- */
+  return new Response(null, { status: 302, headers: { Location: returnTo } });
+});
+
+// /** (disabled)
+//  * POST /admin/integrations/line/save
+//  * body: { tenantId, channelId/clientId/LINE_CHANNEL_ID, channelAccessToken, channelSecret }
+// * / (removed)
 app.post("/admin/integrations/line/save", async (c) => {
   const body = await c.req.json().catch(() => null) as any;
   const tenantId = body?.tenantId ?? "default";
@@ -1924,11 +1939,42 @@ app.post("/admin/integrations/line/save", async (c) => {
   }
 
   return c.json({ ok: true, tenantId, clientIdLast4: String(clientId).slice(-4), updated_at: now });
-});app.post("/admin/line/credentials", async (c: any) => {
-  const req = c.req.raw;
-  const env = c.env;
-  return await handleLineCredentials(req, env);
 });
+// * / (removed)
+// * / (removed)
+// ✅ Module Worker entry (required for Durable Objects)
+
+
+export default {
+  fetch(request: Request, env: Env, ctx: ExecutionContext) {
+    return app.fetch(request, env as any, ctx as any);
+  },
+};
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
