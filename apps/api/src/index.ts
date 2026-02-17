@@ -1911,11 +1911,77 @@ app.post("/admin/integrations/line/save", async (c) => {
   },
 };
 
+async function readJsonBody(req: Request): Promise<any> {
+  const ct = req.headers.get("content-type") || "";
+  if (!ct.includes("application/json")) return {};
+  try { return await req.json(); } catch { return {}; }
+}
+function maskSecret(s: unknown) {
+  if (typeof s !== "string") return null;
+  if (s.length <= 6) return "***";
+  return s.slice(0,2) + "***" + s.slice(-2);
+}
+const LINE_CREDS_KEY = "admin:line:credentials:v1";
 
+async function handleLineCredentials(req: Request, env: any): Promise<Response> {
+  const stamp = "STAMP_LINE_CREDS_V1";
+  const kv = (env as any).SLOT_LOCK;
 
+  if (!kv || typeof kv.get !== "function" || typeof kv.put !== "function") {
+    return new Response(JSON.stringify({
+      ok:false, error:"kv_binding_missing",
+      detail:"Expected env.SLOT_LOCK KVNamespace with get/put",
+      stamp
+    }), { status: 500, headers: { "content-type":"application/json" } });
+  }
 
+  if (req.method === "GET") {
+    const saved = await kv.get(LINE_CREDS_KEY, "json");
+    return new Response(JSON.stringify({ ok:true, stamp, saved: saved ?? null }), {
+      status: 200, headers: { "content-type":"application/json" }
+    });
+  }
 
+  if (req.method === "POST") {
+    const body = await readJsonBody(req);
+    const toSave = {
+      updatedAt: new Date().toISOString(),
+      LINE_CHANNEL_ID: body.LINE_CHANNEL_ID ?? body.lineChannelId ?? null,
+      LINE_CHANNEL_SECRET: body.LINE_CHANNEL_SECRET ?? body.lineChannelSecret ?? null,
+      LINE_CHANNEL_ACCESS_TOKEN: body.LINE_CHANNEL_ACCESS_TOKEN ?? body.lineChannelAccessToken ?? null,
+      LINE_LOGIN_CHANNEL_ID: body.LINE_LOGIN_CHANNEL_ID ?? body.lineLoginChannelId ?? null,
+      LINE_LOGIN_CHANNEL_SECRET: body.LINE_LOGIN_CHANNEL_SECRET ?? body.lineLoginChannelSecret ?? null,
+      LINE_SESSION_SECRET: body.LINE_SESSION_SECRET ?? body.lineSessionSecret ?? null
+    };
+    await kv.put(LINE_CREDS_KEY, JSON.stringify(toSave));
+    return new Response(JSON.stringify({
+      ok:true, stamp,
+      saved: {
+        ...toSave,
+        LINE_CHANNEL_SECRET: maskSecret(toSave.LINE_CHANNEL_SECRET),
+        LINE_CHANNEL_ACCESS_TOKEN: maskSecret(toSave.LINE_CHANNEL_ACCESS_TOKEN),
+        LINE_LOGIN_CHANNEL_SECRET: maskSecret(toSave.LINE_LOGIN_CHANNEL_SECRET),
+        LINE_SESSION_SECRET: maskSecret(toSave.LINE_SESSION_SECRET)
+      }
+    }), { status: 200, headers: { "content-type":"application/json" } });
+  }
 
+  if (req.method === "OPTIONS") return new Response("", { status: 204 });
 
+  return new Response(JSON.stringify({ ok:false, error:"method_not_allowed", stamp }), {
+    status: 405, headers: { "content-type":"application/json" }
+  });
+}
 
+// --- LINE credentials route ---
+app.get("/admin/line/credentials", async (c: any) => {
+  const req = c.req.raw;
+  const env = c.env;
+  return await handleLineCredentials(req, env);
+});
+app.post("/admin/line/credentials", async (c: any) => {
+  const req = c.req.raw;
+  const env = c.env;
+  return await handleLineCredentials(req, env);
+});
 
