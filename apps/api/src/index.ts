@@ -33,18 +33,23 @@ app.get("/__debug/env", (c) => {
     hasEnv: !!e,
     hasDB: !!(e && e.DB),
     envKeys: e ? Object.keys(e) : [],
-  });
-});
 
 });
 /**
  * テナントIDを取得（暫定: 1テナントのみ対応）
  * 将来的にはリクエストヘッダーやサブドメインから取得する
 */
-function getTenantId(c: { req: { header: (name: string) => string | undefined } }): string {
-  // TODO: マルチテナント対応時に実装
-  // const tenantId = c.req.header('X-Tenant-ID') || extractFromSubdomain(c.req.url);
-  return 'default';
+function getTenantId(c: any): string {
+  // 1) query ?tenantId= を最優先（Hono: c.req.query）
+  const q = c?.req?.query ? c.req.query("tenantId") : undefined;
+  if (q && String(q).trim()) return String(q).trim();
+
+  // 2) header X-Tenant-ID 次点
+  const h = c?.req?.header ? c.req.header("X-Tenant-ID") : undefined;
+  if (h && String(h).trim()) return String(h).trim();
+
+  // 3) fallback
+  return "default";
 }
 
 // CORS設定: 開発時のみ http://localhost:3000 を許可
@@ -1942,6 +1947,8 @@ app.post("/admin/integrations/line/save", async (c) => {
 // * / (removed)
 // ✅ Module Worker entry (required for Durable Objects)
 
+
+
 app.get("/__debug/tenant", (c) => {
   const qTenantId = c.req.query("tenantId") ?? null;
   const hTenantId = c.req.header("X-Tenant-ID") ?? null;
@@ -1954,7 +1961,6 @@ export default {
     return app.fetch(request, env as any, ctx as any);
   },
 };
-
 
 
 
