@@ -631,7 +631,7 @@ app.get('/admin/staff', async (c) => {
   try {
     const tenantId = getTenantId(c);
     const kv = c.env.SAAS_FACTORY;
-    const value = await kv.get(dmin:staff:list:);
+    const value = await kv.get("admin:staff:list:");
 
     if (value) {
       const data = JSON.parse(value);
@@ -674,7 +674,7 @@ try {
     }
     
     const kv = c.env.SAAS_FACTORY;
-    const value = await kv.get(`admin:staff:list:${tenantId}`);
+    const value = await kv.get("admin:staff:list:");
     const staff = value ? JSON.parse(value) : [];
     
     // ID生成
@@ -709,7 +709,7 @@ app.patch('/admin/staff/:id', async (c) => {
     const { name, role, active, sortOrder } = body;
     
     const kv = c.env.SAAS_FACTORY;
-    const value = await kv.get(`admin:staff:list:${tenantId}`);
+    const value = await kv.get("admin:staff:list:");
 let staff = value ? JSON.parse(value) : null;
 if (!Array.isArray(staff) || staff.length === 0) {
   staff = [
@@ -763,7 +763,7 @@ app.get('/admin/menu', async (c) => {
   try {
     const tenantId = body?.tenantId ?? getTenantId(c);
     const kv = c.env.SAAS_FACTORY;
-    const value = await kv.get(`admin:menu:list:${tenantId}`);
+    const value = await kv.get("admin:staff:list:");
     
     if (value) {
 return c.json({ ok: true, data: menu });
@@ -1958,7 +1958,6 @@ export default {
     return app.fetch(request, env as any, ctx as any);
   },
 };
-
 
 
 
