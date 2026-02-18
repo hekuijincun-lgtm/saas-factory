@@ -1,6 +1,6 @@
 export const runtime = "edge";
 const gateStamp = "SETTINGS_GATE_COOKIE_V1";
-import { headers } from "next/headers";
+import { headers, cookies } from "next/headers";
 
 export default async function AdminSettingsPage() {
   const h = headers();
@@ -30,6 +30,7 @@ export default async function AdminSettingsPage() {
 </div>
   );
 }
+
 
 
 
