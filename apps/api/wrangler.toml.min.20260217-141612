@@ -1,0 +1,6 @@
+name = "saas-factory-api"
+main = "src/index.ts"
+compatibility_date = "2025-02-01"
+
+[env.staging]
+name = "saas-factory-api-staging"

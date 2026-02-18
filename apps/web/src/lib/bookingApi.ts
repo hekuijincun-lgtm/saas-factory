@@ -141,7 +141,7 @@ export async function createReservation(
   payload: CreateReservationPayload
 ): Promise<ReservationResponse> {
   try {
-    return await apiPost<ReservationResponse>('/reserve', payload);
+    return await apiPost<ReservationResponse>('/api/proxy/reserve', payload);
   } catch (error) {
     if (error instanceof ApiClientError) {
       throw error;
@@ -367,4 +367,5 @@ export async function assignStaffToReservation(reservationId: string, staffId: s
     throw new ApiClientError('Failed to assign staff');
   }
 }
+
 
