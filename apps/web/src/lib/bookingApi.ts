@@ -141,15 +141,45 @@ export async function createReservation(
   payload: CreateReservationPayload
 ): Promise<ReservationResponse> {
   try {
-    return await apiPost<ReservationResponse>('/api/proxy/reserve', payload);
+    // ✅ legacy UI payload(date/time/name) -> new API payload(startAt/endAt/customerName)
+    const tz = "+09:00";
+    const date = payload.date;
+    const time = payload.time;
+    const staffId = payload.staffId ?? "any";
+
+    if (!date || !time || !payload.name) {
+      throw new ApiClientError("Missing required fields: date/time/name", 400);
+    }
+
+    // "YYYY-MM-DD" + "HH:mm" -> ISO-ish string with JST offset
+    const startAt = `${date}T${time}:00${tz}`;
+
+    // endAt: default 60 minutes later
+    const [hh, mm] = time.split(":").map((x) => parseInt(x, 10));
+    const endDateObj = new Date(`${date}T${time}:00${tz}`);
+    endDateObj.setMinutes(endDateObj.getMinutes() + 60);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const endAt = `${endDateObj.getFullYear()}-${pad(endDateObj.getMonth() + 1)}-${pad(endDateObj.getDate())}T${pad(endDateObj.getHours())}:${pad(endDateObj.getMinutes())}:00${tz}`;
+
+    const newPayload: any = {
+      tenantId: "default",
+      staffId,
+      startAt,
+      endAt,
+      customerName: payload.name,
+      phone: payload.phone ?? null,
+    };
+
+    console.log("[createReservation payload->newPayload]", { payload, newPayload });
+
+    return await apiPost<ReservationResponse>("/api/proxy/reserve", newPayload);
   } catch (error) {
     if (error instanceof ApiClientError) {
       throw error;
     }
-    throw new ApiClientError('Failed to create reservation');
+    throw new ApiClientError("Failed to create reservation");
   }
 }
-
 /**
  * GET /admin/reservations?date=YYYY-MM-DD を実行
  */
@@ -367,5 +397,7 @@ export async function assignStaffToReservation(reservationId: string, staffId: s
     throw new ApiClientError('Failed to assign staff');
   }
 }
+
+
 
 
