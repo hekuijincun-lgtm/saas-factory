@@ -1,22 +1,6 @@
 export const runtime = "edge";
-
+const gateStamp = "SETTINGS_GATE_COOKIE_V1";
 import { headers } from "next/headers";
-
-async function getLineStatus(origin: string, cookie: string) {
-  const res = await fetch(`${origin}/api/admin/line/status`, {
-    cache: "no-store",
-    // Forward cookies so the status call sees the same session
-    headers: cookie ? { cookie } : undefined,
-  });
-  return await res.json();
-}
-/api/admin/line/status`, { cache: "no-store" });
-    if (!res.ok) return { ok: false, status: res.status };
-    return await res.json();
-  } catch (e) {
-    return { ok: false, error: String(e) };
-  }
-}
 
 export default async function AdminSettingsPage() {
   const h = headers();
@@ -24,12 +8,8 @@ export default async function AdminSettingsPage() {
   const host = h.get("x-forwarded-host") ?? h.get("host") ?? "";
   const proto = h.get("x-forwarded-proto") ?? "https";
   const origin = host ? `${proto}://${host}` : "https://saas-factory-web-v2.pages.dev";
-
-  const st: any = await getLineStatus(origin, cookie);
-
-  // ✅ status API は configured じゃなく line_session_present を返す
-  const hasSession = Boolean(st?.line_session_present);
-
+// ✅ status API は configured じゃなく line_session_present を返す
+  const hasSession = /(?:^|;\s*)line_session=/.test(cookie);
   if (!hasSession) {
     return (
       <div style={{ fontFamily: "system-ui", padding: 24 }}>
@@ -50,5 +30,6 @@ export default async function AdminSettingsPage() {
     </div>
   );
 }
+
 
 
