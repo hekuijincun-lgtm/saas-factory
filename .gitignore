@@ -34,3 +34,6 @@ apps/web/build.err.txt*
 .pages_logs_*.txt
 *.bak
 *.bak_*
+
+.vercel
+
