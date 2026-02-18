@@ -1,160 +1,3 @@
-import { Hono } from "hono";
-
-// test helper (lock reproduction)
-const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
-
-// test helper (lock reproduction)
-
-// test helper (lock reproduction)
-
-// test helper (lock reproduction)
-
-// test helper (lock reproduction)
-
-import { SlotLock } from "./durable/SlotLock";
-
-// test helper (lock reproduction)
-
-// test helper (lock reproduction)
-
-// test helper (lock reproduction)
-
-// test helper (lock reproduction)
-
-// test helper (lock reproduction)
-
-type Env = Record<string, unknown>;
-
-const app = new Hono<{ Bindings: Env }>();
-
-function getTenantId(c, body) {
-  try {
-    const url = new URL(c.req.url)
-    return (
-      url.searchParams.get("tenantId")
-      ?? (body?.tenantId ?? null)
-      ?? c.req.header("x-tenant-id")
-      ?? "default"
-    )
-  } catch {
-    return (body?.tenantId ?? null) ?? c.req.header("x-tenant-id") ?? "default"
-  }
-}
-app.get("/__build", (c) => c.json({ ok: true, stamp: "API_BUILD_V1" }));
-app.get("/ping", (c) => c.text("pong"));
-
-/** =========================
- * DO debug
- * ========================= */
-// ✅ DO 生存確認: /__debug/do?name=abc
-app.get("/__debug/do", async (c) => {
-  const name = c.req.query("name") || "default";
-  const id = c.env.SLOT_LOCK.idFromName(name);
-  const stub = c.env.SLOT_LOCK.get(id);
-  const res = await stub.fetch("http://slot-lock/__ping");
-  const text = await res.text();
-  return c.json({ ok: true, name, status: res.status, body: text });
-});
-
-/** =========================
- * Menu
- * ========================= */
-type MenuItem = {
-  id: string;
-  name: string;
-  price: number;
-  durationMin: number;
-  active: boolean;
-  sortOrder: number;
-};
-function defaultMenu() {
-  return [
-    { id: "cut",   name: "カット",   price: 5000,  durationMin: 60,  active: true, sortOrder: 1 },
-    { id: "color", name: "カラー",   price: 8000,  durationMin: 90,  active: true, sortOrder: 2 },
-    { id: "perm",  name: "パーマ",   price: 10000, durationMin: 120, active: true, sortOrder: 3 },
-  ];
-}
-
-app.get("/admin/menu", async (c) => {
-  try {
-    const tenantId = getTenantId(c);
-    const kv = c.env.SAAS_FACTORY;
-
-    const key = `admin:menu:list:${tenantId}`;
-    const value = await kv.get(key);
-
-    if (value) {
-      const menu = JSON.parse(value);
-      return c.json({ ok: true, tenantId, data: menu });
-    }
-
-    return c.json({ ok: true, tenantId, data: defaultMenu() });
-  } catch (error) {
-    return c.json({ ok: false, error: "Failed to fetch menu", message: String(error) }, 500);
-  }
-});
-
-app.post("/admin/menu", async (c) => {
-  try {
-    const tenantId = getTenantId(c);
-    const kv = c.env.SAAS_FACTORY;
-
-    const body = await c.req.json().catch(() => ({} as any));
-    const { name, price, durationMin, active, sortOrder } = body ?? {};
-
-    if (!name || typeof name !== "string" || name.trim() === "") {
-      return c.json({ ok: false, error: "name is required" }, 400);
-    }
-    if (price === undefined || typeof price !== "number" || price < 0) {
-      return c.json({ ok: false, error: "price must be non-negative number" }, 400);
-    }
-    if (durationMin === undefined || typeof durationMin !== "number" || durationMin <= 0) {
-      return c.json({ ok: false, error: "durationMin must be positive number" }, 400);
-    }
-    if (active !== undefined && typeof active !== "boolean") {
-      return c.json({ ok: false, error: "active must be boolean" }, 400);
-    }
-    if (sortOrder !== undefined && (typeof sortOrder !== "number" || sortOrder < 0)) {
-      return c.json({ ok: false, error: "sortOrder must be non-negative number" }, 400);
-    }
-
-    const key = `admin:menu:list:${tenantId}`;
-    const value = await kv.get(key);
-
-    const seed = defaultMenu();
-    const menu: any[] = value ? JSON.parse(value) : seed;
-
-    const id = `menu_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
-    const newItem: MenuItem = {
-      id,
-      name: name.trim(),
-      price,
-      durationMin,
-      active: active !== undefined ? active : true,
-      sortOrder: sortOrder !== undefined ? sortOrder : menu.length,
-      };
-    menu.push(newItem);
-    await kv.put(key, JSON.stringify(menu));
-
-    return c.json({ ok: true, tenantId, data: newItem }, 201);
-  } catch (error) {
-    return c.json({ ok: false, error: "Failed to create menu", message: String(error) }, 500);
-  }
-})
-/**
- * --- Staff (multi-tenant, KV) ---
- * key: admin:staff:list:${tenantId}
- */
-app.get("/admin/staff", async (c) => {
-  const tenantId = c.req.query("tenantId") || "default"
-  const key = `admin:staff:list:${tenantId}`
-
-  const raw = await c.env.SAAS_FACTORY.get(key)
-  const data = raw ? JSON.parse(raw) : []
-
-  return c.json({ ok: true, tenantId, data })
-})
-
 app.post("/admin/staff", async (c) => {
   const tenantId = c.req.query("tenantId") || "default"
   const key = `admin:staff:list:${tenantId}`
@@ -172,8 +15,8 @@ app.post("/admin/staff", async (c) => {
 
   return c.json({ ok: true, tenantId, data: item })
 })
-
-app.on("PATCH", "/admin/staff/:id", async (c) => {
+// 
+// app.on("PATCH", "/admin/staff/:id", async (c) => {
   const tenantId = c.req.query("tenantId") || "default"
   const key = `admin:staff:list:${tenantId}`
   const id = c.req.param("id")
@@ -192,8 +35,8 @@ app.on("PATCH", "/admin/staff/:id", async (c) => {
   await c.env.SAAS_FACTORY.put(key, JSON.stringify(list))
   return c.json({ ok: true, tenantId, data: updated })
 })
-
-app.on("DELETE", "/admin/staff/:id", async (c) => {
+// 
+// app.on("DELETE", "/admin/staff/:id", async (c) => {
   const tenantId = c.req.query("tenantId") || "default"
   const key = `admin:staff:list:${tenantId}`
   const id = c.req.param("id")
@@ -447,6 +290,10 @@ app.get("/auth/line/callback", async (c) => {
   return c.redirect(returnTo, 302);
 });
 /* === /LINE_OAUTH_MIN_ROUTES_V1 === */
+
+
+
+
 
 
 
