@@ -22,6 +22,9 @@ export function middleware(req: NextRequest) {
     return NextResponse.json({ ok: false, stamp: "MWDEBUG_LINE_SETUP_V1", error: String(e) }, { status: 500 });
   }
 const url = req.nextUrl;
-  return NextResponse.next();
+  const res = NextResponse.next();
+res.headers.set("x-mw-stamp", "MW_20260218_A");
+return res;
 }
+
 
