@@ -204,10 +204,8 @@ app.onError((err, c) => {
   app.post("/reserve", async (c) => {
   const url = new URL(c.req.url)
 
+  const debug = url.searchParams.get("debug") === "1"
   const body = await c.req.json().catch(() => null) as any
-  const url = new URL(c.req.url);
-  const debug = url.searchParams.get("debug") === "1";
-  const lockTestMs = Number(url.searchParams.get("lockTestMs") ?? "0") || 0;
   const tenantId = getTenantId(c, body)
   if(!body){ return c.json({ ok:false, error:"bad_json" }, 400) }
 
@@ -320,6 +318,7 @@ app.onError((err, c) => {
 
 export { SlotLock };
 export default { fetch: app.fetch };
+
 
 
 
