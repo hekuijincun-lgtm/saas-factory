@@ -1,3 +1,5 @@
+'use client';
+
 /** --- injected: MENU_DEBUG_GUARD_V1 --- */
 async function safeFetchJson(url: string) {
   const res = await fetch(url, { credentials: "include" as RequestCredentials });
@@ -35,5 +37,6 @@ export default function Page() {
     </AdminShell>
   );
 }
+
 
 
