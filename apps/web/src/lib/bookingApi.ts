@@ -315,7 +315,7 @@ export async function getMenu(tenantId: string = "default"): Promise<MenuItem[]>
     
      /** MENU_FETCH_DEBUG_V1 */
      const ct = response.headers.get("content-type") ?? "";
-     console.log([menu:getMenu] status=, response.status, ct=, ct, head=, text.slice(0, 120));
+     console.log("[menu:getMenu]", { status: response.status, ct, head: text.slice(0, 120) });
      /** END MENU_FETCH_DEBUG_V1 */
 let raw: any = null;
     try { raw = text ? JSON.parse(text) : null; } catch { raw = null; }
