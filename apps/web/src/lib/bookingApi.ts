@@ -306,12 +306,18 @@ export async function getMenu(tenantId: string = "default"): Promise<MenuItem[]>
 
     const response = await fetch("/api/proxy/admin/menu?" + params.toString(), {
       method: "GET",
+      credentials: "include",
       headers: { accept: "application/json" },
       cache: "no-store",
     });
 
     const text = await response.text();
-    let raw: any = null;
+    
+     /** MENU_FETCH_DEBUG_V1 */
+     const ct = response.headers.get("content-type") ?? "";
+     console.log([menu:getMenu] status=, response.status, ct=, ct, head=, text.slice(0, 120));
+     /** END MENU_FETCH_DEBUG_V1 */
+let raw: any = null;
     try { raw = text ? JSON.parse(text) : null; } catch { raw = null; }
 
     if (!response.ok || !raw?.ok) {
@@ -413,6 +419,7 @@ export async function assignStaffToReservation(reservationId: string, staffId: s
     throw new ApiClientError('Failed to assign staff');
   }
 }
+
 
 
 
