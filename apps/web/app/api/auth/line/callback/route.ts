@@ -40,7 +40,7 @@ export async function GET(req: Request) {
   try {
     const ctx = getRequestContext();
     ctxSeen = true;
-    // @ts-ignore
+    // @ts-expect-error: ok
     envSeen = (ctx as any)?.env ? Object.keys((ctx as any).env) : null;
   } catch (e: any) {
     return new Response(JSON.stringify({ ok:false, where:'DEBUG_CALLBACK_CTX_FAIL', err: String(e?.message ?? e) }), {
@@ -48,7 +48,7 @@ export async function GET(req: Request) {
     });
   }
 
-  // @ts-ignore
+  // @ts-expect-error: ok
   const v = (getRequestContext() as any)?.env?.LINE_SESSION_SECRET;
   const pv = (process.env.LINE_SESSION_SECRET ?? null);
 
@@ -79,7 +79,7 @@ try {
     const secret = (() => {
   try {
     const ctx = getRequestContext();
-    // @ts-ignore
+    // @ts-expect-error: ok
     const v = (ctx as any)?.env?.LINE_SESSION_SECRET;
     if (typeof v === "string" && v.trim()) return v.trim();
   } catch {}
@@ -114,6 +114,9 @@ try {
     return NextResponse.redirect(new URL("/admin/line-setup?reason=unknown", new URL(req.url).origin));
   }
 }
+
+
+
 
 
 

@@ -22,12 +22,6 @@ export function middleware(req: NextRequest) {
     return NextResponse.json({ ok: false, stamp: "MWDEBUG_LINE_SETUP_V1", error: String(e) }, { status: 500 });
   }
 const url = req.nextUrl;
-
-  if (url.pathname === "/admin/settings") {
-    return new NextResponse("MIDDLEWARE_HIT_418", { status: 418 });
-  }
-
   return NextResponse.next();
 }
 
-export const config = { matcher: ["/admin/settings"] };
