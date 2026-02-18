@@ -2,9 +2,15 @@ export const runtime = "edge";
 
 import { headers } from "next/headers";
 
-async function getLineStatus(origin: string) {
-  try {
-    const res = await fetch(`${origin}/api/admin/line/status`, { cache: "no-store" });
+async function getLineStatus(origin: string, cookie: string) {
+  const res = await fetch(`${origin}/api/admin/line/status`, {
+    cache: "no-store",
+    // Forward cookies so the status call sees the same session
+    headers: cookie ? { cookie } : undefined,
+  });
+  return await res.json();
+}
+/api/admin/line/status`, { cache: "no-store" });
     if (!res.ok) return { ok: false, status: res.status };
     return await res.json();
   } catch (e) {
@@ -44,4 +50,5 @@ export default async function AdminSettingsPage() {
     </div>
   );
 }
+
 
