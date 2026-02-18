@@ -14,11 +14,12 @@ async function getLineStatus(origin: string) {
 
 export default async function AdminSettingsPage() {
   const h = headers();
+  const cookie = h.get("cookie") ?? "";
   const host = h.get("x-forwarded-host") ?? h.get("host") ?? "";
   const proto = h.get("x-forwarded-proto") ?? "https";
   const origin = host ? `${proto}://${host}` : "https://saas-factory-web-v2.pages.dev";
 
-  const st: any = await getLineStatus(origin);
+  const st: any = await getLineStatus(origin, cookie);
 
   // ✅ status API は configured じゃなく line_session_present を返す
   const hasSession = Boolean(st?.line_session_present);
@@ -43,3 +44,4 @@ export default async function AdminSettingsPage() {
     </div>
   );
 }
+
