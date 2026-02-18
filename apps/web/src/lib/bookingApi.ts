@@ -124,8 +124,13 @@ export async function getSlots(date: string, staffId?: string): Promise<SlotsRes
       );
     }
 
-    const data = await response.json();
-    return data as SlotsResponse;
+    const raw = await response.json();
+    // normalize for UI compatibility: accept {slots:[]}, {data:[]}, or both
+    const slots = (raw && Array.isArray(raw.slots)) ? raw.slots
+               : (raw && Array.isArray(raw.data)) ? raw.data
+               : [];
+    const normalized = { ...raw, slots, data: slots };
+    return normalized as SlotsResponse;
   } catch (error) {
     if (error instanceof ApiClientError) {
       throw error;
@@ -236,7 +241,7 @@ export async function cancelReservation(
  */
 export async function getStaff(): Promise<Staff[]> {
   try {
-    const response = await apiGet<ApiResponse<Staff[]>>('/admin/staff');
+    const response = await apiGet<ApiResponse<Staff[]>>('/api/proxy/admin/staff');
     if (response.ok && response.data) {
       // 配列チェック
       if (!Array.isArray(response.data)) {
@@ -259,7 +264,7 @@ export async function getStaff(): Promise<Staff[]> {
  */
 export async function createStaff(payload: Omit<Staff, 'id'>): Promise<Staff> {
   try {
-    const response = await apiPost<ApiResponse<Staff>>('/admin/staff', payload);
+    const response = await apiPost<ApiResponse<Staff>>('/api/proxy/admin/staff', payload);
     if (response.ok && response.data) {
       return response.data;
     }
@@ -295,7 +300,7 @@ export async function updateStaff(id: string, payload: Partial<Omit<Staff, 'id'>
  */
 export async function getMenu(): Promise<MenuItem[]> {
   try {
-    const response = await apiGet<ApiResponse<MenuItem[]>>('/admin/menu');
+    const response = await apiGet<ApiResponse<MenuItem[]>>('/api/proxy/admin/menu');
     if (response.ok && response.data) {
       return response.data.filter(m => m.active).sort((a, b) => a.sortOrder - b.sortOrder);
     }
@@ -313,7 +318,7 @@ export async function getMenu(): Promise<MenuItem[]> {
  */
 export async function createMenuItem(payload: Omit<MenuItem, 'id'>): Promise<MenuItem> {
   try {
-    const response = await apiPost<ApiResponse<MenuItem>>('/admin/menu', payload);
+    const response = await apiPost<ApiResponse<MenuItem>>('/api/proxy/admin/menu', payload);
     if (response.ok && response.data) {
       return response.data;
     }
@@ -349,7 +354,7 @@ export async function updateMenuItem(id: string, payload: Partial<Omit<MenuItem,
  */
 export async function getSettings(): Promise<AdminSettings> {
   try {
-    const response = await apiGet<ApiResponse<AdminSettings>>('/admin/settings');
+    const response = await apiGet<ApiResponse<AdminSettings>>('/api/proxy/admin/settings');
     if (response.ok && response.data) {
       return response.data;
     }
@@ -367,7 +372,7 @@ export async function getSettings(): Promise<AdminSettings> {
  */
 export async function updateSettings(payload: AdminSettings): Promise<AdminSettings> {
   try {
-    const response = await apiPut<ApiResponse<AdminSettings>>('/admin/settings', payload);
+    const response = await apiPut<ApiResponse<AdminSettings>>('/api/proxy/admin/settings', payload);
     if (response.ok && response.data) {
       return response.data;
     }
@@ -397,6 +402,8 @@ export async function assignStaffToReservation(reservationId: string, staffId: s
     throw new ApiClientError('Failed to assign staff');
   }
 }
+
+
 
 
 
