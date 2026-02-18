@@ -6,17 +6,19 @@ type Env = Record<string, unknown>;
 
 const app = new Hono<{ Bindings: Env }>();
 
-function getTenantId(c) {
+function getTenantId(c, body) {
   try {
     const url = new URL(c.req.url)
-    return url.searchParams.get("tenantId")
+    return (
+      url.searchParams.get("tenantId")
+      ?? (body?.tenantId ?? null)
       ?? c.req.header("x-tenant-id")
       ?? "default"
+    )
   } catch {
-    return c.req.header("x-tenant-id") ?? "default"
+    return (body?.tenantId ?? null) ?? c.req.header("x-tenant-id") ?? "default"
   }
 }
-
 app.get("/__build", (c) => c.json({ ok: true, stamp: "API_BUILD_V1" }));
 app.get("/ping", (c) => c.text("pong"));
 
@@ -182,7 +184,7 @@ app.onError((err, c) => {
   const url = new URL(c.req.url)
 
   const body = await c.req.json().catch(() => null) as any
-  const tenantId = url.searchParams.get("tenantId") ?? (body.tenantId ?? null) ?? c.req.header("x-tenant-id") ?? "default";
+  const tenantId = getTenantId(c, body)
   if(!body){ return c.json({ ok:false, error:"bad_json" }, 400) }
 
   const staffId = String(body.staffId ?? "")
@@ -274,6 +276,7 @@ app.onError((err, c) => {
 
 export { SlotLock };
 export default { fetch: app.fetch };
+
 
 
 
