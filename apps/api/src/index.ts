@@ -41,7 +41,422 @@ function getTenantId(c, body) {
   }
 }
 app.get("/__build", (c) => c.json({ ok: true, stamp: "API_BUILD_V1" }));
-app.get("/ping", (c) => c.text("pong"));
+
+
+// --- slots (DUMMY V1) ---
+    // === ADMIN_SETTINGS_V1 ===
+  // GET/PUT admin settings (KV)
+  app.get('/admin/settings', async (c) => {
+    const debug = c.req.query('debug') === '1'
+    const tenantId =
+      (c.req.query('tenantId') || c.req.header('x-tenant-id') || 'default').trim() || 'default'
+
+    const envAny: any = (c as any).env || (c as any)
+    const kv = (envAny && (envAny.SAAS_FACTORY || envAny.KV || envAny.SAAS_FACTORY_KV)) || null
+    if(!kv){
+      return c.json({ ok:false, error:'kv_binding_missing', tenantId, seen:Object.keys(envAny||{}) }, 500)
+    }
+
+    const DEFAULT_SETTINGS: any = {
+      businessName: "Default Shop",
+      slotMinutes: 30,
+      timezone: "Asia/Tokyo",
+      closedWeekdays: [],
+      openTime: "10:00",
+      closeTime: "19:00",
+      slotIntervalMin: 30,
+    }
+
+    const deepMerge = (a: any, b: any) => {
+      const out: any = Array.isArray(a) ? [...a] : { ...(a||{}) }
+      for(const k of Object.keys(b||{})){
+        const av = out[k]
+        const bv = b[k]
+        if(av && bv && typeof av==='object' && typeof bv==='object' && !Array.isArray(av) && !Array.isArray(bv)){
+          out[k] = deepMerge(av, bv)
+        } else {
+          out[k] = bv
+        }
+      }
+      return out
+    }
+
+    const getJson = async (key: string) => {
+      try{
+        const v = await kv.get(key, "json")
+        return v || null
+      }catch(e){
+        try{
+          const v2 = await kv.get(key)
+          return v2 ? JSON.parse(v2) : null
+        }catch(_){
+          return null
+        }
+      }
+    }
+
+    const keyDefault = 'settings:default'
+    const keyTenant  = 'settings:' + tenantId
+
+    const sDefault = await getJson(keyDefault)
+    const sTenant  = tenantId === 'default' ? null : await getJson(keyTenant)
+
+    let data = DEFAULT_SETTINGS
+    if(sDefault) data = deepMerge(data, sDefault)
+    if(sTenant)  data = deepMerge(data, sTenant)
+
+    return c.json({
+      ok:true,
+      tenantId,
+      data,
+      debug: debug ? { keyDefault, keyTenant, hasDefault: !!sDefault, hasTenant: !!sTenant } : undefined
+    })
+  })
+
+  app.put('/admin/settings', async (c) => {
+    const tenantId =
+      (c.req.query('tenantId') || c.req.header('x-tenant-id') || 'default').trim() || 'default'
+
+    const envAny: any = (c as any).env || (c as any)
+    const kv = (envAny && (envAny.SAAS_FACTORY || envAny.KV || envAny.SAAS_FACTORY_KV)) || null
+    if(!kv){
+      return c.json({ ok:false, error:'kv_binding_missing', tenantId, seen:Object.keys(envAny||{}) }, 500)
+    }
+
+    let body: any = null
+    try{
+      body = await c.req.json()
+    }catch(e){
+      return c.json({ ok:false, error:'bad_json' }, 400)
+    }
+
+    const normTime = (s: any, fallback: string) => {
+      const v = String(s ?? fallback)
+      return /^\d{2}:\d{2}$/.test(v) ? v : fallback
+    }
+
+    const patch: any = {}
+    if(body.businessName != null) patch.businessName = String(body.businessName)
+    if(body.timezone != null) patch.timezone = String(body.timezone)
+    if(body.openTime != null) patch.openTime = normTime(body.openTime, "10:00")
+    if(body.closeTime != null) patch.closeTime = normTime(body.closeTime, "19:00")
+    if(body.slotIntervalMin != null) patch.slotIntervalMin = Number(body.slotIntervalMin)
+    if(body.slotMinutes != null) patch.slotMinutes = Number(body.slotMinutes)
+    if(body.closedWeekdays != null){
+      patch.closedWeekdays = Array.isArray(body.closedWeekdays) ? body.closedWeekdays.map((x:any)=>Number(x)) : []
+    }
+
+    // write (partial save)
+    const key = 'settings:' + tenantId
+    await kv.put(key, JSON.stringify(patch))
+
+    return c.json({ ok:true, tenantId, key, saved: patch })
+  })
+  // === /ADMIN_SETTINGS_V1 ===
+// === SLOTS_SETTINGS_V1 ===
+  // settings-driven slots generator (multi-tenant)
+  app.get('/slots', async (c) => {
+    const debug = c.req.query('debug') === '1'
+
+    const tenantId =
+      (c.req.query('tenantId') || c.req.header('x-tenant-id') || 'default').trim() || 'default'
+    const staffId = (c.req.query('staffId') || 'any').trim() || 'any'
+    const date    = (c.req.query('date') || '').trim()
+
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(date)){
+      return c.json({ ok:false, error:'bad_date', hint:'YYYY-MM-DD', tenantId, staffId, date }, 400)
+    }
+
+    const envAny: any = (c as any).env || (c as any)
+
+    const pickFirst = (obj: any, keys: string[]) => {
+      for (const k of keys) if (obj && obj[k]) return obj[k]
+      return null
+    }
+
+    const kv = pickFirst(envAny, ['KV','SAAS_FACTORY_KV','SAAS_FACTORY','APP_KV','DATA_KV','BOOKING_KV'])
+    const db = pickFirst(envAny, ['DB','D1','DATABASE','SAAS_FACTORY_DB','BOOKING_DB'])
+
+    if(!kv){
+      return c.json({ ok:false, error:'kv_binding_missing', tenantId, seen:Object.keys(envAny||{}), hint:'Check wrangler.toml bindings' }, 500)
+    }
+    if(!db){
+      return c.json({ ok:false, error:'d1_binding_missing', tenantId, seen:Object.keys(envAny||{}), hint:'Check wrangler.toml bindings' }, 500)
+    }
+
+    const pad2 = (n: number) => String(n).padStart(2,'0')
+    
+    const JST_OFFSET_MS = 9 * 60 * 60 * 1000
+    const jstDate = (tms: number) => new Date(tms + JST_OFFSET_MS)
+const parseHHMM = (s: string) => {
+      const m = /^(\d{2}):(\d{2})$/.exec(s)
+      if(!m) return null
+      const hh = Number(m[1]), mm = Number(m[2])
+      if(hh<0||hh>23||mm<0||mm>59) return null
+      return { hh, mm }
+    }
+    const toIsoJst = (d: string, hhmm: string) => (d + 'T' + hhmm + ':00+09:00')
+    const ms = (iso: string) => new Date(iso).getTime()
+    const overlaps = (a0:number,a1:number,b0:number,b1:number) => a0 < b1 && a1 > b0
+
+    const DEFAULT_SETTINGS: any = {
+      businessName: "Default Shop",
+      slotMinutes: 30,
+      timezone: "Asia/Tokyo",
+      closedWeekdays: [],
+      openTime: "10:00",
+      closeTime: "19:00",
+      slotIntervalMin: 30,
+    }
+
+    const deepMerge = (a: any, b: any) => {
+      const out: any = Array.isArray(a) ? [...a] : { ...(a||{}) }
+      for(const k of Object.keys(b||{})){
+        const av = out[k]
+        const bv = b[k]
+        if(av && bv && typeof av==='object' && typeof bv==='object' && !Array.isArray(av) && !Array.isArray(bv)){
+          out[k] = deepMerge(av, bv)
+        } else {
+          out[k] = bv
+        }
+      }
+      return out
+    }
+
+    const getJson = async (key: string) => {
+      try{
+        const v = await kv.get(key, "json")
+        return v || null
+      }catch(e){
+        try{
+          const v2 = await kv.get(key)
+          return v2 ? JSON.parse(v2) : null
+        }catch(_){
+          return null
+        }
+      }
+    }
+
+    const candidatesDefault = [
+      'admin:settings:default',
+      'settings:default',
+      'admin:settings',
+      'settings',
+    ]
+    const candidatesTenant = [
+      'admin:settings:' + tenantId,
+      'settings:' + tenantId,
+      'admin:settings:tenant:' + tenantId,
+      'settings:tenant:' + tenantId,
+    ]
+
+    let s = DEFAULT_SETTINGS
+    let sDefault: any = null
+    let sTenant: any  = null
+    let hitDefaultKey: string | null = null
+    let hitTenantKey: string | null = null
+
+    for(const k of candidatesDefault){ sDefault = await getJson(k); if(sDefault){ hitDefaultKey = k; break } }
+    if(tenantId !== 'default'){
+      for(const k of candidatesTenant){  sTenant  = await getJson(k); if(sTenant){ hitTenantKey = k; break } }
+    }
+
+    if(sDefault) s = deepMerge(s, sDefault)
+    if(sTenant)  s = deepMerge(s, sTenant)
+
+    const openTime = String(s.openTime || "10:00")
+    const closeTime = String(s.closeTime || "19:00")
+    const slotIntervalMin = Number(s.slotIntervalMin ?? s.slotMinutes ?? 30)
+    const slotMinutes = Number(s.slotMinutes ?? 30)
+    const closedWeekdays = Array.isArray(s.closedWeekdays) ? s.closedWeekdays.map((x:any)=>Number(x)) : []
+
+    const o = parseHHMM(openTime)
+    const cc = parseHHMM(closeTime)
+    if(!o || !cc){
+      return c.json({ ok:false, error:'bad_settings_time', tenantId, openTime, closeTime }, 500)
+    }
+
+    const weekday = jstDate(ms(date + 'T00:00:00+09:00')).getUTCDay()
+    if(closedWeekdays.includes(weekday)){
+      return c.json({
+        ok:true, tenantId, staffId, date,
+        settings: debug ? { openTime, closeTime, slotIntervalMin, slotMinutes, closedWeekdays, weekday, hitDefaultKey, hitTenantKey } : undefined,
+        slots: []
+      })
+    }
+
+    const openIso  = toIsoJst(date, pad2(o.hh) + ':' + pad2(o.mm))
+    const closeIso = toIsoJst(date, pad2(cc.hh) + ':' + pad2(cc.mm))
+    const openMs  = ms(openIso)
+    const closeMs = ms(closeIso)
+
+    const stepMs = slotIntervalMin * 60 * 1000
+    const durMs  = slotMinutes * 60 * 1000
+
+    const dayStart = date + 'T00:00:00+09:00'
+    const dayEnd   = date + 'T23:59:59+09:00'
+
+    let reservations: Array<{start_at:string,end_at:string,staff_id?:string}> = []
+    try{
+      if(staffId === 'any'){
+        const q = await db
+          .prepare(`SELECT start_at, end_at, staff_id FROM reservations WHERE tenant_id = ? AND start_at < ? AND end_at > ? ORDER BY start_at`)
+          .bind(tenantId, dayEnd, dayStart)
+          .all()
+        reservations = (q.results || []) as any
+      } else {
+        const q = await db
+          .prepare(`SELECT start_at, end_at, staff_id FROM reservations WHERE tenant_id = ? AND staff_id = ? AND start_at < ? AND end_at > ? ORDER BY start_at`)
+          .bind(tenantId, staffId, dayEnd, dayStart)
+          .all()
+        reservations = (q.results || []) as any
+      }
+    }catch(e:any){
+      return c.json({ ok:false, error:'d1_query_failed', tenantId, detail:String(e?.message||e), stack: debug ? String(e?.stack||'') : undefined }, 500)
+    }
+
+    const resMs = reservations
+      .map(r => ({ a0: ms(r.start_at), a1: ms(r.end_at) }))
+      .filter(x => Number.isFinite(x.a0) && Number.isFinite(x.a1))
+
+    const slots: Array<{time:string, available:boolean}> = []
+    for(let t = openMs; t + durMs <= closeMs; t += stepMs){
+      const end = t + durMs
+      const dt = jstDate(t)
+      const time = pad2(dt.getUTCHours()) + ':' + pad2(dt.getUTCMinutes())
+
+      let available = true
+      for(const r of resMs){
+        if(overlaps(t, end, r.a0, r.a1)){ available = false; break }
+      }
+      slots.push({ time, available })
+    }
+
+    return c.json({
+      ok:true, tenantId, staffId, date,
+      settings: debug ? { openTime, closeTime, slotIntervalMin, slotMinutes, closedWeekdays, weekday, hitDefaultKey, hitTenantKey } : undefined,
+      slots,
+    })
+  })
+  // === /SLOTS_SETTINGS_V1 ===
+app.get('/slots__legacy', async (c) => {
+  const debug = (c.req.query("debug") || "") === "1";
+  try {
+    const tenantId = c.req.query("tenantId") || "default";
+    const staffIdQ = c.req.query("staffId") || "any";
+
+    const dateStr = c.req.query("date") || "";
+    let y: number, m: number, d: number;
+
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+      const [yy, mm, dd] = dateStr.split("-").map((v) => Number(v));
+      y = yy; m = mm; d = dd;
+    } else {
+      const now = new Date();
+      y = now.getFullYear(); m = now.getMonth() + 1; d = now.getDate();
+    }
+
+    const pad2 = (n: number) => String(n).padStart(2, "0");
+    const date = `${y}-${pad2(m)}-${pad2(d)}`;
+    const tz = "+09:00";
+
+    // ---- load settings (tenant-scoped) ----
+    // expects { ok:true, tenantId, data:{ openTime, closeTime, slotIntervalMin, timezone } } OR { ok:true, openTime... }
+    const settingsUrl = new URL("/admin/settings", "http://local");
+    settingsUrl.searchParams.set("tenantId", tenantId);
+
+    const settingsRes = await fetch(settingsUrl.toString().replace("http://local", c.req.url.split("/").slice(0,3).join("/")), {
+      method: "GET",
+      headers: { "Accept": "application/json" },
+    });
+    let openTime = "10:00";
+    let closeTime = "16:00";
+    let slotIntervalMin = 30;
+
+    if (settingsRes.ok) {
+      const raw = await settingsRes.json().catch(() => null);
+      const s = raw?.data ?? raw;
+      if (s?.openTime) openTime = String(s.openTime);
+      if (s?.closeTime) closeTime = String(s.closeTime);
+      if (s?.slotIntervalMin) slotIntervalMin = Number(s.slotIntervalMin) || slotIntervalMin;
+    }
+
+    // parse HH:mm
+    const toMin = (hhmm: string) => {
+      const m = /^(\d{1,2}):(\d{2})$/.exec(hhmm || "");
+      if (!m) return null;
+      return Number(m[1]) * 60 + Number(m[2]);
+    };
+
+    const openMin = toMin(openTime) ?? (10 * 60);
+    const closeMin = toMin(closeTime) ?? (16 * 60);
+    const step = Math.max(5, Math.min(120, slotIntervalMin || 30));
+
+    // ---- load reservations (by day prefix) ----
+    const prefix = `${date}T`;
+    const like = `${prefix}%`;
+
+    let rows: any[] = [];
+    if (staffIdQ && staffIdQ !== "any") {
+      const q2 = `
+        SELECT slot_start
+        FROM reservations
+        WHERE tenant_id = ?
+          AND status = 'active'
+          AND slot_start LIKE ?
+          AND staff_id = ?
+      `;
+      const r = await c.env.DB.prepare(q2).bind(tenantId, like, staffIdQ).all();
+      rows = (r && Array.isArray((r as any).results)) ? (r as any).results : [];
+    } else {
+      const q = `
+        SELECT slot_start
+        FROM reservations
+        WHERE tenant_id = ?
+          AND status = 'active'
+          AND slot_start LIKE ?
+      `;
+      const r = await c.env.DB.prepare(q).bind(tenantId, like).all();
+      rows = (r && Array.isArray((r as any).results)) ? (r as any).results : [];
+    }
+
+    const reserved = new Set<string>(rows.map((x) => String(x.slot_start)));
+
+    // ---- build slots ----
+    const slots: Array<any> = [];
+    for (let t = openMin; t + step <= closeMin; t += step) {
+      const hh = Math.floor(t / 60);
+      const mm = t % 60;
+      const time = `${pad2(hh)}:${pad2(mm)}`;
+
+      const slotStart = `${date}T${time}:00${tz}`;
+      const isReserved = reserved.has(slotStart);
+
+      slots.push({
+        time,
+        available: !isReserved,
+        reason: isReserved ? "reserved" : undefined,
+        meta: debug ? { slotStart, source: "dummy_v6_settings" } : undefined,
+      });
+    }
+
+    return c.json({
+      ok: true,
+      tenantId,
+      staffId: staffIdQ,
+      date,
+      slots,
+      debug: debug ? { openTime, closeTime, slotIntervalMin: step, reservedCount: reserved.size } : undefined,
+    });
+  } catch (e: any) {
+    return c.json({
+      ok: false,
+      error: "slots_error",
+      message: String(e?.message || e),
+      stack: debug ? String(e?.stack || "") : undefined,
+    }, 500);
+  }
+});app.get("/ping", (c) => c.text("pong"));
 
 /** =========================
  * DO debug
@@ -454,6 +869,18 @@ app.get("/auth/line/callback", async (c) => {
   return c.redirect(returnTo, 302);
 });
 /* === /LINE_OAUTH_MIN_ROUTES_V1 === */
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

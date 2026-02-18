@@ -2,6 +2,13 @@
 
 import { useEffect, useMemo, useState } from "react";
 
+type ApiResp = {
+  ok: boolean;
+  tenantId?: string;
+  data?: any;
+  error?: string;
+};
+
 type Settings = {
   businessName?: string;
   timezone?: string;
@@ -21,10 +28,6 @@ const WEEKDAYS = [
   { k: 5, label: "金" },
   { k: 6, label: "土" },
 ];
-
-function pad2(n: number) {
-  return String(n).padStart(2, "0");
-}
 
 function normalizeTime(v: string, fallback: string) {
   return /^\d{2}:\d{2}$/.test(v) ? v : fallback;
@@ -47,7 +50,10 @@ export default function AdminSettingsPage() {
   const api = useMemo(() => {
     const base = "/api/proxy/admin/settings";
     return {
-      get: (tid: string) => `${base}?tenantId=${encodeURIComponent(tid)}&nocache=${crypto.randomUUID().replace(/-/g, "")}`,
+      get: (tid: string) =>
+        `${base}?tenantId=${encodeURIComponent(tid)}&nocache=${crypto
+          .randomUUID()
+          .replace(/-/g, "")}`,
       put: (tid: string) => `${base}?tenantId=${encodeURIComponent(tid)}`,
     };
   }, []);
@@ -57,7 +63,7 @@ export default function AdminSettingsPage() {
     setMsg(null);
     try {
       const r = await fetch(api.get(tid), { cache: "no-store" });
-      const j = await r.json();
+      const j = (await r.json()) as ApiResp;
       if (!j.ok) throw new Error(j.error || "failed");
       const d = j.data || {};
       setS({
@@ -67,7 +73,9 @@ export default function AdminSettingsPage() {
         closeTime: normalizeTime(String(d.closeTime || "19:00"), "19:00"),
         slotIntervalMin: Number(d.slotIntervalMin ?? 30),
         slotMinutes: Number(d.slotMinutes ?? 30),
-        closedWeekdays: Array.isArray(d.closedWeekdays) ? d.closedWeekdays.map((x: any) => Number(x)) : [],
+        closedWeekdays: Array.isArray(d.closedWeekdays)
+          ? d.closedWeekdays.map((x: any) => Number(x))
+          : [],
       });
     } catch (e: any) {
       setMsg(`読み込み失敗: ${String(e?.message || e)}`);
@@ -92,10 +100,9 @@ export default function AdminSettingsPage() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
       });
-      const j = await r.json();
+      const j = (await r.json()) as ApiResp;
       if (!j.ok) throw new Error(j.error || "save_failed");
       setMsg("保存したよ ✅");
-      // reload to reflect server-normalized values
       await load(tenantId);
     } catch (e: any) {
       setMsg(`保存失敗: ${String(e?.message || e)}`);
@@ -132,12 +139,15 @@ export default function AdminSettingsPage() {
               <input
                 className="w-44 rounded-xl bg-slate-950/60 border border-slate-800 px-3 py-2 text-sm outline-none"
                 value={tenantId}
-                onChange={(e) => setTenantId(e.target.value.trim() || "default")}
+                onChange={(e) =>
+                  setTenantId(e.target.value.trim() || "default")
+                }
               />
               <button
-                className="rounded-xl border border-slate-700 bg-slate-800/60 px-3 py-2 text-sm hover:bg-slate-800"
+                className="rounded-xl border border-slate-700 bg-slate-800/60 px-3 py-2 text-sm hover:bg-slate-800 disabled:opacity-60"
                 onClick={() => load(tenantId)}
                 disabled={loading || saving}
+                type="button"
               >
                 再読み込み
               </button>
@@ -151,7 +161,12 @@ export default function AdminSettingsPage() {
                 <input
                   className="mt-2 w-full rounded-xl bg-slate-950/60 border border-slate-800 px-3 py-2 text-lg outline-none"
                   value={s.openTime}
-                  onChange={(e) => setS((p) => ({ ...p, openTime: normalizeTime(e.target.value, p.openTime) }))}
+                  onChange={(e) =>
+                    setS((p) => ({
+                      ...p,
+                      openTime: normalizeTime(e.target.value, p.openTime),
+                    }))
+                  }
                   placeholder="10:00"
                 />
               </div>
@@ -160,7 +175,12 @@ export default function AdminSettingsPage() {
                 <input
                   className="mt-2 w-full rounded-xl bg-slate-950/60 border border-slate-800 px-3 py-2 text-lg outline-none"
                   value={s.closeTime}
-                  onChange={(e) => setS((p) => ({ ...p, closeTime: normalizeTime(e.target.value, p.closeTime) }))}
+                  onChange={(e) =>
+                    setS((p) => ({
+                      ...p,
+                      closeTime: normalizeTime(e.target.value, p.closeTime),
+                    }))
+                  }
                   placeholder="19:00"
                 />
               </div>
@@ -173,7 +193,12 @@ export default function AdminSettingsPage() {
                   type="number"
                   className="mt-2 w-full rounded-xl bg-slate-950/60 border border-slate-800 px-3 py-2 text-lg outline-none"
                   value={s.slotIntervalMin}
-                  onChange={(e) => setS((p) => ({ ...p, slotIntervalMin: Number(e.target.value || 0) }))}
+                  onChange={(e) =>
+                    setS((p) => ({
+                      ...p,
+                      slotIntervalMin: Number(e.target.value || 0),
+                    }))
+                  }
                   min={5}
                   step={5}
                 />
@@ -184,7 +209,12 @@ export default function AdminSettingsPage() {
                   type="number"
                   className="mt-2 w-full rounded-xl bg-slate-950/60 border border-slate-800 px-3 py-2 text-lg outline-none"
                   value={s.slotMinutes}
-                  onChange={(e) => setS((p) => ({ ...p, slotMinutes: Number(e.target.value || 0) }))}
+                  onChange={(e) =>
+                    setS((p) => ({
+                      ...p,
+                      slotMinutes: Number(e.target.value || 0),
+                    }))
+                  }
                   min={5}
                   step={5}
                 />
@@ -213,9 +243,6 @@ export default function AdminSettingsPage() {
                   );
                 })}
               </div>
-              <div className="mt-3 text-xs text-slate-400">
-                例）日・土休み → 日(土)をON。営業日に戻す → もう一回押す。
-              </div>
             </div>
 
             {msg && (
@@ -229,6 +256,7 @@ export default function AdminSettingsPage() {
                 className="rounded-2xl border border-slate-700 bg-slate-800/60 px-5 py-3 text-sm hover:bg-slate-800 disabled:opacity-60"
                 onClick={() => load(tenantId)}
                 disabled={loading || saving}
+                type="button"
               >
                 {loading ? "読み込み中..." : "リセット"}
               </button>
@@ -236,13 +264,10 @@ export default function AdminSettingsPage() {
                 className="rounded-2xl bg-emerald-500/20 border border-emerald-400 px-5 py-3 text-sm hover:bg-emerald-500/30 disabled:opacity-60"
                 onClick={save}
                 disabled={saving || loading}
+                type="button"
               >
                 {saving ? "保存中..." : "保存"}
               </button>
-            </div>
-
-            <div className="mt-2 text-xs text-slate-500">
-              tip: 保存すると /slots がこの設定に追従するよ 🤟🏻
             </div>
           </div>
         </div>
