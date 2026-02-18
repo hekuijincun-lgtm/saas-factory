@@ -11,9 +11,7 @@ type LineStatus =
 
 export default function AdminSettingsClient() {
   const searchParams = useSearchParams();
-
-  const router = useRouter();
-
+  const routerNav = useRouter();
   useEffect(() => {
     const line = searchParams.get("line");
     if (!line) return;
@@ -24,11 +22,8 @@ export default function AdminSettingsClient() {
       line === "ok" ? "ok" :
       "unknown";
 
-    router.replace(`/admin/line-setup?reason=${encodeURIComponent(reason)}`);
-  }, [searchParams, router]);
-
-  const router = useRouter();
-
+    routerNav.replace(`/admin/line-setup?reason=${encodeURIComponent(reason)}`);
+  }, [searchParams, routerNav]);
   useEffect(() => {
     const line = searchParams.get("line");
     if (!line) return;
@@ -39,8 +34,8 @@ export default function AdminSettingsClient() {
       line === "ok" ? "ok" :
       "unknown";
 
-    router.replace(`/admin/line-setup?reason=${encodeURIComponent(reason)}`);
-  }, [searchParams, router]);
+    routerNav.replace(`/admin/line-setup?reason=${encodeURIComponent(reason)}`);
+  }, [searchParams, routerNav]);
 
   const [lineStatus, setLineStatus] = useState<LineStatus | null>(null);
   const [loadingStatus, setLoadingStatus] = useState(false);
@@ -134,7 +129,8 @@ export default function AdminSettingsClient() {
       setLineLoading(false);
     }
   };
-  // --- /injected ---  useEffect(() => {
+  // --- /injected ---
+  useEffect(() => {
     // 初期表示でステータス取得（リンク済みならここで UI が更新される）
     fetchLineStatusState();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -211,6 +207,9 @@ export default function AdminSettingsClient() {
     </main>
   );
 }
+
+
+
 
 
 

@@ -3,7 +3,7 @@ const gateStamp = "SETTINGS_GATE_COOKIE_V1";
 import { headers, cookies } from "next/headers";
 
 export default async function AdminSettingsPage() {
-  const h = headers();
+  const h = await headers();
   const cookie = h.get("cookie") ?? "";
   const host = h.get("x-forwarded-host") ?? h.get("host") ?? "";
   const proto = h.get("x-forwarded-proto") ?? "https";
@@ -30,6 +30,7 @@ export default async function AdminSettingsPage() {
 </div>
   );
 }
+
 
 
 
