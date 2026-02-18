@@ -28,3 +28,7 @@ return res;
 }
 
 
+
+export const config = {
+  matcher: ["/admin/:path*", "/booking/:path*", "/login", "/api/:path*"],
+};
