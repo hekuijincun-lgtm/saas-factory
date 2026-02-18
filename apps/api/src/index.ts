@@ -173,7 +173,7 @@ app.post("/admin/staff", async (c) => {
   return c.json({ ok: true, tenantId, data: item })
 })
 
-app.patch("/admin/staff/:id", async (c) => {
+app.on("PATCH", "/admin/staff/:id", async (c) => {
   const tenantId = c.req.query("tenantId") || "default"
   const key = `admin:staff:list:${tenantId}`
   const id = c.req.param("id")
@@ -193,7 +193,7 @@ app.patch("/admin/staff/:id", async (c) => {
   return c.json({ ok: true, tenantId, data: updated })
 })
 
-app.delete("/admin/staff/:id", async (c) => {
+app.on("DELETE", "/admin/staff/:id", async (c) => {
   const tenantId = c.req.query("tenantId") || "default"
   const key = `admin:staff:list:${tenantId}`
   const id = c.req.param("id")
@@ -447,6 +447,7 @@ app.get("/auth/line/callback", async (c) => {
   return c.redirect(returnTo, 302);
 });
 /* === /LINE_OAUTH_MIN_ROUTES_V1 === */
+
 
 
 
