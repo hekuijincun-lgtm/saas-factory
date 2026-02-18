@@ -31,12 +31,13 @@ export default function Page() {
   return (
     <AdminShell
       sidebar={<AdminSidebar />}
-      topbar={<AdminTopBar title="メニュー管理" subtitle="メニューの追加・編集を行います。" />}
+      topbar={<AdminTopBar title="メニュー管理" data-stamp="MENU_STAMP_20260218_180519" subtitle="メニューの追加・編集を行います。" />}
     >
       <MenuManager />
     </AdminShell>
   );
 }
+
 
 
 
