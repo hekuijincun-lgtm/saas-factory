@@ -205,6 +205,7 @@ app.onError((err, c) => {
   const url = new URL(c.req.url)
 
   const debug = url.searchParams.get("debug") === "1"
+  const lockTestMs = Math.max(0, Math.min(10000, Number(url.searchParams.get("lockTestMs") ?? "0") || 0))
   const body = await c.req.json().catch(() => null) as any
   const tenantId = getTenantId(c, body)
   if(!body){ return c.json({ ok:false, error:"bad_json" }, 400) }
