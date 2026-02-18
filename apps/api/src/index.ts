@@ -149,7 +149,7 @@ app.get("/admin/staff", async (c) => {
   const tenantId = c.req.query("tenantId") || "default"
   const key = `admin:staff:list:${tenantId}`
 
-  const raw = await c.env.KV.get(key)
+  const raw = await c.env.SAAS_FACTORY.get(key)
   const data = raw ? JSON.parse(raw) : []
 
   return c.json({ ok: true, tenantId, data })
@@ -161,14 +161,14 @@ app.post("/admin/staff", async (c) => {
 
   const body = await c.req.json()
 
-  const raw = await c.env.KV.get(key)
+  const raw = await c.env.SAAS_FACTORY.get(key)
   const list = raw ? JSON.parse(raw) : []
 
   const id = body?.id || `staff_${Date.now()}_${Math.random().toString(16).slice(2)}`
   const item = { ...body, id }
 
   const next = [item, ...list]
-  await c.env.KV.put(key, JSON.stringify(next))
+  await c.env.SAAS_FACTORY.put(key, JSON.stringify(next))
 
   return c.json({ ok: true, tenantId, data: item })
 })
@@ -180,7 +180,7 @@ app.patch("/admin/staff/:id", async (c) => {
 
   const body = await c.req.json()
 
-  const raw = await c.env.KV.get(key)
+  const raw = await c.env.SAAS_FACTORY.get(key)
   const list = raw ? JSON.parse(raw) : []
 
   const idx = list.findIndex((x: any) => x?.id === id)
@@ -189,7 +189,7 @@ app.patch("/admin/staff/:id", async (c) => {
   const updated = { ...list[idx], ...body, id }
   list[idx] = updated
 
-  await c.env.KV.put(key, JSON.stringify(list))
+  await c.env.SAAS_FACTORY.put(key, JSON.stringify(list))
   return c.json({ ok: true, tenantId, data: updated })
 })
 
@@ -198,13 +198,13 @@ app.delete("/admin/staff/:id", async (c) => {
   const key = `admin:staff:list:${tenantId}`
   const id = c.req.param("id")
 
-  const raw = await c.env.KV.get(key)
+  const raw = await c.env.SAAS_FACTORY.get(key)
   const list = raw ? JSON.parse(raw) : []
 
   const next = list.filter((x: any) => x?.id !== id)
   if (next.length === list.length) return c.json({ ok: false, error: "not_found" }, 404)
 
-  await c.env.KV.put(key, JSON.stringify(next))
+  await c.env.SAAS_FACTORY.put(key, JSON.stringify(next))
   return c.json({ ok: true, tenantId })
 });
 
@@ -447,5 +447,6 @@ app.get("/auth/line/callback", async (c) => {
   return c.redirect(returnTo, 302);
 });
 /* === /LINE_OAUTH_MIN_ROUTES_V1 === */
+
 
 
