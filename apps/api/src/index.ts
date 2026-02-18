@@ -318,29 +318,67 @@ app.onError((err, c) => {
 export { SlotLock };
 export default { fetch: app.fetch };
 
+/* === LINE_OAUTH_MIN_ROUTES_V1 ===
+   Minimal LINE OAuth routes for production recovery.
+   NOTE:
+   - This assumes `app` exists in this module scope.
+   - If your router is not `app`, rename below accordingly.
+   Required env vars (adjust names if needed):
+   - LINE_CHANNEL_ID
+   - LINE_REDIRECT_URI
+*/
 
+app.get("/auth/line/start", async (c) => {
+  const tenantId = c.req.query("tenantId") || "default";
+  const returnTo =
+    c.req.query("returnTo") ||
+    "https://saas-factory-web-v2.pages.dev/admin/settings";
 
+  const clientId = (c.env as any).LINE_CHANNEL_ID;
+  const redirectUri = (c.env as any).LINE_REDIRECT_URI;
 
+  if (!clientId || !redirectUri) {
+    return c.json(
+      { ok: false, error: "missing_line_env", need: ["LINE_CHANNEL_ID", "LINE_REDIRECT_URI"] },
+      500
+    );
+  }
 
+  const stateObj = { tenantId, returnTo, ts: Date.now() };
+  const state = btoa(JSON.stringify(stateObj));
 
+  const scope = "profile%20openid";
+  const authUrl =
+    "https://access.line.me/oauth2/v2.1/authorize" +
+    `?response_type=code` +
+    `&client_id=${encodeURIComponent(clientId)}` +
+    `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+    `&state=${encodeURIComponent(state)}` +
+    `&scope=${scope}`;
 
+  return c.redirect(authUrl, 302);
+});
 
+app.get("/auth/line/callback", async (c) => {
+  const code = c.req.query("code");
+  const state = c.req.query("state") || "";
 
+  if (!code) return c.json({ ok: false, error: "missing_code" }, 400);
 
+  let returnTo = "https://saas-factory-web-v2.pages.dev/admin/settings";
+  try {
+    const s = JSON.parse(atob(state));
+    if (s?.returnTo) returnTo = s.returnTo;
+  } catch {}
 
+  const session = crypto.randomUUID();
 
+  c.header(
+    "Set-Cookie",
+    `line_session=${session}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=86400`
+  );
 
-
-
-
-
-
-
-
-
-
-
-
-
-
+  return c.redirect(returnTo, 302);
+});
+/* === /LINE_OAUTH_MIN_ROUTES_V1 === */
 

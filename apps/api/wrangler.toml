@@ -83,6 +83,6 @@ database_id = "cf28ae30-8e52-4a73-8d74-36dab188fa74"
 # ---- D1 (reservations) ----
 [[d1_databases]]
 binding = "DB"
-database_name = "saas_factory_reservations_staging"
-database_id = "33fb6fea-ba41-4c02-9aeb-64b0ba7ecfae"
+database_name = "saas-factory-staging"
+database_id = "cf28ae30-8e52-4a73-8d74-36dab188fa74"
 
