@@ -2,14 +2,13 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const __dirname  = path.dirname(__filename);
 
-/** @type {import('next').NextConfig} */
-const nextConfig = {
+// 👇 ここが本命：Turbopack の root を apps/web に固定
+const config = {
   turbopack: {
-    // apps/web をルートとして固定
     root: __dirname,
   },
 };
 
-export default nextConfig;
+export default config;
