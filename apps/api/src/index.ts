@@ -246,8 +246,6 @@ app.onError((err, c) => {
   }
 
   try {
-    // 🧪 test: keep DO lock for N ms (query: ?lockTestMs=1500)
-    const lockTestMs = Math.max(0, Math.min(10000, Number(c.req.query("lockTestMs") ?? 0) || 0))
     // ✅ duration minutes from startAt/endAt (reserve scope only)
     const startMs = Date.parse(startAt)
     const endMs = Date.parse(endAt)
@@ -318,6 +316,7 @@ app.onError((err, c) => {
 
 export { SlotLock };
 export default { fetch: app.fetch };
+
 
 
 
