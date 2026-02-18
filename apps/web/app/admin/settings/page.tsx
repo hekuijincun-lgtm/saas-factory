@@ -18,8 +18,7 @@ export default async function AdminSettingsPage() {
         <p style={{ opacity: 0.7 }}>DBG_COOKIE_LEN:{cookie.length}</p>
         <p style={{ opacity: 0.7 }}>DBG_HASSESSION:{String(hasSession)}</p>
         <p style={{ opacity: 0.7 }}>origin: {origin}</p>
-        <pre style={{ whiteSpace: "pre-wrap" }}>{JSON.stringify(st, null, 2)}</pre>
-        <p><a href="/admin/line-setup?reason=line_session_missing">手動でセットアップへ</a></p>
+<p><a href="/admin/line-setup?reason=line_session_missing">手動でセットアップへ</a></p>
       </div>
     );
   }
@@ -28,10 +27,10 @@ export default async function AdminSettingsPage() {
     <div style={{ fontFamily: "system-ui", padding: 24 }}>
       <h1>Settings</h1>
       <p style={{ opacity: 0.7 }}>OK_SETTINGS_PAGE</p>
-      <pre style={{ whiteSpace: "pre-wrap" }}>{JSON.stringify(st, null, 2)}</pre>
-    </div>
+</div>
   );
 }
+
 
 
 
