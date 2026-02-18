@@ -1,40 +1,40 @@
 export const runtime = "edge";
 
+import { headers } from "next/headers";
+
 async function getLineStatus(origin: string) {
   try {
     const res = await fetch(`${origin}/api/admin/line/status`, { cache: "no-store" });
-    if (!res.ok) return { ok: false, configured: false, status: res.status };
-    const json = await res.json();
-    return json;
+    if (!res.ok) return { ok: false, status: res.status };
+    return await res.json();
   } catch (e) {
-    return { ok: false, configured: false, error: String(e) };
+    return { ok: false, error: String(e) };
   }
 }
 
-export default async function AdminSettingsPage({ searchParams }: { searchParams: Record<string, string | string[] | undefined> }) {
-  // origin を確実に取る（Cloudflare Pages上で安定）
-  const origin =
-    (typeof searchParams?.__origin === "string" && searchParams.__origin) ||
-    (process.env.NEXT_PUBLIC_SITE_URL ?? "");
+export default async function AdminSettingsPage() {
+  const h = headers();
+  const host = h.get("x-forwarded-host") ?? h.get("host") ?? "";
+  const proto = h.get("x-forwarded-proto") ?? "https";
+  const origin = host ? `${proto}://${host}` : "https://saas-factory-web-v2.pages.dev";
 
-  // origin が空なら「相対で叩く」 fallback（Pagesでは普通これでOK）
-  const base = origin || "";
+  const st: any = await getLineStatus(origin);
 
-  const st = await getLineStatus(base);
+  // ✅ status API は configured じゃなく line_session_present を返す
+  const hasSession = Boolean(st?.line_session_present);
 
-  // LINE未設定ならセットアップへ（理由を明示）
-  if (!st?.configured) {
+  if (!hasSession) {
     return (
       <div style={{ fontFamily: "system-ui", padding: 24 }}>
         <h1>Redirecting…</h1>
-        <p style={{ opacity: 0.7 }}>REDIR_LINE_NOT_CONFIGURED</p>
-        <p style={{ opacity: 0.7 }}>status: {String(st?.status ?? "")} error: {String(st?.error ?? "")}</p>
-        <p><a href="/admin/line-setup?reason=line_not_configured">手動でセットアップへ</a></p>
+        <p style={{ opacity: 0.7 }}>REDIR_LINE_SESSION_MISSING</p>
+        <p style={{ opacity: 0.7 }}>origin: {origin}</p>
+        <pre style={{ whiteSpace: "pre-wrap" }}>{JSON.stringify(st, null, 2)}</pre>
+        <p><a href="/admin/line-setup?reason=line_session_missing">手動でセットアップへ</a></p>
       </div>
     );
   }
 
-  // ✅ ここに本来の Settings UI を置く（いまは仮）
   return (
     <div style={{ fontFamily: "system-ui", padding: 24 }}>
       <h1>Settings</h1>
