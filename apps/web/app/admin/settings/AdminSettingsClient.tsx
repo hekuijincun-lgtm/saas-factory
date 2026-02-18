@@ -3,6 +3,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { readJson } from "./../../../src/lib/json";
 
 type LineStatus =
   | { kind: "connected" }
@@ -120,7 +121,7 @@ export default function AdminSettingsClient() {
         `/admin/integrations/line/status?tenantId=${encodeURIComponent(tid)}`,
         { method: "GET" }
       );
-      const json = await res.json();
+      const json = await readJson<any>(res);
       if (!res.ok || !json?.ok) throw new Error(json?.error || `status ${res.status}`);
       setLineStatus(json);
     } catch (e: any) {
@@ -207,6 +208,7 @@ export default function AdminSettingsClient() {
     </main>
   );
 }
+
 
 
 

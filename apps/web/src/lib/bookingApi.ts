@@ -124,7 +124,7 @@ export async function getSlots(date: string, staffId?: string): Promise<SlotsRes
       );
     }
 
-    const raw = await response.json();
+    const raw = (await response.json() as any);
     // normalize for UI compatibility: accept {slots:[]}, {data:[]}, or both
     const slots = (raw && Array.isArray(raw.slots)) ? raw.slots
                : (raw && Array.isArray(raw.data)) ? raw.data
@@ -298,24 +298,35 @@ export async function updateStaff(id: string, payload: Partial<Omit<Staff, 'id'>
 /**
  * GET /admin/menu を実行
  */
-export async function getMenu(): Promise<MenuItem[]> {
+export async function getMenu(tenantId: string = "default"): Promise<MenuItem[]> {
   try {
-    const response = await apiGet<ApiResponse<MenuItem[]>>('/api/proxy/admin/menu');
-    if (response.ok && response.data) {
-      return response.data.filter(m => m.active).sort((a, b) => a.sortOrder - b.sortOrder);
+    const params = new URLSearchParams();
+    params.append("tenantId", tenantId || "default");
+    params.append("nocache", (globalThis.crypto?.randomUUID?.() ?? String(Date.now())));
+
+    const response = await fetch("/api/proxy/admin/menu?" + params.toString(), {
+      method: "GET",
+      headers: { accept: "application/json" },
+      cache: "no-store",
+    });
+
+    const text = await response.text();
+    let raw: any = null;
+    try { raw = text ? JSON.parse(text) : null; } catch { raw = null; }
+
+    if (!response.ok || !raw?.ok) {
+      const msg = raw?.error?.message || raw?.error || raw?.detail || raw?.message || ("Failed to fetch menu: " + response.status);
+      throw new ApiClientError(String(msg), response.status);
     }
-    throw new ApiClientError(response.error || 'Failed to fetch menu');
+
+    const list = Array.isArray(raw.data) ? raw.data : [];
+    return list as MenuItem[];
   } catch (error) {
-    if (error instanceof ApiClientError) {
-      throw error;
-    }
-    throw new ApiClientError('Failed to fetch menu');
+    if (error instanceof ApiClientError) throw error;
+    throw new ApiClientError(error instanceof Error ? error.message : "Failed to fetch menu");
   }
 }
 
-/**
- * POST /admin/menu を実行
- */
 export async function createMenuItem(payload: Omit<MenuItem, 'id'>): Promise<MenuItem> {
   try {
     const response = await apiPost<ApiResponse<MenuItem>>('/api/proxy/admin/menu', payload);
@@ -402,6 +413,10 @@ export async function assignStaffToReservation(reservationId: string, staffId: s
     throw new ApiClientError('Failed to assign staff');
   }
 }
+
+
+
+
 
 
 

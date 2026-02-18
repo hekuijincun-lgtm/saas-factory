@@ -27,7 +27,8 @@ export default function MenuManager() {
     setLoading(true);
     setError(null);
     try {
-      const menu = await getMenu();
+            const tenantId = new URLSearchParams(window.location.search).get('tenantId') ?? 'default';
+      const menu = await getMenu(tenantId);
       // 配列チェック
       if (Array.isArray(menu)) {
         setMenuList(menu);
@@ -274,3 +275,4 @@ export default function MenuManager() {
     </div>
   );
 }
+

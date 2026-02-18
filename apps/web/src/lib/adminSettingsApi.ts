@@ -194,7 +194,7 @@ export async function getLineStatus(tenantId?: string): Promise<LineStatus> {
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
     
-    return await response.json() as LineStatus;
+    return (await response.json() as any) as LineStatus;
   } catch (error) {
     return {
       kind: 'error',
@@ -235,7 +235,7 @@ export async function getLineClientId(tenantId?: string): Promise<{ ok: boolean;
     const response = await fetch(`/api/proxy/admin/line/client-id${qs}`, {
       cache: 'no-store',
     });
-    const json = await response.json();
+    const json = (await response.json() as any);
     if (response.ok && json.ok && json.clientId) {
       return { ok: true, clientId: json.clientId };
     }
@@ -377,6 +377,7 @@ export async function deleteLineConfig(): Promise<LineConfigResponse> {
   }
   throw new Error(response.error || 'Failed to delete LINE config');
 }
+
 
 
 

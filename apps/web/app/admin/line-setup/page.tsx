@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-
+import { readJson } from "../../../src/lib/json";
 // ===============================
 // 🔧 API Endpoints（必要ならここだけ変更）
 // ===============================
@@ -361,7 +361,8 @@ export default function LineSetupPage() {
       u.searchParams.set("nocache", crypto.randomUUID());
       const r = await fetch(u.toString(), { method: "GET", cache: "no-store" });
       const j = (await r.json()) as LineStatus;
-      if (!r.ok) throw new Error(j?.error ?? `status http ${r.status}`);
+      const jj: { error?: string; message?: string } = await readJson<{ error?: string; message?: string }>(r);
+      if (!r.ok) throw new Error(jj?.error ?? `status http ${r.status}`);
       setStatus(j);
     } catch (e: any) {
       setStatusError(e?.message ?? String(e));
@@ -405,9 +406,10 @@ export default function LineSetupPage() {
       });
 
       const j = await r.json().catch(() => ({} as any));
-      if (!r.ok) throw new Error(j?.error ?? `save http ${r.status}`);
+      const jj: { error?: string; message?: string } = await readJson<{ error?: string; message?: string }>(r);
+      if (!r.ok) throw new Error(jj?.error ?? `save http ${r.status}`);
 
-      setMessage(j?.message ?? "保存しました ✅");
+      setMessage(jj?.message ?? "保存しました ✅");
       setInitialCreds(payload);
       await loadStatus();
     } catch (e: any) {
@@ -429,6 +431,10 @@ export default function LineSetupPage() {
     </BookingLikeShell>
   );
 }
+
+
+
+
 
 
 

@@ -1,12 +1,18 @@
-export const onRequest: PagesFunction = async (ctx) => {
-  return new Response(JSON.stringify({
+/// <reference types="@cloudflare/workers-types" />
+
+export const onRequestGet: PagesFunction = async (ctx) => {
+  const req = ctx.request;
+  const url = new URL(req.url);
+
+  const body = {
     ok: true,
-    where: "apps/web/functions/api/__whoami.ts",
-    ts: new Date().toISOString(),
-    url: ctx.request.url,
-    method: ctx.request.method,
-  }, null, 2), {
-    status: 200,
-    headers: { "content-type": "application/json; charset=utf-8" },
+    method: req.method,
+    pathname: url.pathname,
+    host: url.host,
+    cf: (req as any).cf ?? null
+  };
+
+  return Response.json(body, {
+    headers: { "cache-control": "no-store" },
   });
 };

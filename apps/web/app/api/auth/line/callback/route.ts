@@ -1,8 +1,6 @@
 export const runtime = "edge";
 
 import { NextResponse } from "next/server";
-import { getRequestContext } from "@cloudflare/next-on-pages";
-
 function b64urlFromBytes(bytes: Uint8Array) {
   let s = "";
   for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
@@ -38,18 +36,16 @@ export async function GET(req: Request) {
   let ctxSeen = false;
   let envSeen = null as any;
   try {
-    const ctx = getRequestContext();
+  const env: any = (process as any).env ?? {};
+  const ctx: any = { env };
     ctxSeen = true;
-    // @ts-expect-error: ok
     envSeen = (ctx as any)?.env ? Object.keys((ctx as any).env) : null;
   } catch (e: any) {
     return new Response(JSON.stringify({ ok:false, where:'DEBUG_CALLBACK_CTX_FAIL', err: String(e?.message ?? e) }), {
       status: 200, headers:{'content-type':'application/json'}
     });
   }
-
-  // @ts-expect-error: ok
-  const v = (getRequestContext() as any)?.env?.LINE_SESSION_SECRET;
+  const v = ((process as any).env ?? {}).LINE_SESSION_SECRET;
   const pv = (process.env.LINE_SESSION_SECRET ?? null);
 
   return new Response(JSON.stringify({
@@ -78,8 +74,8 @@ try {
 
     const secret = (() => {
   try {
-    const ctx = getRequestContext();
-    // @ts-expect-error: ok
+  const env: any = (process as any).env ?? {};
+  const ctx: any = { env };
     const v = (ctx as any)?.env?.LINE_SESSION_SECRET;
     if (typeof v === "string" && v.trim()) return v.trim();
   } catch {}
@@ -114,6 +110,10 @@ try {
     return NextResponse.redirect(new URL("/admin/line-setup?reason=unknown", new URL(req.url).origin));
   }
 }
+
+
+
+
 
 
 
