@@ -1,37 +1,50 @@
-import { NextResponse } from "next/server";
+import { resolveBookingBase } from "../_lib/proxy";
 
-export const runtime = "edge";
+function pickTenantId(u: URL, req: Request) {
+  const tid =
+    (u.searchParams.get("tenantId") || req.headers.get("x-tenant-id") || "default").trim();
+  return tid || "default";
+}
 
 export async function GET(req: Request) {
-  const url = new URL(req.url);
-
-  // tenantId passthrough
-  const tenantId = url.searchParams.get("tenantId") || "default";
-  const debug    = url.searchParams.get("debug") || "";
-  const nocache  = url.searchParams.get("nocache") || "";
-
-  const apiBase = process.env.API_BASE || process.env.BOOKING_API_BASE;
-  if (!apiBase) {
-    return NextResponse.json({ ok:false, error:"missing_api_base" }, { status: 500 });
+  const inUrl = new URL(req.url);
+  
+  if (inUrl.searchParams.get("debug") === "1") {
+    return Response.json({
+      ok: true,
+      seen: {
+        rawUrl: req.url,
+        path: inUrl.pathname,
+        query: Object.fromEntries(inUrl.searchParams.entries()),
+      },
+    });
   }
+const base = resolveBookingBase();
 
-  const upstream = new URL("/slots", apiBase);
+  // upstream = {BOOKING_BASE}/slots + query passthrough
+  const upstream = new URL("/slots", base);
+
+  // copy ALL query params (date, staffId, debug, nocache, etc.)
+  inUrl.searchParams.forEach((v, k) => {
+    if (typeof v === "string") upstream.searchParams.set(k, v);
+  });
+
+  // ensure tenantId
+  const tenantId = pickTenantId(inUrl, req);
   upstream.searchParams.set("tenantId", tenantId);
-  if (debug) upstream.searchParams.set("debug", debug);
-  if (nocache) upstream.searchParams.set("nocache", nocache);
 
   const res = await fetch(upstream.toString(), {
     method: "GET",
-    headers: { "Accept": "application/json" },
+    headers: {
+      accept: "application/json",
+      "x-tenant-id": tenantId,
+    },
     cache: "no-store",
   });
 
   const text = await res.text();
-  return new NextResponse(text, {
+  return new Response(text, {
     status: res.status,
-    headers: {
-      "Content-Type": res.headers.get("content-type") || "application/json; charset=utf-8",
-      "Cache-Control": "no-store",
-    }
+    headers: { "content-type": res.headers.get("content-type") || "application/json" },
   });
 }
