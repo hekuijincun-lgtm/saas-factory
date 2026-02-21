@@ -90,7 +90,7 @@ async function proxy(req: Request, ctx: Ctx): Promise<Response> {
   });
 
   out.headers.set("cache-control", "no-store");
-  out.headers.set("x-proxy-stamp", "STAMP_PROXY_PARAMS_PATH_V1_20260221");
+  out.headers.set("x-proxy-stamp", "STAMP_PROXY_PATCH2PUT_V1_20260221");
   out.headers.set("x-proxy-upstream-url", upstream.toString());
   out.headers.set("x-proxy-upstream-method", method);
 
