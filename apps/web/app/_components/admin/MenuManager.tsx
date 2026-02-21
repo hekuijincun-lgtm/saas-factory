@@ -10,13 +10,18 @@ import Badge from '../ui/Badge';
 import { Plus, Edit2, X, Trash2 } from 'lucide-react';
 
 export default function MenuManager() {
-  const [menuList, setMenuList] = useState<MenuItem[]>([]);
-  const [loading, setLoading] = useState<boolean>(false);
-  const [error, setError] = useState<string | null>(null);
-  const [showModal, setShowModal] = useState<boolean>(false);
-  const [editingItem, setEditingItem] = useState<MenuItem | null>(null);
-  const [formData, setFormData] = useState<{ name: string; price: number; durationMin: number; active: boolean; sortOrder: number }>({
-    name: '',
+  // tenantId (safe): read from query string, fallback to "default"
+  const tenantId =
+    (typeof window !== "undefined"
+      ? (new URLSearchParams(window.location.search).get("tenantId") || undefined)
+      : undefined) ?? "default";
+const [menuList, setMenuList] = useState<MenuItem[]>([]);
+const [loading, setLoading] = useState<boolean>(false);
+const [error, setError] = useState<string | null>(null);
+const [showModal, setShowModal] = useState<boolean>(false);
+const [editingItem, setEditingItem] = useState<MenuItem | null>(null);
+const [formData, setFormData] = useState<{ name: string; price: number; durationMin: number; active: boolean; sortOrder: number }>({
+name: '',
     price: 0,
     durationMin: 60,
     active: true,
@@ -150,8 +155,11 @@ export default function MenuManager() {
 
     // ✅ 最小: state 触らずに削除だけ。失敗したら alert でOK（まず動かす）
     try {
-      await deleteMenuItem(id);
+      await deleteMenuItem(tenantId, id);
 
+
+      // UI: remove immediately
+      setMenuList(prev => prev.filter(x => x?.id !== id));
       // 再取得関数がこのファイルに無い/名前が違うので、
       // まずはローカルから消して即反映させる（確実）
       setMenuList((prev) => prev.filter((x) => x.id !== id));
