@@ -26,20 +26,19 @@ function getBase(): string {
 
 async function proxy(req: Request, ctx: Ctx): Promise<Response> {
   const nextUrl = new URL(req.url);
-const base = getBase();
+    const base = getBase();
 
-// ✅ rel: pathname から安定抽出（ctx.params は使わない）
-const fullPath = nextUrl.pathname;
-const rel = fullPath.split("/api/proxy/")[1] ?? "";
+  // ✅ rel: Next catch-all の params.path だけを真実にする（pathname は汚染され得る）
+  const segs = await getPathSegments(ctx);
+  const rel = segs.join("/");
 
-// ✅ query: Next内部の path=... は全部捨てる（これが壊してた）
-const sp = new URLSearchParams(nextUrl.search);
-  // FIX: drop Next internal path=... param (it breaks upstream path like '=default')
+  // ✅ query: Next内部の path=... は捨てる（壊す原因）
+  const sp = new URLSearchParams(nextUrl.search);
   sp.delete("path");
-sp.delete("path"); // Next catch-all internal
-const upstream = new URL(`${base}/${rel}`);
-const qs = sp.toString();
-upstream.search = qs ? `?${qs}` : ""; // ✅ keep tenantId, nocache, etc.
+
+  const upstream = new URL(`${base}/${rel}`);
+  const qs = sp.toString();
+  upstream.search = qs ? `?${qs}` : ""; // keep tenantId, nocache, etc.// keep tenantId, nocache, etc.// ✅ keep tenantId, nocache, etc.
 
   // forward headers (drop hop-by-hop)
   const headers = new Headers(req.headers);
@@ -79,4 +78,6 @@ export async function POST(req: Request, ctx: Ctx) { return proxy(req, ctx); }
 export async function PUT(req: Request, ctx: Ctx) { return proxy(req, ctx); }
 export async function PATCH(req: Request, ctx: Ctx) { return proxy(req, ctx); }
 export async function DELETE(req: Request, ctx: Ctx) { return proxy(req, ctx); }
+
+
 
