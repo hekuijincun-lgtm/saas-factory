@@ -301,34 +301,67 @@ export async function updateStaff(id: string, payload: Partial<Omit<Staff, 'id'>
 export async function getMenu(tenantId: string = "default"): Promise<MenuItem[]> {
   try {
     const params = new URLSearchParams();
-    params.append("tenantId", tenantId || "default");
-    params.append("nocache", (globalThis.crypto?.randomUUID?.() ?? String(Date.now())));
+    params.set("tenantId", tenantId);
 
     const response = await fetch("/api/proxy/admin/menu?" + params.toString(), {
       method: "GET",
-      credentials: "include",
-      headers: { accept: "application/json" },
+      headers: { "accept": "application/json" },
       cache: "no-store",
     });
 
-    const text = await response.text();
-    
-     /** MENU_FETCH_DEBUG_V1 */
-     const ct = response.headers.get("content-type") ?? "";
-     console.log("[menu:getMenu]", { status: response.status, ct, head: text.slice(0, 120) });
-     /** END MENU_FETCH_DEBUG_V1 */
-let raw: any = null;
-    try { raw = text ? JSON.parse(text) : null; } catch { raw = null; }
-
-    if (!response.ok || !raw?.ok) {
-      const msg = raw?.error?.message || raw?.error || raw?.detail || raw?.message || ("Failed to fetch menu: " + response.status);
-      throw new ApiClientError(String(msg), response.status);
+    // まず JSON として読む（失敗しても raw text で拾う）
+    let raw: any = null;
+    const ct = response.headers.get("content-type") || "";
+    if (ct.includes("application/json")) {
+      raw = await response.json().catch(() => null);
+    } else {
+      const t = await response.text().catch(() => "");
+      try { raw = JSON.parse(t); } catch { raw = t; }
     }
 
-    const list = Array.isArray(raw.data) ? raw.data : [];
-    return list as MenuItem[];
+    // ✅ HTTP エラー
+    if (!response.ok) {
+      const msg =
+        raw?.error?.message ||
+        raw?.error ||
+        raw?.detail ||
+        raw?.message ||
+        ("Failed to fetch menu: " + response.status);
+      throw new ApiClientError(msg, response.status, response.statusText, raw);
+    }
+
+    // ✅ 200 でも { ok:false } を弾く
+    if (raw && typeof raw === "object" && raw.ok === false) {
+      const msg = raw?.error?.message || raw?.error || raw?.detail || raw?.message || "Failed to fetch menu";
+      throw new ApiClientError(msg, response.status, response.statusText, raw);
+    }
+
+    // ✅ データ抽出（今のAPIは raw.data が配列）
+    // 将来の揺れに備えて raw.data.data も拾う
+    const list = Array.isArray(raw?.data)
+      ? raw.data
+      : Array.isArray(raw?.data?.data)
+        ? raw.data.data
+        : Array.isArray(raw)
+          ? raw
+          : [];
+
+    // ✅ 正規化（price/durationMin が "5000" みたいな文字列でも数値に）
+    const n = (v: any, d = 0) => {
+      const k = Number(v);
+      return Number.isFinite(k) ? k : d;
+    };
+
+    return list.map((x: any) => ({
+      id: String(x?.id ?? ""),
+      name: String(x?.name ?? ""),
+      price: n(x?.price, 0),
+      durationMin: n(x?.durationMin, 60),
+      active: x?.active !== false,
+      sortOrder: n(x?.sortOrder, 0),
+      tenantId: (x?.tenantId != null ? String(x.tenantId) : tenantId),
+    })) as MenuItem[];
   } catch (error) {
-    if (error instanceof ApiClientError) throw error;
     throw new ApiClientError(error instanceof Error ? error.message : "Failed to fetch menu");
   }
 }
@@ -419,6 +452,7 @@ export async function assignStaffToReservation(reservationId: string, staffId: s
     throw new ApiClientError('Failed to assign staff');
   }
 }
+
 
 
 

@@ -15,12 +15,13 @@ function resolveUpstreamBase(): string {
   );
 }
 
-type Ctx = { params: { path: string[] } };
+type Ctx = { params: any };
 
 async function forward(req: Request, ctx: Ctx, methodOverride?: string) {
   const upstreamBase = resolveUpstreamBase();
   const inUrl = new URL(req.url);
-  const segs = (ctx?.params?.path || []) as string[];
+  const p = await (ctx as any)?.params;
+  const segs = ((p?.path) || []) as string[];
   const path = "/" + segs.join("/");
 
   const m = (methodOverride ?? req.method).toUpperCase();
@@ -77,10 +78,10 @@ export async function GET(req: Request, ctx: any) {
   return forward(req, ctx as Ctx);
 }
 export async function POST(req: Request, ctx: any) {
-  const segs = ((ctx?.params?.path || []) as string[]);
-  const p = "/" + segs.join("/");
-
-  // ✅ Pages 側が PUT を弾く運用なら、POSTで受けて upstream をPUTに変換
+  const p0 = await (ctx as any)?.params;
+  const segs0 = ((p0?.path) || []) as string[];
+  const p = "/" + segs0.join("/");
+// ✅ Pages 側が PUT を弾く運用なら、POSTで受けて upstream をPUTに変換
   if (p === "/admin/line/config") {
     return forward(req, ctx as Ctx, "PUT");
   }
