@@ -90,18 +90,17 @@ export default function MenuManager() {
     setError(null);
 
     try {
-      if (editingId || editingItem) {
-        const id = (editingId ?? editingItem?.id) as string;
+      if (editingItem) {
+        const id = editingItem.id;
 
         // ✅ Update: 追加と同じ思想で Upsert（id付き）を API に投げる
-        await updateMenuItem(tenantId, id, {
-          name: newName.trim(),
-          price: Number.isFinite(newPrice) ? Number(newPrice) : 0,
-          durationMin: durationMin,
-          isActive: true,
+        await updateMenuItem(id, {
+          name: formData.name.trim(),
+          price: formData.price,
+          durationMin: formData.durationMin,
+          active: formData.active,
+          sortOrder: formData.sortOrder,
         });
-
-        await loadMenus();
       } else {
         await createMenuItem({
           name: formData.name.trim(),
@@ -146,22 +145,22 @@ export default function MenuManager() {
   };
 
   const handleDelete = async (id: string, name?: string) => {
-    const ok = confirm(「」を削除しますか？);
+    const ok = confirm('「' + (name ?? 'このメニュー') + '」を削除しますか？');
     if (!ok) return;
 
-    setSubmitting(true);
-    setError(null);
+    // ✅ 最小: state 触らずに削除だけ。失敗したら alert でOK（まず動かす）
     try {
-      await deleteMenuItem(tenantId, id);
-      await loadMenus();
+      await deleteMenuItem(id);
+
+      // 再取得関数がこのファイルに無い/名前が違うので、
+      // まずはローカルから消して即反映させる（確実）
+      setMenuList((prev) => prev.filter((x) => x.id !== id));
     } catch (err) {
       const msg =
         err instanceof ApiClientError ? err.message :
         err instanceof Error ? err.message :
         'メニューの削除に失敗しました';
-      setError(msg);
-    } finally {
-      setSubmitting(false);
+      alert(msg);
     }
   };
 
