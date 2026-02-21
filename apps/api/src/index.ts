@@ -646,6 +646,30 @@ app.get("/admin/settings", async (c) => {
   }
 });
 
+
+
+app.on(["PUT","PATCH"], "/admin/menu/:id", async (c) => {
+  try {
+    const tenantId = getTenantId(c);
+    const id = c.req.param("id");
+
+    const key = `admin:menu:list:${tenantId}`;
+    const list = ((await c.env.SAAS_FACTORY.get(key, "json")) as any[]) ?? [];
+
+    const idx = list.findIndex((x) => x && x.id === id);
+    if (idx < 0) return c.json({ ok: false, error: "not_found" }, 404);
+
+    const patch = await c.req.json<any>();
+    const updated = { ...list[idx], ...patch, id };
+
+    list[idx] = updated;
+    await c.env.SAAS_FACTORY.put(key, JSON.stringify(list));
+
+    return c.json({ ok: true, tenantId, data: updated });
+  } catch (e: any) {
+    return c.json({ ok: false, error: "exception", detail: String(e?.message ?? e) }, 500);
+  }
+});
 app.put("/admin/settings", async (c) => {
   try {
     const tenantId = getTenantId(c);
