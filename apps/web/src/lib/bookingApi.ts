@@ -384,6 +384,11 @@ export async function createMenuItem(payload: Omit<MenuItem, 'id'>): Promise<Men
 /**
  * PATCH /admin/menu/:id を実行
  */
+
+export async function deleteMenuItem(tenantId: string, id: string) {
+  // ✅ delete は既存POSTルートに「_delete」で指示（Workers側が対応していれば即動く）
+  return apiPost('/api/proxy/admin/menu', { id, _delete: true }, { tenantId });
+}
 export async function updateMenuItem(id: string, payload: Partial<Omit<MenuItem, 'id'>>): Promise<MenuItem> {
   try {
     const response = await apiPatch<ApiResponse<MenuItem>>(`/admin/menu/${id}`, payload);

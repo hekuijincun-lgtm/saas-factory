@@ -1,13 +1,13 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { getMenu, createMenuItem, updateMenuItem, type MenuItem } from '@/src/lib/bookingApi';
+import { getMenu, createMenuItem, updateMenuItem, deleteMenuItem, type MenuItem } from '@/src/lib/bookingApi';
 import { ApiClientError } from '@/src/lib/apiClient';
 import Card from '../ui/Card';
 import PageHeader from '../ui/PageHeader';
 import DataTable from '../ui/DataTable';
 import Badge from '../ui/Badge';
-import { Plus, Edit2, X } from 'lucide-react';
+import { Plus, Edit2, X, Trash2 } from 'lucide-react';
 
 export default function MenuManager() {
   const [menuList, setMenuList] = useState<MenuItem[]>([]);
@@ -90,14 +90,18 @@ export default function MenuManager() {
     setError(null);
 
     try {
-      if (editingItem) {
-        await updateMenuItem(editingItem.id, {
-          name: formData.name.trim(),
-          price: formData.price,
-          durationMin: formData.durationMin,
-          active: formData.active,
-          sortOrder: formData.sortOrder,
+      if (editingId || editingItem) {
+        const id = (editingId ?? editingItem?.id) as string;
+
+        // ✅ Update: 追加と同じ思想で Upsert（id付き）を API に投げる
+        await updateMenuItem(tenantId, id, {
+          name: newName.trim(),
+          price: Number.isFinite(newPrice) ? Number(newPrice) : 0,
+          durationMin: durationMin,
+          isActive: true,
         });
+
+        await loadMenus();
       } else {
         await createMenuItem({
           name: formData.name.trim(),
@@ -141,7 +145,27 @@ export default function MenuManager() {
     }
   };
 
-  return (
+  const handleDelete = async (id: string, name?: string) => {
+    const ok = confirm(「」を削除しますか？);
+    if (!ok) return;
+
+    setSubmitting(true);
+    setError(null);
+    try {
+      await deleteMenuItem(tenantId, id);
+      await loadMenus();
+    } catch (err) {
+      const msg =
+        err instanceof ApiClientError ? err.message :
+        err instanceof Error ? err.message :
+        'メニューの削除に失敗しました';
+      setError(msg);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+return(
     <div className="space-y-6">
       <PageHeader
         title="メニュー管理"
@@ -187,13 +211,14 @@ export default function MenuManager() {
                 >
                   <Edit2 className="w-4 h-4" />
                 </button>
-                <button
-                  onClick={() => handleToggleActive(item)}
-                  className="p-2 text-brand-muted hover:bg-brand-bg rounded-lg transition-all"
-                  title={item.active ? '無効化' : '有効化'}
-                >
-                  <X className="w-4 h-4" />
-                </button>
+                
+          <button
+            onClick={() => handleDelete(item.id, item.name)}
+            className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-all"
+            title="削除"
+          >
+            <Trash2 className="w-4 h-4" />
+          </button>
               </div>,
             ])}
           />
