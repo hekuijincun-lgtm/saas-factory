@@ -69,7 +69,7 @@ async function proxy(req: Request, ctx: Ctx): Promise<Response> {
   headers.delete("host");
   headers.delete("content-length");
 
-  const method = req.method.toUpperCase();
+  const method = (req.method === "PATCH" ? "PUT" : req.method).toUpperCase();
 
   let body: ArrayBuffer | undefined = undefined;
   if (method !== "GET" && method !== "HEAD") {
