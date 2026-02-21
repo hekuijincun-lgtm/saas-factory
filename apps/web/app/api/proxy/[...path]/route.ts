@@ -25,6 +25,27 @@ function getBase(): string {
 }
 
 async function proxy(req: Request, ctx: Ctx): Promise<Response> {
+  const __u = new URL(req.url);
+  if (__u.searchParams.get("debug") === "1") {
+    const segs = await getPathSegments(ctx);
+    const sp = new URLSearchParams(__u.search);
+    sp.delete("path");
+    const base = getBase();
+    const rel = (segs && segs.length > 0) ? segs.join("/") : (__u.pathname.split("/api/proxy/")[1] ?? "");
+    const upstream = new URL(`${base}/${rel}`);
+    const qs = sp.toString();
+    upstream.search = qs ? `?${qs}` : "";
+    return Response.json({
+      ok: true,
+      stamp: "DBG_PROXY_V1_20260221",
+      pathname: __u.pathname,
+      search: __u.search,
+      params_path: segs,
+      rel,
+      qs,
+      upstream: upstream.toString(),
+    }, { status: 200, headers: { "cache-control": "no-store" } });
+  }
   const nextUrl = new URL(req.url);
     const base = getBase();
 
