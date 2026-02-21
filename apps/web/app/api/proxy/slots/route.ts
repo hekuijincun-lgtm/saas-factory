@@ -1,3 +1,5 @@
+export const runtime = 'edge';
+
 import { resolveBookingBase } from "../_lib/proxy";
 
 function pickTenantId(u: URL, req: Request) {
@@ -48,3 +50,4 @@ const base = resolveBookingBase();
     headers: { "content-type": res.headers.get("content-type") || "application/json" },
   });
 }
+
