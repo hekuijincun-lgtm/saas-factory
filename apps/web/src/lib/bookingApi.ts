@@ -387,7 +387,7 @@ export async function createMenuItem(payload: Omit<MenuItem, 'id'>): Promise<Men
 
 export async function deleteMenuItem(tenantId: string, id: string) {
   const qs = tenantId ? `?tenantId=${encodeURIComponent(tenantId)}` : "";
-  const res = await fetch(`/api/proxy/admin/menu${qs}`, {
+  const res = await fetch(`/api/proxy/admin/menu/${id}${qs}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ delete: id }),
@@ -398,7 +398,7 @@ export async function deleteMenuItem(tenantId: string, id: string) {
 }
 export async function updateMenuItem(id: string, payload: Partial<Omit<MenuItem, 'id'>>): Promise<MenuItem> {
   try {
-    const response = await apiPatch<ApiResponse<MenuItem>>(`/admin/menu/${id}`, payload);
+    const response = await apiPatch<ApiResponse<MenuItem>>(`/api/proxy/admin/menu/${id}`, payload);
     if (response.ok && response.data) {
       return response.data;
     }
@@ -464,6 +464,7 @@ export async function assignStaffToReservation(reservationId: string, staffId: s
     throw new ApiClientError('Failed to assign staff');
   }
 }
+
 
 
 
