@@ -1,3 +1,4 @@
+/* LITERAL_OK_20260221_144234 */
 export const runtime = "edge";
 
 type Ctx = { params: any };
@@ -32,7 +33,8 @@ async function proxy(req: Request, ctx: Ctx): Promise<Response> {
     sp.delete("path");
     const base = getBase();
     const rel = (segs && segs.length > 0) ? segs.join("/") : (__u.pathname.split("/api/proxy/")[1] ?? "");
-    const upstream = new URL(`${base}/${rel}`);
+    
+  const upstreamMethod = req.method === "PATCH" ? "PUT" : req.method;const upstream = new URL(`${base}/${rel}`);
     const qs = sp.toString();
     upstream.search = qs ? `?${qs}` : "";
     return Response.json({
@@ -53,7 +55,8 @@ async function proxy(req: Request, ctx: Ctx): Promise<Response> {
   const segs = await getPathSegments(ctx);
   const rel = segs.join("/");
 
-  // ✅ query: Next内部の path=... は捨てる（壊す原因）
+  
+  const upstreamMethod = req.method === "PATCH" ? "PUT" : req.method;// ✅ query: Next内部の path=... は捨てる（壊す原因）
   const sp = new URLSearchParams(nextUrl.search);
   sp.delete("path");
 
