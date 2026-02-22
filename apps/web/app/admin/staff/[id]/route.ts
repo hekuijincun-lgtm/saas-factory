@@ -1,5 +1,7 @@
 import { NextRequest } from "next/server";
 
+export const runtime = "edge";
+
 async function forward(req: NextRequest, method: "PATCH" | "DELETE", id: string) {
   const url = new URL(req.url);
   const tenantId = url.searchParams.get("tenantId") ?? "default";
