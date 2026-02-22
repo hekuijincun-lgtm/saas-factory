@@ -32,15 +32,18 @@ name: '',
     setError(null);
     try {
             const tenantId = tenantIdProp ?? new URLSearchParams(window.location.search).get('tenantId') ?? 'default';
-      const menu = await getMenu(tenantId);
-      // 配列チェック
-      if (Array.isArray(menu)) {
-        setMenuList(menu);
-      } else {
+      const menu = await getMenu(tenantId);      // 配列 or { data: [...] } の両対応
+      const items = Array.isArray(menu)
+        ? menu
+        : Array.isArray((menu as any)?.data)
+          ? (menu as any).data
+          : [];
+      if (!Array.isArray(items)) {
         console.warn('fetchMenu: menu is not an array, setting to empty array');
         setMenuList([]);
-      }
-    } catch (err) {
+      } else {
+        setMenuList(items);
+      }} catch (err) {
       const errorMessage =
         err instanceof ApiClientError
           ? err.message
@@ -77,64 +80,81 @@ name: '',
   };
 
   const handleSubmit = async () => {
-    if (!formData.name.trim()) {
-      setError('メニュー名は必須です');
-      return;
-    }
-    if (formData.price < 0) {
-      setError('価格は0以上である必要があります');
-      return;
-    }
-    if (formData.durationMin <= 0) {
-      setError('所要時間は1分以上である必要があります');
-      return;
+  if (!formData.name.trim()) {
+    setError('メニュー名は必須です');
+    return;
+  }
+  if (formData.price < 0) {
+    setError('価格は0以上である必要があります');
+    return;
+  }
+  if (formData.durationMin <= 0) {
+    setError('所要時間は1分以上である必要があります');
+    return;
+  }
+
+  setLoading(true);
+  setError(null);
+
+  try {
+    let saved: any;
+
+    if (editingItem) {
+      const id = editingItem.id;
+      saved = await updateMenuItem(id, {
+        name: formData.name.trim(),
+        price: formData.price,
+        durationMin: formData.durationMin,
+        active: formData.active,
+        sortOrder: formData.sortOrder,
+      });
+    } else {
+      saved = await createMenuItem({
+        name: formData.name.trim(),
+        price: formData.price,
+        durationMin: formData.durationMin,
+        active: formData.active,
+        sortOrder: formData.sortOrder,
+      });
     }
 
-    setLoading(true);
-    setError(null);
+    // API が MenuItem を返す場合 / { ok, data } を返す場合の両対応
+    const item = (saved && (saved as any).data) ? (saved as any).data : saved;
+    alert("DBG saved=" + JSON.stringify(saved)?.slice(0,300));
+    if (item && item.id) {
+      setMenuList(prev => {
+        const idx = prev.findIndex(x => x.id === item.id);
+        if (idx >= 0) {
+          const next = prev.slice();
+          next[idx] = { ...prev[idx], ...item };
+          return next;
+        }
+        return [...prev, item];
+      });
+    } else {
+      // 念のため: 形が予想外なら再取得にフォールバック（でも基本ここには来ない）
+      await fetchMenu();
+    }
 
-    try {
-      if (editingItem) {
-        const id = editingItem.id;
-
-        // ✅ Update: 追加と同じ思想で Upsert（id付き）を API に投げる
-        await updateMenuItem(id, {
-          name: formData.name.trim(),
-          price: formData.price,
-          durationMin: formData.durationMin,
-          active: formData.active,
-          sortOrder: formData.sortOrder,
-        });
-      } else {
-        await createMenuItem({
-          name: formData.name.trim(),
-          price: formData.price,
-          durationMin: formData.durationMin,
-          active: formData.active,
-          sortOrder: formData.sortOrder,
-        });
-      
-      
-}
-      setShowModal(false);
-    } catch (err) {
-      const errorMessage =
-        err instanceof ApiClientError
+    setShowModal(false);
+  } catch (err) {
+    const errorMessage =
+      err instanceof ApiClientError
+        ? err.message
+        : err instanceof Error
           ? err.message
-          : err instanceof Error
-            ? err.message
-            : 'Failed to save menu item';
-      setError(errorMessage);
-    } finally {
-      setLoading(false);
-    }
-  };
-
+          : 'Failed to save menu item';
+    setError(errorMessage);
+  } finally {
+    setLoading(false);
+  }
+};
   const handleToggleActive = async (item: MenuItem) => {
     setLoading(true);
     setError(null);
     try {
       await updateMenuItem(item.id, { active: !item.active });
+      await fetchMenu();
     } catch (err) {
       const errorMessage =
         err instanceof ApiClientError
@@ -309,6 +329,12 @@ return(
     </div>
   );
 }
+
+
+
+
+
+
 
 
 
