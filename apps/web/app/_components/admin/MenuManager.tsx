@@ -158,6 +158,8 @@ name: '',
 
 
       
+
+      await fetchMenu();
 // UI: remove immediately
       setMenuList(prev => prev.filter(x => x?.id !== id));
       // 再取得関数がこのファイルに無い/名前が違うので、
@@ -307,6 +309,7 @@ return(
     </div>
   );
 }
+
 
 
 
