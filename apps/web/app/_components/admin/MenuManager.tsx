@@ -9,10 +9,9 @@ import DataTable from '../ui/DataTable';
 import Badge from '../ui/Badge';
 import { Plus, Edit2, X, Trash2 } from 'lucide-react';
 
-export default function MenuManager() {
+export default function MenuManager({ tenantId: tenantIdProp }: { tenantId?: string }) {
   // tenantId (safe): read from query string, fallback to "default"
-  const tenantId =
-    (typeof window !== "undefined"
+  const tenantId = tenantIdProp ?? (typeof window !== "undefined"
       ? (new URLSearchParams(window.location.search).get("tenantId") || undefined)
       : undefined) ?? "default";
 const [menuList, setMenuList] = useState<MenuItem[]>([]);
@@ -32,7 +31,7 @@ name: '',
     setLoading(true);
     setError(null);
     try {
-            const tenantId = new URLSearchParams(window.location.search).get('tenantId') ?? 'default';
+            const tenantId = tenantIdProp ?? new URLSearchParams(window.location.search).get('tenantId') ?? 'default';
       const menu = await getMenu(tenantId);
       // 配列チェック
       if (Array.isArray(menu)) {
@@ -114,8 +113,9 @@ name: '',
           active: formData.active,
           sortOrder: formData.sortOrder,
         });
-      }
-      await fetchMenu();
+      
+      
+}
       setShowModal(false);
     } catch (err) {
       const errorMessage =
@@ -135,7 +135,6 @@ name: '',
     setError(null);
     try {
       await updateMenuItem(item.id, { active: !item.active });
-      await fetchMenu();
     } catch (err) {
       const errorMessage =
         err instanceof ApiClientError
@@ -158,7 +157,8 @@ name: '',
       await deleteMenuItem(tenantId, id);
 
 
-      // UI: remove immediately
+      
+// UI: remove immediately
       setMenuList(prev => prev.filter(x => x?.id !== id));
       // 再取得関数がこのファイルに無い/名前が違うので、
       // まずはローカルから消して即反映させる（確実）
@@ -307,4 +307,12 @@ return(
     </div>
   );
 }
+
+
+
+
+
+
+
+
 
