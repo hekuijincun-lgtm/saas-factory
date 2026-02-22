@@ -1,6 +1,6 @@
-import { NextRequest } from "next/server";
-
 export const runtime = "edge";
+
+import { NextRequest } from "next/server";
 
 async function forward(req: NextRequest, method: "PATCH" | "DELETE", id: string) {
   const url = new URL(req.url);
@@ -11,7 +11,6 @@ async function forward(req: NextRequest, method: "PATCH" | "DELETE", id: string)
   upstream.searchParams.set("tenantId", tenantId);
 
   const headers = new Headers(req.headers);
-  // Avoid confusing upstream with wrong host/length
   headers.delete("host");
   headers.delete("content-length");
 
@@ -23,19 +22,26 @@ async function forward(req: NextRequest, method: "PATCH" | "DELETE", id: string)
 
   const res = await fetch(upstream.toString(), init);
 
-  // Pass-through response
+  // pass-through
   return new Response(await res.text(), {
     status: res.status,
     headers: res.headers,
   });
 }
 
-export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
-  const { id } = await ctx.params;
+function getIdFromPath(req: NextRequest): string {
+  // /admin/staff/<id>
+  const p = new URL(req.url).pathname;
+  const id = p.split("/").filter(Boolean).pop() ?? "";
+  return id;
+}
+
+export async function PATCH(req: NextRequest) {
+  const id = getIdFromPath(req);
   return forward(req, "PATCH", id);
 }
 
-export async function DELETE(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
-  const { id } = await ctx.params;
+export async function DELETE(req: NextRequest) {
+  const id = getIdFromPath(req);
   return forward(req, "DELETE", id);
 }
