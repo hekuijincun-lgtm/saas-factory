@@ -2,33 +2,16 @@ export const runtime = "edge";
 
 import { NextRequest } from "next/server";
 
-function pickId(req: NextRequest, ctx?: any): string {
-  // 1) ctx.params.id がある環境（Next標準）を最優先
-  const fromCtx = ctx?.params?.id;
-  if (typeof fromCtx === "string" && fromCtx.length > 0) return fromCtx;
-
-  // 2) Edge/Pages では req.nextUrl が一番安全
-  const p = req.nextUrl?.pathname ?? new URL(req.url).pathname;
-
-  // /admin/staff/<id>
-  const parts = p.split("/").filter(Boolean);
-  const last = parts[parts.length - 1] ?? "";
-  return last;
-}
+type Ctx = { params: { id: string } };
 
 async function forward(req: NextRequest, method: "PATCH" | "DELETE", id: string) {
-  const tenantId = req.nextUrl.searchParams.get("tenantId") ?? "default";
+  const origin = req.nextUrl.origin;
 
-  // ✅ guard: ここで変なIDを弾く（=default みたいなのを潰す）
-  if (!id || id === "staff" || id.startsWith("=") || id.includes("tenantId")) {
-    return Response.json(
-      { ok: false, where: "STAFF_FORWARD_ROUTE", error: "bad_id", id, tenantId, path: req.nextUrl.pathname },
-      { status: 400, headers: { "x-forward-id": id || "(empty)" } }
-    );
-  }
+  // Forward to existing proxy route (which hits Worker)
+  const upstream = new URL(`/api/proxy/admin/staff/${encodeURIComponent(id)}`, origin);
 
-  const upstream = new URL(`/api/proxy/admin/staff/${encodeURIComponent(id)}`, req.nextUrl.origin);
-  upstream.searchParams.set("tenantId", tenantId);
+  // Preserve query params (tenantId / nocache etc.)
+  req.nextUrl.searchParams.forEach((v, k) => upstream.searchParams.set(k, v));
 
   const headers = new Headers(req.headers);
   headers.delete("host");
@@ -41,25 +24,32 @@ async function forward(req: NextRequest, method: "PATCH" | "DELETE", id: string)
   };
 
   const res = await fetch(upstream.toString(), init);
-  const text = await res.text();
 
-  // pass-through + debug header
-  const outHeaders = new Headers(res.headers);
-  outHeaders.set("x-forward-id", id);
-  outHeaders.set("x-forward-tenant", tenantId);
-
-  return new Response(text, {
+  // pass-through (keep body + status)
+  return new Response(await res.text(), {
     status: res.status,
-    headers: outHeaders,
+    headers: res.headers,
   });
 }
 
-export async function PATCH(req: NextRequest, ctx: any) {
-  const id = pickId(req, ctx);
+export async function PATCH(req: NextRequest, ctx: Ctx) {
+  const id = ctx?.params?.id ?? "";
+  if(!id || id.includes("=")){
+    return new Response(JSON.stringify({ ok:false, where:"STAFF_FORWARD_ROUTE", error:"bad_id", id }), {
+      status: 400,
+      headers: { "content-type": "application/json" },
+    });
+  }
   return forward(req, "PATCH", id);
 }
 
-export async function DELETE(req: NextRequest, ctx: any) {
-  const id = pickId(req, ctx);
+export async function DELETE(req: NextRequest, ctx: Ctx) {
+  const id = ctx?.params?.id ?? "";
+  if(!id || id.includes("=")){
+    return new Response(JSON.stringify({ ok:false, where:"STAFF_FORWARD_ROUTE", error:"bad_id", id }), {
+      status: 400,
+      headers: { "content-type": "application/json" },
+    });
+  }
   return forward(req, "DELETE", id);
 }
