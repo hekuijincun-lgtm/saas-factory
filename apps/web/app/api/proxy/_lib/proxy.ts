@@ -119,12 +119,16 @@ export async function proxyFetch(
   // Phase 0.6: /admin/* へ転送する場合のみ X-Admin-Token をサーバーサイドから注入する。
   // ブラウザにはトークンを渡さない（NEXT_PUBLIC_ / localStorage 不使用）。
   // ADMIN_TOKEN 未設定時は何もしない（後方互換）。
+  let adminTokenInjected = false;
   {
     const normPath = upstreamPath.startsWith('/') ? upstreamPath : `/${upstreamPath}`;
     if (normPath === '/admin' || normPath.startsWith('/admin/')) {
       const env = (globalThis as any)?.process?.env ?? {};
       const adminToken = env.ADMIN_TOKEN as string | undefined;
-      if (adminToken) headers.set('X-Admin-Token', adminToken);
+      if (adminToken) {
+        headers.set('X-Admin-Token', adminToken);
+        adminTokenInjected = true;
+      }
     }
   }
 
@@ -156,6 +160,7 @@ export async function proxyFetch(
   if (!outHeaders.has('access-control-allow-methods')) {
     outHeaders.set('access-control-allow-methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
   }
+  if (adminTokenInjected) outHeaders.set('x-admin-token-present', '1');
 
   return new Response(res.body, {
     status: res.status,
@@ -205,12 +210,16 @@ export async function forwardJson(req: Request, url: string, init: RequestInit =
   }
 
   // Phase 0.6: /admin/* へ転送する場合のみ X-Admin-Token を注入（proxyFetch と同じポリシー）。
+  let adminTokenInjected = false;
   try {
     const pathname = new URL(url).pathname;
     if (pathname === '/admin' || pathname.startsWith('/admin/')) {
       const env = (globalThis as any)?.process?.env ?? {};
       const adminToken = env.ADMIN_TOKEN as string | undefined;
-      if (adminToken) h.set('X-Admin-Token', adminToken);
+      if (adminToken) {
+        h.set('X-Admin-Token', adminToken);
+        adminTokenInjected = true;
+      }
     }
   } catch { /* 無効 URL は無視 */ }
 
@@ -227,13 +236,12 @@ export async function forwardJson(req: Request, url: string, init: RequestInit =
 
   const res = await fetch(upstreamReq);
 
-  // ensure JSON-ish content-type if upstream forgets
-  if (!res.headers.get("content-type")) {
-    const rh = new Headers(res.headers);
+  // ensure JSON-ish content-type if upstream forgets; always build rh for flag injection
+  const rh = new Headers(res.headers);
+  if (!rh.get("content-type")) {
     rh.set("content-type", "application/json; charset=utf-8");
-    return new Response(res.body, { status: res.status, headers: rh });
   }
-
-  return res;
+  if (adminTokenInjected) rh.set('x-admin-token-present', '1');
+  return new Response(res.body, { status: res.status, headers: rh });
 }
 

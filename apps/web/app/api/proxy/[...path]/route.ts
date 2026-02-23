@@ -105,6 +105,7 @@ async function proxy(req: Request, ctx: Ctx): Promise<Response> {
   out.headers.set("x-proxy-stamp", "STAMP_PROXY_PATCH2PUT_V1_20260221");
   out.headers.set("x-proxy-upstream-url", upstream.toString());
   out.headers.set("x-proxy-upstream-method", method);
+  if (adminTokenInjected) out.headers.set("x-admin-token-present", "1");
 
   return out;
 }
