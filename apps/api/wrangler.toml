@@ -18,6 +18,44 @@ bindings = [
 tag = "v1"
 new_sqlite_classes = ["SlotLock"]
 
+# =============================================================================
+# Phase 0.6: CORS / admin auth 関連 env vars テンプレート
+#
+# ─── CORS ───────────────────────────────────────────────────────────────────
+# ADMIN_WEB_BASE
+#   管理画面の本番/staging URL。この origin が CORS 許可リストに自動追加される。
+#   例(staging vars): ADMIN_WEB_BASE = "https://saas-factory-web-v2.pages.dev"
+#   例(production vars): ADMIN_WEB_BASE = "https://admin.example.com"
+#
+# ADMIN_ALLOWED_ORIGINS
+#   カンマ区切りで追加 origin を列挙。ADMIN_WEB_BASE で賄えない場合に使用。
+#   例: ADMIN_ALLOWED_ORIGINS = "https://custom.example.com,https://staging.example.com"
+#
+# PAGES_DEV_ALLOWED_SUFFIX  【推奨: staging で設定】
+#   pages.dev の origin を「このプロジェクト限定」に絞るサフィックス。
+#   設定するとワイルドカード全許可より安全。
+#   例: PAGES_DEV_ALLOWED_SUFFIX = ".saas-factory-web-v2.pages.dev"
+#   → https://abc123.saas-factory-web-v2.pages.dev だけ通る。
+#   未設定 かつ ALLOW_PAGES_DEV_WILDCARD 未設定 → pages.dev は拒否（デフォルト安全）
+#
+# ALLOW_PAGES_DEV_WILDCARD
+#   "1" にすると *.pages.dev を全許可（staging の一時的な動作確認用）。
+#   本番では絶対に設定しないこと。PAGES_DEV_ALLOWED_SUFFIX で代替する。
+#   例(staging 一時): ALLOW_PAGES_DEV_WILDCARD = "1"
+#
+# ─── admin 認証 ──────────────────────────────────────────────────────────────
+# ADMIN_TOKEN  【secret 運用・[vars] に実値を書かないこと】
+#   /admin/* へのアクセスに必要なトークン。
+#   設定: wrangler secret put ADMIN_TOKEN --env staging
+#         wrangler secret put ADMIN_TOKEN --env production
+#   ローカル: apps/api/.dev.vars に ADMIN_TOKEN=<任意の文字列> を追記
+#
+# REQUIRE_ADMIN_TOKEN  【secret 運用推奨・staging から段階適用】
+#   "1" に設定すると ADMIN_TOKEN 未設定でも /admin/* を 503 でブロック。
+#   staging から先に設定し、問題なければ production に展開する。
+#   設定: wrangler secret put REQUIRE_ADMIN_TOKEN --env staging  （"1" を入力）
+# =============================================================================
+
 # ===== STAGING =====
 [env.staging]
 vars = { ENVIRONMENT = "staging", WEB_BASE = "https://saas-factory-web-v2.pages.dev",  LINE_LOGIN_CHANNEL_ID = "2008915612", LINE_REDIRECT_URI = "https://saas-factory-web-v2.pages.dev/api/auth/line/callback" }
