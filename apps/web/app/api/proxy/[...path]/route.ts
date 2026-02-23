@@ -118,6 +118,8 @@ async function proxy(req: Request, ctx: Ctx): Promise<Response> {
   out.headers.set("x-proxy-upstream-method", method);
   if (adminTokenInjected) out.headers.set("x-admin-token-present", "1");
   if (isDebug) {
+    const iso = new Date().toISOString();
+    out.headers.set("x-debug-proxy", "STAMP_" + iso.slice(0,10).replace(/-/g,"") + "_" + iso.slice(11,16).replace(/:/g,""));
     out.headers.set("x-admin-route", isAdminRoute ? "1" : "0");
     out.headers.set("x-admin-token-configured", isTokenConfigured ? "1" : "0");
     if (!adminTokenInjected) out.headers.set("x-admin-token-present", "0");

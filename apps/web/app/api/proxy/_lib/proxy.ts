@@ -113,7 +113,14 @@ export async function proxyFetch(
   const url = safeJoin(base, upstreamPath);
 
   let isDebug = false;
-  try { isDebug = new URL(req.url).searchParams.get('debug') === '1'; } catch {}
+  let dbgStamp = "";
+  try {
+    if (new URL(req.url).searchParams.get('debug') === '1') {
+      isDebug = true;
+      const iso = new Date().toISOString();
+      dbgStamp = "STAMP_" + iso.slice(0,10).replace(/-/g,"") + "_" + iso.slice(11,16).replace(/:/g,"");
+    }
+  } catch {}
 
   const method = (opts?.method ?? req.method ?? 'GET').toUpperCase();
 
@@ -158,6 +165,7 @@ export async function proxyFetch(
     const ph = new Headers(res.headers);
     if (adminTokenInjected) ph.set('x-admin-token-present', '1');
     if (isDebug) {
+      ph.set('x-debug-proxy', dbgStamp);
       ph.set('x-admin-route', isAdminRoute ? '1' : '0');
       ph.set('x-admin-token-configured', isTokenConfigured ? '1' : '0');
       if (!adminTokenInjected) ph.set('x-admin-token-present', '0');
@@ -179,6 +187,7 @@ export async function proxyFetch(
   }
   if (adminTokenInjected) outHeaders.set('x-admin-token-present', '1');
   if (isDebug) {
+    outHeaders.set('x-debug-proxy', dbgStamp);
     outHeaders.set('x-admin-route', isAdminRoute ? '1' : '0');
     outHeaders.set('x-admin-token-configured', isTokenConfigured ? '1' : '0');
     if (!adminTokenInjected) outHeaders.set('x-admin-token-present', '0');
@@ -226,7 +235,14 @@ export async function forwardJson(req: Request, url: string, init: RequestInit =
   const h = new Headers(req.headers);
 
   let isDebug = false;
-  try { isDebug = new URL(req.url).searchParams.get('debug') === '1'; } catch {}
+  let dbgStamp = "";
+  try {
+    if (new URL(req.url).searchParams.get('debug') === '1') {
+      isDebug = true;
+      const iso = new Date().toISOString();
+      dbgStamp = "STAMP_" + iso.slice(0,10).replace(/-/g,"") + "_" + iso.slice(11,16).replace(/:/g,"");
+    }
+  } catch {}
 
   // allow init headers override/merge
   if (init.headers) {
@@ -272,6 +288,7 @@ export async function forwardJson(req: Request, url: string, init: RequestInit =
   }
   if (adminTokenInjected) rh.set('x-admin-token-present', '1');
   if (isDebug) {
+    rh.set('x-debug-proxy', dbgStamp);
     rh.set('x-admin-route', isAdminRoute ? '1' : '0');
     rh.set('x-admin-token-configured', isTokenConfigured ? '1' : '0');
     if (!adminTokenInjected) rh.set('x-admin-token-present', '0');

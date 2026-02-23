@@ -36,6 +36,8 @@ export async function GET(req: Request) {
   const out = new Response(body, { status: r.status, headers: { "content-type": "application/json" } });
   if (tokenInjected) out.headers.set("x-admin-token-present", "1");
   if (isDebug) {
+    const iso = new Date().toISOString();
+    out.headers.set("x-debug-proxy", "STAMP_" + iso.slice(0,10).replace(/-/g,"") + "_" + iso.slice(11,16).replace(/:/g,""));
     out.headers.set("x-admin-route", "1");
     out.headers.set("x-admin-token-configured", tokenConfigured ? "1" : "0");
     if (!tokenInjected) out.headers.set("x-admin-token-present", "0");
@@ -73,6 +75,8 @@ export async function PUT(req: Request) {
   const out = new Response(outBody, { status: r.status, headers: { "content-type": "application/json" } });
   if (tokenInjected) out.headers.set("x-admin-token-present", "1");
   if (isDebug) {
+    const iso = new Date().toISOString();
+    out.headers.set("x-debug-proxy", "STAMP_" + iso.slice(0,10).replace(/-/g,"") + "_" + iso.slice(11,16).replace(/:/g,""));
     out.headers.set("x-admin-route", "1");
     out.headers.set("x-admin-token-configured", tokenConfigured ? "1" : "0");
     if (!tokenInjected) out.headers.set("x-admin-token-present", "0");
