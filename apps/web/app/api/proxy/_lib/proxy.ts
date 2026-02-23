@@ -116,6 +116,18 @@ export async function proxyFetch(
 
   const headers = copyHeaders(req.headers, opts?.headers);
 
+  // Phase 0.6: /admin/* へ転送する場合のみ X-Admin-Token をサーバーサイドから注入する。
+  // ブラウザにはトークンを渡さない（NEXT_PUBLIC_ / localStorage 不使用）。
+  // ADMIN_TOKEN 未設定時は何もしない（後方互換）。
+  {
+    const normPath = upstreamPath.startsWith('/') ? upstreamPath : `/${upstreamPath}`;
+    if (normPath === '/admin' || normPath.startsWith('/admin/')) {
+      const env = (globalThis as any)?.process?.env ?? {};
+      const adminToken = env.ADMIN_TOKEN as string | undefined;
+      if (adminToken) headers.set('X-Admin-Token', adminToken);
+    }
+  }
+
   // If we send body, ensure content-type exists (caller may override)
   const body = opts?.body ?? (method === 'GET' || method === 'HEAD' ? null : await req.arrayBuffer().catch(() => null));
 
@@ -191,6 +203,16 @@ export async function forwardJson(req: Request, url: string, init: RequestInit =
     const ih = new Headers(init.headers as HeadersInit);
     ih.forEach((v, k) => h.set(k, v));
   }
+
+  // Phase 0.6: /admin/* へ転送する場合のみ X-Admin-Token を注入（proxyFetch と同じポリシー）。
+  try {
+    const pathname = new URL(url).pathname;
+    if (pathname === '/admin' || pathname.startsWith('/admin/')) {
+      const env = (globalThis as any)?.process?.env ?? {};
+      const adminToken = env.ADMIN_TOKEN as string | undefined;
+      if (adminToken) h.set('X-Admin-Token', adminToken);
+    }
+  } catch { /* 無効 URL は無視 */ }
 
   // body: keep streaming where possible
   const method = (init.method ?? req.method).toUpperCase();
