@@ -18,6 +18,30 @@ bindings = [
 tag = "v1"
 new_sqlite_classes = ["SlotLock"]
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Phase 0.6: 管理 API 認証 / CORS 関連 env vars
+#
+# ADMIN_TOKEN
+#   本番・staging では絶対に [vars] に書かない。
+#   設定方法: wrangler secret put ADMIN_TOKEN [--env staging|production]
+#   ローカル: apps/api/.dev.vars に ADMIN_TOKEN=<任意のトークン> を追記
+#
+# REQUIRE_ADMIN_TOKEN
+#   '1' に設定すると ADMIN_TOKEN 未設定でも /admin/* を 503 で強制ブロック。
+#   staging から段階的に有効化することを推奨。
+#   設定方法: wrangler secret put REQUIRE_ADMIN_TOKEN [--env staging]
+#             プロンプトに "1" を入力
+#
+# ADMIN_WEB_BASE
+#   管理画面の本番 URL（例: https://saas-factory-web-v2.pages.dev）。
+#   この値の origin が CORS 許可リストに自動で追加される。
+#   staging の vars にすでに WEB_BASE として類似値あり（統一は Phase 1 以降）。
+#
+# ADMIN_ALLOWED_ORIGINS
+#   カンマ区切りで追加 origin を指定（例: "https://custom.example.com"）。
+#   ADMIN_WEB_BASE で賄えない場合に使用。
+# ─────────────────────────────────────────────────────────────────────────────
+
 # ===== STAGING =====
 [env.staging]
 vars = { ENVIRONMENT = "staging", WEB_BASE = "https://saas-factory-web-v2.pages.dev",  LINE_LOGIN_CHANNEL_ID = "2008915612", LINE_REDIRECT_URI = "https://saas-factory-web-v2.pages.dev/api/auth/line/callback" }

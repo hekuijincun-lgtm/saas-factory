@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { cors } from "hono/cors";
 
 // test helper (lock reproduction)
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
@@ -26,6 +27,78 @@ import { SlotLock } from "./durable/SlotLock";
 type Env = Record<string, unknown>;
 
 const app = new Hono<{ Bindings: Env }>();
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 0.6: CORS
+// 許可ルール（優先順）:
+//   1) ハードコード: localhost:3000 / 127.0.0.1:3000
+//   2) ADMIN_WEB_BASE env var の origin（例: https://saas-factory-web-v2.pages.dev）
+//   3) ADMIN_ALLOWED_ORIGINS env var（カンマ区切り追加 origin 群）
+//   4) *.pages.dev サフィックス（Cloudflare Pages preview）
+// origin: '*' は使わない（credentials: true と共存不可のため）
+// ─────────────────────────────────────────────────────────────────────────────
+app.use('/*', cors({
+  origin: (origin, c) => {
+    if (!origin) return null;
+
+    // 1) ローカル開発用
+    const staticList = ['http://localhost:3000', 'http://127.0.0.1:3000'];
+    if (staticList.includes(origin)) return origin;
+
+    // 2) ADMIN_WEB_BASE env var（例: "https://saas-factory-web-v2.pages.dev"）
+    const webBase = (c.env as any)?.ADMIN_WEB_BASE as string | undefined;
+    if (webBase) {
+      try {
+        if (origin === new URL(webBase).origin) return origin;
+      } catch { /* 無効 URL は無視 */ }
+    }
+
+    // 3) ADMIN_ALLOWED_ORIGINS env var（カンマ区切り）
+    const extra = (c.env as any)?.ADMIN_ALLOWED_ORIGINS as string | undefined;
+    if (extra) {
+      const list = extra.split(',').map((s: string) => s.trim()).filter(Boolean);
+      if (list.includes(origin)) return origin;
+    }
+
+    // 4) Cloudflare Pages preview / production（*.pages.dev）
+    if (origin.startsWith('https://') && origin.endsWith('.pages.dev')) {
+      return origin;
+    }
+
+    return null;
+  },
+  allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowHeaders: ['Content-Type', 'Authorization', 'X-Admin-Token'],
+  credentials: true,
+}));
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 0.6: admin 認証ミドルウェア
+// ADMIN_TOKEN が設定されていれば X-Admin-Token ヘッダーと比較して認証する。
+// REQUIRE_ADMIN_TOKEN='1' なら ADMIN_TOKEN 未設定でも 503 で強制ブロック（本番設定漏れ対策）。
+// デフォルト（未設定）は後方互換で warn → next()。
+// ─────────────────────────────────────────────────────────────────────────────
+app.use('/admin/*', async (c, next) => {
+  const env = c.env as any;
+  const expected: string | undefined = env?.ADMIN_TOKEN;
+  const require = env?.REQUIRE_ADMIN_TOKEN === '1';
+
+  if (!expected) {
+    if (require) {
+      console.error('[auth] REQUIRE_ADMIN_TOKEN=1 but ADMIN_TOKEN is not set. Blocking /admin/* request.');
+      return c.json({ ok: false, error: 'Service misconfigured: admin token not set' }, 503);
+    }
+    console.warn('[auth] ADMIN_TOKEN is not set. /admin/* is unprotected. Set via wrangler secret put ADMIN_TOKEN');
+    return next();
+  }
+
+  const provided = c.req.header('X-Admin-Token');
+  if (!provided || provided !== expected) {
+    return c.json({ ok: false, error: 'Unauthorized' }, 401);
+  }
+
+  return next();
+});
 
 function getTenantId(c, body) {
   try {
