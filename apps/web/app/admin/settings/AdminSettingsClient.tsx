@@ -9,6 +9,9 @@ type LineStatus =
   | { kind: "connected" }
   | { kind: "disconnected"; reason?: string }
   | { kind: "unconfigured" };
+function brandKey(tenantId: string) {
+  return `admin:brandName:${tenantId}`;
+}
 
 export default function AdminSettingsClient() {
   const searchParams = useSearchParams();
@@ -208,6 +211,8 @@ export default function AdminSettingsClient() {
     </main>
   );
 }
+
+
 
 
 
