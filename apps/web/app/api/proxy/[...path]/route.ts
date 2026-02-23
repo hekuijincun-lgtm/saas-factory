@@ -69,6 +69,18 @@ async function proxy(req: Request, ctx: Ctx): Promise<Response> {
   headers.delete("host");
   headers.delete("content-length");
 
+  // Phase 0.6: /admin/* への転送時に X-Admin-Token をサーバーサイドから注入する。
+  // - ブラウザにトークンを渡さない（localStorage/cookie 不使用）。
+  // - ADMIN_TOKEN 未設定時はヘッダーを付与せずそのまま forward（後方互換）。
+  // - 設定方法: apps/web/.env.local に ADMIN_TOKEN=<token> を追記
+  //             Cloudflare Pages: Environment Variables に ADMIN_TOKEN を追加（plain text, non-NEXT_PUBLIC_）
+  if (rel === "admin" || rel.startsWith("admin/")) {
+    const adminToken = process.env.ADMIN_TOKEN;
+    if (adminToken) {
+      headers.set("X-Admin-Token", adminToken);
+    }
+  }
+
   const method = (req.method === "PATCH" ? "PUT" : req.method).toUpperCase();
 
   let body: ArrayBuffer | undefined = undefined;
