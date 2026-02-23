@@ -121,8 +121,8 @@ export async function proxyFetch(
   // ADMIN_TOKEN 未設定時は何もしない（後方互換）。
   let adminTokenInjected = false;
   {
-    const normPath = upstreamPath.startsWith('/') ? upstreamPath : `/${upstreamPath}`;
-    if (normPath === '/admin' || normPath.startsWith('/admin/')) {
+    const p = new URL(url).pathname;
+    if (p === '/admin' || p.startsWith('/admin/')) {
       const env = (globalThis as any)?.process?.env ?? {};
       const adminToken = env.ADMIN_TOKEN as string | undefined;
       if (adminToken) {
@@ -146,7 +146,12 @@ export async function proxyFetch(
   });
 
   // Optionally pass through raw response
-  if (opts?.passthrough) return res;
+  if (opts?.passthrough) {
+    if (!adminTokenInjected) return res;
+    const ph = new Headers(res.headers);
+    ph.set('x-admin-token-present', '1');
+    return new Response(res.body, { status: res.status, headers: ph });
+  }
 
   // Default: just return upstream response as-is (status/headers/body)
   // But ensure CORS for browser calls if you use this from client
