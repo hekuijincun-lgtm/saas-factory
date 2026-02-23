@@ -1,4 +1,5 @@
 export const runtime = "edge";
+import { getRequestContext } from "@cloudflare/next-on-pages";
 
 function apiBase() {
   const v = process.env.API_BASE || process.env.BOOKING_API_BASE || process.env.NEXT_PUBLIC_API_BASE;
@@ -11,6 +12,18 @@ function tenantIdFrom(req: Request) {
   return (u.searchParams.get("tenantId") || req.headers.get("x-tenant-id") || "default").trim() || "default";
 }
 
+
+function readEnv(name: string): string | undefined {
+  // Cloudflare Pages (next-on-pages) runtime env
+  try {
+    const ctx = getRequestContext();
+    const v = (ctx?.env as any)?.[name];
+    if (typeof v === "string" && v.length) return v;
+  } catch {}
+  // Fallback: traditional Node-style env (local dev / build-time)
+  const v2 = (process.env as any)?.[name];
+  return (typeof v2 === "string" && v2.length) ? v2 : undefined;
+}
 export async function GET(req: Request) {
   const u = new URL(req.url);
   const isDebug = u.searchParams.get("debug") === "1";
@@ -20,7 +33,7 @@ export async function GET(req: Request) {
   upstream.searchParams.set("tenantId", tenantId);
   if (u.searchParams.get("nocache")) upstream.searchParams.set("nocache", u.searchParams.get("nocache")!);
 
-  const adminToken = process.env.ADMIN_TOKEN;
+  const adminToken = readEnv("ADMIN_TOKEN");
   const tokenConfigured = !!adminToken;
   const reqHeaders: Record<string, string> = { "accept": "application/json", "x-tenant-id": tenantId };
   if (adminToken) reqHeaders["X-Admin-Token"] = adminToken;
@@ -55,7 +68,7 @@ export async function PUT(req: Request) {
 
   const body = await req.text();
 
-  const adminToken = process.env.ADMIN_TOKEN;
+  const adminToken = readEnv("ADMIN_TOKEN");
   const tokenConfigured = !!adminToken;
   const reqHeaders: Record<string, string> = {
     "content-type": "application/json",
@@ -83,3 +96,4 @@ export async function PUT(req: Request) {
   }
   return out;
 }
+
