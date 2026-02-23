@@ -27,7 +27,8 @@ function getBase(): string {
 
 async function proxy(req: Request, ctx: Ctx): Promise<Response> {
   const __u = new URL(req.url);
-  if (__u.searchParams.get("debug") === "1") {
+  const isDebug = __u.searchParams.get("debug") === "1";
+  if (__u.searchParams.get("debug") === "2") {
     const segs = await getPathSegments(ctx);
     const sp = new URLSearchParams(__u.search);
     sp.delete("path");
@@ -59,6 +60,7 @@ async function proxy(req: Request, ctx: Ctx): Promise<Response> {
   const upstreamMethod = req.method === "PATCH" ? "PUT" : req.method;// ✅ query: Next内部の path=... は捨てる（壊す原因）
   const sp = new URLSearchParams(nextUrl.search);
   sp.delete("path");
+  sp.delete("debug"); // strip — don't leak to upstream
 
   const upstream = new URL(`${base}/${rel}`);
   const qs = sp.toString();
@@ -75,10 +77,14 @@ async function proxy(req: Request, ctx: Ctx): Promise<Response> {
   // - 設定方法: apps/web/.env.local に ADMIN_TOKEN=<token> を追記
   //             Cloudflare Pages: Environment Variables に ADMIN_TOKEN を追加（plain text, non-NEXT_PUBLIC_）
   let adminTokenInjected = false;
+  let isAdminRoute = false;
+  let isTokenConfigured = false;
   {
     const p = upstream.pathname;
-    if (p === "/admin" || p.startsWith("/admin/")) {
+    isAdminRoute = p === "/admin" || p.startsWith("/admin/");
+    if (isAdminRoute) {
       const adminToken = process.env.ADMIN_TOKEN;
+      isTokenConfigured = !!adminToken;
       if (adminToken) {
         headers.set("X-Admin-Token", adminToken);
         adminTokenInjected = true;
@@ -111,6 +117,11 @@ async function proxy(req: Request, ctx: Ctx): Promise<Response> {
   out.headers.set("x-proxy-upstream-url", upstream.toString());
   out.headers.set("x-proxy-upstream-method", method);
   if (adminTokenInjected) out.headers.set("x-admin-token-present", "1");
+  if (isDebug) {
+    out.headers.set("x-admin-route", isAdminRoute ? "1" : "0");
+    out.headers.set("x-admin-token-configured", isTokenConfigured ? "1" : "0");
+    if (!adminTokenInjected) out.headers.set("x-admin-token-present", "0");
+  }
 
   return out;
 }

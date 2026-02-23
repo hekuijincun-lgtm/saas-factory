@@ -112,6 +112,9 @@ export async function proxyFetch(
   const base = resolveTargetBase(target);
   const url = safeJoin(base, upstreamPath);
 
+  let isDebug = false;
+  try { isDebug = new URL(req.url).searchParams.get('debug') === '1'; } catch {}
+
   const method = (opts?.method ?? req.method ?? 'GET').toUpperCase();
 
   const headers = copyHeaders(req.headers, opts?.headers);
@@ -120,11 +123,15 @@ export async function proxyFetch(
   // ブラウザにはトークンを渡さない（NEXT_PUBLIC_ / localStorage 不使用）。
   // ADMIN_TOKEN 未設定時は何もしない（後方互換）。
   let adminTokenInjected = false;
+  let isAdminRoute = false;
+  let isTokenConfigured = false;
   {
     const p = new URL(url).pathname;
-    if (p === '/admin' || p.startsWith('/admin/')) {
+    isAdminRoute = p === '/admin' || p.startsWith('/admin/');
+    if (isAdminRoute) {
       const env = (globalThis as any)?.process?.env ?? {};
       const adminToken = env.ADMIN_TOKEN as string | undefined;
+      isTokenConfigured = !!adminToken;
       if (adminToken) {
         headers.set('X-Admin-Token', adminToken);
         adminTokenInjected = true;
@@ -147,9 +154,14 @@ export async function proxyFetch(
 
   // Optionally pass through raw response
   if (opts?.passthrough) {
-    if (!adminTokenInjected) return res;
+    if (!adminTokenInjected && !isDebug) return res;
     const ph = new Headers(res.headers);
-    ph.set('x-admin-token-present', '1');
+    if (adminTokenInjected) ph.set('x-admin-token-present', '1');
+    if (isDebug) {
+      ph.set('x-admin-route', isAdminRoute ? '1' : '0');
+      ph.set('x-admin-token-configured', isTokenConfigured ? '1' : '0');
+      if (!adminTokenInjected) ph.set('x-admin-token-present', '0');
+    }
     return new Response(res.body, { status: res.status, headers: ph });
   }
 
@@ -166,6 +178,11 @@ export async function proxyFetch(
     outHeaders.set('access-control-allow-methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
   }
   if (adminTokenInjected) outHeaders.set('x-admin-token-present', '1');
+  if (isDebug) {
+    outHeaders.set('x-admin-route', isAdminRoute ? '1' : '0');
+    outHeaders.set('x-admin-token-configured', isTokenConfigured ? '1' : '0');
+    if (!adminTokenInjected) outHeaders.set('x-admin-token-present', '0');
+  }
 
   return new Response(res.body, {
     status: res.status,
@@ -208,6 +225,9 @@ export const getBookingApiBase = resolveBookingBase;
 export async function forwardJson(req: Request, url: string, init: RequestInit = {}) {
   const h = new Headers(req.headers);
 
+  let isDebug = false;
+  try { isDebug = new URL(req.url).searchParams.get('debug') === '1'; } catch {}
+
   // allow init headers override/merge
   if (init.headers) {
     const ih = new Headers(init.headers as HeadersInit);
@@ -216,11 +236,15 @@ export async function forwardJson(req: Request, url: string, init: RequestInit =
 
   // Phase 0.6: /admin/* へ転送する場合のみ X-Admin-Token を注入（proxyFetch と同じポリシー）。
   let adminTokenInjected = false;
+  let isAdminRoute = false;
+  let isTokenConfigured = false;
   try {
     const pathname = new URL(url).pathname;
-    if (pathname === '/admin' || pathname.startsWith('/admin/')) {
+    isAdminRoute = pathname === '/admin' || pathname.startsWith('/admin/');
+    if (isAdminRoute) {
       const env = (globalThis as any)?.process?.env ?? {};
       const adminToken = env.ADMIN_TOKEN as string | undefined;
+      isTokenConfigured = !!adminToken;
       if (adminToken) {
         h.set('X-Admin-Token', adminToken);
         adminTokenInjected = true;
@@ -247,6 +271,11 @@ export async function forwardJson(req: Request, url: string, init: RequestInit =
     rh.set("content-type", "application/json; charset=utf-8");
   }
   if (adminTokenInjected) rh.set('x-admin-token-present', '1');
+  if (isDebug) {
+    rh.set('x-admin-route', isAdminRoute ? '1' : '0');
+    rh.set('x-admin-token-configured', isTokenConfigured ? '1' : '0');
+    if (!adminTokenInjected) rh.set('x-admin-token-present', '0');
+  }
   return new Response(res.body, { status: res.status, headers: rh });
 }
 
