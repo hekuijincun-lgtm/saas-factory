@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { cors } from "hono/cors";
 
 // test helper (lock reproduction)
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
@@ -26,6 +27,116 @@ import { SlotLock } from "./durable/SlotLock";
 type Env = Record<string, unknown>;
 
 const app = new Hono<{ Bindings: Env }>();
+
+// =============================================================================
+// Phase 0.6: CORS ミドルウェア
+//
+// origin 判定の優先順位:
+//   1. staticOrigins: localhost:3000 / 127.0.0.1:3000（常に許可・env 不要）
+//   2. ADMIN_WEB_BASE: この env の origin と完全一致なら許可
+//   3. ADMIN_ALLOWED_ORIGINS: カンマ区切り origin リストと完全一致なら許可
+//   4. PAGES_DEV_ALLOWED_SUFFIX: 指定サフィックスに一致する pages.dev のみ許可
+//      例: ".saas-factory-web-v2.pages.dev" を設定すると
+//          https://abc123.saas-factory-web-v2.pages.dev だけ通る
+//   5. ALLOW_PAGES_DEV_WILDCARD=1: *.pages.dev を全許可（staging 検証用）
+//   6. 上記いずれにも一致しない → null（拒否）
+//
+// 推奨設定方針（B案: デフォルト安全）:
+//   ローカル: env なしでも localhost は通る
+//   staging : PAGES_DEV_ALLOWED_SUFFIX=".saas-factory-web-v2.pages.dev"
+//             + ADMIN_WEB_BASE=https://saas-factory-web-v2.pages.dev
+//   production: ADMIN_WEB_BASE に本番 origin を設定。wildcard は使わない。
+// =============================================================================
+app.use('/*', cors({
+  origin: (origin, c) => {
+    if (!origin) return null;
+
+    const env = c.env as any;
+
+    // 1) ハードコード: 常に許可（ローカル開発）
+    const staticOrigins = ['http://localhost:3000', 'http://127.0.0.1:3000'];
+    if (staticOrigins.includes(origin)) return origin;
+
+    // 2) ADMIN_WEB_BASE: この env var の URL の origin と完全一致
+    const webBase: string | undefined = env?.ADMIN_WEB_BASE;
+    if (webBase) {
+      try {
+        if (origin === new URL(webBase).origin) return origin;
+      } catch { /* 無効 URL は無視 */ }
+    }
+
+    // 3) ADMIN_ALLOWED_ORIGINS: カンマ区切りの追加 origin リスト
+    const extraOrigins: string | undefined = env?.ADMIN_ALLOWED_ORIGINS;
+    if (extraOrigins) {
+      const list = extraOrigins.split(',').map((s: string) => s.trim()).filter(Boolean);
+      if (list.includes(origin)) return origin;
+    }
+
+    // pages.dev チェックは HTTPS のみ対象
+    if (!origin.startsWith('https://')) return null;
+
+    // 4) PAGES_DEV_ALLOWED_SUFFIX: 指定サフィックスに一致する pages.dev origin のみ許可
+    //    例: ".saas-factory-web-v2.pages.dev"
+    //    → https://abc123.saas-factory-web-v2.pages.dev を通し、
+    //      他プロジェクトの pages.dev は弾く
+    const suffix: string | undefined = env?.PAGES_DEV_ALLOWED_SUFFIX;
+    if (suffix && origin.endsWith('.pages.dev')) {
+      if (origin.endsWith(suffix)) return origin;
+      // サフィックス指定があるがマッチしない → wildcard も見ない（安全側）
+      return null;
+    }
+
+    // 5) ALLOW_PAGES_DEV_WILDCARD=1: *.pages.dev を全許可（staging 一時検証用）
+    //    本番では設定しないこと
+    if (env?.ALLOW_PAGES_DEV_WILDCARD === '1' && origin.endsWith('.pages.dev')) {
+      return origin;
+    }
+
+    // 6) 上記いずれにも該当しない → 拒否
+    return null;
+  },
+  allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowHeaders: ['Content-Type', 'Authorization', 'X-Admin-Token'],
+  credentials: true,
+}));
+
+// =============================================================================
+// Phase 0.6: admin 認証ミドルウェア（/admin/* に適用）
+//
+// 動作モード:
+//   ADMIN_TOKEN 設定済み
+//     → X-Admin-Token ヘッダーと照合。不一致で 401。
+//   ADMIN_TOKEN 未設定 + REQUIRE_ADMIN_TOKEN=1
+//     → 503 で強制ブロック（本番での設定漏れを事故にしない）
+//   ADMIN_TOKEN 未設定 + REQUIRE_ADMIN_TOKEN 未設定
+//     → console.warn してスキップ（後方互換・デフォルト）
+//
+// 設定方法:
+//   ADMIN_TOKEN       : wrangler secret put ADMIN_TOKEN [--env staging|production]
+//   REQUIRE_ADMIN_TOKEN: wrangler secret put REQUIRE_ADMIN_TOKEN [--env staging]
+//                        プロンプトに "1" を入力
+// =============================================================================
+app.use('/admin/*', async (c, next) => {
+  const env = c.env as any;
+  const expected: string | undefined = env?.ADMIN_TOKEN;
+  const requireToken: boolean = env?.REQUIRE_ADMIN_TOKEN === '1';
+
+  if (!expected) {
+    if (requireToken) {
+      console.error('[auth] REQUIRE_ADMIN_TOKEN=1 だが ADMIN_TOKEN が未設定。/admin/* をブロック。');
+      return c.json({ ok: false, error: 'Service misconfigured: admin token not set' }, 503);
+    }
+    console.warn('[auth] ADMIN_TOKEN 未設定。/admin/* が無防備。wrangler secret put ADMIN_TOKEN で設定を。');
+    return next();
+  }
+
+  const provided = c.req.header('X-Admin-Token');
+  if (!provided || provided !== expected) {
+    return c.json({ ok: false, error: 'Unauthorized' }, 401);
+  }
+
+  return next();
+});
 
 function getTenantId(c, body) {
   try {
