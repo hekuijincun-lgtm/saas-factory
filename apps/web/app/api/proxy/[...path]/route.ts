@@ -1,5 +1,6 @@
 /* LITERAL_OK_20260221_144234 */
 export const runtime = "edge";
+import { isAdminPathname, readAdminToken, injectAdminToken, makeDebugStamp, applyDebugHeaders } from '../_lib/proxy';
 
 type Ctx = { params: any };
 
@@ -34,8 +35,7 @@ async function proxy(req: Request, ctx: Ctx): Promise<Response> {
     sp.delete("path");
     const base = getBase();
     const rel = (segs && segs.length > 0) ? segs.join("/") : (__u.pathname.split("/api/proxy/")[1] ?? "");
-    
-  const upstreamMethod = req.method === "PATCH" ? "PUT" : req.method;const upstream = new URL(`${base}/${rel}`);
+    const upstream = new URL(`${base}/${rel}`);
     const qs = sp.toString();
     upstream.search = qs ? `?${qs}` : "";
     return Response.json({
@@ -56,8 +56,7 @@ async function proxy(req: Request, ctx: Ctx): Promise<Response> {
   const segs = await getPathSegments(ctx);
   const rel = segs.join("/");
 
-  
-  const upstreamMethod = req.method === "PATCH" ? "PUT" : req.method;// ✅ query: Next内部の path=... は捨てる（壊す原因）
+  // ✅ query: Next内部の path=... は捨てる（壊す原因）
   const sp = new URLSearchParams(nextUrl.search);
   sp.delete("path");
   sp.delete("debug"); // strip — don't leak to upstream
@@ -71,26 +70,10 @@ async function proxy(req: Request, ctx: Ctx): Promise<Response> {
   headers.delete("host");
   headers.delete("content-length");
 
-  // Phase 0.6: /admin/* への転送時に X-Admin-Token をサーバーサイドから注入する。
-  // - ブラウザにトークンを渡さない（localStorage/cookie 不使用）。
-  // - ADMIN_TOKEN 未設定時はヘッダーを付与せずそのまま forward（後方互換）。
-  // - 設定方法: apps/web/.env.local に ADMIN_TOKEN=<token> を追記
-  //             Cloudflare Pages: Environment Variables に ADMIN_TOKEN を追加（plain text, non-NEXT_PUBLIC_）
-  let adminTokenInjected = false;
-  let isAdminRoute = false;
-  let isTokenConfigured = false;
-  {
-    const p = upstream.pathname;
-    isAdminRoute = p === "/admin" || p.startsWith("/admin/");
-    if (isAdminRoute) {
-      const adminToken = process.env.ADMIN_TOKEN;
-      isTokenConfigured = !!adminToken;
-      if (adminToken) {
-        headers.set("X-Admin-Token", adminToken);
-        adminTokenInjected = true;
-      }
-    }
-  }
+  // /admin/* のみ X-Admin-Token をサーバーサイドから注入（ブラウザ非公開）
+  const isAdminRoute = isAdminPathname(upstream.pathname);
+  const isTokenConfigured = isAdminRoute && !!readAdminToken();
+  const adminTokenInjected = injectAdminToken(headers, upstream.pathname);
 
   const method = (req.method === "PATCH" ? "PUT" : req.method).toUpperCase();
 
@@ -118,11 +101,7 @@ async function proxy(req: Request, ctx: Ctx): Promise<Response> {
   out.headers.set("x-proxy-upstream-method", method);
   if (adminTokenInjected) out.headers.set("x-admin-token-present", "1");
   if (isDebug) {
-    const iso = new Date().toISOString();
-    out.headers.set("x-debug-proxy", "STAMP_" + iso.slice(0,10).replace(/-/g,"") + "_" + iso.slice(11,16).replace(/:/g,""));
-    out.headers.set("x-admin-route", isAdminRoute ? "1" : "0");
-    out.headers.set("x-admin-token-configured", isTokenConfigured ? "1" : "0");
-    if (!adminTokenInjected) out.headers.set("x-admin-token-present", "0");
+    applyDebugHeaders(out.headers, { stamp: makeDebugStamp(), isAdminRoute, tokenConfigured: isTokenConfigured, tokenInjected: adminTokenInjected });
   }
 
   return out;

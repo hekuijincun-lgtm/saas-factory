@@ -3,6 +3,7 @@
 // ✅ avoids hard-coded staging domains (ERR_NAME_NOT_RESOLVED killer)
 
 export const runtime = 'edge';
+import { getRequestContext } from '@cloudflare/next-on-pages';
 
 type Dict = Record<string, string>;
 
@@ -96,6 +97,54 @@ export function resolveTargetBase(target: ProxyTarget): string {
   return target === 'booking' ? resolveBookingBase() : resolveUpstreamBase();
 }
 
+// ── Admin token + debug helpers ────────────────────────────────────────────
+// これらを各 route から import することで注入ロジックを一元管理する。
+
+/** /admin または /admin/* かどうかを pathname で判定する */
+export function isAdminPathname(pathname: string): boolean {
+  return pathname === '/admin' || pathname.startsWith('/admin/');
+}
+
+/** ADMIN_TOKEN を環境から読む: CF Pages runtime env → process.env の順 */
+export function readAdminToken(): string | undefined {
+  try {
+    const ctx = getRequestContext();
+    const v = (ctx?.env as any)?.ADMIN_TOKEN;
+    if (typeof v === 'string' && v.length) return v;
+  } catch {}
+  const v2 = (process.env as any)?.ADMIN_TOKEN;
+  return typeof v2 === 'string' && v2.length ? v2 : undefined;
+}
+
+/**
+ * X-Admin-Token を headers に注入する。
+ * /admin/* 以外・ADMIN_TOKEN 未設定時は false を返す（注入なし）。
+ */
+export function injectAdminToken(headers: Headers, pathname: string): boolean {
+  if (!isAdminPathname(pathname)) return false;
+  const token = readAdminToken();
+  if (!token) return false;
+  headers.set('X-Admin-Token', token);
+  return true;
+}
+
+/** x-debug-proxy 用タイムスタンプ文字列を生成する (UTC) */
+export function makeDebugStamp(): string {
+  const iso = new Date().toISOString();
+  return 'STAMP_' + iso.slice(0, 10).replace(/-/g, '') + '_' + iso.slice(11, 16).replace(/:/g, '');
+}
+
+/** debug=1 のときのみ呼び出す: 観測用レスポンスヘッダを一括付与する */
+export function applyDebugHeaders(
+  headers: Headers,
+  opts: { stamp: string; isAdminRoute: boolean; tokenConfigured: boolean; tokenInjected: boolean }
+): void {
+  headers.set('x-debug-proxy', opts.stamp);
+  headers.set('x-admin-route', opts.isAdminRoute ? '1' : '0');
+  headers.set('x-admin-token-configured', opts.tokenConfigured ? '1' : '0');
+  headers.set('x-admin-token-present', opts.tokenInjected ? '1' : '0');
+}
+
 export async function proxyFetch(
   req: Request,
   upstreamPath: string,
@@ -117,8 +166,7 @@ export async function proxyFetch(
   try {
     if (new URL(req.url).searchParams.get('debug') === '1') {
       isDebug = true;
-      const iso = new Date().toISOString();
-      dbgStamp = "STAMP_" + iso.slice(0,10).replace(/-/g,"") + "_" + iso.slice(11,16).replace(/:/g,"");
+      dbgStamp = makeDebugStamp();
     }
   } catch {}
 
@@ -126,25 +174,11 @@ export async function proxyFetch(
 
   const headers = copyHeaders(req.headers, opts?.headers);
 
-  // Phase 0.6: /admin/* へ転送する場合のみ X-Admin-Token をサーバーサイドから注入する。
-  // ブラウザにはトークンを渡さない（NEXT_PUBLIC_ / localStorage 不使用）。
-  // ADMIN_TOKEN 未設定時は何もしない（後方互換）。
-  let adminTokenInjected = false;
-  let isAdminRoute = false;
-  let isTokenConfigured = false;
-  {
-    const p = new URL(url).pathname;
-    isAdminRoute = p === '/admin' || p.startsWith('/admin/');
-    if (isAdminRoute) {
-      const env = (globalThis as any)?.process?.env ?? {};
-      const adminToken = env.ADMIN_TOKEN as string | undefined;
-      isTokenConfigured = !!adminToken;
-      if (adminToken) {
-        headers.set('X-Admin-Token', adminToken);
-        adminTokenInjected = true;
-      }
-    }
-  }
+  // /admin/* のみ X-Admin-Token をサーバーサイドから注入（ブラウザ非公開）
+  const upstreamPathname = new URL(url).pathname;
+  const isAdminRoute = isAdminPathname(upstreamPathname);
+  const isTokenConfigured = isAdminRoute && !!readAdminToken();
+  const adminTokenInjected = injectAdminToken(headers, upstreamPathname);
 
   // If we send body, ensure content-type exists (caller may override)
   const body = opts?.body ?? (method === 'GET' || method === 'HEAD' ? null : await req.arrayBuffer().catch(() => null));
@@ -165,10 +199,7 @@ export async function proxyFetch(
     const ph = new Headers(res.headers);
     if (adminTokenInjected) ph.set('x-admin-token-present', '1');
     if (isDebug) {
-      ph.set('x-debug-proxy', dbgStamp);
-      ph.set('x-admin-route', isAdminRoute ? '1' : '0');
-      ph.set('x-admin-token-configured', isTokenConfigured ? '1' : '0');
-      if (!adminTokenInjected) ph.set('x-admin-token-present', '0');
+      applyDebugHeaders(ph, { stamp: dbgStamp, isAdminRoute, tokenConfigured: isTokenConfigured, tokenInjected: adminTokenInjected });
     }
     return new Response(res.body, { status: res.status, headers: ph });
   }
@@ -187,10 +218,7 @@ export async function proxyFetch(
   }
   if (adminTokenInjected) outHeaders.set('x-admin-token-present', '1');
   if (isDebug) {
-    outHeaders.set('x-debug-proxy', dbgStamp);
-    outHeaders.set('x-admin-route', isAdminRoute ? '1' : '0');
-    outHeaders.set('x-admin-token-configured', isTokenConfigured ? '1' : '0');
-    if (!adminTokenInjected) outHeaders.set('x-admin-token-present', '0');
+    applyDebugHeaders(outHeaders, { stamp: dbgStamp, isAdminRoute, tokenConfigured: isTokenConfigured, tokenInjected: adminTokenInjected });
   }
 
   return new Response(res.body, {
@@ -239,8 +267,7 @@ export async function forwardJson(req: Request, url: string, init: RequestInit =
   try {
     if (new URL(req.url).searchParams.get('debug') === '1') {
       isDebug = true;
-      const iso = new Date().toISOString();
-      dbgStamp = "STAMP_" + iso.slice(0,10).replace(/-/g,"") + "_" + iso.slice(11,16).replace(/:/g,"");
+      dbgStamp = makeDebugStamp();
     }
   } catch {}
 
@@ -250,22 +277,15 @@ export async function forwardJson(req: Request, url: string, init: RequestInit =
     ih.forEach((v, k) => h.set(k, v));
   }
 
-  // Phase 0.6: /admin/* へ転送する場合のみ X-Admin-Token を注入（proxyFetch と同じポリシー）。
+  // /admin/* のみ X-Admin-Token を注入（proxyFetch と同じポリシー）
   let adminTokenInjected = false;
   let isAdminRoute = false;
   let isTokenConfigured = false;
   try {
     const pathname = new URL(url).pathname;
-    isAdminRoute = pathname === '/admin' || pathname.startsWith('/admin/');
-    if (isAdminRoute) {
-      const env = (globalThis as any)?.process?.env ?? {};
-      const adminToken = env.ADMIN_TOKEN as string | undefined;
-      isTokenConfigured = !!adminToken;
-      if (adminToken) {
-        h.set('X-Admin-Token', adminToken);
-        adminTokenInjected = true;
-      }
-    }
+    isAdminRoute = isAdminPathname(pathname);
+    isTokenConfigured = isAdminRoute && !!readAdminToken();
+    adminTokenInjected = injectAdminToken(h, pathname);
   } catch { /* 無効 URL は無視 */ }
 
   // body: keep streaming where possible
@@ -288,10 +308,7 @@ export async function forwardJson(req: Request, url: string, init: RequestInit =
   }
   if (adminTokenInjected) rh.set('x-admin-token-present', '1');
   if (isDebug) {
-    rh.set('x-debug-proxy', dbgStamp);
-    rh.set('x-admin-route', isAdminRoute ? '1' : '0');
-    rh.set('x-admin-token-configured', isTokenConfigured ? '1' : '0');
-    if (!adminTokenInjected) rh.set('x-admin-token-present', '0');
+    applyDebugHeaders(rh, { stamp: dbgStamp, isAdminRoute, tokenConfigured: isTokenConfigured, tokenInjected: adminTokenInjected });
   }
   return new Response(res.body, { status: res.status, headers: rh });
 }

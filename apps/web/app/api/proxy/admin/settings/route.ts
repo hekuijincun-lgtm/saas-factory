@@ -1,5 +1,5 @@
 export const runtime = "edge";
-import { getRequestContext } from "@cloudflare/next-on-pages";
+import { readAdminToken, injectAdminToken, makeDebugStamp, applyDebugHeaders } from '../../_lib/proxy';
 
 function apiBase() {
   const v = process.env.API_BASE || process.env.BOOKING_API_BASE || process.env.NEXT_PUBLIC_API_BASE;
@@ -12,18 +12,6 @@ function tenantIdFrom(req: Request) {
   return (u.searchParams.get("tenantId") || req.headers.get("x-tenant-id") || "default").trim() || "default";
 }
 
-
-function readEnv(name: string): string | undefined {
-  // Cloudflare Pages (next-on-pages) runtime env
-  try {
-    const ctx = getRequestContext();
-    const v = (ctx?.env as any)?.[name];
-    if (typeof v === "string" && v.length) return v;
-  } catch {}
-  // Fallback: traditional Node-style env (local dev / build-time)
-  const v2 = (process.env as any)?.[name];
-  return (typeof v2 === "string" && v2.length) ? v2 : undefined;
-}
 export async function GET(req: Request) {
   const u = new URL(req.url);
   const isDebug = u.searchParams.get("debug") === "1";
@@ -33,11 +21,9 @@ export async function GET(req: Request) {
   upstream.searchParams.set("tenantId", tenantId);
   if (u.searchParams.get("nocache")) upstream.searchParams.set("nocache", u.searchParams.get("nocache")!);
 
-  const adminToken = readEnv("ADMIN_TOKEN");
-  const tokenConfigured = !!adminToken;
-  const reqHeaders: Record<string, string> = { "accept": "application/json", "x-tenant-id": tenantId };
-  if (adminToken) reqHeaders["X-Admin-Token"] = adminToken;
-  const tokenInjected = tokenConfigured;
+  const tokenConfigured = !!readAdminToken();
+  const reqHeaders = new Headers({ "accept": "application/json", "x-tenant-id": tenantId });
+  const tokenInjected = injectAdminToken(reqHeaders, upstream.pathname);
 
   const r = await fetch(upstream.toString(), {
     method: "GET",
@@ -49,11 +35,7 @@ export async function GET(req: Request) {
   const out = new Response(body, { status: r.status, headers: { "content-type": "application/json" } });
   if (tokenInjected) out.headers.set("x-admin-token-present", "1");
   if (isDebug) {
-    const iso = new Date().toISOString();
-    out.headers.set("x-debug-proxy", "STAMP_" + iso.slice(0,10).replace(/-/g,"") + "_" + iso.slice(11,16).replace(/:/g,""));
-    out.headers.set("x-admin-route", "1");
-    out.headers.set("x-admin-token-configured", tokenConfigured ? "1" : "0");
-    if (!tokenInjected) out.headers.set("x-admin-token-present", "0");
+    applyDebugHeaders(out.headers, { stamp: makeDebugStamp(), isAdminRoute: true, tokenConfigured, tokenInjected });
   }
   return out;
 }
@@ -68,15 +50,13 @@ export async function PUT(req: Request) {
 
   const body = await req.text();
 
-  const adminToken = readEnv("ADMIN_TOKEN");
-  const tokenConfigured = !!adminToken;
-  const reqHeaders: Record<string, string> = {
+  const tokenConfigured = !!readAdminToken();
+  const reqHeaders = new Headers({
     "content-type": "application/json",
     "accept": "application/json",
     "x-tenant-id": tenantId,
-  };
-  if (adminToken) reqHeaders["X-Admin-Token"] = adminToken;
-  const tokenInjected = tokenConfigured;
+  });
+  const tokenInjected = injectAdminToken(reqHeaders, upstream.pathname);
 
   const r = await fetch(upstream.toString(), {
     method: "PUT",
@@ -88,11 +68,7 @@ export async function PUT(req: Request) {
   const out = new Response(outBody, { status: r.status, headers: { "content-type": "application/json" } });
   if (tokenInjected) out.headers.set("x-admin-token-present", "1");
   if (isDebug) {
-    const iso = new Date().toISOString();
-    out.headers.set("x-debug-proxy", "STAMP_" + iso.slice(0,10).replace(/-/g,"") + "_" + iso.slice(11,16).replace(/:/g,""));
-    out.headers.set("x-admin-route", "1");
-    out.headers.set("x-admin-token-configured", tokenConfigured ? "1" : "0");
-    if (!tokenInjected) out.headers.set("x-admin-token-present", "0");
+    applyDebugHeaders(out.headers, { stamp: makeDebugStamp(), isAdminRoute: true, tokenConfigured, tokenInjected });
   }
   return out;
 }
