@@ -74,10 +74,12 @@ async function proxy(req: Request, ctx: Ctx): Promise<Response> {
   // - ADMIN_TOKEN 未設定時はヘッダーを付与せずそのまま forward（後方互換）。
   // - 設定方法: apps/web/.env.local に ADMIN_TOKEN=<token> を追記
   //             Cloudflare Pages: Environment Variables に ADMIN_TOKEN を追加（plain text, non-NEXT_PUBLIC_）
+  let adminTokenInjected = false;
   if (rel === "admin" || rel.startsWith("admin/")) {
     const adminToken = process.env.ADMIN_TOKEN;
     if (adminToken) {
       headers.set("X-Admin-Token", adminToken);
+      adminTokenInjected = true;
     }
   }
 
