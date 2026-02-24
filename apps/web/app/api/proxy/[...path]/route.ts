@@ -116,7 +116,7 @@ async function proxy(req: Request, ctx: Ctx): Promise<Response> {
 
   out.headers.set("cache-control", "no-store");
   out.headers.set("x-proxy-stamp", "CATCHALL_V1");
-  if (menuRewrite) out.headers.set("x-proxy-rewrite", "patch_to_post_catchall");
+  if (menuRewrite) out.headers.set("x-proxy-rewrite", "menu_patch_to_post");
   out.headers.set("x-proxy-upstream-url", upstream.toString());
   out.headers.set("x-proxy-upstream-method", method);
   if (adminTokenInjected) out.headers.set("x-admin-token-present", "1");
