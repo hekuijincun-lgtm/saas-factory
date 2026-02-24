@@ -22,24 +22,37 @@ export function minutesToTime(minutes: number): TimeStr {
 }
 
 /**
- * 30分刻みの時刻オプションを生成（10:00〜20:00）
+ * 時刻オプションを生成（open〜close を interval 分刻みで返す）
+ * デフォルト: 10:00〜20:00 を 30 分刻み（後方互換）
  */
-export function generateTimeOptions(): TimeStr[] {
+export function generateTimeOptions(
+  open: string = '10:00',
+  close: string = '20:00',
+  interval: number = 30,
+): TimeStr[] {
   const options: TimeStr[] = [];
-  for (let hour = 10; hour <= 20; hour++) {
-    for (let minute = 0; minute < 60; minute += 30) {
-      const timeStr = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}` as TimeStr;
-      options.push(timeStr);
-    }
+  const [oh, om] = open.split(':').map(Number);
+  const [ch, cm] = close.split(':').map(Number);
+  const openMin  = oh * 60 + om;
+  const closeMin = ch * 60 + cm;
+  const step = interval > 0 ? interval : 30;
+  for (let min = openMin; min <= closeMin; min += step) {
+    options.push(minutesToTime(min));
   }
   return options;
 }
 
 /**
  * 開始時刻より後の時刻オプションを生成
+ * open/close/interval を渡すと generateTimeOptions と同じ範囲・刻みで絞り込む
  */
-export function generateEndTimeOptions(startTime: TimeStr): TimeStr[] {
-  const allOptions = generateTimeOptions();
+export function generateEndTimeOptions(
+  startTime: TimeStr,
+  open?: string,
+  close?: string,
+  interval?: number,
+): TimeStr[] {
+  const allOptions = generateTimeOptions(open, close, interval);
   const startMinutes = timeToMinutes(startTime);
   return allOptions.filter((time) => timeToMinutes(time) > startMinutes);
 }
@@ -103,23 +116,26 @@ export function validateShiftDay(day: ShiftDay): { valid: boolean; error?: strin
 
 /**
  * デフォルトの週次シフトを生成
+ * @param open  営業開始時間（デフォルト: '10:00'）
+ * @param close 営業終了時間（デフォルト: '19:00'）
  */
-export function generateDefaultWeekly(): StaffShiftWeekly[] {
-  const days: { dow: Dow; enabled: boolean; start: TimeStr; end: TimeStr }[] = [
-    { dow: 0, enabled: false, start: '10:00', end: '19:00' }, // 日
-    { dow: 1, enabled: true, start: '10:00', end: '19:00' }, // 月
-    { dow: 2, enabled: true, start: '10:00', end: '19:00' }, // 火
-    { dow: 3, enabled: true, start: '10:00', end: '19:00' }, // 水
-    { dow: 4, enabled: true, start: '10:00', end: '19:00' }, // 木
-    { dow: 5, enabled: true, start: '10:00', end: '19:00' }, // 金
-    { dow: 6, enabled: true, start: '10:00', end: '18:00' }, // 土
+export function generateDefaultWeekly(open: string = '10:00', close: string = '19:00'): StaffShiftWeekly[] {
+  const startTime = open  as TimeStr;
+  const endTime   = close as TimeStr;
+  const days: { dow: Dow; enabled: boolean }[] = [
+    { dow: 0, enabled: false }, // 日
+    { dow: 1, enabled: true  }, // 月
+    { dow: 2, enabled: true  }, // 火
+    { dow: 3, enabled: true  }, // 水
+    { dow: 4, enabled: true  }, // 木
+    { dow: 5, enabled: true  }, // 金
+    { dow: 6, enabled: true  }, // 土
   ];
-
   return days.map((day) => ({
     dow: day.dow,
     enabled: day.enabled,
-    start: day.start,
-    end: day.end,
+    start: startTime,
+    end: endTime,
   }));
 }
 
