@@ -386,7 +386,7 @@ export async function createMenuItem(payload: Omit<MenuItem, 'id'>): Promise<Men
  */
 
 export async function deleteMenuItem(tenantId: string, id: string) {
-  const u = `/api/proxy/admin/menu?tenantId=${encodeURIComponent(tenantId)}&id=${encodeURIComponent(id)}`;
+  const u = `/api/proxy/admin/menu/${encodeURIComponent(id)}?tenantId=${encodeURIComponent(tenantId)}`;
 
   const res = await fetch(u, { method: 'DELETE' });
 

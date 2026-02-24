@@ -781,6 +781,20 @@ app.on(["PUT","PATCH"], "/admin/menu/:id", async (c) => {
     return c.json({ ok: false, error: "exception", detail: String(e?.message ?? e) }, 500);
   }
 });
+app.delete("/admin/menu/:id", async (c) => {
+  try {
+    const tenantId = getTenantId(c);
+    const id = c.req.param("id");
+    const key = `admin:menu:list:${tenantId}`;
+    const list = ((await c.env.SAAS_FACTORY.get(key, "json")) as any[]) ?? [];
+    const next = list.filter((x) => x && x.id !== id);
+    if (next.length === list.length) return c.json({ ok: false, error: "not_found" }, 404);
+    await c.env.SAAS_FACTORY.put(key, JSON.stringify(next));
+    return c.json({ ok: true, tenantId });
+  } catch (e: any) {
+    return c.json({ ok: false, error: "exception", detail: String(e?.message ?? e) }, 500);
+  }
+});
 app.put("/admin/settings", async (c) => {
   try {
     const tenantId = getTenantId(c);
