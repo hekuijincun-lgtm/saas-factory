@@ -54,14 +54,14 @@ async function proxy(req: Request, ctx: Ctx): Promise<Response> {
 
   // ✅ rel: Next catch-all の params.path だけを真実にする（pathname は汚染され得る）
   const segs = await getPathSegments(ctx);
-  const rel = segs.join("/");
+  let rel = segs.join("/");
 
   // ✅ query: Next内部の path=... は捨てる（壊す原因）
   const sp = new URLSearchParams(nextUrl.search);
   sp.delete("path");
   sp.delete("debug"); // strip — don't leak to upstream
 
-  const upstream = new URL(`${base}/${rel}`);
+  let upstream = new URL(`${base}/${rel}`);
   const qs = sp.toString();
   upstream.search = qs ? `?${qs}` : ""; // keep tenantId, nocache, etc.// keep tenantId, nocache, etc.// ✅ keep tenantId, nocache, etc.
 
@@ -75,11 +75,28 @@ async function proxy(req: Request, ctx: Ctx): Promise<Response> {
   const isTokenConfigured = isAdminRoute && !!readAdminToken();
   const adminTokenInjected = injectAdminToken(headers, upstream.pathname);
 
-  const method = (req.method === "PATCH" ? "PUT" : req.method).toUpperCase();
+  let method = (req.method === "PATCH" ? "PUT" : req.method).toUpperCase();
 
   let body: ArrayBuffer | undefined = undefined;
   if (method !== "GET" && method !== "HEAD") {
     body = await req.arrayBuffer();
+  }
+
+  // Rewrite PATCH /admin/menu/:id → POST /admin/menu (upstream compat)
+  if (req.method === "PATCH" && /^admin\/menu\/[^\/]+$/.test(rel)) {
+    const menuId = segs[segs.length - 1];
+    rel = "admin/menu";
+    method = "POST";
+    upstream = new URL(`${base}/${rel}`);
+    upstream.search = qs ? `?${qs}` : "";
+    if (body && body.byteLength > 0) {
+      try {
+        const j = JSON.parse(new TextDecoder().decode(body));
+        if (!j.id) j.id = menuId;
+        body = new TextEncoder().encode(JSON.stringify(j)).buffer as ArrayBuffer;
+      } catch {}
+    }
+    headers.delete("content-length");
   }
 
   const res = await fetch(upstream.toString(), {
