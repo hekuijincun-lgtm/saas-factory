@@ -149,8 +149,10 @@ export default function AdminShell({
     fetch(`/api/proxy/admin/settings?tenantId=${encodeURIComponent(tenantId)}`)
       .then((r) => r.json())
       .then((data: any) => {
-        if (data?.storeName) {
-          setStoreName(data.storeName);
+        // API returns { ok, tenantId, data: { storeName, ... } }
+        const sn = data?.data?.storeName || data?.storeName;
+        if (sn) {
+          setStoreName(sn);
         }
       })
       .catch(() => {

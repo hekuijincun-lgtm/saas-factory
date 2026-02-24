@@ -3,7 +3,7 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Briefcase, CalendarDays, Building2, Link as LinkIcon, CheckCircle, AlertCircle, RefreshCw, Save } from 'lucide-react';
+import { Briefcase, CalendarDays, Building2, Clock, Link as LinkIcon, CheckCircle, AlertCircle, RefreshCw, Save } from 'lucide-react';
 import DebugHydration from './DebugHydration';
 import {
   fetchAdminSettings,
@@ -135,6 +135,14 @@ export default function AdminSettingsClient() {
   const [storeNameInput, setStoreNameInput] = useState(FALLBACK_STORE_NAME);
   const [contactEmail, setContactEmail] = useState('info@lumiere.demo');
 
+  // --- API由来の営業時間設定 ---
+  const [openTime, setOpenTime] = useState('10:00');
+  const [savedOpenTime, setSavedOpenTime] = useState('10:00');
+  const [closeTime, setCloseTime] = useState('19:00');
+  const [savedCloseTime, setSavedCloseTime] = useState('19:00');
+  const [slotIntervalMin, setSlotIntervalMin] = useState(30);
+  const [savedSlotIntervalMin, setSavedSlotIntervalMin] = useState(30);
+
   const [isMounted, setIsMounted] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [toastType, setToastType] = useState<'success' | 'error'>('success');
@@ -181,6 +189,14 @@ export default function AdminSettingsClient() {
         setStoreName(settings.storeName);
         setStoreNameInput(settings.storeName);
       }
+      // 営業時間設定を API から反映（API は flat 構造: openTime, closeTime, slotIntervalMin）
+      const raw = settings as any;
+      const ot = raw.openTime || '10:00';
+      const ct = raw.closeTime || '19:00';
+      const si = Number(raw.slotIntervalMin) || 30;
+      setOpenTime(ot); setSavedOpenTime(ot);
+      setCloseTime(ct); setSavedCloseTime(ct);
+      setSlotIntervalMin(si); setSavedSlotIntervalMin(si);
     } catch (error) {
       const msg = error instanceof ApiClientError
         ? error.message
@@ -368,9 +384,12 @@ export default function AdminSettingsClient() {
   const handleSave = async () => {
     setIsSaving(true);
     try {
-      // API に storeName を保存
-      await saveAdminSettings({ storeName: storeNameInput }, tenantId);
+      // API に storeName + 営業時間設定を保存
+      await saveAdminSettings({ storeName: storeNameInput, openTime, closeTime, slotIntervalMin } as any, tenantId);
       setStoreName(storeNameInput);
+      setSavedOpenTime(openTime);
+      setSavedCloseTime(closeTime);
+      setSavedSlotIntervalMin(slotIntervalMin);
 
       // localStorage にローカル設定を保存（業種・営業日等）
       try {
@@ -391,6 +410,9 @@ export default function AdminSettingsClient() {
   const handleReset = () => {
     setStoreNameInput(storeName);
     setLocalTenant(savedLocalTenant);
+    setOpenTime(savedOpenTime);
+    setCloseTime(savedCloseTime);
+    setSlotIntervalMin(savedSlotIntervalMin);
   };
 
   const toggleDay = (dayIndex: number) => {
@@ -518,6 +540,61 @@ export default function AdminSettingsClient() {
                 onChange={e => setContactEmail(e.target.value)}
                 placeholder="info@example.com"
               />
+            </div>
+          </div>
+        </div>
+
+        {/* ============================================================
+            営業時間設定（API連携）
+        ============================================================ */}
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <div className="flex items-center gap-3 mb-5">
+            <div className="p-2 bg-green-100 rounded-lg shrink-0">
+              <Clock className="w-5 h-5 text-indigo-600" />
+            </div>
+            <div>
+              <h2 className="text-base font-semibold text-gray-900">営業時間設定</h2>
+              <p className="text-xs text-gray-500">予約スロット生成の基準となる時間帯を設定します</p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                営業開始時間
+              </label>
+              <input
+                type="time"
+                className="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
+                value={openTime}
+                onChange={e => setOpenTime(e.target.value)}
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                営業終了時間
+              </label>
+              <input
+                type="time"
+                className="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
+                value={closeTime}
+                onChange={e => setCloseTime(e.target.value)}
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                予約間隔（分）
+              </label>
+              <input
+                type="number"
+                step="15"
+                min="15"
+                max="120"
+                className="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
+                value={slotIntervalMin}
+                onChange={e => setSlotIntervalMin(Number(e.target.value))}
+              />
+              <p className="mt-1 text-xs text-gray-400">スロット表示間隔（15・30・60分など）</p>
             </div>
           </div>
         </div>

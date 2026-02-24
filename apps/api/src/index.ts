@@ -247,6 +247,7 @@ app.get("/__build", (c) => c.json({ ok: true, stamp: "API_BUILD_V1" }));
     }
 
     const patch: any = {}
+    if(body.storeName != null) patch.storeName = String(body.storeName)
     if(body.businessName != null) patch.businessName = String(body.businessName)
     if(body.timezone != null) patch.timezone = String(body.timezone)
     if(body.openTime != null) patch.openTime = normTime(body.openTime, "10:00")
@@ -257,11 +258,17 @@ app.get("/__build", (c) => c.json({ ok: true, stamp: "API_BUILD_V1" }));
       patch.closedWeekdays = Array.isArray(body.closedWeekdays) ? body.closedWeekdays.map((x:any)=>Number(x)) : []
     }
 
-    // write (partial save)
+    // read existing KV, merge patch on top (partial save - don't overwrite other fields)
     const key = 'settings:' + tenantId
-    await kv.put(key, JSON.stringify(patch))
+    let existing: any = {}
+    try {
+      const ev = await kv.get(key, "json")
+      if(ev && typeof ev === 'object') existing = ev
+    } catch { try { const s = await kv.get(key); if(s) existing = JSON.parse(s) } catch {} }
+    const merged = { ...existing, ...patch }
+    await kv.put(key, JSON.stringify(merged))
 
-    return c.json({ ok:true, tenantId, key, saved: patch })
+    return c.json({ ok:true, tenantId, key, saved: merged })
   })
   // === /ADMIN_SETTINGS_V1 ===
 // === SLOTS_SETTINGS_V1 ===

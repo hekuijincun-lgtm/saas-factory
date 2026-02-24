@@ -30,7 +30,9 @@ import type { AdminSettings } from '../../src/types/settings';
  */
 export async function fetchAdminSettings(tenantId?: string): Promise<AdminSettings> {
   try {
-    return await apiGet<AdminSettings>('/admin/settings', { tenantId });
+    // API returns { ok, tenantId, data: {...} } — extract .data
+    const res = await apiGet<any>('/admin/settings', { tenantId });
+    return (res?.data ?? res) as AdminSettings;
   } catch (error) {
     if (error instanceof ApiClientError) {
       throw error;
