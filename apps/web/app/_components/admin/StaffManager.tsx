@@ -4,7 +4,6 @@ import { useState, useEffect } from 'react';
 import { getStaff, createStaff, updateStaff, type Staff } from '@/src/lib/bookingApi';
 import { ApiClientError } from '@/src/lib/apiClient';
 import Card from '../ui/Card';
-import PageHeader from '../ui/PageHeader';
 import DataTable from '../ui/DataTable';
 import Badge from '../ui/Badge';
 import { Plus, Edit2, X, Calendar } from 'lucide-react';
@@ -135,19 +134,15 @@ export default function StaffManager() {
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        title="スタッフ管理"
-        subtitle="スタッフの追加・編集を行います。"
-        right={
-          <button
-            onClick={handleCreate}
-            className="px-4 py-2 bg-brand-primary text-white rounded-xl font-medium hover:shadow-md transition-all flex items-center gap-2"
-          >
-            <Plus className="w-5 h-5" />
-            <span>追加</span>
-          </button>
-        }
-      />
+      <div className="flex justify-end mb-6">
+        <button
+          onClick={handleCreate}
+          className="px-4 py-2 bg-brand-primary text-white rounded-xl font-medium hover:shadow-md transition-all flex items-center gap-2"
+        >
+          <Plus className="w-5 h-5" />
+          <span>追加</span>
+        </button>
+      </div>
 
       {error && (
         <div className="p-4 bg-red-50 border border-red-200 rounded-2xl">

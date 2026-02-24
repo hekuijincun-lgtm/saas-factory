@@ -4,7 +4,6 @@ import { useState, useEffect } from 'react';
 import { getMenu, createMenuItem, updateMenuItem, deleteMenuItem, type MenuItem } from '@/src/lib/bookingApi';
 import { ApiClientError } from '@/src/lib/apiClient';
 import Card from '../ui/Card';
-import PageHeader from '../ui/PageHeader';
 import DataTable from '../ui/DataTable';
 import Badge from '../ui/Badge';
 import { Plus, Edit2, X, Trash2 } from 'lucide-react';
@@ -120,7 +119,6 @@ name: '',
 
     // API が MenuItem を返す場合 / { ok, data } を返す場合の両対応
     const item = (saved && (saved as any).data) ? (saved as any).data : saved;
-    alert("DBG saved=" + JSON.stringify(saved)?.slice(0,300));
     if (item && item.id) {
       setMenuList(prev => {
         const idx = prev.findIndex(x => x.id === item.id);
@@ -169,9 +167,6 @@ name: '',
   };
 
   const handleDelete = async (id: string, name?: string) => {
-    const ok = confirm('「' + (name ?? 'このメニュー') + '」を削除しますか？');
-    if (!ok) return;
-
     // ✅ 最小: state 触らずに削除だけ。失敗したら alert でOK（まず動かす）
     try {
       await deleteMenuItem(tenantId, id);
@@ -196,19 +191,15 @@ name: '',
 
 return(
     <div className="space-y-6">
-      <PageHeader
-        title="メニュー管理"
-        subtitle="メニューの追加・編集を行います。"
-        right={
-          <button
-            onClick={handleCreate}
-            className="px-4 py-2 bg-brand-primary text-white rounded-xl font-medium hover:shadow-md transition-all flex items-center gap-2"
-          >
-            <Plus className="w-5 h-5" />
-            <span>追加</span>
-          </button>
-        }
-      />
+      <div className="flex justify-end mb-6">
+        <button
+          onClick={handleCreate}
+          className="px-4 py-2 bg-brand-primary text-white rounded-xl font-medium hover:shadow-md transition-all flex items-center gap-2"
+        >
+          <Plus className="w-5 h-5" />
+          <span>追加</span>
+        </button>
+      </div>
 
       {error && (
         <div className="p-4 bg-red-50 border border-red-200 rounded-2xl">
