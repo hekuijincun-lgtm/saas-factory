@@ -2,16 +2,13 @@
 "use client";
 
 import { useState, useEffect } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
-import { Briefcase, CalendarDays, Building2, Clock, Link as LinkIcon, CheckCircle, AlertCircle, RefreshCw, Save } from 'lucide-react';
+import { useSearchParams } from 'next/navigation';
+import { CalendarDays, Building2, Clock, Link as LinkIcon, AlertCircle, RefreshCw, Save } from 'lucide-react';
 import DebugHydration from './DebugHydration';
 import {
   fetchAdminSettings,
   saveAdminSettings,
   type AdminSettings,
-  fetchLineStatus,
-  fetchLineAuthUrl,
-  type LineStatusResponse,
   fetchMessagingStatus,
   saveMessagingConfig,
   deleteMessagingConfig,
@@ -23,27 +20,9 @@ import { ApiClientError } from '../../lib/apiClient';
 // Types
 // ============================================================
 
-type VerticalType = 'hair-salon' | 'lash-salon' | 'nail-salon' | 'sauna' | 'gym';
-
-interface VerticalConfig {
-  id: VerticalType;
-  displayName: string;
-  themeColor: string;
-  terminology: {
-    staff: string;
-    menu: string;
-    customer: string;
-  };
-  features: {
-    enableStaffSelection: boolean;
-    enableSeatSelection?: boolean;
-  };
-}
-
 // localStorageベースのテナント設定（API移行前の暫定）
 interface LocalTenant {
   id: string;
-  vertical: VerticalType;
   contactEmail: string;
   workDays: number[];
   bookingWindow: number;
@@ -51,72 +30,12 @@ interface LocalTenant {
 
 const INITIAL_LOCAL_TENANT: LocalTenant = {
   id: 'tenant-001',
-  vertical: 'hair-salon',
   contactEmail: 'info@lumiere.demo',
   workDays: [0, 1, 3, 4, 5, 6],
   bookingWindow: 14,
 };
 
-const VERTICAL_CONFIGS: Record<VerticalType, VerticalConfig> = {
-  'hair-salon': {
-    id: 'hair-salon',
-    displayName: '美容室',
-    themeColor: 'slate',
-    terminology: { staff: 'スタイリスト', menu: 'メニュー', customer: 'お客様' },
-    features: { enableStaffSelection: true }
-  },
-  'lash-salon': {
-    id: 'lash-salon',
-    displayName: 'まつげサロン',
-    themeColor: 'pink',
-    terminology: { staff: 'アイリスト', menu: 'コース', customer: 'お客様' },
-    features: { enableStaffSelection: true }
-  },
-  'nail-salon': {
-    id: 'nail-salon',
-    displayName: 'ネイルサロン',
-    themeColor: 'rose',
-    terminology: { staff: 'ネイリスト', menu: 'デザイン', customer: 'お客様' },
-    features: { enableStaffSelection: true }
-  },
-  'sauna': {
-    id: 'sauna',
-    displayName: '個室サウナ',
-    themeColor: 'stone',
-    terminology: { staff: '個室', menu: 'プラン', customer: '会員様' },
-    features: { enableStaffSelection: false }
-  },
-  'gym': {
-    id: 'gym',
-    displayName: 'パーソナルジム',
-    themeColor: 'orange',
-    terminology: { staff: 'トレーナー', menu: 'セッション', customer: '会員様' },
-    features: { enableStaffSelection: true }
-  }
-};
-
-const THEME_COLOR_CLASSES: Record<string, string> = {
-  'slate': 'bg-slate-500',
-  'pink': 'bg-pink-500',
-  'rose': 'bg-rose-500',
-  'stone': 'bg-stone-500',
-  'orange': 'bg-orange-500',
-};
-
 const FALLBACK_STORE_NAME = 'Lumiere 表参道';
-
-// ============================================================
-// normalizeLineStatus
-// ============================================================
-
-function normalizeLineStatus(input: any): LineStatusResponse | null {
-  if (!input || typeof input !== 'object') return null;
-  const kind = String((input as any).kind ?? '');
-  if (kind === 'linked') {
-    return { ...(input as any), kind: 'connected' } as LineStatusResponse;
-  }
-  return input as LineStatusResponse;
-}
 
 // ============================================================
 // Component
@@ -124,9 +43,8 @@ function normalizeLineStatus(input: any): LineStatusResponse | null {
 
 export default function AdminSettingsClient() {
   const searchParams = useSearchParams();
-  const router = useRouter();
 
-  // --- localStorageベースのテナント設定（業種・営業日・予約窓 等） ---
+  // --- localStorageベースのテナント設定（営業日・予約窓 等） ---
   const [localTenant, setLocalTenant] = useState<LocalTenant>(INITIAL_LOCAL_TENANT);
   const [savedLocalTenant, setSavedLocalTenant] = useState<LocalTenant>(INITIAL_LOCAL_TENANT);
 
@@ -149,16 +67,8 @@ export default function AdminSettingsClient() {
   const [isSaving, setIsSaving] = useState(false);
 
   // --- 設定全体の状態 ---
-  const [adminSettings, setAdminSettings] = useState<AdminSettings | null>(null);
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [settingsLoading, setSettingsLoading] = useState(false);
-
-  // --- LINE連携 ---
-  const [lineStatus, setLineStatus] = useState<LineStatusResponse | null>(null);
-  const [lineLoading, setLineLoading] = useState(false);
-  const [lineConnecting, setLineConnecting] = useState(false);
-  const [lineError, setLineError] = useState<string | null>(null);
-  const [isFetchingLineStatus, setIsFetchingLineStatus] = useState(false);
 
   // --- Messaging API ---
   const [messagingStatus, setMessagingStatus] = useState<MessagingStatusResponse | null>(null);
@@ -183,7 +93,6 @@ export default function AdminSettingsClient() {
     setSettingsError(null);
     try {
       const settings = await fetchAdminSettings(tenantId);
-      setAdminSettings(settings);
       // storeName を API から反映
       if (settings.storeName) {
         setStoreName(settings.storeName);
@@ -202,31 +111,8 @@ export default function AdminSettingsClient() {
         ? error.message
         : error instanceof Error ? error.message : '設定の取得に失敗しました';
       setSettingsError(msg);
-      setAdminSettings(null);
     } finally {
       setSettingsLoading(false);
-    }
-  };
-
-  // ============================================================
-  // API: LINE ステータス取得
-  // ============================================================
-
-  const fetchLineStatusState = async () => {
-    if (isFetchingLineStatus) return;
-    setIsFetchingLineStatus(true);
-    setLineLoading(true);
-    setLineError(null);
-    try {
-      const status = await fetchLineStatus(tenantId);
-      setLineStatus(normalizeLineStatus(status));
-    } catch (error) {
-      const msg = error instanceof ApiClientError ? error.message
-        : error instanceof Error ? error.message : 'LINE連携ステータスの取得に失敗しました';
-      setLineError(msg);
-    } finally {
-      setLineLoading(false);
-      setIsFetchingLineStatus(false);
     }
   };
 
@@ -246,31 +132,6 @@ export default function AdminSettingsClient() {
       setMessagingError(msg);
     } finally {
       setMessagingLoading(false);
-    }
-  };
-
-  // ============================================================
-  // LINE OAuth 連携開始
-  // ============================================================
-
-  const handleLineConnect = async () => {
-    setLineError(null);
-    setLineConnecting(true);
-    try {
-      const authUrlResponse = await fetchLineAuthUrl(tenantId);
-      if (authUrlResponse.ok && authUrlResponse.url) {
-        window.location.href = authUrlResponse.url;
-      } else {
-        const msg = authUrlResponse.error || authUrlResponse.message || 'LINE連携の認証URL生成に失敗しました';
-        setLineError(msg);
-        showToast(`エラー: ${msg}`, 'error');
-      }
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : 'LINE連携の認証URL生成に失敗しました';
-      setLineError(msg);
-      showToast(`エラー: ${msg}`, 'error');
-    } finally {
-      setLineConnecting(false);
     }
   };
 
@@ -343,7 +204,7 @@ export default function AdminSettingsClient() {
   useEffect(() => {
     setIsMounted(true);
 
-    // localStorage からローカル設定を読み込む（業種・営業日等）
+    // localStorage からローカル設定を読み込む（営業日等）
     try {
       const saved = localStorage.getItem('adminLocalTenant');
       if (saved) {
@@ -355,27 +216,9 @@ export default function AdminSettingsClient() {
     } catch { /* ignore */ }
 
     fetchSettings();
-    fetchLineStatusState();
     fetchMessagingStatusState();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // LINE callback パラメータ処理
-  useEffect(() => {
-    const line = searchParams?.get('line');
-    if (!line) return;
-    if (line === 'linked') {
-      showToast('LINE連携が完了しました！', 'success');
-      fetchLineStatusState();
-    } else {
-      const reason =
-        line === 'error_secret' ? 'secret' :
-        line === 'error_missing' ? 'missing_env' :
-        line === 'ok' ? 'ok' : 'unknown';
-      router.replace(`/admin/line-setup?reason=${encodeURIComponent(reason)}`);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams, router]);
 
   // ============================================================
   // 保存処理
@@ -391,7 +234,7 @@ export default function AdminSettingsClient() {
       setSavedCloseTime(closeTime);
       setSavedSlotIntervalMin(slotIntervalMin);
 
-      // localStorage にローカル設定を保存（業種・営業日等）
+      // localStorage にローカル設定を保存（営業日等）
       try {
         localStorage.setItem('adminLocalTenant', JSON.stringify(localTenant));
         setSavedLocalTenant(localTenant);
@@ -432,7 +275,6 @@ export default function AdminSettingsClient() {
     return <div className="p-6 text-sm text-gray-500">読み込み中...</div>;
   }
 
-  const verticals: VerticalType[] = ['hair-salon', 'lash-salon', 'nail-salon', 'sauna', 'gym'];
   const weekDays = ['日', '月', '火', '水', '木', '金', '土'];
 
   // ============================================================
@@ -600,62 +442,6 @@ export default function AdminSettingsClient() {
         </div>
 
         {/* ============================================================
-            業種 (Vertical) 設定
-        ============================================================ */}
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-          <div className="flex items-center gap-3 mb-5">
-            <div className="p-2 bg-blue-100 rounded-lg shrink-0">
-              <Briefcase className="w-5 h-5 text-indigo-600" />
-            </div>
-            <div>
-              <h2 className="text-base font-semibold text-gray-900">業種 (Vertical) 設定</h2>
-              <p className="text-xs text-gray-500">予約システムのUIと専門用語を切り替えます</p>
-            </div>
-          </div>
-
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-5">
-            <p className="text-xs text-blue-800">
-              <span className="font-semibold">※重要:</span>{' '}
-              業種を変更すると予約システムのUI・専門用語・ビジネスロジックが切り替わります。
-              変更後は「保存」ボタンを押してください。
-            </p>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {verticals.map(v => {
-              const config = VERTICAL_CONFIGS[v];
-              const isSelected = localTenant.vertical === v;
-              return (
-                <button
-                  key={v}
-                  type="button"
-                  onClick={() => setLocalTenant({ ...localTenant, vertical: v })}
-                  className={`relative p-4 border-2 rounded-xl transition-all duration-200 text-left
-                    ${isSelected
-                      ? 'border-indigo-600 bg-indigo-50 shadow-md ring-2 ring-indigo-200'
-                      : 'border-gray-200 hover:border-gray-300 hover:shadow-sm'
-                    }`}
-                >
-                  {isSelected && (
-                    <div className="absolute top-2 right-2">
-                      <CheckCircle className="w-5 h-5 text-indigo-600" />
-                    </div>
-                  )}
-                  <div className="font-semibold text-sm text-gray-900 mb-2">{config.displayName}</div>
-                  <div
-                    className={`h-1 rounded-full ${THEME_COLOR_CLASSES[config.themeColor] || 'bg-gray-500'} mb-2`}
-                    suppressHydrationWarning
-                  />
-                  <div className="text-xs text-gray-500">
-                    {config.terminology.staff} / {config.terminology.menu}
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* ============================================================
             営業・予約設定
         ============================================================ */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
@@ -718,7 +504,7 @@ export default function AdminSettingsClient() {
         </div>
 
         {/* ============================================================
-            外部連携
+            外部連携（Messaging API のみ）
         ============================================================ */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
           <div className="flex items-center gap-3 mb-5">
@@ -732,54 +518,6 @@ export default function AdminSettingsClient() {
           </div>
 
           <div className="space-y-3">
-            {/* LINE連携 */}
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-4 bg-gray-50 rounded-lg border border-gray-200 hover:bg-gray-100 transition-colors">
-              <div className="flex-1">
-                <div className="flex items-center gap-2 mb-1">
-                  <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${
-                    lineLoading ? 'bg-yellow-400 animate-pulse'
-                      : lineStatus?.kind === 'connected' ? 'bg-green-500'
-                      : 'bg-gray-400'
-                  }`} />
-                  <div className="font-semibold text-sm text-gray-900">LINE連携</div>
-                </div>
-                <div className="text-xs text-gray-500">
-                  {lineLoading ? '取得中...'
-                    : lineStatus?.kind === 'connected'
-                      ? lineStatus.line?.displayName
-                        ? `LINE連携済み (${lineStatus.line.displayName})`
-                        : 'LINE連携済み'
-                      : 'LINE未連携'}
-                </div>
-                {lineError && (
-                  <div className="flex items-start gap-1.5 mt-2 p-2 bg-red-50 border border-red-200 rounded text-xs text-red-700">
-                    <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                    <div>
-                      <div className="font-semibold">ステータス取得に失敗</div>
-                      <div className="mt-0.5">{lineError}</div>
-                      <button
-                        onClick={fetchLineStatusState}
-                        className="mt-1 px-2 py-0.5 bg-red-100 hover:bg-red-200 rounded text-xs font-medium transition-colors"
-                      >
-                        再取得
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-              <div className="flex flex-col gap-1.5 w-full sm:w-auto">
-                <button
-                  onClick={handleLineConnect}
-                  disabled={lineConnecting || lineLoading}
-                  className="w-full sm:w-auto px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-xs font-medium transition-all"
-                >
-                  {lineConnecting ? '処理中...'
-                    : lineStatus?.kind === 'connected' ? '再連携'
-                    : lineLoading ? '取得中...' : 'LINEと連携する'}
-                </button>
-              </div>
-            </div>
-
             {/* Messaging API */}
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-4 bg-gray-50 rounded-lg border border-gray-200 hover:bg-gray-100 transition-colors">
               <div className="flex-1">
@@ -884,23 +622,6 @@ export default function AdminSettingsClient() {
                   </div>
                 )}
               </div>
-            </div>
-
-            {/* Stripe */}
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-4 bg-gray-50 rounded-lg border border-gray-200 hover:bg-gray-100 transition-colors">
-              <div className="flex items-center gap-2">
-                <div className="w-2.5 h-2.5 bg-purple-400 rounded-full shrink-0" />
-                <div>
-                  <div className="font-semibold text-sm text-gray-900">Stripe 決済連携</div>
-                  <div className="text-xs text-gray-500">オンライン決済を有効化</div>
-                </div>
-              </div>
-              <button
-                onClick={() => showToast('Stripe決済APIキー設定画面へ遷移します（デモ動作）', 'success')}
-                className="w-full sm:w-auto px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 hover:border-gray-400 text-xs font-medium transition-all"
-              >
-                設定する
-              </button>
             </div>
           </div>
         </div>

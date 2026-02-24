@@ -17,17 +17,18 @@ const _cache = new Map<string, AdminSettingsNormalized>();
 
 /**
  * API レスポンス（flat or nested）→ 正規化
- * API は { openTime, closeTime, slotIntervalMin } のフラット構造を返す
- * 将来的に { businessHours: { openTime, closeTime } } になった場合も対応
+ * ネスト形式 { businessHours: { open, close } } を優先し、
+ * フラット形式 { openTime, closeTime, slotIntervalMin } にフォールバック
+ * 空文字列も FALLBACK に落とす
  */
 export function normalizeSettings(raw: unknown): AdminSettingsNormalized {
   const r = raw as any;
-  const open  = String(r?.openTime  ?? r?.businessHours?.openTime  ?? FALLBACK.open);
-  const close = String(r?.closeTime ?? r?.businessHours?.closeTime ?? FALLBACK.close);
-  const iv    = Number(r?.slotIntervalMin ?? r?.slotMinutes ?? FALLBACK.interval);
+  const openRaw  = r?.businessHours?.open  ?? r?.openTime  ?? '';
+  const closeRaw = r?.businessHours?.close ?? r?.closeTime ?? '';
+  const iv       = Number(r?.slotIntervalMin ?? r?.businessHours?.slotIntervalMin ?? r?.slotMinutes ?? FALLBACK.interval);
   return {
-    open:  /^\d{2}:\d{2}$/.test(open)  ? open  : FALLBACK.open,
-    close: /^\d{2}:\d{2}$/.test(close) ? close : FALLBACK.close,
+    open:  (openRaw  && /^\d{2}:\d{2}$/.test(openRaw))  ? openRaw  : FALLBACK.open,
+    close: (closeRaw && /^\d{2}:\d{2}$/.test(closeRaw)) ? closeRaw : FALLBACK.close,
     interval: iv > 0 && iv <= 240 ? iv : FALLBACK.interval,
   };
 }

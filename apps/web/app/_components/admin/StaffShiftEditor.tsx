@@ -167,12 +167,12 @@ export default function StaffShiftEditor({ staffId, staffName, onClose, onSave, 
           }
           // type変更時の処理
           if (field === 'type' && value === 'custom') {
-            // customに変更した場合、デフォルト時間を設定
+            // customに変更した場合、settings 由来のデフォルト時間を設定
             if (!newItem.start) {
-              newItem.start = '10:00' as TimeStr;
+              newItem.start = (defaultOpen || '10:00') as TimeStr;
             }
             if (!newItem.end) {
-              newItem.end = '19:00' as TimeStr;
+              newItem.end = (defaultClose || '19:00') as TimeStr;
             }
           }
           return newItem;
@@ -340,8 +340,8 @@ export default function StaffShiftEditor({ staffId, staffName, onClose, onSave, 
                 const dayShift = weekly.find((w) => w.dow === dow) || {
                   dow,
                   enabled: false,
-                  start: '10:00' as TimeStr,
-                  end: '19:00' as TimeStr,
+                  start: (defaultOpen || '10:00') as TimeStr,
+                  end: (defaultClose || '19:00') as TimeStr,
                 };
                 const errorKey = `weekly-${dow}`;
                 const hasError = errors[errorKey];

@@ -29,8 +29,7 @@ function generateTimeSlots(open = '10:00', close = '19:00', interval = 60): stri
     const m = min % 60;
     slots.push(`${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`);
   }
-  // fallback: settings 取得前も UI が壊れないようにデフォルトを返す
-  return slots.length > 0 ? slots : ['10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00', '19:00'];
+  return slots;
 }
 
 export default function ReservationsLedger() {
