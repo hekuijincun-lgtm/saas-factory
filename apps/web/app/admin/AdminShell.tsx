@@ -162,7 +162,7 @@ export default function AdminShell({
   if (!mounted) return null;
 
   return (
-    <div className="flex h-screen overflow-hidden bg-gray-50">
+    <div data-admin-shell className="flex h-screen overflow-hidden bg-gray-50">
       {/* サイドバー */}
       <Sidebar
         storeName={storeName}
