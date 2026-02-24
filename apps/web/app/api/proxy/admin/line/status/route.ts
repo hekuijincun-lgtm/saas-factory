@@ -1,42 +1,50 @@
-import { NextResponse } from "next/server";
-
 export const runtime = "edge";
+// Note: Pages route /api/proxy/admin/line/status
+//       → upstream  /admin/integrations/line/status  (path differs intentionally)
+import { readAdminToken, injectAdminToken, makeDebugStamp, applyDebugHeaders } from "../../../_lib/proxy";
 
-function upstreamBase(): string {
-  const env = process.env as Record<string, string | undefined>;
-  const b = env.BOOKING_API_BASE || env.API_BASE;
-  if (!b) throw new Error("BOOKING_API_BASE/API_BASE is missing on Pages env");
-  return b;
+function apiBase(): string {
+  const v = process.env.API_BASE || process.env.BOOKING_API_BASE || process.env.NEXT_PUBLIC_API_BASE;
+  if (!v) throw new Error("API_BASE missing in Pages env");
+  return v.replace(/\/$/, "");
 }
 
-function corsHeaders(req: Request) {
-  const origin = req.headers.get("origin") ?? "*";
-  return {
-    "access-control-allow-origin": origin,
-    "access-control-allow-credentials": "true",
-    "access-control-allow-headers": "content-type",
-    "access-control-allow-methods": "GET,POST,OPTIONS",
-  };
-}
+export async function GET(req: Request): Promise<Response> {
+  const u = new URL(req.url);
+  const isDebug = u.searchParams.get("debug") === "1";
+  const tenantId = u.searchParams.get("tenantId") ?? "default";
 
-export async function OPTIONS(req: Request) {
-  return new NextResponse(null, { status: 204, headers: corsHeaders(req) });
-}
+  const upstream = new URL(apiBase());
+  upstream.pathname = "/admin/integrations/line/status";
+  upstream.searchParams.set("tenantId", tenantId);
 
-export async function GET(req: Request) {
-  const url = new URL(req.url);
-  const tenantId = url.searchParams.get("tenantId") ?? "default";
+  const tokenConfigured = !!readAdminToken();
+  const reqHeaders = new Headers({ "accept": "application/json", "x-tenant-id": tenantId });
+  const tokenInjected = injectAdminToken(reqHeaders, upstream.pathname);
 
-  const up = new URL(upstreamBase());
-  up.pathname = "/admin/integrations/line/status";
-  up.searchParams.set("tenantId", tenantId);
-
-  const r = await fetch(up.toString(), { method: "GET" });
+  const r = await fetch(upstream.toString(), { method: "GET", headers: reqHeaders, cache: "no-store" });
   const body = await r.text();
-
-  return new NextResponse(body, {
+  const out = new Response(body, {
     status: r.status,
-    headers: { ...corsHeaders(req), "content-type": r.headers.get("content-type") ?? "application/json", "x-proxy-stamp": "STAMP_PROXY_LINESTATUS_V1" },
+    headers: {
+      "content-type": r.headers.get("content-type") ?? "application/json",
+      "cache-control": "no-store",
+    },
+  });
+  if (tokenInjected) out.headers.set("x-admin-token-present", "1");
+  if (isDebug) {
+    applyDebugHeaders(out.headers, { stamp: makeDebugStamp(), isAdminRoute: true, tokenConfigured, tokenInjected });
+  }
+  return out;
+}
+
+export async function OPTIONS(req: Request): Promise<Response> {
+  return new Response(null, {
+    status: 204,
+    headers: {
+      "access-control-allow-origin": req.headers.get("origin") ?? "*",
+      "access-control-allow-methods": "GET,OPTIONS",
+      "access-control-allow-headers": "content-type",
+    },
   });
 }
-

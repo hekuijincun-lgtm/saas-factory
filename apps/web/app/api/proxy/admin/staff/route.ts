@@ -1,58 +1,53 @@
-import { NextRequest, NextResponse } from "next/server";
-
 export const runtime = "edge";
+import { readAdminToken, injectAdminToken, makeDebugStamp, applyDebugHeaders } from "../../_lib/proxy";
 
-// Prefer Pages env: API_BASE. Fallback to BOOKING_API_BASE if you used it before.
-const API_BASE =
-  process.env.API_BASE ||
-  process.env.BOOKING_API_BASE ||
-  "https://saas-factory-api.hekuijincun.workers.dev";
-
-function getTenantId(req: NextRequest) {
-  return req.nextUrl.searchParams.get("tenantId") || "default";
+function apiBase(): string {
+  const v = process.env.API_BASE || process.env.BOOKING_API_BASE || process.env.NEXT_PUBLIC_API_BASE;
+  if (!v) throw new Error("API_BASE missing in Pages env");
+  return v.replace(/\/$/, "");
 }
 
-async function forward(req: NextRequest) {
-  const url = new URL(req.url);
-  const tenantId = getTenantId(req);
+function tenantIdFrom(req: Request): string {
+  const u = new URL(req.url);
+  return (u.searchParams.get("tenantId") || req.headers.get("x-tenant-id") || "default").trim() || "default";
+}
 
-  // Ensure tenantId is always present
-  url.searchParams.set("tenantId", tenantId);
-
-  // Build upstream URL
-  const upstream = `${API_BASE}/admin/staff?${url.searchParams.toString()}`;
-
-  // Forward headers (keep minimal to avoid edge quirks)
-  const headers: Record<string, string> = {};
-  const ct = req.headers.get("content-type");
-  if (ct) headers["content-type"] = ct;
-
-  let body: BodyInit | undefined = undefined;
+async function forward(req: Request): Promise<Response> {
+  const u = new URL(req.url);
+  const isDebug = u.searchParams.get("debug") === "1";
+  const tenantId = tenantIdFrom(req);
   const method = req.method.toUpperCase();
+
+  const upstream = new URL(apiBase() + "/admin/staff");
+  // forward all query params except debug; ensure tenantId is set
+  u.searchParams.forEach((v, k) => { if (k !== "debug") upstream.searchParams.set(k, v); });
+  upstream.searchParams.set("tenantId", tenantId);
+
+  const tokenConfigured = !!readAdminToken();
+  const reqHeaders = new Headers({ "accept": "application/json", "x-tenant-id": tenantId });
+  const ct = req.headers.get("content-type");
+  if (ct) reqHeaders.set("content-type", ct);
+  const tokenInjected = injectAdminToken(reqHeaders, upstream.pathname);
+
+  let body: ArrayBuffer | undefined;
   if (method !== "GET" && method !== "HEAD") {
-    // preserve body
-    body = await req.text();
+    body = await req.arrayBuffer();
   }
 
-  const res = await fetch(upstream, {
-    method,
-    headers,
-    body,
-  });
-
-  const text = await res.text();
-  const resCt = res.headers.get("content-type") || "application/json; charset=utf-8";
-
-  return new NextResponse(text, {
+  const res = await fetch(upstream.toString(), { method, headers: reqHeaders, body, redirect: "manual" });
+  const outCt = res.headers.get("content-type") ?? "application/json";
+  const out = new Response(res.body, {
     status: res.status,
-    headers: {
-      "content-type": resCt,
-      "cache-control": "no-store",
-    },
+    headers: { "content-type": outCt, "cache-control": "no-store" },
   });
+  if (tokenInjected) out.headers.set("x-admin-token-present", "1");
+  if (isDebug) {
+    applyDebugHeaders(out.headers, { stamp: makeDebugStamp(), isAdminRoute: true, tokenConfigured, tokenInjected });
+  }
+  return out;
 }
 
-export async function GET(req: NextRequest)    { return forward(req); }
-export async function POST(req: NextRequest)   { return forward(req); }
-export async function PATCH(req: NextRequest)  { return forward(req); }
-export async function DELETE(req: NextRequest) { return forward(req); }
+export async function GET(req: Request) { return forward(req); }
+export async function POST(req: Request) { return forward(req); }
+export async function PATCH(req: Request) { return forward(req); }
+export async function DELETE(req: Request) { return forward(req); }
