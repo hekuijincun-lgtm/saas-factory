@@ -12,15 +12,8 @@ async function forward(req: Request, method: string): Promise<Response> {
   const tenantId = (u.searchParams.get("tenantId") || req.headers.get("x-tenant-id") || "default").trim() || "default";
   const id = u.pathname.split("/").at(-1) ?? "";
 
-  // PATCH /admin/menu/:id → POST /admin/menu with id in body (upstream compat)
-  let forwardMethod = method;
-  let forwardPath = `admin/menu/${id}`;
-  let rewritten = false;
-  if (method === "PATCH") {
-    forwardMethod = "POST";
-    forwardPath = "admin/menu";
-    rewritten = true;
-  }
+  const forwardMethod = method;
+  const forwardPath = `admin/menu/${id}`;
 
   const upstream = new URL(`${apiBase()}/${forwardPath}`);
   upstream.searchParams.set("tenantId", tenantId);
@@ -33,13 +26,6 @@ async function forward(req: Request, method: string): Promise<Response> {
   let body: ArrayBuffer | undefined;
   if (forwardMethod !== "GET" && forwardMethod !== "HEAD" && forwardMethod !== "DELETE") {
     body = await req.arrayBuffer();
-    if (rewritten && body && body.byteLength > 0) {
-      try {
-        const j = JSON.parse(new TextDecoder().decode(body));
-        if (!j.id) j.id = id;
-        body = new TextEncoder().encode(JSON.stringify(j)).buffer as ArrayBuffer;
-      } catch {}
-    }
   }
 
   const res = await fetch(upstream.toString(), { method: forwardMethod, headers: reqHeaders, body });
@@ -49,7 +35,7 @@ async function forward(req: Request, method: string): Promise<Response> {
       "content-type": res.headers.get("content-type") ?? "application/json",
       "cache-control": "no-store",
       "x-proxy-stamp": "MENU_ID_ROUTE_V1",
-      ...(rewritten ? { "x-proxy-rewrite": "patch_to_post" } : {}),
+      "x-proxy-rewrite": "none",
     },
   });
   return out;
