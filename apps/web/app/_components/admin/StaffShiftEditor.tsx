@@ -4,10 +4,10 @@ import { useState, useEffect } from 'react';
 import type { StaffShift, StaffShiftWeekly, StaffShiftException, Dow, TimeStr } from '@/src/types/shift';
 import {
   generateTimeOptions,
-  generateEndTimeOptions,
   validateShiftDay,
   generateDefaultWeekly,
   getDayLabel,
+  timeToMinutes,
 } from '@/src/lib/shiftUtils';
 import { getStaffShift, updateStaffShift } from '@/src/lib/staffShiftApi';
 import { ApiClientError } from '@/src/lib/apiClient';
@@ -19,11 +19,17 @@ interface StaffShiftEditorProps {
   staffName: string;
   onClose: () => void;
   onSave: (shift: StaffShift) => void;
+  /** 時刻選択肢（settings 由来; 未指定時は generateTimeOptions() のデフォルト） */
+  timeOptions?: TimeStr[];
+  /** デフォルト開始時刻（generateDefaultWeekly に渡す） */
+  defaultOpen?: string;
+  /** デフォルト終了時刻（generateDefaultWeekly に渡す; 自動補正の上限にも使用） */
+  defaultClose?: string;
 }
 
 const DAYS_OF_WEEK: Dow[] = [0, 1, 2, 3, 4, 5, 6]; // 日〜土
 
-export default function StaffShiftEditor({ staffId, staffName, onClose, onSave }: StaffShiftEditorProps) {
+export default function StaffShiftEditor({ staffId, staffName, onClose, onSave, timeOptions, defaultOpen, defaultClose }: StaffShiftEditorProps) {
   const [weekly, setWeekly] = useState<StaffShiftWeekly[]>([]);
   const [exceptions, setExceptions] = useState<StaffShiftException[]>([]);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -31,7 +37,8 @@ export default function StaffShiftEditor({ staffId, staffName, onClose, onSave }
   const [loading, setLoading] = useState<boolean>(true);
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  const TIME_OPTIONS = generateTimeOptions();
+  // settings 由来の選択肢があればそれを使う（fallback: 10:00-20:00/30min）
+  const TIME_OPTIONS = timeOptions ?? generateTimeOptions();
 
   // 初期化: APIからシフトを取得
   useEffect(() => {
@@ -44,14 +51,14 @@ export default function StaffShiftEditor({ staffId, staffName, onClose, onSave }
           setWeekly(shift.weekly);
         } else {
           // デフォルト値を設定
-          setWeekly(generateDefaultWeekly());
+          setWeekly(generateDefaultWeekly(defaultOpen, defaultClose));
         }
         setExceptions(shift.exceptions || []);
       } catch (err) {
         console.error(`Failed to load shift for ${staffId}:`, err);
         setSaveError(err instanceof Error ? err.message : 'シフトの読み込みに失敗しました');
         // エラー時もデフォルト値を設定
-        setWeekly(generateDefaultWeekly());
+        setWeekly(generateDefaultWeekly(defaultOpen, defaultClose));
         setExceptions([]);
       } finally {
         setLoading(false);
@@ -71,9 +78,12 @@ export default function StaffShiftEditor({ staffId, staffName, onClose, onSave }
             const currentEnd = newItem.end as TimeStr;
             // 終了時刻が開始時刻以下になった場合は調整
             if (newStart >= currentEnd) {
-              // 開始時刻の30分後を終了時刻に設定（最大20:00）
+              // 開始時刻の30分後を終了時刻に設定（上限: defaultClose または 20:00）
               const startMinutes = parseInt(newStart.split(':')[0]) * 60 + parseInt(newStart.split(':')[1]);
-              const endMinutes = Math.min(startMinutes + 30, 20 * 60);
+              const closeMinutes = defaultClose
+                ? parseInt(defaultClose.split(':')[0]) * 60 + parseInt(defaultClose.split(':')[1])
+                : 20 * 60;
+              const endMinutes = Math.min(startMinutes + 30, closeMinutes);
               const endHours = Math.floor(endMinutes / 60);
               const endMins = endMinutes % 60;
               newItem.end = `${endHours.toString().padStart(2, '0')}:${endMins.toString().padStart(2, '0')}` as TimeStr;
@@ -381,7 +391,7 @@ export default function StaffShiftEditor({ staffId, staffName, onClose, onSave }
                               onChange={(e) => handleWeeklyChange(dow, 'end', e.target.value)}
                               className="px-3 py-2 border border-brand-border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary"
                             >
-                              {generateEndTimeOptions(dayShift.start).map((time) => (
+                              {TIME_OPTIONS.filter(t => timeToMinutes(t) > timeToMinutes(dayShift.start as TimeStr)).map((time) => (
                                 <option key={time} value={time}>
                                   {time}
                                 </option>
@@ -516,7 +526,7 @@ export default function StaffShiftEditor({ staffId, staffName, onClose, onSave }
                                 className="px-3 py-2 border border-brand-border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary"
                               >
                                 {exception.start
-                                  ? generateEndTimeOptions(exception.start as TimeStr).map((time) => (
+                                  ? TIME_OPTIONS.filter(t => timeToMinutes(t) > timeToMinutes(exception.start as TimeStr)).map((time) => (
                                       <option key={time} value={time}>
                                         {time}
                                       </option>

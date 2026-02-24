@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { getStaff, createStaff, updateStaff, type Staff } from '@/src/lib/bookingApi';
 import { ApiClientError } from '@/src/lib/apiClient';
 import Card from '../ui/Card';
@@ -8,9 +9,17 @@ import DataTable from '../ui/DataTable';
 import Badge from '../ui/Badge';
 import { Plus, Edit2, X, Calendar } from 'lucide-react';
 import StaffShiftEditor from './StaffShiftEditor';
-import type { StaffShift } from '@/src/types/shift';
+import type { StaffShift, TimeStr } from '@/src/types/shift';
+import { generateTimeOptions } from '@/src/lib/shiftUtils';
+import { useAdminSettings } from '../../admin/_lib/useAdminSettings';
 
 export default function StaffManager() {
+  const searchParams = useSearchParams();
+  const tenantId = searchParams?.get('tenantId') || 'default';
+  const { settings: bizSettings } = useAdminSettings(tenantId);
+  // settings 由来の時刻選択肢（fallback: 10:00-20:00/30min）
+  const settingsTimeOptions = generateTimeOptions(bizSettings.open, bizSettings.close, bizSettings.interval) as TimeStr[];
+
   const [staffList, setStaffList] = useState<Staff[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
@@ -269,8 +278,10 @@ export default function StaffManager() {
           }}
           onSave={(shift: StaffShift) => {
             console.log('Shift saved:', shift);
-            // 将来的にAPI呼び出しをここに追加
           }}
+          timeOptions={settingsTimeOptions}
+          defaultOpen={bizSettings.open}
+          defaultClose={bizSettings.close}
         />
       )}
     </div>
