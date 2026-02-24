@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { getReservations, cancelReservationById, assignStaffToReservation, getStaff, type Reservation, type Staff } from '@/src/lib/bookingApi';
 import { ApiClientError } from '@/src/lib/apiClient';
 import { ChevronLeft, ChevronRight, Plus } from 'lucide-react';
@@ -10,19 +11,35 @@ import type { StaffShift } from '@/src/types/shift';
 import { isWorkingTime } from '@/src/lib/shiftUtils';
 import { getAdminSettings } from '@/src/lib/adminSettingsApi';
 import type { AdminSettings } from '@/src/types/settings';
+import { useAdminSettings } from '../../admin/_lib/useAdminSettings';
 
 // この定数は削除（APIから取得したstaffListを使用）
 
-// タイムスロット生成（10:00-19:00 1時間刻み）
-function generateTimeSlots(): string[] {
+// タイムスロット生成（open〜close を interval 分刻みで生成）
+// デフォルト: 10:00-19:00 を 60 分刻み（後方互換）
+function generateTimeSlots(open = '10:00', close = '19:00', interval = 60): string[] {
+  const [oh, om] = open.split(':').map(Number);
+  const [ch, cm] = close.split(':').map(Number);
+  const openMin  = oh * 60 + om;
+  const closeMin = ch * 60 + cm;
+  const step = interval > 0 ? interval : 60;
   const slots: string[] = [];
-  for (let hour = 10; hour <= 19; hour++) {
-    slots.push(`${hour.toString().padStart(2, '0')}:00`);
+  for (let min = openMin; min <= closeMin; min += step) {
+    const h = Math.floor(min / 60);
+    const m = min % 60;
+    slots.push(`${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`);
   }
-  return slots;
+  // fallback: settings 取得前も UI が壊れないようにデフォルトを返す
+  return slots.length > 0 ? slots : ['10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00', '19:00'];
 }
 
 export default function ReservationsLedger() {
+  // tenantId は URL クエリから取得（なければ default）
+  const searchParams = useSearchParams();
+  const tenantId = searchParams?.get('tenantId') || 'default';
+  // settings hook (失敗時は 10:00/19:00/30min fallback で継続)
+  const { settings: bizSettings } = useAdminSettings(tenantId);
+
   const [mounted, setMounted] = useState(false);
   const [todayStr, setTodayStr] = useState<string>('');
 
@@ -50,7 +67,11 @@ export default function ReservationsLedger() {
   const [staffShifts, setStaffShifts] = useState<Map<string, StaffShift>>(new Map());
   const [settings, setSettings] = useState<AdminSettings | null>(null);
 
-  const timeSlots = generateTimeSlots();
+  // settings が取得されたら open/close/interval に追随（取得前は デフォルト値で表示継続）
+  const timeSlots = useMemo(
+    () => generateTimeSlots(bizSettings.open, bizSettings.close, bizSettings.interval),
+    [bizSettings],
+  );
 
   // 設定を取得
   useEffect(() => {
