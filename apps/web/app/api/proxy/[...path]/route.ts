@@ -83,7 +83,9 @@ async function proxy(req: Request, ctx: Ctx): Promise<Response> {
   }
 
   // Rewrite PATCH /admin/menu/:id → POST /admin/menu (upstream compat)
+  let menuRewrite = false;
   if (req.method === "PATCH" && /^admin\/menu\/[^\/]+$/.test(rel)) {
+    menuRewrite = true;
     const menuId = segs[segs.length - 1];
     rel = "admin/menu";
     method = "POST";
@@ -113,7 +115,8 @@ async function proxy(req: Request, ctx: Ctx): Promise<Response> {
   });
 
   out.headers.set("cache-control", "no-store");
-  out.headers.set("x-proxy-stamp", "STAMP_PROXY_PATCH2PUT_V1_20260221");
+  out.headers.set("x-proxy-stamp", "CATCHALL_V1");
+  if (menuRewrite) out.headers.set("x-proxy-rewrite", "patch_to_post_catchall");
   out.headers.set("x-proxy-upstream-url", upstream.toString());
   out.headers.set("x-proxy-upstream-method", method);
   if (adminTokenInjected) out.headers.set("x-admin-token-present", "1");
