@@ -3,34 +3,22 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev -H 127.0.0.1 -p 3000",
-    "build": "next build", "pages:build": "next build && npx @cloudflare/next-on-pages",
-    "start": "next start",
-    "lint": "next lint",
+    "dev": "next dev -H 0.0.0.0 -p 3000",
+    "build": "next build",
     "build:pages": "next build && npx -y @cloudflare/next-on-pages",
-    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p functions/tsconfig.json --noEmit"
+    "start": "next start",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "lucide-react": "^0.469.0",
-    "next": "15.5.2",
-    "react": "18.3.1",
-    "react-dom": "18.3.1"
+    "next": "14.1.0",
+    "react": "^18",
+    "react-dom": "^18"
   },
   "devDependencies": {
-    "@cloudflare/next-on-pages": "^1.13.16",
-    "@cloudflare/workers-types": "^4.20260218.0",
-    "@types/node": "^25.2.0",
-    "@types/react": "^19.2.11",
-    "autoprefixer": "^10.4.0",
-    "eslint-config-next": "14.2.35",
-    "postcss": "^8.4.0",
-    "tailwindcss": "^3.4.0",
-    "typescript": "5.9.3",
-    "vercel": "47.0.4"
-  },
-  "engines": {
-    "node": ">=20"
-  },
-  "packageManager": "pnpm@10.25.0"
+    "typescript": "^5.0.0",
+    "@types/node": "^20.0.0",
+    "@types/react": "^18.0.0",
+    "@types/react-dom": "^18.0.0",
+    "@cloudflare/next-on-pages": "^1.0.0"
+  }
 }
-
