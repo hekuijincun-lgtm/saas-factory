@@ -58,6 +58,7 @@ export interface IntegrationSettings {
 }
 
 export interface AdminSettings {
+  storeName?: string; // 店舗名（表示用）
   publicDays: number; // 今日から何日後まで公開
   tenant: TenantInfo;
   businessHours: BusinessHours;
