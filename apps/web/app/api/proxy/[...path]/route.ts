@@ -75,30 +75,11 @@ async function proxy(req: Request, ctx: Ctx): Promise<Response> {
   const isTokenConfigured = isAdminRoute && !!readAdminToken();
   const adminTokenInjected = injectAdminToken(headers, upstream.pathname);
 
-  let method = (req.method === "PATCH" ? "PUT" : req.method).toUpperCase();
+  let method = req.method.toUpperCase();
 
   let body: ArrayBuffer | undefined = undefined;
   if (method !== "GET" && method !== "HEAD") {
     body = await req.arrayBuffer();
-  }
-
-  // Rewrite PATCH /admin/menu/:id → POST /admin/menu (upstream compat)
-  let menuRewrite = false;
-  if (req.method === "PATCH" && /^admin\/menu\/[^\/]+$/.test(rel)) {
-    menuRewrite = true;
-    const menuId = segs[segs.length - 1];
-    rel = "admin/menu";
-    method = "POST";
-    upstream = new URL(`${base}/${rel}`);
-    upstream.search = qs ? `?${qs}` : "";
-    if (body && body.byteLength > 0) {
-      try {
-        const j = JSON.parse(new TextDecoder().decode(body));
-        if (!j.id) j.id = menuId;
-        body = new TextEncoder().encode(JSON.stringify(j)).buffer as ArrayBuffer;
-      } catch {}
-    }
-    headers.delete("content-length");
   }
 
   const res = await fetch(upstream.toString(), {
@@ -116,7 +97,6 @@ async function proxy(req: Request, ctx: Ctx): Promise<Response> {
 
   out.headers.set("cache-control", "no-store");
   out.headers.set("x-proxy-stamp", "CATCHALL_V1");
-  if (menuRewrite) out.headers.set("x-proxy-rewrite", "menu_patch_to_post");
   out.headers.set("x-proxy-upstream-url", upstream.toString());
   out.headers.set("x-proxy-upstream-method", method);
   if (adminTokenInjected) out.headers.set("x-admin-token-present", "1");
