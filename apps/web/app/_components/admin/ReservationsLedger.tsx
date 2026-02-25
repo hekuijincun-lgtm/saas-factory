@@ -80,7 +80,10 @@ export default function ReservationsLedger() {
   const [menuList, setMenuList] = useState<MenuItem[]>([]);
 
   // 予約可能日時グリッド
+  // availabilityOverrides: KV生データ（cycleAvailabilityのサイクル判定用）
   const [availabilityOverrides, setAvailabilityOverrides] = useState<Map<string, string>>(new Map());
+  // slotsPerStaff: /slots から取得したスタッフ別スロット状態（表示用・bookingと同一ソース）
+  const [slotsPerStaff, setSlotsPerStaff] = useState<Map<string, Record<string, string>>>(new Map());
   const [availSaving, setAvailSaving] = useState(false);
 
   // 予約編集モーダル
@@ -196,7 +199,7 @@ export default function ReservationsLedger() {
     };
   }, [date, fetchReservations]);
 
-  // 予約可能日時オーバーライドを取得
+  // KV生データを取得（cycleAvailabilityのサイクル判定用）
   const fetchAvailability = useCallback(async () => {
     if (!date || staffList.length === 0) return;
     try {
@@ -205,15 +208,15 @@ export default function ReservationsLedger() {
       const json = await res.json() as { ok: boolean; staff: Record<string, Record<string, string>> };
       if (json.ok && json.staff) {
         const newMap = new Map<string, string>();
-        for (const [staffId, times] of Object.entries(json.staff)) {
+        for (const [sid, times] of Object.entries(json.staff)) {
           for (const [time, status] of Object.entries(times)) {
-            newMap.set(`${staffId}:${time}`, status as string);
+            newMap.set(`${sid}:${time}`, status as string);
           }
         }
         setAvailabilityOverrides(newMap);
       }
     } catch (err) {
-      console.warn('Failed to fetch availability:', err);
+      console.warn('Failed to fetch availability KV:', err);
     }
   }, [date, staffList, tenantId]);
 
@@ -221,21 +224,48 @@ export default function ReservationsLedger() {
     fetchAvailability();
   }, [fetchAvailability]);
 
-  // 予約可能ステータス取得（override優先、なければシフト由来）
-  const getAvailabilityStatus = useCallback((staffId: string, time: string): 'open' | 'half' | 'closed' => {
-    const override = availabilityOverrides.get(`${staffId}:${time}`);
-    if (override === 'open' || override === 'half' || override === 'closed') return override;
-    const shift = staffShifts.get(staffId);
-    return isWorkingTime(date, time, shift || null) ? 'open' : 'closed';
-  }, [availabilityOverrides, staffShifts, date]);
+  // /slots から各スタッフのスロット状態を取得（表示用・bookingと同一ソース）
+  const fetchSlotsPerStaff = useCallback(async () => {
+    if (!date || staffList.length === 0) return;
+    const results = await Promise.allSettled(
+      staffList.map(async (staff) => {
+        const params = new URLSearchParams({ date, tenantId, staffId: staff.id });
+        const res = await fetch(`/api/proxy/slots?${params.toString()}`, { cache: 'no-store' });
+        const json = await res.json() as any;
+        const slotMap: Record<string, string> = {};
+        for (const slot of (json.slots || [])) {
+          slotMap[slot.time] = slot.status; // 'available' | 'few' | 'full'
+        }
+        return { staffId: staff.id, slotMap };
+      })
+    );
+    const updated = new Map<string, Record<string, string>>();
+    for (const r of results) {
+      if (r.status === 'fulfilled') {
+        updated.set(r.value.staffId, r.value.slotMap);
+      }
+    }
+    setSlotsPerStaff(updated);
+  }, [date, staffList, tenantId]);
 
-  // ○→△→×→○ サイクル、KVに保存（楽観的更新）
+  useEffect(() => {
+    fetchSlotsPerStaff();
+  }, [fetchSlotsPerStaff]);
+
+  // 表示用スロット状態（/slots と同一ソース → bookingと完全一致）
+  const getSlotStatusForDisplay = useCallback((staffId: string, time: string): 'available' | 'few' | 'full' => {
+    return (slotsPerStaff.get(staffId)?.[time] ?? 'available') as 'available' | 'few' | 'full';
+  }, [slotsPerStaff]);
+
+  // ○→△→×→○ サイクル：KVを更新後 /slots を再fetchして表示を同期
   const cycleAvailability = useCallback(async (staffId: string, time: string) => {
-    const current = getAvailabilityStatus(staffId, time);
+    // サイクル判定はKV生データ（availabilityOverrides）を使用
+    const kvStatus = availabilityOverrides.get(`${staffId}:${time}`) || 'open';
     const cycleMap: Record<string, 'open' | 'half' | 'closed'> = { open: 'half', half: 'closed', closed: 'open' };
-    const next = cycleMap[current];
+    const next = cycleMap[kvStatus];
     const key = `${staffId}:${time}`;
 
+    // KV楽観的更新（次のサイクルのため）
     setAvailabilityOverrides(prev => new Map(prev).set(key, next));
     setAvailSaving(true);
     try {
@@ -244,13 +274,25 @@ export default function ReservationsLedger() {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ tenantId, staffId, date, time, status: next }),
       });
+      // 保存成功後 /slots を再fetchして表示を更新（bookingと同一ソース）
+      try {
+        const params = new URLSearchParams({ date, tenantId, staffId });
+        const res = await fetch(`/api/proxy/slots?${params.toString()}`, { cache: 'no-store' });
+        const json = await res.json() as any;
+        const slotMap: Record<string, string> = {};
+        for (const slot of (json.slots || [])) {
+          slotMap[slot.time] = slot.status;
+        }
+        setSlotsPerStaff(prev => new Map(prev).set(staffId, slotMap));
+      } catch { /* display will be updated on next poll */ }
     } catch (err) {
       console.warn('Failed to save availability:', err);
-      setAvailabilityOverrides(prev => new Map(prev).set(key, current));
+      // ロールバック
+      setAvailabilityOverrides(prev => new Map(prev).set(key, kvStatus));
     } finally {
       setAvailSaving(false);
     }
-  }, [getAvailabilityStatus, tenantId, date]);
+  }, [availabilityOverrides, tenantId, date]);
 
   // スタッフ一覧を取得
   useEffect(() => {
@@ -599,7 +641,7 @@ export default function ReservationsLedger() {
         <div className="flex items-center justify-between p-4 border-b border-brand-border">
           <div>
             <h2 className="text-lg font-semibold text-brand-text">予約可能日時</h2>
-            <p className="text-xs text-brand-muted mt-0.5">クリックで ○→△→×→○ 切替。KVに保存され /slots に反映されます</p>
+            <p className="text-xs text-brand-muted mt-0.5">クリックで ○→△→×→○ 切替（KV保存後 /slots 再fetchで同期）。表示は booking と同一ソース</p>
           </div>
           {availSaving && (
             <div className="flex items-center gap-2 text-xs text-brand-muted">
@@ -635,12 +677,13 @@ export default function ReservationsLedger() {
                       {time}
                     </td>
                     {staffList.map((staff) => {
-                      const status = getAvailabilityStatus(staff.id, time);
+                      // 表示は /slots から取得（bookingと同一ソース）
+                      const slotStatus = getSlotStatusForDisplay(staff.id, time);
                       const cfg = {
-                        open:   { label: '○', cls: 'text-green-600 bg-green-50 hover:bg-green-100 border-green-200' },
-                        half:   { label: '△', cls: 'text-amber-600 bg-amber-50 hover:bg-amber-100 border-amber-200' },
-                        closed: { label: '×', cls: 'text-gray-400 bg-gray-50 hover:bg-gray-100 border-gray-200' },
-                      }[status];
+                        available: { label: '○', cls: 'text-green-600 bg-green-50 hover:bg-green-100 border-green-200' },
+                        few:       { label: '△', cls: 'text-amber-600 bg-amber-50 hover:bg-amber-100 border-amber-200' },
+                        full:      { label: '×', cls: 'text-gray-400 bg-gray-50 hover:bg-gray-100 border-gray-200' },
+                      }[slotStatus];
                       return (
                         <td key={staff.id} className="border-r border-brand-border px-2 py-2 text-center last:border-r-0">
                           <button
