@@ -80,6 +80,12 @@ export default function ReservationsLedger() {
   const [availabilityOverrides, setAvailabilityOverrides] = useState<Map<string, string>>(new Map());
   const [availSaving, setAvailSaving] = useState(false);
 
+  // 予約編集モーダル
+  const [editMode, setEditMode] = useState(false);
+  const [editForm, setEditForm] = useState<{ name: string; phone: string; note: string; staffId: string }>({ name: '', phone: '', note: '', staffId: 'any' });
+  const [editing, setEditing] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+
   // settings が取得されたら open/close/interval に追随（取得前は デフォルト値で表示継続）
   const timeSlots = useMemo(
     () => generateTimeSlots(bizSettings.open, bizSettings.close, bizSettings.interval),
@@ -137,7 +143,7 @@ export default function ReservationsLedger() {
   // staffId がない場合は 'any' として扱う
   const reservationMap = new Map<string, Reservation>();
   reservations.forEach((res) => {
-    const staffId = (res as any).staffId || 'any';
+    const staffId = res.staffId || 'any';
     const key = `${res.date}|${res.time}|${staffId}`;
     reservationMap.set(key, res);
   });
@@ -327,7 +333,7 @@ export default function ReservationsLedger() {
 
   // 予約の現在の staffId を取得（割り当て状態を確認するため）
   const getReservationStaffId = (reservation: Reservation): string => {
-    return (reservation as any).staffId || 'any';
+    return reservation.staffId || 'any';
   };
 
   // 担当者を割り当て（API呼び出し）
@@ -360,6 +366,45 @@ export default function ReservationsLedger() {
       setError(errorMessage);
     } finally {
       setAssigning(false);
+    }
+  };
+
+  // 編集モードを開始
+  const startEdit = (reservation: Reservation) => {
+    setEditForm({
+      name: reservation.name,
+      phone: reservation.phone || '',
+      note: reservation.note || '',
+      staffId: reservation.staffId || 'any',
+    });
+    setEditError(null);
+    setEditMode(true);
+  };
+
+  // 予約を編集（PATCH /admin/reservations/:id）
+  const handleEdit = async () => {
+    if (!selectedReservation) return;
+    if (!editForm.name.trim()) { setEditError('お名前は必須です'); return; }
+    setEditing(true);
+    setEditError(null);
+    try {
+      await fetch(`/api/proxy/admin/reservations/${selectedReservation.reservationId}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          name: editForm.name.trim(),
+          phone: editForm.phone.trim() || null,
+          note: editForm.note.trim() || null,
+          staffId: editForm.staffId === 'any' ? null : editForm.staffId,
+        }),
+      });
+      setEditMode(false);
+      setSelectedReservation(null);
+      await fetchReservations();
+    } catch (err) {
+      setEditError(err instanceof Error ? err.message : '更新に失敗しました');
+    } finally {
+      setEditing(false);
     }
   };
 
@@ -611,15 +656,20 @@ export default function ReservationsLedger() {
 
       {/* 詳細モーダル（既存を流用） */}
       {selectedReservation && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setSelectedReservation(null)}>
+        <div
+          className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+          onClick={() => { setSelectedReservation(null); setEditMode(false); }}
+        >
           <div className="bg-white rounded-2xl shadow-soft max-w-2xl w-full p-6 space-y-6" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-start justify-between">
               <div>
-                <h2 className="text-2xl font-semibold text-brand-text">予約詳細</h2>
+                <h2 className="text-2xl font-semibold text-brand-text">
+                  {editMode ? '予約を編集' : '予約詳細'}
+                </h2>
                 <p className="text-sm text-brand-muted mt-1">予約ID: {selectedReservation.reservationId}</p>
               </div>
               <button
-                onClick={() => setSelectedReservation(null)}
+                onClick={() => { setSelectedReservation(null); setEditMode(false); }}
                 className="p-2 text-brand-muted hover:text-brand-text hover:bg-brand-bg rounded-lg transition-all"
               >
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -628,118 +678,161 @@ export default function ReservationsLedger() {
               </button>
             </div>
 
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <p className="text-sm font-medium text-brand-muted mb-1">日付</p>
-                  <p className="text-base text-brand-text">{selectedReservation.date}</p>
-                </div>
-                <div>
-                  <p className="text-sm font-medium text-brand-muted mb-1">時間</p>
-                  <p className="text-base text-brand-text">{selectedReservation.time}</p>
-                </div>
-              </div>
-
-              <div>
-                <p className="text-sm font-medium text-brand-muted mb-1">お名前</p>
-                <p className="text-base text-brand-text">{selectedReservation.name}</p>
-              </div>
-
-              {selectedReservation.phone && (
-                <div>
-                  <p className="text-sm font-medium text-brand-muted mb-1">電話番号</p>
-                  <p className="text-base text-brand-text">{selectedReservation.phone}</p>
-                </div>
-              )}
-
-              <div>
-                <p className="text-sm font-medium text-brand-muted mb-1">作成日時</p>
-                <p className="text-base text-brand-text">
-                  {mounted ? (() => {
-                    try {
-                      return new Date(selectedReservation.createdAt).toLocaleString('ja-JP');
-                    } catch {
-                      return selectedReservation.createdAt;
-                    }
-                  })() : selectedReservation.createdAt}
-                </p>
-              </div>
-
-              <div>
-                <p className="text-sm font-medium text-brand-muted mb-1">ステータス</p>
-                <div><Badge variant="reserved">予約済み</Badge></div>
-              </div>
-
-              {/* 担当者情報 */}
-              <div>
-                <p className="text-sm font-medium text-brand-muted mb-1">担当者</p>
-                <p className="text-base text-brand-text">
-                  {(() => {
-                    const staffId = getReservationStaffId(selectedReservation);
-                    if (staffId === 'any') return '指名なし';
-                    const staff = staffList.find((s) => s.id === staffId);
-                    return staff ? staff.name : '指名なし';
-                  })()}
-                </p>
-              </div>
-
-              {/* 担当者を割り当て（指名なしの場合のみ表示） */}
-              {getReservationStaffId(selectedReservation) === 'any' && (
-                <div className="border-t border-brand-border pt-4 mt-4">
-                  <h3 className="text-lg font-semibold text-brand-text mb-3">担当者を割り当て</h3>
-                  <div className="space-y-3">
-                    <div>
-                      <label htmlFor="assign-staff" className="block text-sm font-medium text-brand-text mb-2">
-                        スタッフを選択
-                      </label>
-                      <select
-                        id="assign-staff"
-                        value={assigningStaffId}
-                        onChange={(e) => setAssigningStaffId(e.target.value)}
-                        className="w-full px-4 py-3 border border-brand-border rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary transition-all bg-white"
-                      >
-                        <option value="">選択してください</option>
-                        {staffList
-                          .filter((staff) => {
-                            // 選択された予約の日時で、そのスタッフが勤務中かどうかをチェック
-                            if (!selectedReservation) return false;
-                            const shift = staffShifts.get(staff.id);
-                            return isWorkingTime(selectedReservation.date, selectedReservation.time, shift || null);
-                          })
-                          .map((staff) => (
-                            <option key={staff.id} value={staff.id}>
-                              {staff.name} {staff.role ? `(${staff.role})` : ''}
-                            </option>
-                          ))}
-                      </select>
-                    </div>
-                    <button
-                      onClick={handleAssignStaff}
-                      disabled={!assigningStaffId}
-                      className="w-full px-4 py-3 bg-brand-primary text-white rounded-xl font-medium hover:shadow-md focus:outline-none focus:ring-2 focus:ring-brand-primary focus:ring-offset-2 disabled:bg-brand-muted disabled:cursor-not-allowed transition-all"
-                    >
-                      割り当て
-                    </button>
-                    <p className="text-xs text-brand-muted">
-                      ※ 現時点では画面表示のみ更新されます。API連携は準備中です。
-                    </p>
+            {editMode ? (
+              /* ─── 編集フォーム ─── */
+              <div className="space-y-4">
+                {editError && (
+                  <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700">{editError}</div>
+                )}
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <p className="text-sm font-medium text-brand-muted mb-1">日付（変更不可）</p>
+                    <p className="text-base text-brand-text">{selectedReservation.date}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-brand-muted mb-1">時間（変更不可）</p>
+                    <p className="text-base text-brand-text">{selectedReservation.time}</p>
                   </div>
                 </div>
-              )}
-            </div>
+                <div>
+                  <label className="block text-sm font-medium text-brand-text mb-1">お名前 <span className="text-red-500">*</span></label>
+                  <input
+                    type="text"
+                    value={editForm.name}
+                    onChange={(e) => setEditForm(f => ({ ...f, name: e.target.value }))}
+                    className="w-full px-3 py-2 border border-brand-border rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-brand-text mb-1">電話番号</label>
+                  <input
+                    type="tel"
+                    value={editForm.phone}
+                    onChange={(e) => setEditForm(f => ({ ...f, phone: e.target.value }))}
+                    placeholder="090-0000-0000"
+                    className="w-full px-3 py-2 border border-brand-border rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-brand-text mb-1">担当スタッフ</label>
+                  <select
+                    value={editForm.staffId}
+                    onChange={(e) => setEditForm(f => ({ ...f, staffId: e.target.value }))}
+                    className="w-full px-3 py-2 border border-brand-border rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary bg-white text-sm"
+                  >
+                    <option value="any">指名なし</option>
+                    {staffList.map((s) => (
+                      <option key={s.id} value={s.id}>{s.name}{s.role ? ` (${s.role})` : ''}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-brand-text mb-1">備考</label>
+                  <textarea
+                    value={editForm.note}
+                    onChange={(e) => setEditForm(f => ({ ...f, note: e.target.value }))}
+                    rows={2}
+                    className="w-full px-3 py-2 border border-brand-border rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary text-sm resize-none"
+                  />
+                </div>
+                <div className="flex gap-3 pt-2">
+                  <button
+                    onClick={handleEdit}
+                    disabled={editing}
+                    className="flex-1 px-4 py-3 bg-brand-primary text-white rounded-xl font-medium hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed transition-all text-sm"
+                  >
+                    {editing ? '保存中...' : '保存する'}
+                  </button>
+                  <button
+                    onClick={() => { setEditMode(false); setEditError(null); }}
+                    className="px-4 py-3 text-sm font-medium text-brand-text bg-white border border-brand-border rounded-xl hover:shadow-md transition-all"
+                  >
+                    戻る
+                  </button>
+                </div>
+              </div>
+            ) : (
+              /* ─── 詳細表示 ─── */
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <p className="text-sm font-medium text-brand-muted mb-1">日付</p>
+                    <p className="text-base text-brand-text">{selectedReservation.date}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-brand-muted mb-1">時間</p>
+                    <p className="text-base text-brand-text">{selectedReservation.time}</p>
+                  </div>
+                </div>
 
-            <div className="flex items-center gap-2 pt-4 border-t border-brand-border">
-              <button
-                onClick={() => {
-                  setSelectedReservation(null);
-                  handleCancel(selectedReservation);
-                }}
-                disabled={cancellingId === selectedReservation.reservationId}
-                className="px-4 py-2 text-sm font-medium text-rose-600 bg-rose-50 border border-rose-200 rounded-xl hover:bg-rose-100 focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-              >
-                {cancellingId === selectedReservation.reservationId ? 'キャンセル中...' : 'キャンセル'}
-              </button>
-            </div>
+                <div>
+                  <p className="text-sm font-medium text-brand-muted mb-1">お名前</p>
+                  <p className="text-base text-brand-text">{selectedReservation.name}</p>
+                </div>
+
+                {selectedReservation.phone && (
+                  <div>
+                    <p className="text-sm font-medium text-brand-muted mb-1">電話番号</p>
+                    <p className="text-base text-brand-text">{selectedReservation.phone}</p>
+                  </div>
+                )}
+
+                {selectedReservation.note && (
+                  <div>
+                    <p className="text-sm font-medium text-brand-muted mb-1">備考</p>
+                    <p className="text-base text-brand-text">{selectedReservation.note}</p>
+                  </div>
+                )}
+
+                <div>
+                  <p className="text-sm font-medium text-brand-muted mb-1">作成日時</p>
+                  <p className="text-base text-brand-text">
+                    {mounted ? (() => {
+                      try { return new Date(selectedReservation.createdAt).toLocaleString('ja-JP'); }
+                      catch { return selectedReservation.createdAt; }
+                    })() : selectedReservation.createdAt}
+                  </p>
+                </div>
+
+                <div>
+                  <p className="text-sm font-medium text-brand-muted mb-1">ステータス</p>
+                  <div><Badge variant="reserved">予約済み</Badge></div>
+                </div>
+
+                <div>
+                  <p className="text-sm font-medium text-brand-muted mb-1">担当者</p>
+                  <p className="text-base text-brand-text">
+                    {(() => {
+                      const sid = getReservationStaffId(selectedReservation);
+                      if (sid === 'any') return '指名なし';
+                      const s = staffList.find((x) => x.id === sid);
+                      return s ? s.name : sid;
+                    })()}
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {!editMode && (
+              <div className="flex items-center gap-2 pt-4 border-t border-brand-border">
+                <button
+                  onClick={() => startEdit(selectedReservation)}
+                  className="px-4 py-2 text-sm font-medium text-brand-text bg-white border border-brand-border rounded-xl hover:shadow-md transition-all"
+                >
+                  編集
+                </button>
+                <button
+                  onClick={() => {
+                    setSelectedReservation(null);
+                    handleCancel(selectedReservation);
+                  }}
+                  disabled={cancellingId === selectedReservation.reservationId}
+                  className="px-4 py-2 text-sm font-medium text-rose-600 bg-rose-50 border border-rose-200 rounded-xl hover:bg-rose-100 focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                >
+                  {cancellingId === selectedReservation.reservationId ? 'キャンセル中...' : 'キャンセル'}
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}

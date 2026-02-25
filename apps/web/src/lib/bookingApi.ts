@@ -39,6 +39,10 @@ export interface Reservation {
   time: string;
   name: string;
   phone?: string;
+  staffId?: string;
+  note?: string;
+  durationMin?: number;
+  status?: string;
   createdAt: string;
 }
 

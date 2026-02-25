@@ -833,6 +833,134 @@ app.put("/admin/settings", async (c) => {
 });
 
 /** =========================
+ * Admin Reservations (READ / UPDATE / DELETE)
+ * GET  /admin/reservations?tenantId=&date=YYYY-MM-DD
+ * PATCH /admin/reservations/:id  { staffId?, name?, phone?, note? }
+ * DELETE /admin/reservations/:id  → mark status='cancelled'
+ * ========================= */
+app.get("/admin/reservations", async (c) => {
+  try {
+    const tenantId = getTenantId(c);
+    const date = c.req.query("date");
+    if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      return c.json({ ok: false, error: "bad_date", hint: "?date=YYYY-MM-DD" }, 400);
+    }
+    const db = (c.env as any).DB;
+    if (!db) return c.json({ ok: false, error: "DB_not_bound" }, 500);
+
+    // slot_start is stored as ISO with +09:00, e.g. "2026-02-25T06:00:00+09:00"
+    const like = `${date}T%`;
+    const q = await db
+      .prepare(`SELECT id, tenant_id, slot_start, start_at, end_at, duration_minutes,
+                       customer_name, customer_phone, staff_id, note, created_at, status
+                FROM reservations
+                WHERE tenant_id = ? AND slot_start LIKE ? AND status != 'cancelled'
+                ORDER BY slot_start ASC`)
+      .bind(tenantId, like)
+      .all();
+
+    const rows: any[] = (q.results || []);
+    const reservations = rows.map((r: any) => {
+      // extract date/time from slot_start (already JST: "YYYY-MM-DDTHH:MM:SS+09:00")
+      const slotStr = String(r.slot_start || r.start_at || "");
+      const dtMatch = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/.exec(slotStr);
+      const rDate = dtMatch ? dtMatch[1] : date;
+      const rTime = dtMatch ? dtMatch[2] : "";
+
+      return {
+        reservationId: r.id,
+        date: rDate,
+        time: rTime,
+        name: r.customer_name ?? "",
+        phone: r.customer_phone ?? undefined,
+        staffId: r.staff_id ?? "any",
+        note: r.note ?? undefined,
+        durationMin: r.duration_minutes ?? 60,
+        status: r.status ?? "active",
+        createdAt: r.created_at ?? "",
+      };
+    });
+
+    return c.json({ ok: true, tenantId, date, reservations });
+  } catch (error) {
+    return c.json({ ok: false, error: "Failed to fetch reservations", message: String(error) }, 500);
+  }
+});
+
+app.patch("/admin/reservations/:id", async (c) => {
+  try {
+    const tenantId = getTenantId(c);
+    const id = c.req.param("id");
+    const db = (c.env as any).DB;
+    if (!db) return c.json({ ok: false, error: "DB_not_bound" }, 500);
+
+    const body = await c.req.json<{ staffId?: string | null; name?: string; phone?: string | null; note?: string | null }>()
+      .catch(() => ({} as any));
+
+    // Build SET clause dynamically (only provided fields)
+    const sets: string[] = [];
+    const vals: unknown[] = [];
+    if ("staffId" in body) { sets.push("staff_id = ?"); vals.push(body.staffId ?? null); }
+    if ("name" in body && body.name !== undefined) { sets.push("customer_name = ?"); vals.push(body.name); }
+    if ("phone" in body) { sets.push("customer_phone = ?"); vals.push(body.phone ?? null); }
+    if ("note" in body) { sets.push("note = ?"); vals.push(body.note ?? null); }
+
+    if (sets.length === 0) return c.json({ ok: false, error: "no_fields_to_update" }, 400);
+
+    vals.push(id, tenantId);
+    await db.prepare(`UPDATE reservations SET ${sets.join(", ")} WHERE id = ? AND tenant_id = ?`)
+      .bind(...vals).run();
+
+    // Return updated row
+    const row: any = await db
+      .prepare("SELECT * FROM reservations WHERE id = ? AND tenant_id = ?")
+      .bind(id, tenantId).first();
+    if (!row) return c.json({ ok: false, error: "not_found" }, 404);
+
+    const slotStr = String(row.slot_start || row.start_at || "");
+    const dtMatch = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/.exec(slotStr);
+    return c.json({
+      ok: true, tenantId,
+      data: {
+        reservationId: row.id,
+        date: dtMatch ? dtMatch[1] : "",
+        time: dtMatch ? dtMatch[2] : "",
+        name: row.customer_name ?? "",
+        phone: row.customer_phone ?? undefined,
+        staffId: row.staff_id ?? "any",
+        note: row.note ?? undefined,
+        status: row.status ?? "active",
+        createdAt: row.created_at ?? "",
+      },
+    });
+  } catch (error) {
+    return c.json({ ok: false, error: "Failed to update reservation", message: String(error) }, 500);
+  }
+});
+
+app.delete("/admin/reservations/:id", async (c) => {
+  try {
+    const tenantId = getTenantId(c);
+    const id = c.req.param("id");
+    const db = (c.env as any).DB;
+    if (!db) return c.json({ ok: false, error: "DB_not_bound" }, 500);
+
+    const existing: any = await db
+      .prepare("SELECT id, status FROM reservations WHERE id = ? AND tenant_id = ?")
+      .bind(id, tenantId).first();
+    if (!existing) return c.json({ ok: false, error: "not_found" }, 404);
+    if (existing.status === "cancelled") return c.json({ ok: false, error: "already_cancelled" }, 409);
+
+    await db.prepare("UPDATE reservations SET status = 'cancelled' WHERE id = ? AND tenant_id = ?")
+      .bind(id, tenantId).run();
+
+    return c.json({ ok: true, tenantId, id, status: "cancelled" });
+  } catch (error) {
+    return c.json({ ok: false, error: "Failed to cancel reservation", message: String(error) }, 500);
+  }
+});
+
+/** =========================
  * Availability (admin-managed slot status)
  * GET  /admin/availability?tenantId=&date=
  * PUT  /admin/availability  { staffId, date, time, status }
