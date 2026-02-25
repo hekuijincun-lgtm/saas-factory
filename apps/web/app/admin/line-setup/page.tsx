@@ -4,9 +4,7 @@ import * as React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { saveAdminSettings } from "../../lib/adminApi";
 
-// ===============================
-// ✅ Shell
-// ===============================
+// ─── Shell ───────────────────────────────────────────────────────────────────
 function BookingLikeShell({
   label = "ADMIN",
   title,
@@ -31,17 +29,11 @@ function BookingLikeShell({
   );
 }
 
-// ===============================
-// 🔐 Credentials UI
-// ===============================
+// ─── Field rows ───────────────────────────────────────────────────────────────
 function maskValue(v: string, keep = 4) {
   if (!v) return "";
   if (v.length <= keep * 2) return "•".repeat(Math.max(8, v.length));
-  return (
-    v.slice(0, keep) +
-    "•".repeat(Math.max(8, v.length - keep * 2)) +
-    v.slice(-keep)
-  );
+  return v.slice(0, keep) + "•".repeat(Math.max(8, v.length - keep * 2)) + v.slice(-keep);
 }
 
 function FieldRow({
@@ -51,6 +43,7 @@ function FieldRow({
   onChange,
   mono = false,
   secret = false,
+  readOnly = false,
 }: {
   label: string;
   value: string;
@@ -58,6 +51,7 @@ function FieldRow({
   onChange: (v: string) => void;
   mono?: boolean;
   secret?: boolean;
+  readOnly?: boolean;
 }) {
   const [reveal, setReveal] = React.useState(false);
   const shown = secret && !reveal ? maskValue(value) : value;
@@ -98,14 +92,14 @@ function FieldRow({
           </button>
         </div>
       </div>
-
       <input
         value={shown}
         placeholder={placeholder}
-        onChange={(e) => onChange(e.target.value)}
+        readOnly={readOnly}
+        onChange={(e) => !readOnly && onChange(e.target.value)}
         className={[
           "w-full rounded-xl border bg-white px-3 py-2",
-          "focus:outline-none focus:ring-2 focus:ring-slate-300",
+          readOnly ? "bg-slate-50 text-slate-500 cursor-default" : "focus:outline-none focus:ring-2 focus:ring-slate-300",
           mono ? "font-mono text-[13px]" : "",
           secret && !reveal ? "tracking-wider text-slate-700" : "",
         ].join(" ")}
@@ -114,7 +108,13 @@ function FieldRow({
   );
 }
 
-type Creds = { channelId: string; channelSecret: string; channelAccessToken: string };
+// ─── Credentials card ─────────────────────────────────────────────────────────
+type Creds = {
+  channelId: string;
+  channelSecret: string;
+  channelAccessToken: string;
+  bookingUrl: string;
+};
 
 function CredentialsCard({
   creds,
@@ -123,6 +123,7 @@ function CredentialsCard({
   message,
   onSave,
   changed,
+  webhookUrl,
 }: {
   creds: Creds;
   setCreds: React.Dispatch<React.SetStateAction<Creds>>;
@@ -130,6 +131,7 @@ function CredentialsCard({
   message: string;
   onSave: () => Promise<void> | void;
   changed: boolean;
+  webhookUrl: string;
 }) {
   const ready =
     /^\d+$/.test((creds.channelId ?? "").replace(/[^\d]/g, "")) &&
@@ -143,6 +145,7 @@ function CredentialsCard({
 
   return (
     <div className="rounded-2xl border bg-white shadow-sm">
+      {/* header */}
       <div className="flex items-start justify-between gap-4 border-b px-5 py-4">
         <div className="flex items-center gap-3">
           <div className="grid h-10 w-10 place-items-center rounded-2xl bg-slate-900 text-white">
@@ -159,6 +162,17 @@ function CredentialsCard({
       </div>
 
       <div className="grid gap-4 px-5 py-5">
+        {/* Webhook URL — read-only, for pasting into LINE Developers */}
+        <FieldRow
+          label="Webhook URL（LINE Developers に貼り付け）"
+          value={webhookUrl}
+          readOnly
+          mono
+          onChange={() => {}}
+        />
+
+        <hr className="border-slate-100" />
+
         <FieldRow
           label="Channel ID（数字）"
           value={creds.channelId ?? ""}
@@ -183,11 +197,22 @@ function CredentialsCard({
           onChange={(v) => setCreds((p) => ({ ...p, channelAccessToken: v }))}
         />
 
+        <hr className="border-slate-100" />
+
+        {/* Booking URL — optional override */}
+        <FieldRow
+          label="予約ページURL（任意・未入力で自動）"
+          value={creds.bookingUrl ?? ""}
+          placeholder="例: https://example.com/booking?tenantId=default"
+          mono
+          onChange={(v) => setCreds((p) => ({ ...p, bookingUrl: v }))}
+        />
+
+        {/* actions */}
         <div className="flex flex-col gap-2 pt-1 sm:flex-row sm:items-center sm:justify-between">
           <div className="text-xs text-slate-500">
             {ready ? "入力OK ✅ 保存して反映しよ" : "不足があります（ID/Secret/Token）"}
           </div>
-
           <button
             type="button"
             onClick={onSave}
@@ -213,20 +238,31 @@ function CredentialsCard({
   );
 }
 
+// ─── Page ─────────────────────────────────────────────────────────────────────
 export default function LineSetupPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const tenantId = searchParams.get("tenantId") ?? "default";
 
+  // Webhook URL to display — includes tenantId so LINE knows which tenant
+  const [webhookUrl, setWebhookUrl] = React.useState("");
+  React.useEffect(() => {
+    setWebhookUrl(
+      `${window.location.origin}/api/line/webhook?tenantId=${encodeURIComponent(tenantId)}`
+    );
+  }, [tenantId]);
+
   const [creds, setCreds] = React.useState<Creds>({
     channelId: "",
     channelSecret: "",
     channelAccessToken: "",
+    bookingUrl: "",
   });
   const [initialCreds, setInitialCreds] = React.useState<Creds>({
     channelId: "",
     channelSecret: "",
     channelAccessToken: "",
+    bookingUrl: "",
   });
 
   const [saving, setSaving] = React.useState(false);
@@ -235,30 +271,33 @@ export default function LineSetupPage() {
   const changed =
     creds.channelId !== initialCreds.channelId ||
     creds.channelSecret !== initialCreds.channelSecret ||
-    creds.channelAccessToken !== initialCreds.channelAccessToken;
+    creds.channelAccessToken !== initialCreds.channelAccessToken ||
+    creds.bookingUrl !== initialCreds.bookingUrl;
 
   async function onSave() {
     setSaving(true);
     setMessage("");
     try {
       const payload: Creds = {
-        channelId: (creds.channelId ?? "").trim(),
-        channelSecret: (creds.channelSecret ?? "").trim(),
+        channelId:        (creds.channelId ?? "").trim(),
+        channelSecret:    (creds.channelSecret ?? "").trim(),
         channelAccessToken: (creds.channelAccessToken ?? "").trim(),
+        bookingUrl:       (creds.bookingUrl ?? "").trim(),
       };
 
-      // 既存の /admin/settings に統合して保存 — 新しい integrations API は作らない
+      // 既存の /admin/settings に統合して保存
       await saveAdminSettings(
         {
           integrations: {
             line: {
               connected: true,
-              ...payload,
+              channelId:          payload.channelId,
+              channelSecret:      payload.channelSecret,
+              channelAccessToken: payload.channelAccessToken,
+              ...(payload.bookingUrl ? { bookingUrl: payload.bookingUrl } : {}),
             },
           },
-          onboarding: {
-            lineConnected: true,
-          },
+          onboarding: { lineConnected: true },
         },
         tenantId
       );
@@ -282,6 +321,7 @@ export default function LineSetupPage() {
         message={message}
         onSave={onSave}
         changed={changed}
+        webhookUrl={webhookUrl}
       />
     </BookingLikeShell>
   );

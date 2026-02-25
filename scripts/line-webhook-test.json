@@ -1,0 +1,21 @@
+{
+  "destination": "U0000000000000000000000000000000",
+  "events": [
+    {
+      "type": "message",
+      "mode": "active",
+      "timestamp": 1708844400000,
+      "source": {
+        "type": "user",
+        "userId": "U0000000000000000000000000000000"
+      },
+      "replyToken": "0000000000000000000000000000000000000000",
+      "message": {
+        "id": "1234567890",
+        "type": "text",
+        "quoteToken": "q3Plxr4AgKd...",
+        "text": "予約"
+      }
+    }
+  ]
+}

@@ -2,19 +2,24 @@ import { NextResponse } from "next/server";
 
 export const runtime = "edge";
 
-const isDebug = (process.env.LINE_DEBUG === "1");
+// ─── version / stamps ────────────────────────────────────────────────────────
+const STAMP_V5  = "LINE_WEBHOOK_V5_20260225_140000";
+const STAMP_V4  = "LINE_WEBHOOK_V4_20260215_202858"; // kept for reference / fallback echo
+const where     = "api/line/webhook";
+const isDebug   = (process.env.LINE_DEBUG === "1");
 
-const where = "api/line/webhook";
-const stamp = "LINE_WEBHOOK_V4_20260215_202858";
-
-// --- utils ---
-function base64FromBytes(bytes: Uint8Array) {
+// ─── utils ───────────────────────────────────────────────────────────────────
+function base64FromBytes(bytes: Uint8Array): string {
   let s = "";
   for (const b of bytes) s += String.fromCharCode(b);
   return btoa(s);
 }
 
-async function verifyLineSignature(rawBody: ArrayBuffer, signature: string, secret: string) {
+async function verifyLineSignature(
+  rawBody: ArrayBuffer,
+  signature: string,
+  secret: string
+): Promise<boolean> {
   const key = await crypto.subtle.importKey(
     "raw",
     new TextEncoder().encode(secret),
@@ -22,13 +27,15 @@ async function verifyLineSignature(rawBody: ArrayBuffer, signature: string, secr
     false,
     ["sign"]
   );
-
   const mac = await crypto.subtle.sign("HMAC", key, rawBody);
-  const expected = base64FromBytes(new Uint8Array(mac));
-  return expected === signature;
+  return base64FromBytes(new Uint8Array(mac)) === signature;
 }
 
-async function replyLine(accessToken: string, replyToken: string, messages: any[]) {
+async function replyLine(
+  accessToken: string,
+  replyToken: string,
+  messages: any[]
+): Promise<{ ok: boolean; status: number; bodyText: string }> {
   const res = await fetch("https://api.line.me/v2/bot/message/reply", {
     method: "POST",
     headers: {
@@ -37,15 +44,14 @@ async function replyLine(accessToken: string, replyToken: string, messages: any[
     },
     body: JSON.stringify({ replyToken, messages }),
   });
-
   const bodyText = await res.text().catch(() => "");
   return { ok: res.ok, status: res.status, bodyText };
 }
 
-function buildBookingFlex(bookingUrl: string) {
+function buildBookingFlex(bookingUrl: string, stamp: string) {
   return {
     type: "flex",
-    altText: "予約ページを開く (" + stamp + ")",
+    altText: "予約ページを開く",
     contents: {
       type: "bubble",
       body: {
@@ -54,8 +60,19 @@ function buildBookingFlex(bookingUrl: string) {
         spacing: "md",
         contents: [
           { type: "text", text: "予約ページ", weight: "bold", size: "xl" },
-          { type: "text", text: "下のボタンから予約を開始してね😉", wrap: true, color: "#666666" },
-          { type: "text", text: `stamp: ${stamp}`, size: "xs", color: "#999999", wrap: true },
+          {
+            type: "text",
+            text: "下のボタンから予約を開始してね😉",
+            wrap: true,
+            color: "#666666",
+          },
+          {
+            type: "text",
+            text: `stamp: ${stamp}`,
+            size: "xs",
+            color: "#aaaaaa",
+            wrap: true,
+          },
         ],
       },
       footer: {
@@ -74,80 +91,175 @@ function buildBookingFlex(bookingUrl: string) {
   };
 }
 
-// --- GET debug (no-store) ---
-export async function GET() {
-const secret = process.env.LINE_CHANNEL_SECRET ?? "";
-  const accessToken = process.env.LINE_CHANNEL_ACCESS_TOKEN ?? "";
+// ─── tenant config resolution ─────────────────────────────────────────────────
+// Priority: KV (via Workers /admin/settings) → process.env (V4 fallback)
+interface TenantLineConfig {
+  channelSecret: string;
+  channelAccessToken: string;
+  bookingUrl: string;
+  source: "kv" | "env";
+}
+
+async function getTenantLineConfig(
+  tenantId: string,
+  origin: string
+): Promise<TenantLineConfig> {
+  const apiBase = (
+    process.env.API_BASE ??
+    process.env.NEXT_PUBLIC_API_BASE ??
+    ""
+  ).replace(/\/+$/, "");
+  const adminToken = process.env.ADMIN_TOKEN ?? "";
+
+  // 1) Try Workers KV via /admin/settings
+  if (apiBase) {
+    try {
+      const url = `${apiBase}/admin/settings?tenantId=${encodeURIComponent(tenantId)}`;
+      const headers: Record<string, string> = { Accept: "application/json" };
+      if (adminToken) headers["X-Admin-Token"] = adminToken;
+
+      const r = await fetch(url, { headers });
+      if (r.ok) {
+        const json = (await r.json()) as any;
+        // Workers returns { ok, data: {...} } or flat { ... }
+        const s = json?.data ?? json;
+        const line = s?.integrations?.line;
+
+        const channelSecret      = String(line?.channelSecret      ?? "").trim();
+        const channelAccessToken = String(line?.channelAccessToken ?? "").trim();
+        const bookingUrl = String(line?.bookingUrl ?? "").trim() ||
+          `${origin}/booking?tenantId=${encodeURIComponent(tenantId)}`;
+
+        if (channelSecret && channelAccessToken) {
+          return { channelSecret, channelAccessToken, bookingUrl, source: "kv" };
+        }
+      }
+    } catch {
+      // fall through to env fallback
+    }
+  }
+
+  // 2) Fallback: process.env — preserves V4 behavior exactly
+  const channelSecret      = process.env.LINE_CHANNEL_SECRET      ?? "";
+  const channelAccessToken = process.env.LINE_CHANNEL_ACCESS_TOKEN ?? "";
+  const bookingUrl =
+    process.env.LINE_BOOKING_URL_DEFAULT ??
+    `${origin}/booking`;
+
+  return { channelSecret, channelAccessToken, bookingUrl, source: "env" };
+}
+
+// ─── GET (debug probe) ────────────────────────────────────────────────────────
+export async function GET(req: Request) {
+  const { searchParams, origin } = new URL(req.url);
+  const tenantId = searchParams.get("tenantId") ?? "default";
+
+  const cfg = await getTenantLineConfig(tenantId, origin);
   const allowBadSig = (process.env.LINE_WEBHOOK_ALLOW_BAD_SIGNATURE ?? "0") === "1";
-  const bookingUrl = process.env.LINE_BOOKING_URL_DEFAULT ?? "";
 
   return NextResponse.json(
     {
       ok: true,
       where,
-      method: "GET",
-      stamp,
-      secretLen: secret.length,
-      accessTokenLen: accessToken.length,
+      stamp: STAMP_V5,
+      tenantId,
+      secretLen: cfg.channelSecret.length,
+      accessTokenLen: cfg.channelAccessToken.length,
       allowBadSig,
-      bookingUrl,
+      bookingUrl: cfg.bookingUrl,
+      source: cfg.source,
     },
     {
       headers: {
-        "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
-        "Pragma": "no-cache",
-        "Expires": "0",
+        "Cache-Control": "no-store, no-cache, must-revalidate",
+        Pragma: "no-cache",
+        Expires: "0",
       },
     }
   );
 }
 
-// --- POST webhook ---
+// ─── POST (LINE webhook) ──────────────────────────────────────────────────────
 export async function POST(req: Request) {
-const sig = req.headers.get("x-line-signature") ?? "";
-  const secret = process.env.LINE_CHANNEL_SECRET ?? "";
-  const accessToken = process.env.LINE_CHANNEL_ACCESS_TOKEN ?? "";
+  const { searchParams, origin } = new URL(req.url);
+  // Multi-tenant: tenantId from query param (set this in LINE Developers webhook URL)
+  const tenantId =
+    searchParams.get("tenantId") ??
+    process.env.LINE_DEFAULT_TENANT_ID ??
+    "default";
+
+  const sig         = req.headers.get("x-line-signature") ?? "";
   const allowBadSig = (process.env.LINE_WEBHOOK_ALLOW_BAD_SIGNATURE ?? "0") === "1";
+  const stamp       = STAMP_V5;
 
-  const bookingUrl =
-    process.env.LINE_BOOKING_URL_DEFAULT ??
-    "https://saas-factory-web-v2.pages.dev/booking";
-
+  // Read body once
   const raw = await req.arrayBuffer();
 
-  if (!secret) {
-    return NextResponse.json({ ok: false, stamp, where, error: "missing_LINE_CHANNEL_SECRET" }, { status: 500 });
+  // Resolve credentials: KV → env fallback
+  const cfg = await getTenantLineConfig(tenantId, origin);
+
+  if (!cfg.channelSecret) {
+    return NextResponse.json(
+      { ok: false, stamp, where, tenantId, source: cfg.source, error: "missing_channelSecret" },
+      { status: 500 }
+    );
   }
-  if (!accessToken) {
-    return NextResponse.json({ ok: false, stamp, where, error: "missing_LINE_CHANNEL_ACCESS_TOKEN" }, { status: 500 });
+  if (!cfg.channelAccessToken) {
+    return NextResponse.json(
+      { ok: false, stamp, where, tenantId, source: cfg.source, error: "missing_channelAccessToken" },
+      { status: 500 }
+    );
   }
 
-  const verified = sig ? await verifyLineSignature(raw, sig, secret) : false;
+  // Signature verification
+  const verified = sig ? await verifyLineSignature(raw, sig, cfg.channelSecret) : false;
   if (!verified && !allowBadSig) {
     return NextResponse.json(
-      { ok: false, stamp, where, error: "bad_signature", verified, hasSig: !!sig, bodyLen: raw.byteLength },
+      {
+        ok: false,
+        stamp,
+        where,
+        tenantId,
+        error: "bad_signature",
+        verified,
+        hasSig: !!sig,
+        bodyLen: raw.byteLength,
+      },
       { status: 401 }
     );
   }
 
+  // Parse payload
   let payload: any;
   try {
     payload = JSON.parse(new TextDecoder().decode(raw));
   } catch (e: any) {
     return NextResponse.json(
-      { ok: false, stamp, where, error: "invalid_json", message: String(e?.message ?? e), verified },
+      { ok: false, stamp, where, tenantId, error: "invalid_json", message: String(e?.message ?? e) },
       { status: 400 }
     );
   }
 
   const events = Array.isArray(payload?.events) ? payload.events : [];
-  const ev = events.find((x: any) => x?.type === "message" && x?.message?.type === "text" && x?.replyToken);
+  const ev = events.find(
+    (x: any) =>
+      x?.type === "message" && x?.message?.type === "text" && x?.replyToken
+  );
 
   if (!ev) {
-    return NextResponse.json({ ok: true, stamp, where, verified, replied: false, eventCount: events.length });
+    return NextResponse.json({
+      ok: true,
+      stamp,
+      where,
+      tenantId,
+      source: cfg.source,
+      verified,
+      replied: false,
+      eventCount: events.length,
+    });
   }
 
-  const textIn = String(ev.message.text ?? "");
+  const textIn     = String(ev.message.text ?? "");
   const replyToken = String(ev.replyToken);
 
   const normalized = textIn
@@ -159,28 +271,29 @@ const sig = req.headers.get("x-line-signature") ?? "";
 
   if (normalized.includes("予約") || normalized.includes("よやく")) {
     messages = [
-      ...(isDebug ? [{ type: "text", text: `DBG stamp=${stamp} url=${bookingUrl}` }] : []),
-      buildBookingFlex(bookingUrl),
+      ...(isDebug
+        ? [{ type: "text", text: `DBG stamp=${stamp} url=${cfg.bookingUrl} src=${cfg.source}` }]
+        : []),
+      buildBookingFlex(cfg.bookingUrl, stamp),
     ];
   } else {
+    // Preserve V4 echo behavior for non-booking messages
     messages = [{ type: "text", text: `ECHO: ${textIn} (stamp=${stamp})` }];
   }
 
-  const rep = await replyLine(accessToken, replyToken, messages);
+  const rep = await replyLine(cfg.channelAccessToken, replyToken, messages);
 
   return NextResponse.json({
     ok: true,
     stamp,
     where,
+    tenantId,
+    source: cfg.source,
     verified,
     replied: true,
     replyStatus: rep.status,
     replyOk: rep.ok,
     replyBody: rep.ok ? null : rep.bodyText?.slice(0, 300) ?? null,
     eventCount: events.length,
-    mode: messages[0]?.type ?? "unknown",
   });
 }
-
-
-
