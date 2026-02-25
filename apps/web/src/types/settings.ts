@@ -57,6 +57,10 @@ export interface IntegrationSettings {
   };
 }
 
+export interface OnboardingSettings {
+  lineConnected?: boolean;
+}
+
 export interface AdminSettings {
   storeName?: string; // 店舗名（表示用）
   publicDays: number; // 今日から何日後まで公開
@@ -68,6 +72,7 @@ export interface AdminSettings {
   notifications: NotificationSettings;
   assignment: AssignmentSettings;
   integrations: IntegrationSettings;
+  onboarding?: OnboardingSettings;
 }
 
 /**

@@ -1,7 +1,9 @@
 "use client";
 
 import * as React from "react";
+import { useRouter } from "next/navigation";
 import { readJson } from "../../../src/lib/json";
+import { saveAdminSettings } from "../../lib/adminApi";
 // ===============================
 // 🔧 API Endpoints（必要ならここだけ変更）
 // ===============================
@@ -315,7 +317,7 @@ function CredentialsCard({
                 : "bg-slate-900 text-white hover:bg-slate-800",
             ].join(" ")}
           >
-            {saving ? "Saving…" : changed ? "保存する" : "保存済み"}
+            {saving ? "Saving…" : changed ? "保存して次へ（メニュー作成）" : "保存済み"}
           </button>
         </div>
 
@@ -330,6 +332,7 @@ function CredentialsCard({
 }
 
 export default function LineSetupPage() {
+  const router = useRouter();
   const [status, setStatus] = React.useState<LineStatus | null>(null);
   const [loadingStatus, setLoadingStatus] = React.useState(false);
   const [statusError, setStatusError] = React.useState("");
@@ -412,6 +415,13 @@ export default function LineSetupPage() {
       setMessage(jj?.message ?? "保存しました ✅");
       setInitialCreds(payload);
       await loadStatus();
+      // onboarding: lineConnected=true を保存してメニュー作成ページへ遷移
+      try {
+        await saveAdminSettings({ onboarding: { lineConnected: true } });
+      } catch {
+        // onboarding 保存失敗は警告のみ（メイン保存は成功済み）
+      }
+      router.push("/admin/menu?onboarding=1");
     } catch (e: any) {
       setMessage(`保存に失敗: ${e?.message ?? String(e)}`);
     } finally {
