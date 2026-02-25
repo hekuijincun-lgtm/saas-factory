@@ -1261,12 +1261,14 @@ app.get("/auth/line/start", async (c) => {
     c.req.query("returnTo") ||
     "https://saas-factory-web-v2.pages.dev/admin/settings";
 
-  const clientId = (c.env as any).LINE_CHANNEL_ID;
-  const redirectUri = (c.env as any).LINE_REDIRECT_URI;
+  const env = c.env as any;
+  // Fallback across multiple possible env var names for forward-compatibility
+  const clientId = env.LINE_CHANNEL_ID ?? env.LINE_LOGIN_CHANNEL_ID ?? env.LINE_CLIENT_ID ?? "";
+  const redirectUri = env.LINE_REDIRECT_URI ?? env.LINE_LOGIN_REDIRECT_URI ?? env.LINE_CALLBACK_URL ?? "";
 
   if (!clientId || !redirectUri) {
     return c.json(
-      { ok: false, error: "missing_line_env", need: ["LINE_CHANNEL_ID", "LINE_REDIRECT_URI"] },
+      { ok: false, error: "missing line env", need: ["LINE_CHANNEL_ID", "LINE_REDIRECT_URI"] },
       500
     );
   }
@@ -1308,6 +1310,36 @@ app.get("/auth/line/callback", async (c) => {
   return c.redirect(returnTo, 302);
 });
 /* === /LINE_OAUTH_MIN_ROUTES_V1 === */
+
+/* === LINE_STATUS_ROUTE_V1 ===
+   GET /admin/integrations/line/status
+   Returns LINE env/connection status for the admin UI.
+   Protected by /admin/* middleware (ADMIN_TOKEN).
+*/
+app.get("/admin/integrations/line/status", async (c) => {
+  const tenantId = c.req.query("tenantId") || "default";
+  const env = c.env as any;
+
+  const channelId   = env.LINE_CHANNEL_ID ?? env.LINE_LOGIN_CHANNEL_ID ?? env.LINE_CLIENT_ID ?? "";
+  const redirectUri = env.LINE_REDIRECT_URI ?? env.LINE_LOGIN_REDIRECT_URI ?? env.LINE_CALLBACK_URL ?? "";
+
+  const loginReady = !!(channelId && redirectUri);
+  const need: string[] = [];
+  if (!channelId)   need.push("LINE_CHANNEL_ID");
+  if (!redirectUri) need.push("LINE_REDIRECT_URI");
+
+  return c.json({
+    ok: true,
+    tenantId,
+    connected: loginReady,
+    loginReady,
+    need,
+    line_session_present: false,
+    stamp: "LINE_STATUS_v1",
+    debug: false,
+  });
+});
+/* === /LINE_STATUS_ROUTE_V1 === */
 
 
 

@@ -2,7 +2,6 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { readJson } from "../../../src/lib/json";
 import { saveAdminSettings } from "../../lib/adminApi";
 // ===============================
 // 🔧 API Endpoints（必要ならここだけ変更）
@@ -363,10 +362,11 @@ export default function LineSetupPage() {
       const u = new URL(STATUS_URL, window.location.origin);
       u.searchParams.set("nocache", crypto.randomUUID());
       const r = await fetch(u.toString(), { method: "GET", cache: "no-store" });
-      const j = (await r.json()) as LineStatus;
-      const jj: { error?: string; message?: string } = await readJson<{ error?: string; message?: string }>(r);
-      if (!r.ok) throw new Error(jj?.error ?? `status http ${r.status}`);
-      setStatus(j);
+      // Read body exactly once; guard against empty/non-JSON responses
+      let j: any = null;
+      try { j = await r.json(); } catch { j = {}; }
+      if (!r.ok) throw new Error(j?.error ?? j?.message ?? `status http ${r.status}`);
+      setStatus(j as LineStatus);
     } catch (e: any) {
       setStatusError(e?.message ?? String(e));
       setStatus(null);
@@ -408,11 +408,12 @@ export default function LineSetupPage() {
         body: JSON.stringify(payload),
       });
 
-      const j = await r.json().catch(() => ({} as any));
-      const jj: { error?: string; message?: string } = await readJson<{ error?: string; message?: string }>(r);
-      if (!r.ok) throw new Error(jj?.error ?? `save http ${r.status}`);
+      // Read body exactly once; guard against empty/non-JSON responses
+      let j: any = {};
+      try { j = await r.json(); } catch { j = {}; }
+      if (!r.ok) throw new Error(j?.error ?? j?.message ?? `save http ${r.status}`);
 
-      setMessage(jj?.message ?? "保存しました ✅");
+      setMessage(j?.message ?? "保存しました ✅");
       setInitialCreds(payload);
       await loadStatus();
       // onboarding: lineConnected=true を保存してメニュー作成ページへ遷移

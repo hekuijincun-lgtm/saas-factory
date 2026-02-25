@@ -87,6 +87,7 @@ bindings = [
 # ===== AUTO-ADDED production env (cloned from staging) =====
 [env.production]
 name = "saas-factory-api"
+vars = { ENVIRONMENT = "production", WEB_BASE = "https://saas-factory-web-v2.pages.dev", LINE_LOGIN_CHANNEL_ID = "2008915612", LINE_REDIRECT_URI = "https://saas-factory-web-v2.pages.dev/api/auth/line/callback" }
 
 
 
