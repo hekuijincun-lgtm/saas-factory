@@ -1,16 +1,11 @@
 "use client";
 
 import * as React from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { saveAdminSettings } from "../../lib/adminApi";
+
 // ===============================
-// 🔧 API Endpoints（必要ならここだけ変更）
-// ===============================
-const STATUS_URL = "/api/proxy/admin/integrations/line/status";
-const CREDS_GET_URL  = "/api/proxy/admin/line/credentials";
-const CREDS_SAVE_URL = "/api/proxy/admin/integrations/line/save";
-// ===============================
-// ✅ Booking 風 Shell（同梱で安全）
+// ✅ Shell
 // ===============================
 function BookingLikeShell({
   label = "ADMIN",
@@ -37,119 +32,7 @@ function BookingLikeShell({
 }
 
 // ===============================
-// 🟢 Status UI
-// ===============================
-type LineStatus = {
-  ok?: boolean;
-  stamp?: string;
-  line_session_present?: boolean;
-  debug?: boolean;
-  [k: string]: any;
-};
-
-function StatusRow({
-  label,
-  active,
-  activeText,
-  inactiveText,
-  tone = "normal",
-}: {
-  label: string;
-  active?: boolean;
-  activeText: string;
-  inactiveText: string;
-  tone?: "normal" | "warn";
-}) {
-  const dot = active
-    ? "bg-emerald-500"
-    : tone === "warn"
-    ? "bg-amber-500"
-    : "bg-rose-500";
-
-  const pill = active
-    ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-    : tone === "warn"
-    ? "bg-amber-50 text-amber-700 border-amber-200"
-    : "bg-rose-50 text-rose-700 border-rose-200";
-
-  return (
-    <div className="flex items-center justify-between rounded-2xl border bg-white px-5 py-4 shadow-sm">
-      <div className="text-sm font-medium text-slate-700">{label}</div>
-      <div className="flex items-center gap-2">
-        <span className={`h-2.5 w-2.5 rounded-full ${dot}`} />
-        <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${pill}`}>
-          {active ? activeText : inactiveText}
-        </span>
-      </div>
-    </div>
-  );
-}
-
-function StatusCard({
-  status,
-  loading,
-  onReload,
-  error,
-}: {
-  status: LineStatus | null;
-  loading: boolean;
-  onReload: () => void;
-  error: string;
-}) {
-  return (
-    <div className="rounded-2xl border bg-white shadow-sm">
-      <div className="flex items-start justify-between gap-4 border-b px-5 py-4">
-        <div>
-          <div className="text-base font-semibold text-slate-900">Status</div>
-          <div className="text-sm text-slate-500">接続状態（API から取得）</div>
-        </div>
-        <button
-          type="button"
-          onClick={onReload}
-          className="rounded-xl border px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 active:scale-[0.99]"
-        >
-          {loading ? "Reloading…" : "↻ Reload"}
-        </button>
-      </div>
-
-      <div className="grid gap-4 px-5 py-5">
-        {error ? (
-          <div className="rounded-xl border bg-rose-50 px-4 py-3 text-sm text-rose-800">
-            {error}
-          </div>
-        ) : null}
-
-        <StatusRow
-          label="Connection"
-          active={!!status?.ok}
-          activeText="Connected"
-          inactiveText="Disconnected"
-        />
-        <StatusRow
-          label="Session"
-          active={!!status?.line_session_present}
-          activeText="Active"
-          inactiveText="Missing"
-          tone="warn"
-        />
-        <StatusRow
-          label="Debug"
-          active={!status?.debug}
-          activeText="Off"
-          inactiveText="On"
-          tone="warn"
-        />
-
-        <div className="text-xs text-slate-500">
-          stamp: <span className="font-mono">{status?.stamp ?? "-"}</span>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ===============================
-// 🔐 Credentials UI（あなたのコード）
+// 🔐 Credentials UI
 // ===============================
 function maskValue(v: string, keep = 4) {
   if (!v) return "";
@@ -332,9 +215,8 @@ function CredentialsCard({
 
 export default function LineSetupPage() {
   const router = useRouter();
-  const [status, setStatus] = React.useState<LineStatus | null>(null);
-  const [loadingStatus, setLoadingStatus] = React.useState(false);
-  const [statusError, setStatusError] = React.useState("");
+  const searchParams = useSearchParams();
+  const tenantId = searchParams.get("tenantId") ?? "default";
 
   const [creds, setCreds] = React.useState<Creds>({
     channelId: "",
@@ -355,43 +237,6 @@ export default function LineSetupPage() {
     creds.channelSecret !== initialCreds.channelSecret ||
     creds.channelAccessToken !== initialCreds.channelAccessToken;
 
-  async function loadStatus() {
-    setLoadingStatus(true);
-    setStatusError("");
-    try {
-      const u = new URL(STATUS_URL, window.location.origin);
-      u.searchParams.set("nocache", crypto.randomUUID());
-      const r = await fetch(u.toString(), { method: "GET", cache: "no-store" });
-      // Read body exactly once; guard against empty/non-JSON responses
-      let j: any = null;
-      try { j = await r.json(); } catch { j = {}; }
-      if (!r.ok) throw new Error(j?.error ?? j?.message ?? `status http ${r.status}`);
-      setStatus(j as LineStatus);
-    } catch (e: any) {
-      setStatusError(e?.message ?? String(e));
-      setStatus(null);
-    } finally {
-      setLoadingStatus(false);
-    }
-  }
-
-  async function loadCredsIfAvailable() {
-    try {
-      const u = new URL(CREDS_GET_URL, window.location.origin);
-      u.searchParams.set("nocache", crypto.randomUUID());
-      const r = await fetch(u.toString(), { method: "GET", cache: "no-store" });
-      if (!r.ok) return;
-      const j = (await r.json()) as Partial<Creds>;
-      const next: Creds = {
-        channelId: j.channelId ?? "",
-        channelSecret: j.channelSecret ?? "",
-        channelAccessToken: j.channelAccessToken ?? "",
-      };
-      setCreds(next);
-      setInitialCreds(next);
-    } catch {}
-  }
-
   async function onSave() {
     setSaving(true);
     setMessage("");
@@ -402,27 +247,25 @@ export default function LineSetupPage() {
         channelAccessToken: (creds.channelAccessToken ?? "").trim(),
       };
 
-      const r = await fetch(CREDS_SAVE_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
+      // 既存の /admin/settings に統合して保存 — 新しい integrations API は作らない
+      await saveAdminSettings(
+        {
+          integrations: {
+            line: {
+              connected: true,
+              ...payload,
+            },
+          },
+          onboarding: {
+            lineConnected: true,
+          },
+        },
+        tenantId
+      );
 
-      // Read body exactly once; guard against empty/non-JSON responses
-      let j: any = {};
-      try { j = await r.json(); } catch { j = {}; }
-      if (!r.ok) throw new Error(j?.error ?? j?.message ?? `save http ${r.status}`);
-
-      setMessage(j?.message ?? "保存しました ✅");
+      setMessage("保存しました ✅");
       setInitialCreds(payload);
-      await loadStatus();
-      // onboarding: lineConnected=true を保存してメニュー作成ページへ遷移
-      try {
-        await saveAdminSettings({ onboarding: { lineConnected: true } });
-      } catch {
-        // onboarding 保存失敗は警告のみ（メイン保存は成功済み）
-      }
-      router.push("/admin/menu?onboarding=1");
+      router.push(`/admin/menu?tenantId=${tenantId}&onboarding=1`);
     } catch (e: any) {
       setMessage(`保存に失敗: ${e?.message ?? String(e)}`);
     } finally {
@@ -430,29 +273,16 @@ export default function LineSetupPage() {
     }
   }
 
-  React.useEffect(() => {
-    loadStatus();
-    // loadCredsIfAvailable(); // disabled: GET endpoint currently broken
-}, []);
-
   return (
     <BookingLikeShell label="ADMIN" title="LINE 連携設定">
-      <StatusCard status={status} loading={loadingStatus} onReload={loadStatus} error={statusError} />
-      <CredentialsCard creds={creds} setCreds={setCreds} saving={saving} message={message} onSave={onSave} changed={changed} />
+      <CredentialsCard
+        creds={creds}
+        setCreds={setCreds}
+        saving={saving}
+        message={message}
+        onSave={onSave}
+        changed={changed}
+      />
     </BookingLikeShell>
   );
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-

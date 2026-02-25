@@ -43,6 +43,9 @@ export interface AssignmentSettings {
 export interface IntegrationSettings {
   line?: {
     connected: boolean;
+    channelId?: string; // Messaging API Channel ID
+    channelSecret?: string; // Messaging API Channel Secret
+    channelAccessToken?: string; // Messaging API Channel Access Token
     userId?: string; // LINEユーザーID（表示用メタ）
     displayName?: string; // 表示名（表示用メタ）
     connectedAt?: number; // 接続日時（Unix timestamp、表示用メタ）
