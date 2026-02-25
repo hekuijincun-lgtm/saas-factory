@@ -503,28 +503,38 @@ const parseHHMM = (s: string) => {
           for(const r of resAll){ if(overlaps(t, end, r.a0, r.a1)){ available = false; break } }
           status = available ? 'available' : 'full'
         } else {
-          // Find best available status across active staff members
-          let bestStatus: SlotStatus = 'full'
+          // ── Count-based aggregation (correct capacity model) ──
+          // 'any' reservations consume ONE staff slot each — not all staff.
+          // 1) Count how many 'any' reservations conflict with this time window
+          let anyConflictCount = 0
+          for(const r of (resByStaff['any'] || [])){ if(overlaps(t, end, r.a0, r.a1)) anyConflictCount++ }
+
+          // 2) Collect status of each staff member (only own D1 + KV, NOT 'any' resv)
+          const staffStatuses: SlotStatus[] = []
           for(const sid of activeStaffIds){
-            // Check D1 conflict for this specific staff
-            const sidResv = (resByStaff[sid] || []).concat(resByStaff['any'] || [])
-            let conflict = false
-            for(const r of sidResv){ if(overlaps(t, end, r.a0, r.a1)){ conflict = true; break } }
-            if(conflict) continue   // this staff has a booking conflict
+            // Own D1 conflict check (excludes 'any' reservations)
+            let ownConflict = false
+            for(const r of (resByStaff[sid] || [])){ if(overlaps(t, end, r.a0, r.a1)){ ownConflict = true; break } }
+            if(ownConflict) continue
 
             const ovr = (allStaffAvail[sid] || {})[time]
             if(ovr === 'closed') continue  // admin closed this staff for this time
 
-            // Staff is available for this slot
-            if(ovr === 'half'){
-              if(bestStatus === 'full') bestStatus = 'few'
-            } else {
-              bestStatus = 'available'
-              break  // At least one staff is fully available — no need to check further
-            }
+            staffStatuses.push(ovr === 'half' ? 'few' : 'available')
           }
-          available = (bestStatus !== 'full')
-          status = bestStatus
+
+          // 3) Deduct 'any' reservations from available capacity
+          const remainingCount = staffStatuses.length - anyConflictCount
+          if(remainingCount <= 0){
+            available = false
+            status = 'full'
+          } else {
+            available = true
+            // Sort best-first (available > few), skip 'any'-consumed slots, take remaining
+            const sorted = staffStatuses.slice().sort((a, b) => a === b ? 0 : a === 'available' ? -1 : 1)
+            const remaining = sorted.slice(anyConflictCount)
+            status = remaining.some(s => s === 'available') ? 'available' : 'few'
+          }
         }
       }
 
