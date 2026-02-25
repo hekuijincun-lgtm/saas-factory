@@ -257,6 +257,14 @@ app.get("/__build", (c) => c.json({ ok: true, stamp: "API_BUILD_V1" }));
     if(body.closedWeekdays != null){
       patch.closedWeekdays = Array.isArray(body.closedWeekdays) ? body.closedWeekdays.map((x:any)=>Number(x)) : []
     }
+    // nested objects from the full AdminSettings schema
+    if(body.publicDays != null) patch.publicDays = Number(body.publicDays)
+    if(body.tenant != null && typeof body.tenant === 'object') patch.tenant = body.tenant
+    if(body.businessHours != null && typeof body.businessHours === 'object') patch.businessHours = body.businessHours
+    if(body.rules != null && typeof body.rules === 'object') patch.rules = body.rules
+    if(body.notifications != null && typeof body.notifications === 'object') patch.notifications = body.notifications
+    if(body.assignment != null && typeof body.assignment === 'object') patch.assignment = body.assignment
+    if(body.exceptions != null && Array.isArray(body.exceptions)) patch.exceptions = body.exceptions
 
     // read existing KV, merge patch on top (partial save - don't overwrite other fields)
     const key = 'settings:' + tenantId
@@ -265,6 +273,24 @@ app.get("/__build", (c) => c.json({ ok: true, stamp: "API_BUILD_V1" }));
       const ev = await kv.get(key, "json")
       if(ev && typeof ev === 'object') existing = ev
     } catch { try { const s = await kv.get(key); if(s) existing = JSON.parse(s) } catch {} }
+
+    // deep-merge integrations so sub-objects (line, stripe) are merged not replaced
+    if(body.integrations != null && typeof body.integrations === 'object') {
+      const existingInteg = existing.integrations || {}
+      const bodyInteg = body.integrations
+      patch.integrations = { ...existingInteg }
+      if(bodyInteg.line != null && typeof bodyInteg.line === 'object') {
+        patch.integrations.line = { ...(existingInteg.line || {}), ...bodyInteg.line }
+      }
+      if(bodyInteg.stripe != null && typeof bodyInteg.stripe === 'object') {
+        patch.integrations.stripe = { ...(existingInteg.stripe || {}), ...bodyInteg.stripe }
+      }
+    }
+    // onboarding: shallow merge
+    if(body.onboarding != null && typeof body.onboarding === 'object') {
+      patch.onboarding = { ...(existing.onboarding || {}), ...body.onboarding }
+    }
+
     const merged = { ...existing, ...patch }
     await kv.put(key, JSON.stringify(merged))
 
@@ -1340,6 +1366,158 @@ app.get("/admin/integrations/line/status", async (c) => {
   });
 });
 /* === /LINE_STATUS_ROUTE_V1 === */
+
+/* =========================================================================
+ * LINE Messaging API — KV-backed (no D1 / no CONFIG_ENC_KEY needed)
+ * Single source of truth: settings:{tenantId} KV → integrations.line.*
+ *
+ * GET  /admin/integrations/line/messaging/status  → MessagingStatusResponse
+ * POST /admin/integrations/line/messaging/save    → MessagingStatusResponse
+ * DELETE /admin/integrations/line/messaging       → MessagingStatusResponse
+ * ========================================================================= */
+
+/** Read integrations.line from KV settings */
+async function readLineKv(kv: any, tenantId: string): Promise<any> {
+  try {
+    const raw = await kv.get(`settings:${tenantId}`);
+    const s = raw ? JSON.parse(raw) : {};
+    return s?.integrations?.line ?? {};
+  } catch { return {}; }
+}
+
+/** Verify channelAccessToken via LINE Bot API (4-second timeout) */
+async function verifyLineToken(token: string): Promise<"ok" | "ng"> {
+  try {
+    const ac = new AbortController();
+    const tid = setTimeout(() => ac.abort(), 4000);
+    const r = await fetch("https://api.line.me/v2/bot/info", {
+      headers: { Authorization: "Bearer " + token },
+      signal: ac.signal,
+    });
+    clearTimeout(tid);
+    return r.ok ? "ok" : "ng";
+  } catch { return "ng"; }
+}
+
+// ── GET /admin/integrations/line/messaging/status ────────────────────────────
+app.get("/admin/integrations/line/messaging/status", async (c) => {
+  const STAMP = "LINE_MSG_STATUS_V1_20260225";
+  const tenantId = getTenantId(c, null);
+  try {
+    const kv = (c.env as any).SAAS_FACTORY;
+    if (!kv) return c.json({ ok: false, stamp: STAMP, error: "kv_missing" }, 500);
+
+    const line = await readLineKv(kv, tenantId);
+    const accessToken = String(line?.channelAccessToken ?? "").trim();
+    const secret      = String(line?.channelSecret      ?? "").trim();
+
+    if (!accessToken && !secret) {
+      return c.json({
+        ok: true, tenantId, stamp: STAMP,
+        kind: "unconfigured",
+        checks: { token: "ng", webhook: "ng" },
+      });
+    }
+
+    const tokenCheck = accessToken ? await verifyLineToken(accessToken) : "ng";
+    const kind = accessToken && secret
+      ? (tokenCheck === "ok" ? "linked" : "partial")
+      : "partial";
+
+    return c.json({
+      ok: true, tenantId, stamp: STAMP, kind,
+      checks: { token: tokenCheck, webhook: "ng" },
+    });
+  } catch (e: any) {
+    return c.json({ ok: false, stamp: STAMP, tenantId, error: "status_error", detail: String(e?.message ?? e) }, 500);
+  }
+});
+
+// ── POST /admin/integrations/line/messaging/save ────────────────────────────
+app.post("/admin/integrations/line/messaging/save", async (c) => {
+  const STAMP = "LINE_MSG_SAVE_V1_20260225";
+  const tenantId = getTenantId(c, null);
+  try {
+    const kv = (c.env as any).SAAS_FACTORY;
+    if (!kv) return c.json({ ok: false, stamp: STAMP, error: "kv_missing" }, 500);
+
+    const body = await c.req.json().catch(() => ({} as any));
+    const channelAccessToken = String(body?.channelAccessToken ?? "").trim();
+    const channelSecret      = String(body?.channelSecret      ?? "").trim();
+    // UI sends webhookUrl (display field); map to bookingUrl in KV
+    const bookingUrl = String(body?.webhookUrl ?? body?.bookingUrl ?? "").trim() || undefined;
+
+    if (!channelAccessToken) return c.json({ ok: false, stamp: STAMP, error: "missing_channelAccessToken" }, 400);
+    if (!channelSecret)      return c.json({ ok: false, stamp: STAMP, error: "missing_channelSecret"      }, 400);
+
+    // Read existing → deep-merge integrations.line
+    const key = `settings:${tenantId}`;
+    let existing: any = {};
+    try { const r = await kv.get(key); if (r) existing = JSON.parse(r); } catch {}
+
+    const existingLine = existing?.integrations?.line ?? {};
+    const updatedLine: any = {
+      ...existingLine,
+      connected: true,
+      channelAccessToken,
+      channelSecret,
+      ...(bookingUrl ? { bookingUrl } : {}),
+    };
+    const next = {
+      ...existing,
+      integrations: { ...(existing.integrations ?? {}), line: updatedLine },
+    };
+    await kv.put(key, JSON.stringify(next));
+
+    // Verify token to give accurate status back
+    const tokenCheck = await verifyLineToken(channelAccessToken);
+    const kind = tokenCheck === "ok" ? "linked" : "partial";
+
+    return c.json({
+      ok: true, tenantId, stamp: STAMP, kind,
+      checks: { token: tokenCheck, webhook: "ng" },
+    });
+  } catch (e: any) {
+    return c.json({ ok: false, stamp: STAMP, tenantId, error: "save_error", detail: String(e?.message ?? e) }, 500);
+  }
+});
+
+// ── DELETE /admin/integrations/line/messaging ────────────────────────────────
+app.delete("/admin/integrations/line/messaging", async (c) => {
+  const STAMP = "LINE_MSG_DELETE_V1_20260225";
+  const tenantId = getTenantId(c, null);
+  try {
+    const kv = (c.env as any).SAAS_FACTORY;
+    if (!kv) return c.json({ ok: false, stamp: STAMP, error: "kv_missing" }, 500);
+
+    const key = `settings:${tenantId}`;
+    let existing: any = {};
+    try { const r = await kv.get(key); if (r) existing = JSON.parse(r); } catch {}
+
+    // Remove credential fields but keep metadata (userId, displayName, notify flags etc.)
+    const { channelSecret: _s, channelAccessToken: _t, bookingUrl: _b, connected: _c, channelId: _id, ...restLine } =
+      existing?.integrations?.line ?? {};
+
+    const next = {
+      ...existing,
+      integrations: {
+        ...(existing.integrations ?? {}),
+        line: { ...restLine, connected: false },
+      },
+    };
+    await kv.put(key, JSON.stringify(next));
+
+    return c.json({
+      ok: true, tenantId, stamp: STAMP,
+      kind: "unconfigured",
+      checks: { token: "ng", webhook: "ng" },
+    });
+  } catch (e: any) {
+    return c.json({ ok: false, stamp: STAMP, tenantId, error: "delete_error", detail: String(e?.message ?? e) }, 500);
+  }
+});
+
+/* === /LINE_MESSAGING_ROUTES_V1 === */
 
 
 

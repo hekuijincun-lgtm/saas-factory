@@ -44,6 +44,10 @@ export interface AssignmentSettings {
 export interface IntegrationSettings {
   line?: {
     connected: boolean;
+    channelId?: string; // Messaging API Channel ID
+    channelSecret?: string; // Messaging API Channel Secret（Webhook署名検証用）
+    channelAccessToken?: string; // Messaging API Channel Access Token（返信用）
+    bookingUrl?: string; // 予約ページURL（未設定時は origin/booking?tenantId=... で自動補完）
     userId?: string; // LINEユーザーID（表示用メタ）
     displayName?: string; // 表示名（表示用メタ）
     connectedAt?: number; // 接続日時（Unix timestamp、表示用メタ）
@@ -58,7 +62,12 @@ export interface IntegrationSettings {
   };
 }
 
+export interface OnboardingSettings {
+  lineConnected?: boolean;
+}
+
 export interface AdminSettings {
+  storeName?: string; // 店舗名（表示用）
   publicDays: number; // 今日から何日後まで公開
   tenant: TenantInfo;
   businessHours: BusinessHours;
@@ -68,6 +77,7 @@ export interface AdminSettings {
   notifications: NotificationSettings;
   assignment: AssignmentSettings;
   integrations: IntegrationSettings;
+  onboarding?: OnboardingSettings;
 }
 
 /**
@@ -268,6 +278,7 @@ function timeToMinutes(time: string): number {
  */
 export function mergeSettings(defaults: AdminSettings, partial: Partial<AdminSettings>): AdminSettings {
   return {
+    storeName: partial.storeName ?? defaults.storeName,
     publicDays: partial.publicDays ?? defaults.publicDays,
     tenant: {
       name: partial.tenant?.name ?? defaults.tenant.name,
@@ -298,21 +309,29 @@ export function mergeSettings(defaults: AdminSettings, partial: Partial<AdminSet
     },
     integrations: {
       line: {
-        connected: partial.integrations?.line?.connected ?? defaults.integrations.line.connected,
-        // 既存データ互換: channelId が存在したら userId に移し替える
-        userId: partial.integrations?.line?.userId ?? (partial.integrations?.line as any)?.channelId ?? defaults.integrations.line.userId,
-        displayName: partial.integrations?.line?.displayName ?? defaults.integrations.line.displayName,
-        connectedAt: partial.integrations?.line?.connectedAt ?? defaults.integrations.line.connectedAt,
-        notifyOnReservation: partial.integrations?.line?.notifyOnReservation ?? defaults.integrations.line.notifyOnReservation,
-        notifyOnCancel: partial.integrations?.line?.notifyOnCancel ?? defaults.integrations.line.notifyOnCancel,
-        notifyOnReminder: partial.integrations?.line?.notifyOnReminder ?? defaults.integrations.line.notifyOnReminder,
-        lastError: partial.integrations?.line?.lastError ?? defaults.integrations.line.lastError,
+        connected: partial.integrations?.line?.connected ?? defaults.integrations.line?.connected ?? false,
+        channelId:          partial.integrations?.line?.channelId          ?? defaults.integrations.line?.channelId,
+        channelSecret:      partial.integrations?.line?.channelSecret      ?? defaults.integrations.line?.channelSecret,
+        channelAccessToken: partial.integrations?.line?.channelAccessToken ?? defaults.integrations.line?.channelAccessToken,
+        bookingUrl:         partial.integrations?.line?.bookingUrl         ?? defaults.integrations.line?.bookingUrl,
+        userId:             partial.integrations?.line?.userId             ?? defaults.integrations.line?.userId,
+        displayName:        partial.integrations?.line?.displayName        ?? defaults.integrations.line?.displayName,
+        connectedAt:        partial.integrations?.line?.connectedAt        ?? defaults.integrations.line?.connectedAt,
+        notifyOnReservation: partial.integrations?.line?.notifyOnReservation ?? defaults.integrations.line?.notifyOnReservation,
+        notifyOnCancel:      partial.integrations?.line?.notifyOnCancel      ?? defaults.integrations.line?.notifyOnCancel,
+        notifyOnReminder:    partial.integrations?.line?.notifyOnReminder    ?? defaults.integrations.line?.notifyOnReminder,
+        lastError:           partial.integrations?.line?.lastError           ?? defaults.integrations.line?.lastError,
       },
       stripe: {
-        connected: partial.integrations?.stripe?.connected ?? defaults.integrations.stripe.connected,
-        accountId: partial.integrations?.stripe?.accountId ?? defaults.integrations.stripe.accountId,
+        connected: partial.integrations?.stripe?.connected ?? defaults.integrations.stripe?.connected ?? false,
+        accountId: partial.integrations?.stripe?.accountId ?? defaults.integrations.stripe?.accountId,
       },
     },
+    onboarding: (partial.onboarding || defaults.onboarding)
+      ? {
+          lineConnected: partial.onboarding?.lineConnected ?? defaults.onboarding?.lineConnected,
+        }
+      : undefined,
   };
 }
 
