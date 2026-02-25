@@ -196,7 +196,7 @@ export async function createReservation(
  */
 export async function getReservations(date: string): Promise<ReservationsResponse> {
   try {
-    const response = await apiGet<ReservationsResponse>(`/admin/reservations?date=${encodeURIComponent(date)}`);
+    const response = await apiGet<ReservationsResponse>(`/api/proxy/admin/reservations?date=${encodeURIComponent(date)}`);
     // reservationsが配列かチェック
     if (response.reservations && !Array.isArray(response.reservations)) {
       console.warn('getReservations: response.reservations is not an array, setting to empty array');
@@ -221,7 +221,7 @@ export async function cancelReservationById(
   reservationId: string
 ): Promise<CancelReservationResponse> {
   try {
-    return await apiDelete<CancelReservationResponse>(`/admin/reservations/${encodeURIComponent(reservationId)}`);
+    return await apiDelete<CancelReservationResponse>(`/api/proxy/admin/reservations/${encodeURIComponent(reservationId)}`);
   } catch (error) {
     if (error instanceof ApiClientError) {
       throw error;
@@ -461,7 +461,7 @@ export async function updateSettings(payload: AdminSettings): Promise<AdminSetti
  */
 export async function assignStaffToReservation(reservationId: string, staffId: string | null): Promise<Reservation> {
   try {
-    const response = await apiPatch<ApiResponse<Reservation>>(`/admin/reservations/${reservationId}`, { staffId });
+    const response = await apiPatch<ApiResponse<Reservation>>(`/api/proxy/admin/reservations/${reservationId}`, { staffId });
     if (response.ok && response.data) {
       return response.data;
     }

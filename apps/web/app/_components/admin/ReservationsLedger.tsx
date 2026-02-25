@@ -44,8 +44,11 @@ export default function ReservationsLedger() {
 
   useEffect(() => {
     setMounted(true);
-    const today = new Date();
-    setTodayStr(today.toISOString().split('T')[0]);
+    const d = new Date();
+    const y = d.getFullYear();
+    const mo = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    setTodayStr(`${y}-${mo}-${day}`);
   }, []);
   const [date, setDate] = useState<string>('');
   
@@ -258,34 +261,25 @@ export default function ReservationsLedger() {
         if (Array.isArray(staff)) {
           setStaffList(staff);
         } else {
-          console.warn('fetchStaff: staff is not an array, using fallback');
-          setStaffList(STAFF.filter(s => s.id !== 'any').map(s => ({
-            id: s.id,
-            name: s.name,
-            role: s.role,
-            active: true,
-            sortOrder: 0,
-          })));
+          console.warn('fetchStaff: staff is not an array, using empty list');
+          setStaffList([]);
         }
       } catch (err) {
-        console.warn('Failed to fetch staff, using fallback:', err);
-        // フォールバック
-        setStaffList(STAFF.filter(s => s.id !== 'any').map(s => ({
-          id: s.id,
-          name: s.name,
-          role: s.role,
-          active: true,
-          sortOrder: 0,
-        })));
+        console.warn('Failed to fetch staff, using empty list:', err);
+        // フォールバック: hardcoded IDs (sakura/kenji/rookie) は実際のstaffIdと合わないため空配列を使用
+        setStaffList([]);
       }
     };
     fetchStaff();
   }, []);
 
   const handleDateChange = (days: number) => {
-    const currentDate = new Date(date);
-    currentDate.setDate(currentDate.getDate() + days);
-    setDate(currentDate.toISOString().split('T')[0]);
+    const [y, mo, da] = date.split('-').map(Number);
+    const d = new Date(y, mo - 1, da + days);
+    const ny = d.getFullYear();
+    const nm = String(d.getMonth() + 1).padStart(2, '0');
+    const nd = String(d.getDate()).padStart(2, '0');
+    setDate(`${ny}-${nm}-${nd}`);
   };
 
   const handleToday = () => {
