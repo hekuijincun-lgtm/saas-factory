@@ -1144,6 +1144,73 @@ app.onError((err, c) => {
   return c.json({ ok:false, error:"internal_error" }, 500)
 });// ✅ Module Worker entry（Durable Object を使う場合の定番）
 
+// stamp: LINE_RESERVE_NOTIFY_V1_20260225
+// Feature-flag: env.LINE_NOTIFY_ON_RESERVE = "1" enables push. Default = "0" (off).
+async function notifyLineReservation(opts: {
+  kv: any;
+  tenantId: string;
+  lineUserId: string;
+  customerName: string | null;
+  startAt: string;
+  staffId: string;
+  flag: string;
+}): Promise<void> {
+  const STAMP = "LINE_RESERVE_NOTIFY_V1_20260225";
+  if (opts.flag !== "1") {
+    console.log(`[${STAMP}] notify.skipped.flagOff tenantId=${opts.tenantId} flag=${opts.flag}`);
+    return;
+  }
+  if (!opts.lineUserId) {
+    console.log(`[${STAMP}] notify.skipped.noUserId tenantId=${opts.tenantId}`);
+    return;
+  }
+  if (!opts.kv) {
+    console.log(`[${STAMP}] notify.skipped.noKV tenantId=${opts.tenantId}`);
+    return;
+  }
+  try {
+    // Read channelAccessToken from KV (inline to avoid function ordering dependency)
+    let accessToken = "";
+    try {
+      const raw = await opts.kv.get(`settings:${opts.tenantId}`);
+      const s = raw ? JSON.parse(raw) : {};
+      accessToken = String(s?.integrations?.line?.channelAccessToken ?? "").trim();
+    } catch { /* ignore KV read failure */ }
+    if (!accessToken) {
+      console.log(`[${STAMP}] skip: no channelAccessToken tenantId=${opts.tenantId}`);
+      return;
+    }
+    // Build JST-formatted datetime
+    const jst = (iso: string) => {
+      try {
+        return new Date(iso).toLocaleString("ja-JP", {
+          timeZone: "Asia/Tokyo",
+          year: "numeric", month: "2-digit", day: "2-digit",
+          hour: "2-digit", minute: "2-digit",
+        });
+      } catch { return iso; }
+    };
+    const nameStr = opts.customerName ? `\nお名前: ${opts.customerName}` : "";
+    const text = `予約が確定しました✅\n日時: ${jst(opts.startAt)}${nameStr}`;
+    const ac = new AbortController();
+    const tid = setTimeout(() => ac.abort(), 5000);
+    const res = await fetch("https://api.line.me/v2/bot/message/push", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + accessToken,
+      },
+      body: JSON.stringify({ to: opts.lineUserId, messages: [{ type: "text", text }] }),
+      signal: ac.signal,
+    });
+    clearTimeout(tid);
+    const bodyText = await res.text().catch(() => "");
+    console.log(`[${STAMP}] notify.sent tenantId=${opts.tenantId} userId=${opts.lineUserId} status=${res.status} ok=${res.ok} body=${bodyText.slice(0, 200)}`);
+  } catch (e: any) {
+    console.log(`[${STAMP}] notify.error tenantId=${opts.tenantId} userId=${opts.lineUserId} err=${String(e?.message ?? e)}`);
+  }
+}
+
   // ---- RESERVE (minimum) ----
   app.post("/reserve", async (c) => {
   const url = new URL(c.req.url)
@@ -1158,6 +1225,7 @@ app.onError((err, c) => {
   const startAt = String(body.startAt ?? "")
   const endAt   = String(body.endAt ?? "")
   const customerName = body.customerName ? String(body.customerName) : null
+  const lineUserId   = body.lineUserId   ? String(body.lineUserId).trim() : ""
 
   if(!staffId || !startAt || !endAt){
     return c.json({ ok:false, error:"missing_fields", need:["staffId","startAt","endAt"] }, 400)
@@ -1221,7 +1289,14 @@ app.onError((err, c) => {
       return c.json({ ok:false, error:"duplicate_slot", tenantId, staffId, startAt }, 409)
     }
     throw e
-  }return c.json({ ok:true, id: rid, tenantId, staffId, startAt, endAt })
+  }
+  // LINE push notification — best-effort, does NOT affect reservation result
+  await notifyLineReservation({
+    kv: (env as any).SAAS_FACTORY,
+    tenantId, lineUserId, customerName, startAt, staffId,
+    flag: String((env as any).LINE_NOTIFY_ON_RESERVE ?? "0").trim(),
+  }).catch(() => null);
+  return c.json({ ok:true, id: rid, tenantId, staffId, startAt, endAt })
   } finally {
     // best-effort unlock
     await stub.fetch("https://slotlock/unlock", {
@@ -1514,6 +1589,47 @@ app.delete("/admin/integrations/line/messaging", async (c) => {
     });
   } catch (e: any) {
     return c.json({ ok: false, stamp: STAMP, tenantId, error: "delete_error", detail: String(e?.message ?? e) }, 500);
+  }
+});
+
+// ── POST /admin/integrations/line/last-user ─────────────────────────────────
+// Saves the most-recently-seen LINE userId for a tenant (used by /reserve push notify).
+// Called best-effort from Pages webhook handler on every message event.
+// KV key: line:lastUser:${tenantId}  TTL: 24 h
+// stamp: LINE_LAST_USER_V1_20260225
+app.post("/admin/integrations/line/last-user", async (c) => {
+  const STAMP = "LINE_LAST_USER_POST_V1_20260225";
+  const tenantId = getTenantId(c, null);
+  try {
+    const kv = (c.env as any).SAAS_FACTORY;
+    if (!kv) return c.json({ ok: false, stamp: STAMP, error: "kv_missing" }, 500);
+
+    const body = await c.req.json().catch(() => ({} as any));
+    const userId = String(body?.userId ?? "").trim();
+    if (!userId || !userId.startsWith("U")) {
+      return c.json({ ok: false, stamp: STAMP, error: "invalid_userId" }, 400);
+    }
+
+    await kv.put(`line:lastUser:${tenantId}`, userId, { expirationTtl: 86400 }); // 24 h TTL
+    return c.json({ ok: true, tenantId, stamp: STAMP, userId });
+  } catch (e: any) {
+    return c.json({ ok: false, stamp: STAMP, tenantId, error: "save_error", detail: String(e?.message ?? e) }, 500);
+  }
+});
+
+// ── GET /admin/integrations/line/last-user ───────────────────────────────────
+// Returns the most-recently-saved userId for a tenant (for push notify testing).
+app.get("/admin/integrations/line/last-user", async (c) => {
+  const STAMP = "LINE_LAST_USER_GET_V1_20260225";
+  const tenantId = getTenantId(c, null);
+  try {
+    const kv = (c.env as any).SAAS_FACTORY;
+    if (!kv) return c.json({ ok: false, stamp: STAMP, error: "kv_missing" }, 500);
+
+    const userId = await kv.get(`line:lastUser:${tenantId}`);
+    return c.json({ ok: true, tenantId, stamp: STAMP, userId: userId ?? null });
+  } catch (e: any) {
+    return c.json({ ok: false, stamp: STAMP, tenantId, error: "get_error", detail: String(e?.message ?? e) }, 500);
   }
 });
 

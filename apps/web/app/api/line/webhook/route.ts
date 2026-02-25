@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 export const runtime = "edge";
 
 // ─── version / stamps ────────────────────────────────────────────────────────
-const STAMP_V5  = "LINE_WEBHOOK_V5_20260225_140000";
+const STAMP_V5  = "LINE_WEBHOOK_V5_20260225_235900"; // bumped: stamp removed from Flex UI, debug probe added
 const STAMP_V4  = "LINE_WEBHOOK_V4_20260215_202858"; // kept for reference / fallback echo
 const where     = "api/line/webhook";
 const isDebug   = (process.env.LINE_DEBUG === "1");
@@ -48,7 +48,12 @@ async function replyLine(
   return { ok: res.ok, status: res.status, bodyText };
 }
 
-function buildBookingFlex(bookingUrl: string, stamp: string) {
+function buildBookingFlex(bookingUrl: string, stamp: string, userId?: string) {
+  // stamp intentionally excluded from UI — kept in server logs and response body only
+  // Embed userId in URL so /reserve can send push notification after booking completes
+  const url = userId
+    ? `${bookingUrl}${bookingUrl.includes("?") ? "&" : "?"}lu=${encodeURIComponent(userId)}`
+    : bookingUrl;
   return {
     type: "flex",
     altText: "予約ページを開く",
@@ -66,13 +71,6 @@ function buildBookingFlex(bookingUrl: string, stamp: string) {
             wrap: true,
             color: "#666666",
           },
-          {
-            type: "text",
-            text: `stamp: ${stamp}`,
-            size: "xs",
-            color: "#aaaaaa",
-            wrap: true,
-          },
         ],
       },
       footer: {
@@ -83,7 +81,7 @@ function buildBookingFlex(bookingUrl: string, stamp: string) {
           {
             type: "button",
             style: "primary",
-            action: { type: "uri", label: "予約を開始", uri: bookingUrl },
+            action: { type: "uri", label: "予約を開始", uri: url },
           },
         ],
       },
@@ -150,33 +148,66 @@ async function getTenantLineConfig(
 }
 
 // ─── GET (debug probe) ────────────────────────────────────────────────────────
+// ?debug=1&text=予約  → returns the exact Flex JSON that would be sent to LINE
+//                       (no LINE request, no credentials in response, safe in prod)
 export async function GET(req: Request) {
   const { searchParams, origin } = new URL(req.url);
-  const tenantId = searchParams.get("tenantId") ?? "default";
+  const tenantId  = searchParams.get("tenantId") ?? "default";
+  const debugMode = searchParams.get("debug") === "1";
+  const debugText = searchParams.get("text") ?? "予約";
 
   const cfg = await getTenantLineConfig(tenantId, origin);
   const allowBadSig = (process.env.LINE_WEBHOOK_ALLOW_BAD_SIGNATURE ?? "0") === "1";
 
-  return NextResponse.json(
-    {
-      ok: true,
-      where,
-      stamp: STAMP_V5,
-      tenantId,
-      secretLen: cfg.channelSecret.length,
-      accessTokenLen: cfg.channelAccessToken.length,
-      allowBadSig,
-      bookingUrl: cfg.bookingUrl,
-      source: cfg.source,
-    },
-    {
-      headers: {
-        "Cache-Control": "no-store, no-cache, must-revalidate",
-        Pragma: "no-cache",
-        Expires: "0",
-      },
+  const base = {
+    ok: true,
+    where,
+    stamp: STAMP_V5,
+    tenantId,
+    secretLen: cfg.channelSecret.length,
+    accessTokenLen: cfg.channelAccessToken.length,
+    allowBadSig,
+    bookingUrl: cfg.bookingUrl,
+    source: cfg.source,
+  };
+
+  const cacheHeaders = {
+    "Cache-Control": "no-store, no-cache, must-revalidate",
+    Pragma: "no-cache",
+    Expires: "0",
+    "x-stamp": STAMP_V5,
+  };
+
+  if (debugMode) {
+    // Simulate what POST would send for a given message text
+    const normalized = debugText
+      .normalize("NFKC")
+      .replace(/[\s\u200B-\u200D\uFEFF]/g, "")
+      .toLowerCase();
+
+    let messages: any[];
+    let handler: string;
+
+    if (normalized.includes("予約") || normalized.includes("よやく")) {
+      handler = "BOOKING_FLEX";
+      messages = [
+        ...(isDebug
+          ? [{ type: "text", text: `DBG stamp=${STAMP_V5} src=${cfg.source}` }]
+          : []),
+        buildBookingFlex(cfg.bookingUrl, STAMP_V5, "DEBUG_USER_ID"),
+      ];
+    } else {
+      handler = "ECHO";
+      messages = [{ type: "text", text: `ECHO: ${debugText}` }];
     }
-  );
+
+    return NextResponse.json(
+      { ...base, debug: true, handler, simulatedText: debugText, messages },
+      { headers: cacheHeaders }
+    );
+  }
+
+  return NextResponse.json(base, { headers: cacheHeaders });
 }
 
 // ─── POST (LINE webhook) ──────────────────────────────────────────────────────
@@ -269,31 +300,51 @@ export async function POST(req: Request) {
 
   let messages: any[];
 
+  const lineUserId = String(ev.source?.userId ?? "").trim();
+
+  // Best-effort: persist lineUserId to Workers KV so /reserve can send push notifications.
+  // Fire-and-forget — never blocks the reply or fails the webhook.
+  if (lineUserId) {
+    const _apiBase = (process.env.API_BASE ?? process.env.NEXT_PUBLIC_API_BASE ?? "").replace(/\/+$/, "");
+    const _adminToken = process.env.ADMIN_TOKEN ?? "";
+    if (_apiBase) {
+      const _headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (_adminToken) _headers["X-Admin-Token"] = _adminToken;
+      fetch(
+        `${_apiBase}/admin/integrations/line/last-user?tenantId=${encodeURIComponent(tenantId)}`,
+        { method: "POST", headers: _headers, body: JSON.stringify({ userId: lineUserId }) }
+      ).catch(() => null);
+    }
+  }
+
   if (normalized.includes("予約") || normalized.includes("よやく")) {
     messages = [
       ...(isDebug
-        ? [{ type: "text", text: `DBG stamp=${stamp} url=${cfg.bookingUrl} src=${cfg.source}` }]
+        ? [{ type: "text", text: `DBG stamp=${stamp} url=${cfg.bookingUrl} src=${cfg.source} uid=${lineUserId.slice(0, 8)}` }]
         : []),
-      buildBookingFlex(cfg.bookingUrl, stamp),
+      buildBookingFlex(cfg.bookingUrl, stamp, lineUserId || undefined),
     ];
   } else {
     // Preserve V4 echo behavior for non-booking messages
-    messages = [{ type: "text", text: `ECHO: ${textIn} (stamp=${stamp})` }];
+    messages = [{ type: "text", text: `ECHO: ${textIn}` }];
   }
 
   const rep = await replyLine(cfg.channelAccessToken, replyToken, messages);
 
-  return NextResponse.json({
-    ok: true,
-    stamp,
-    where,
-    tenantId,
-    source: cfg.source,
-    verified,
-    replied: true,
-    replyStatus: rep.status,
-    replyOk: rep.ok,
-    replyBody: rep.ok ? null : rep.bodyText?.slice(0, 300) ?? null,
-    eventCount: events.length,
-  });
+  return NextResponse.json(
+    {
+      ok: true,
+      stamp,
+      where,
+      tenantId,
+      source: cfg.source,
+      verified,
+      replied: true,
+      replyStatus: rep.status,
+      replyOk: rep.ok,
+      replyBody: rep.ok ? null : rep.bodyText?.slice(0, 300) ?? null,
+      eventCount: events.length,
+    },
+    { headers: { "x-stamp": stamp } }
+  );
 }

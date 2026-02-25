@@ -65,6 +65,7 @@ export default function StepConfirm({ booking, onBack, onDone }: Props) {
         phone: phone.trim() || undefined,
         staffId:
           booking.staffId === 'any' ? undefined : (booking.staffId ?? undefined),
+        lineUserId: booking.lineUserId ?? undefined,
       });
       setDone(true);
     } catch (e: unknown) {

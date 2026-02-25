@@ -17,6 +17,7 @@ export interface BookingState {
   staffName: string | null;
   date: string | null;
   time: string | null;
+  lineUserId?: string | null;
 }
 
 export interface StaffOption {
@@ -28,6 +29,7 @@ export interface StaffOption {
 const INITIAL: BookingState = {
   menuId: null, menuName: null, menuPrice: null, menuDurationMin: null,
   staffId: null, staffName: null, date: null, time: null,
+  lineUserId: null,
 };
 
 const STEP_LABELS = ['メニュー', 'スタッフ', '日時', '確認'];
@@ -78,9 +80,10 @@ function StepIndicator({ current }: { current: number }) {
 export default function BookingFlow() {
   const searchParams = useSearchParams();
   const tenantId = searchParams?.get('tenantId') || 'default';
+  const lineUserId = searchParams?.get('lu') || null;
 
   const [step, setStep] = useState(1);
-  const [state, setState] = useState<BookingState>(INITIAL);
+  const [state, setState] = useState<BookingState>({ ...INITIAL, lineUserId });
 
   const update = (patch: Partial<BookingState>) =>
     setState(prev => ({ ...prev, ...patch }));
