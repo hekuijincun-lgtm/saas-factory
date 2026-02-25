@@ -1026,7 +1026,16 @@ app.onError((err, c) => {
 
 
 export { SlotLock };
-export default { fetch: app.fetch };
+
+// Queue consumer handler (no-op — queue binding exists in dashboard but not actively used)
+async function queue(batch: MessageBatch<unknown>): Promise<void> {
+  // Intentionally empty — acknowledge all messages to prevent re-delivery
+  for (const msg of batch.messages) {
+    msg.ack();
+  }
+}
+
+export default { fetch: app.fetch, queue };
 
 /* === LINE_OAUTH_MIN_ROUTES_V1 ===
    Minimal LINE OAuth routes for production recovery.

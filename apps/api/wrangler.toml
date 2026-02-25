@@ -115,7 +115,11 @@ database_id = "cf28ae30-8e52-4a73-8d74-36dab188fa74"
 [[env.production.d1_databases]]
 binding = "DB"
 database_name = "saas-factory-staging"
-database_id = "cf28ae30-8e52-4a73-8d74-36dab188fa74"  
+database_id = "cf28ae30-8e52-4a73-8d74-36dab188fa74"
+
+[[env.production.queues.consumers]]
+queue = "saas-factory-jobs"
+
 # ---- D1 (reservations) ----
 
 # ---- D1 (reservations) ----
