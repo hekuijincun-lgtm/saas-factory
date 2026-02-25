@@ -437,6 +437,15 @@ const parseHHMM = (s: string) => {
       .map(r => ({ a0: ms(r.start_at), a1: ms(r.end_at) }))
       .filter(x => Number.isFinite(x.a0) && Number.isFinite(x.a1))
 
+    // Load admin availability overrides (only for specific staff, not 'any')
+    let availOverrides: Record<string, string> = {}
+    if(staffId !== 'any'){
+      try{
+        const avRaw = await kv.get(`availability:${tenantId}:${staffId}:${date}`)
+        if(avRaw) availOverrides = JSON.parse(avRaw)
+      }catch{}
+    }
+
     const slots: Array<{time:string, available:boolean}> = []
     for(let t = openMs; t + durMs <= closeMs; t += stepMs){
       const end = t + durMs
@@ -447,6 +456,8 @@ const parseHHMM = (s: string) => {
       for(const r of resMs){
         if(overlaps(t, end, r.a0, r.a1)){ available = false; break }
       }
+      // Admin override: 'closed' forces unavailable
+      if(available && availOverrides[time] === 'closed') available = false
       slots.push({ time, available })
     }
 
@@ -818,6 +829,61 @@ app.put("/admin/settings", async (c) => {
     return c.json({ ok: true, tenantId, data: next });
   } catch (error) {
     return c.json({ ok: false, error: "Failed to save settings", message: String(error) }, 500);
+  }
+});
+
+/** =========================
+ * Availability (admin-managed slot status)
+ * GET  /admin/availability?tenantId=&date=
+ * PUT  /admin/availability  { staffId, date, time, status }
+ * KV key: availability:${tenantId}:${staffId}:${date}  = JSON {[time]: 'open'|'half'|'closed'}
+ * ========================= */
+app.get("/admin/availability", async (c) => {
+  try {
+    const tenantId = getTenantId(c);
+    const date = c.req.query("date") || new Date().toISOString().slice(0, 10);
+    const kv = c.env.SAAS_FACTORY;
+
+    const staffRaw = await kv.get(`admin:staff:list:${tenantId}`);
+    const staffList: { id: string }[] = staffRaw ? JSON.parse(staffRaw) : [];
+
+    const result: Record<string, Record<string, string>> = {};
+    for (const staff of staffList) {
+      const key = `availability:${tenantId}:${staff.id}:${date}`;
+      const raw = await kv.get(key);
+      result[staff.id] = raw ? JSON.parse(raw) : {};
+    }
+
+    return c.json({ ok: true, tenantId, date, staff: result });
+  } catch (error) {
+    return c.json({ ok: false, error: "Failed to fetch availability", message: String(error) }, 500);
+  }
+});
+
+app.put("/admin/availability", async (c) => {
+  try {
+    const tenantId = getTenantId(c);
+    const kv = c.env.SAAS_FACTORY;
+    const body = await c.req.json<{ staffId: string; date: string; time: string; status: string }>();
+
+    if (!body.staffId || !body.date || !body.time || !body.status) {
+      return c.json({ ok: false, error: "missing_fields", need: ["staffId", "date", "time", "status"] }, 400);
+    }
+
+    const validStatuses = ["open", "half", "closed"];
+    if (!validStatuses.includes(body.status)) {
+      return c.json({ ok: false, error: "invalid_status", valid: validStatuses }, 400);
+    }
+
+    const key = `availability:${tenantId}:${body.staffId}:${body.date}`;
+    const raw = await kv.get(key);
+    const current: Record<string, string> = raw ? JSON.parse(raw) : {};
+    current[body.time] = body.status;
+    await kv.put(key, JSON.stringify(current));
+
+    return c.json({ ok: true, tenantId, staffId: body.staffId, date: body.date, time: body.time, status: body.status });
+  } catch (error) {
+    return c.json({ ok: false, error: "Failed to save availability", message: String(error) }, 500);
   }
 });
 
