@@ -887,7 +887,7 @@ app.get("/admin/reservations", async (c) => {
   }
 });
 
-app.patch("/admin/reservations/:id", async (c) => {
+app.on(["PUT", "PATCH"], "/admin/reservations/:id", async (c) => {
   try {
     const tenantId = getTenantId(c);
     const id = c.req.param("id");
