@@ -433,32 +433,102 @@ const parseHHMM = (s: string) => {
       return c.json({ ok:false, error:'d1_query_failed', tenantId, detail:String(e?.message||e), stack: debug ? String(e?.stack||'') : undefined }, 500)
     }
 
-    const resMs = reservations
-      .map(r => ({ a0: ms(r.start_at), a1: ms(r.end_at) }))
+    // Map reservations to ms pairs, also track staff_id for per-staff aggregation
+    type ResPair = { a0: number; a1: number; sid: string }
+    const resAll: ResPair[] = reservations
+      .map(r => ({ a0: ms(r.start_at), a1: ms(r.end_at), sid: String(r.staff_id || 'any') }))
       .filter(x => Number.isFinite(x.a0) && Number.isFinite(x.a1))
 
-    // Load admin availability overrides (only for specific staff, not 'any')
-    let availOverrides: Record<string, string> = {}
+    // Group reservations by staff_id for per-staff conflict check
+    const resByStaff: Record<string, ResPair[]> = {}
+    for(const r of resAll){
+      if(!resByStaff[r.sid]) resByStaff[r.sid] = []
+      resByStaff[r.sid].push(r)
+    }
+
+    // Load availability overrides
+    // - specific staff: single KV read
+    // - any staff: load all active staff KV entries for aggregation
+    let singleAvail: Record<string, string> = {}
+    let allStaffAvail: Record<string, Record<string, string>> = {}
+    let activeStaffIds: string[] = []
+
     if(staffId !== 'any'){
       try{
-        const avRaw = await kv.get(`availability:${tenantId}:${staffId}:${date}`)
-        if(avRaw) availOverrides = JSON.parse(avRaw)
+        const raw = await kv.get(`availability:${tenantId}:${staffId}:${date}`)
+        if(raw) singleAvail = JSON.parse(raw)
+      }catch{}
+    } else {
+      try{
+        const staffRaw = await kv.get(`admin:staff:list:${tenantId}`)
+        const allStaff: any[] = staffRaw ? JSON.parse(staffRaw) : []
+        activeStaffIds = allStaff.filter(s => s.active !== false).map(s => String(s.id))
+        for(const sid of activeStaffIds){
+          try{
+            const raw = await kv.get(`availability:${tenantId}:${sid}:${date}`)
+            if(raw) allStaffAvail[sid] = JSON.parse(raw)
+          }catch{}
+        }
       }catch{}
     }
 
-    const slots: Array<{time:string, available:boolean}> = []
+    type SlotStatus = 'available' | 'few' | 'full'
+    const slots: Array<{time:string, available:boolean, status:SlotStatus}> = []
     for(let t = openMs; t + durMs <= closeMs; t += stepMs){
       const end = t + durMs
       const dt = jstDate(t)
       const time = pad2(dt.getUTCHours()) + ':' + pad2(dt.getUTCMinutes())
 
       let available = true
-      for(const r of resMs){
-        if(overlaps(t, end, r.a0, r.a1)){ available = false; break }
+      let status: SlotStatus = 'available'
+
+      if(staffId !== 'any'){
+        // ── Specific staff ──
+        // 1. D1 conflict (already filtered to this staff in the query above)
+        for(const r of resAll){
+          if(overlaps(t, end, r.a0, r.a1)){ available = false; break }
+        }
+        // 2. Availability override
+        const ovr = singleAvail[time]
+        if(available && ovr === 'closed') available = false
+        // 3. Status
+        if(!available)      status = 'full'
+        else if(ovr === 'half') status = 'few'
+        else                status = 'available'
+
+      } else {
+        // ── Any staff ── aggregate across active staff
+        if(activeStaffIds.length === 0){
+          // No active staff list: fall back to global conflict check (any conflict → unavailable)
+          for(const r of resAll){ if(overlaps(t, end, r.a0, r.a1)){ available = false; break } }
+          status = available ? 'available' : 'full'
+        } else {
+          // Find best available status across active staff members
+          let bestStatus: SlotStatus = 'full'
+          for(const sid of activeStaffIds){
+            // Check D1 conflict for this specific staff
+            const sidResv = (resByStaff[sid] || []).concat(resByStaff['any'] || [])
+            let conflict = false
+            for(const r of sidResv){ if(overlaps(t, end, r.a0, r.a1)){ conflict = true; break } }
+            if(conflict) continue   // this staff has a booking conflict
+
+            const ovr = (allStaffAvail[sid] || {})[time]
+            if(ovr === 'closed') continue  // admin closed this staff for this time
+
+            // Staff is available for this slot
+            if(ovr === 'half'){
+              if(bestStatus === 'full') bestStatus = 'few'
+            } else {
+              bestStatus = 'available'
+              break  // At least one staff is fully available — no need to check further
+            }
+          }
+          available = (bestStatus !== 'full')
+          status = bestStatus
+        }
       }
-      // Admin override: 'closed' forces unavailable
-      if(available && availOverrides[time] === 'closed') available = false
-      slots.push({ time, available })
+
+      slots.push({ time, available, status })
     }
 
     return c.json({

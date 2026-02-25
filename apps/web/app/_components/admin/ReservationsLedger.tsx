@@ -181,6 +181,18 @@ export default function ReservationsLedger() {
     }
   }, [date, fetchReservations]);
 
+  // Auto-refresh: poll every 30s + refresh on window focus
+  useEffect(() => {
+    if (!date) return;
+    const handleFocus = () => fetchReservations();
+    window.addEventListener('focus', handleFocus);
+    const timer = setInterval(() => fetchReservations(), 30_000);
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+      clearInterval(timer);
+    };
+  }, [date, fetchReservations]);
+
   // 予約可能日時オーバーライドを取得
   const fetchAvailability = useCallback(async () => {
     if (!date || staffList.length === 0) return;

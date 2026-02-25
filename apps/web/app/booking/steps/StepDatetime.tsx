@@ -168,7 +168,13 @@ export default function StepDatetime({ staffId, onSelect, onBack }: Props) {
       ) : (
         <div className="grid grid-cols-3 gap-2">
           {slots.map(slot => {
-            const mark = slot.available ? '○' : '×';
+            const isFew = slot.available && slot.status === 'few';
+            const mark = !slot.available ? '×' : isFew ? '△' : '○';
+            const markColor = !slot.available
+              ? 'text-red-400'
+              : isFew
+              ? 'text-amber-500'
+              : 'text-green-600';
             return (
               <button
                 key={slot.time}
@@ -184,11 +190,7 @@ export default function StepDatetime({ staffId, onSelect, onBack }: Props) {
                 `}
               >
                 <span>{slot.time}</span>
-                <span
-                  className={`text-xs font-semibold ${
-                    slot.available ? 'text-green-600' : 'text-red-400'
-                  }`}
-                >
+                <span className={`text-xs font-semibold ${markColor}`}>
                   {mark}
                 </span>
               </button>

@@ -9,6 +9,8 @@ export interface TimeSlot {
   time: string;
   available: boolean;
   reason?: 'cutoff' | 'reserved' | 'shift' | 'closed';
+  /** Availability status from admin: 'available'=○, 'few'=△, 'full'=× */
+  status?: 'available' | 'few' | 'full';
 }
 
 export interface SlotsResponse {
