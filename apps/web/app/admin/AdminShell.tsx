@@ -11,6 +11,7 @@ import {
   Menu,
   X,
   Store,
+  Bot,
 } from "lucide-react";
 
 // ============================================================
@@ -23,6 +24,7 @@ const NAV_ITEMS = [
   { href: "/admin/menu", label: "メニュー管理", icon: UtensilsCrossed },
   { href: "/admin/staff", label: "スタッフ管理", icon: Users },
   { href: "/admin/reservations", label: "予約管理", icon: Calendar },
+  { href: "/admin/ai", label: "AI接客設定", icon: Bot },
   { href: "/admin/settings", label: "管理者設定", icon: Settings },
 ];
 
