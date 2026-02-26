@@ -3,14 +3,24 @@ import { NextResponse } from "next/server";
 export const runtime = "edge";
 
 // ─── version / stamps ────────────────────────────────────────────────────────
-// V7: 全メッセージ返信 + pushLine fallback + POST debug=1 + 予約キーワード検出
-const STAMP_V7  = "LINE_WEBHOOK_V7_20260226_FULLREPLY";
-const STAMP_V6  = "LINE_WEBHOOK_V6_20260226_AI_CHAT"; // kept for reference
+// V8: ack-first + push-final (99% reply rate)
+//   受信後1秒以内に ack reply → AI処理 → push で最終回答
+//   KV dedup (TTL 120s) で重複イベントをスキップ
+const STAMP_V8  = "LINE_WEBHOOK_V8_20260226_ACK_PUSH";
+const STAMP_V7  = "LINE_WEBHOOK_V7_20260226_FULLREPLY"; // kept for reference
 const where     = "api/line/webhook";
 const isDebug   = (process.env.LINE_DEBUG === "1");
 
-// 予約関連キーワード（メッセージ本文からも検出する）
-const BOOKING_KW = ["予約", "よやく", "booking", "reserve"] as const;
+const ACK_TEXT      = "確認しますね！少々お待ちください😊";
+const FALLBACK_TEXT = "少し時間をおいて再度お試しください。";
+
+// 予約/空き関連キーワード（メッセージ本文からも検出する）
+const BOOKING_KW = [
+  "予約", "よやく", "booking", "reserve",
+  "空き", "あき", "空き状況", "空いてる", "空いてますか",
+  "最短", "明日行ける", "来週行ける", "当日",
+  "予約できる", "予約したい", "いつ空いてる",
+] as const;
 
 // ─── utils ───────────────────────────────────────────────────────────────────
 function base64FromBytes(bytes: Uint8Array): string {
@@ -35,7 +45,7 @@ async function verifyLineSignature(
   return base64FromBytes(new Uint8Array(mac)) === signature;
 }
 
-// LINE reply API — replyToken を使用（1回限り有効）
+// LINE reply API — replyToken を使用（1回限り有効、期限は数秒〜30秒）
 async function replyLine(
   accessToken: string,
   replyToken: string,
@@ -53,7 +63,7 @@ async function replyLine(
   return { ok: res.ok, status: res.status, bodyText };
 }
 
-// LINE push API — replyToken 失効時のフォールバック（userId が必要）
+// LINE push API — replyToken 不要（userId が必要、AI処理後の最終回答に使用）
 async function pushLine(
   accessToken: string,
   userId: string,
@@ -69,6 +79,32 @@ async function pushLine(
   });
   const bodyText = await res.text().catch(() => "");
   return { ok: res.ok, status: res.status, bodyText };
+}
+
+// KV dedup via Workers /ai/dedup — 500ms タイムアウト付き (best-effort)
+// isNew=true → 新規イベント（処理を続行）
+// isNew=false → 重複イベント（スキップ）
+async function dedupEvent(
+  apiBase: string,
+  key: string,
+  ttlSeconds = 120
+): Promise<boolean> {
+  if (!apiBase || !key) return true; // フォールバック: 常に新規扱い
+
+  const timeout = new Promise<boolean>(resolve =>
+    setTimeout(() => resolve(true), 500) // 500ms で諦め → 新規扱い
+  );
+
+  const check = fetch(`${apiBase}/ai/dedup`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ key, ttlSeconds }),
+  })
+    .then(r => r.json() as Promise<{ isNew: boolean }>)
+    .then(d => d?.isNew !== false) // isNew=false なら重複
+    .catch(() => true); // エラー → 新規扱い
+
+  return Promise.race([check, timeout]);
 }
 
 function buildBookingFlex(bookingUrl: string, stamp: string, userId?: string) {
@@ -102,8 +138,6 @@ function buildBookingFlex(bookingUrl: string, stamp: string, userId?: string) {
 }
 
 // ─── AI chat caller ──────────────────────────────────────────────────────────
-// Workers の /ai/chat を HTTP cross-service で呼び出すヘルパー。
-// Pages (edge) と Workers は別ランタイム。再帰呼び出しではない。
 async function runAiChat(
   tenantId: string,
   message: string,
@@ -124,7 +158,6 @@ async function runAiChat(
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        // レート制限キー: LINE経由は "line:{userId先頭12文字}" で web UI と分離
         "cf-connecting-ip": ip,
         "x-real-ip": ip,
       },
@@ -213,7 +246,6 @@ async function getTenantLineConfig(
 }
 
 // ─── GET (debug probe) ────────────────────────────────────────────────────────
-// ?debug=1&text=営業時間  → 実際のLINE送信なし、シミュレーション結果を返す
 export async function GET(req: Request) {
   const { searchParams, origin } = new URL(req.url);
   const tenantId  = searchParams.get("tenantId") ?? "default";
@@ -226,7 +258,7 @@ export async function GET(req: Request) {
   const base = {
     ok: true,
     where,
-    stamp: STAMP_V7,
+    stamp: STAMP_V8,
     tenantId,
     secretLen: cfg.channelSecret.length,
     accessTokenLen: cfg.channelAccessToken.length,
@@ -239,7 +271,7 @@ export async function GET(req: Request) {
     "Cache-Control": "no-store, no-cache, must-revalidate",
     Pragma: "no-cache",
     Expires: "0",
-    "x-stamp": STAMP_V7,
+    "x-stamp": STAMP_V8,
   };
 
   if (debugMode) {
@@ -255,19 +287,29 @@ export async function GET(req: Request) {
     const bookingLink = simulatedBooking
       ? buildBookingLink(cfg.bookingUrl, tenantId, "DEBUG_USER_ID")
       : null;
-    const simulatedText = bookingLink
+    const simulatedFinalText = bookingLink
       ? simulatedAnswer + `\n\n予約はこちら👇\n${bookingLink}`
       : simulatedAnswer;
 
-    const messages: any[] = [
+    const ackMessages: any[] = [{ type: "text", text: ACK_TEXT }];
+    const finalMessages: any[] = [
       ...(isDebug
-        ? [{ type: "text", text: `DBG stamp=${STAMP_V7} src=${cfg.source}` }]
+        ? [{ type: "text", text: `DBG stamp=${STAMP_V8} src=${cfg.source}` }]
         : []),
-      { type: "text", text: simulatedText },
+      { type: "text", text: simulatedFinalText },
     ];
 
     return NextResponse.json(
-      { ...base, debug: true, handler: "AI_CHAT", simulatedText: debugText, messages },
+      {
+        ...base,
+        debug: true,
+        handler: "ACK_PUSH",
+        ackText: ACK_TEXT,
+        finalText: simulatedFinalText,
+        shouldAttachBooking: simulatedBooking,
+        ackMessages,
+        finalMessages,
+      },
       { headers: cacheHeaders }
     );
   }
@@ -282,12 +324,12 @@ export async function POST(req: Request) {
     searchParams.get("tenantId") ??
     process.env.LINE_DEFAULT_TENANT_ID ??
     "default";
-  // POST debug=1: reply/push を実行せず、想定メッセージを JSON で返す（安全）
+  // POST debug=1: LINE 送信なし、AI は呼んで想定メッセージを JSON 返却
   const postDebug = searchParams.get("debug") === "1";
 
   const sig         = req.headers.get("x-line-signature") ?? "";
   const allowBadSig = (process.env.LINE_WEBHOOK_ALLOW_BAD_SIGNATURE ?? "0") === "1";
-  const stamp       = STAMP_V7;
+  const stamp       = STAMP_V8;
 
   // Read body once
   const raw = await req.arrayBuffer();
@@ -308,7 +350,7 @@ export async function POST(req: Request) {
     );
   }
 
-  // Signature verification（debug=1 + allowBadSig=1 でローカルテスト可）
+  // Signature verification（allowBadSig=1 でローカルテスト可）
   const verified = sig ? await verifyLineSignature(raw, sig, cfg.channelSecret) : false;
   if (!verified && !allowBadSig) {
     return NextResponse.json(
@@ -348,68 +390,109 @@ export async function POST(req: Request) {
   const replyToken = String(ev.replyToken);
   const lineUserId = String(ev.source?.userId ?? "").trim();
 
-  // Best-effort: persist lineUserId to Workers KV（/reserve の push 通知用）
+  // ── KV dedup（重複イベントをスキップ）────────────────────────────────────
+  // Cloudflare が同一 webhook を複数回 deliver する場合がある
+  const apiBase = (
+    process.env.API_BASE ?? process.env.NEXT_PUBLIC_API_BASE ?? ""
+  ).replace(/\/+$/, "");
+
+  if (!postDebug) {
+    // eventKey = replyToken の先頭32文字（一意性十分）
+    const eventKey = replyToken.slice(0, 32).replace(/[^a-zA-Z0-9_-]/g, "");
+    const dedupKey = `ai:evt:${tenantId}:${eventKey}`;
+    const isNew = await dedupEvent(apiBase, dedupKey, 120);
+    if (!isNew) {
+      // 重複イベント — 200 で即返却（LINE は 200 を期待する）
+      return NextResponse.json({
+        ok: true, stamp, where, tenantId, source: cfg.source,
+        verified, skipped: true, reason: "duplicate_event", eventCount: events.length,
+      });
+    }
+  }
+
+  // Best-effort: persist lineUserId to Workers KV
   if (lineUserId && !postDebug) {
-    const _apiBase = (process.env.API_BASE ?? process.env.NEXT_PUBLIC_API_BASE ?? "").replace(/\/+$/, "");
     const _adminToken = process.env.ADMIN_TOKEN ?? "";
-    if (_apiBase) {
+    if (apiBase) {
       const _headers: Record<string, string> = { "Content-Type": "application/json" };
       if (_adminToken) _headers["X-Admin-Token"] = _adminToken;
       fetch(
-        `${_apiBase}/admin/integrations/line/last-user?tenantId=${encodeURIComponent(tenantId)}`,
+        `${apiBase}/admin/integrations/line/last-user?tenantId=${encodeURIComponent(tenantId)}`,
         { method: "POST", headers: _headers, body: JSON.stringify({ userId: lineUserId }) }
       ).catch(() => null);
     }
   }
 
-  // ── AI 接客 ──────────────────────────────────────────────────────────────
-  const aiIp = lineUserId ? `line:${lineUserId.slice(0, 12)}` : "line";
-  const ai = await runAiChat(tenantId, textIn, aiIp);
-
-  let replyText = ai.ok
-    ? ai.answer
-    : "少し時間をおいて再度お試しください。";
-
-  // 予約URL付与: メッセージキーワード OR suggestedActions の open_booking_form
+  // ── 予約キーワード判定 ────────────────────────────────────────────────────
   const normalizedIn = textIn
     .normalize("NFKC")
     .replace(/[\s\u200B-\u200D\uFEFF]/g, "")
     .toLowerCase();
-  const hasBookingKw     = BOOKING_KW.some(k => normalizedIn.includes(k));
-  const hasBookingAction = ai.suggestedActions.some((a: any) => a?.type === "open_booking_form");
-  const shouldAttachBooking = hasBookingKw || hasBookingAction;
+  const hasBookingKw = BOOKING_KW.some(k => normalizedIn.includes(k));
 
-  if (shouldAttachBooking) {
-    replyText += `\n\n予約はこちら👇\n${buildBookingLink(cfg.bookingUrl, tenantId, lineUserId)}`;
-  }
-
-  const messages: any[] = [
-    ...(isDebug
-      ? [{ type: "text", text: `DBG stamp=${stamp} src=${cfg.source} aiOk=${ai.ok}` }]
-      : []),
-    { type: "text", text: replyText },
-  ];
-
-  // ── POST debug=1: 送信せず想定メッセージを返す ───────────────────────────
+  // ── POST debug=1: AI は呼ぶが LINE 送信なし ───────────────────────────────
   if (postDebug) {
+    const aiStart = Date.now();
+    const aiIp = lineUserId ? `line:${lineUserId.slice(0, 12)}` : "line";
+    const ai = await runAiChat(tenantId, textIn, aiIp);
+    const aiMs = Date.now() - aiStart;
+
+    const hasBookingAction = ai.suggestedActions.some((a: any) => a?.type === "open_booking_form");
+    const shouldAttachBooking = hasBookingKw || hasBookingAction;
+
+    let finalText = ai.ok ? ai.answer : FALLBACK_TEXT;
+    if (shouldAttachBooking) {
+      finalText += `\n\n予約はこちら👇\n${buildBookingLink(cfg.bookingUrl, tenantId, lineUserId)}`;
+    }
+
     return NextResponse.json({
       ok: true, stamp, where, tenantId, debug: true,
-      textIn, replyText, shouldAttachBooking, aiOk: ai.ok,
-      messages, eventCount: events.length,
+      userId: lineUserId || null,
+      aiMs,
+      ackText: ACK_TEXT,
+      finalText,
+      shouldAttachBooking,
+      aiOk: ai.ok,
+      replyPlanned: true,
+      pushPlanned: !!lineUserId,
+      eventCount: events.length,
     });
   }
 
-  // ── reply → push fallback ────────────────────────────────────────────────
-  const rep = await replyLine(cfg.channelAccessToken, replyToken, messages);
+  // ── Step 1: ack reply（1秒以内）─────────────────────────────────────────
+  // AI処理前に即座に受付メッセージを送る
+  const ackMessages: any[] = [{ type: "text", text: ACK_TEXT }];
+  const ackRep = await replyLine(cfg.channelAccessToken, replyToken, ackMessages)
+    .catch(() => ({ ok: false, status: 0, bodyText: "reply_exception" }));
 
+  // ── Step 2: AI 接客（ack 後に実行）──────────────────────────────────────
+  const aiIp = lineUserId ? `line:${lineUserId.slice(0, 12)}` : "line";
+  const ai = await runAiChat(tenantId, textIn, aiIp);
+
+  const hasBookingAction = ai.suggestedActions.some((a: any) => a?.type === "open_booking_form");
+  const shouldAttachBooking = hasBookingKw || hasBookingAction;
+
+  let finalText = ai.ok ? ai.answer : FALLBACK_TEXT;
+  if (shouldAttachBooking) {
+    finalText += `\n\n予約はこちら👇\n${buildBookingLink(cfg.bookingUrl, tenantId, lineUserId)}`;
+  }
+
+  const finalMessages: any[] = [
+    ...(isDebug
+      ? [{ type: "text", text: `DBG stamp=${stamp} src=${cfg.source} aiOk=${ai.ok}` }]
+      : []),
+    { type: "text", text: finalText },
+  ];
+
+  // ── Step 3: push で最終回答（replyToken 不要）────────────────────────────
+  // userId がない場合は push できないが、ack で受付済みのため best-effort
   let pushRep: { ok: boolean; status: number; bodyText: string } | null = null;
-  // replyToken 失効（"invalid reply token"）かつ userId がある場合は push で救済
-  if (!rep.ok && lineUserId && rep.bodyText.toLowerCase().includes("invalid reply token")) {
-    pushRep = await pushLine(cfg.channelAccessToken, lineUserId, messages)
+  if (lineUserId) {
+    pushRep = await pushLine(cfg.channelAccessToken, lineUserId, finalMessages)
       .catch(() => ({ ok: false, status: 0, bodyText: "push_exception" }));
   }
 
-  // 500 は返さない — LINE は 200 を期待する
+  // LINE は 200 を期待する — 500 は返さない
   return NextResponse.json(
     {
       ok: true,
@@ -418,14 +501,14 @@ export async function POST(req: Request) {
       tenantId,
       source: cfg.source,
       verified,
-      replied: true,
-      replyStatus: rep.status,
-      replyOk: rep.ok,
-      replyBody: rep.ok ? null : rep.bodyText?.slice(0, 300) ?? null,
-      pushFallback: pushRep !== null,
+      ackOk: ackRep.ok,
+      ackStatus: ackRep.status,
       pushOk: pushRep?.ok ?? null,
-      eventCount: events.length,
+      pushStatus: pushRep?.status ?? null,
+      hasUserId: !!lineUserId,
       aiOk: ai.ok,
+      shouldAttachBooking,
+      eventCount: events.length,
     },
     { headers: { "x-stamp": stamp } }
   );
