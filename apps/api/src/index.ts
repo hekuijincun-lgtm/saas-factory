@@ -1867,21 +1867,144 @@ app.put("/admin/ai/retention", async (c) => {
   }
 });
 
-// POST /ai/chat — STUB（OpenAI未接続）
+// POST /ai/chat — OpenAI Responses API
 app.post("/ai/chat", async (c) => {
-  const STAMP = "AI_CHAT_STUB_V1";
+  const STAMP = "AI_CHAT_V1";
+  const env = c.env as any;
+  let tenantId = "default";
   try {
     const body: any = await c.req.json().catch(() => ({}));
-    const tenantId = getTenantId(c, body);
-    // OPENAI_API_KEY が未設定の場合は not_configured を返す（絶対に 500 にしない）
-    const apiKey = (c.env as any)?.OPENAI_API_KEY;
+    tenantId = getTenantId(c, body);
+
+    // 1. OPENAI_API_KEY チェック（未設定は not_configured を 200 で返す）
+    const apiKey: string | undefined = env?.OPENAI_API_KEY;
     if (!apiKey) {
       return c.json({ ok: false, stamp: STAMP, tenantId, error: "not_configured", detail: "OPENAI_API_KEY missing" });
     }
-    // キーは存在するが OpenAI 連携未実装
-    return c.json({ ok: false, stamp: STAMP, tenantId, error: "not_implemented", detail: "OpenAI integration coming soon" });
+
+    // 2. ユーザーメッセージ検証
+    const message = String(body?.message ?? "").trim();
+    if (!message) {
+      return c.json({ ok: false, stamp: STAMP, tenantId, error: "missing_message", detail: "message is required" });
+    }
+
+    // 3. モデル選択（env.OPENAI_MODEL → "gpt-5"）
+    const model = String(env?.OPENAI_MODEL || "gpt-5").trim() || "gpt-5";
+
+    // 4. テナントの AI 設定・ポリシー・FAQ を KV から取得
+    const kv = env?.SAAS_FACTORY;
+    let aiSettings: any = { voice: "friendly", character: "", answerLength: "normal" };
+    let aiPolicy: any = { prohibitedTopics: [] as string[], hardRules: [] as string[] };
+    let aiFaq: any[] = [];
+    if (kv) {
+      const [s, p, f] = await Promise.all([
+        aiGetJson(kv, `ai:settings:${tenantId}`),
+        aiGetJson(kv, `ai:policy:${tenantId}`),
+        aiGetJson(kv, `ai:faq:${tenantId}`),
+      ]);
+      if (s && typeof s === "object") aiSettings = { ...aiSettings, ...s };
+      if (p && typeof p === "object") aiPolicy = { ...aiPolicy, ...p };
+      if (Array.isArray(f)) aiFaq = f.filter((x: any) => x.enabled !== false);
+    }
+
+    // 5. system プロンプト構築
+    const faqBlock = aiFaq.length > 0
+      ? "\n\n## FAQ（よくある質問と回答）\n" +
+        aiFaq.slice(0, 20).map((f: any) => `Q: ${f.question}\nA: ${f.answer}`).join("\n\n")
+      : "";
+    const hardRulesBlock = (aiPolicy.hardRules as string[]).length > 0
+      ? "\n\n## 禁止ルール\n" + (aiPolicy.hardRules as string[]).map((r: string) => `- ${r}`).join("\n")
+      : "";
+    const prohibitedBlock = (aiPolicy.prohibitedTopics as string[]).length > 0
+      ? "\n\n## 禁止トピック: " + (aiPolicy.prohibitedTopics as string[]).join(", ")
+      : "";
+
+    const systemContent = [
+      "あなたはお店のAIアシスタントです。",
+      aiSettings.character ? `キャラクター設定: ${aiSettings.character}` : "",
+      `口調: ${aiSettings.voice}`,
+      `回答の長さ: ${aiSettings.answerLength}`,
+      "",
+      "## 絶対に守るルール",
+      "- 予約はフォームでのみ確定します。あなたは予約を作ったり確約したりしません。",
+      "- 料金・空き枠・規約など不確実な情報は断定しません。",
+      "- 予約に関する質問には「予約フォームからご確認ください」と案内してください。",
+      "- 医療・法律・政治・宗教などのアドバイスはしません。",
+      "- booking created や reservation confirmed などの行動を起こしたとは絶対に言いません。",
+      faqBlock,
+      hardRulesBlock,
+      prohibitedBlock,
+    ].filter(Boolean).join("\n");
+
+    // 6. OpenAI Responses API 呼び出し（失敗しても 500 にしない）
+    const openaiPayload = {
+      model,
+      store: false,
+      max_output_tokens: 400,
+      temperature: 0.3,
+      input: [
+        { role: "system", content: systemContent },
+        { role: "user", content: message },
+      ],
+    };
+
+    let openaiRes: any = null;
+    let openaiStatus = 0;
+    try {
+      const r = await fetch("https://api.openai.com/v1/responses", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(openaiPayload),
+      });
+      openaiStatus = r.status;
+      openaiRes = await r.json().catch(() => null);
+    } catch (fetchErr: any) {
+      return c.json({ ok: false, stamp: STAMP, tenantId, error: "upstream_error", detail: String(fetchErr?.message ?? fetchErr) });
+    }
+
+    if (!openaiRes || openaiStatus !== 200) {
+      const detail = openaiRes?.error?.message ?? openaiRes?.error ?? `HTTP ${openaiStatus}`;
+      return c.json({ ok: false, stamp: STAMP, tenantId, error: "upstream_error", detail: String(detail) });
+    }
+
+    // 7. テキスト抽出ヘルパー（output_text → output[].content[].text の順で走査）
+    const extractText = (res: any): string => {
+      if (typeof res?.output_text === "string" && res.output_text.trim()) {
+        return res.output_text.trim();
+      }
+      if (Array.isArray(res?.output)) {
+        const parts: string[] = [];
+        for (const item of res.output) {
+          if (Array.isArray(item?.content)) {
+            for (const part of item.content) {
+              if (typeof part?.text === "string" && part.text.trim()) parts.push(part.text.trim());
+            }
+          } else if (typeof item?.text === "string" && item.text.trim()) {
+            parts.push(item.text.trim());
+          }
+        }
+        if (parts.length > 0) return parts.join("\n");
+      }
+      return "";
+    };
+
+    const answer = extractText(openaiRes);
+    if (!answer) {
+      return c.json({ ok: false, stamp: STAMP, tenantId, error: "empty_response", detail: "No text extracted from OpenAI response" });
+    }
+
+    // 8. suggestedActions（予約関連キーワードで open_booking_form を提案）
+    const bookingKw = ["予約", "ご予約", "booking", "reserve", "フォーム", "予約フォーム"];
+    const needsBooking = bookingKw.some((k) => answer.includes(k) || message.includes(k));
+    const suggestedActions = needsBooking ? [{ type: "open_booking_form", url: "/booking" }] : [];
+
+    return c.json({ ok: true, stamp: STAMP, tenantId, answer, suggestedActions });
+
   } catch (e: any) {
-    return c.json({ ok: false, stamp: STAMP, error: "exception", detail: String(e?.message ?? e) }, 500);
+    return c.json({ ok: false, stamp: STAMP, tenantId, error: "exception", detail: String(e?.message ?? e) });
   }
 });
 
