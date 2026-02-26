@@ -1675,6 +1675,58 @@ async function aiGetJson(kv: any, key: string): Promise<any> {
   }
 }
 
+// extractResponseText: OpenAI Responses API / Chat Completions 両対応の堅牢なテキスト抽出
+// 優先順位:
+//   A) resp.output_text (string, 非空)
+//   B) resp.output[].content[].text  (type=output_text/text/その他を問わず text フィールドがあれば採用)
+//   C) resp.output[].content が文字列ならそれ
+//   D) resp.choices[0].message.content  (Chat Completions 互換保険)
+//   E) resp.response ネスト（再帰1段）
+function extractResponseText(resp: any): string {
+  if (!resp || typeof resp !== "object") return "";
+
+  // A) 最上位 output_text
+  if (typeof resp.output_text === "string" && resp.output_text.trim()) {
+    return resp.output_text.trim();
+  }
+
+  // B / C) output 配列を走査
+  if (Array.isArray(resp.output)) {
+    const parts: string[] = [];
+    for (const item of resp.output) {
+      if (Array.isArray(item?.content)) {
+        // B) content が配列 → 各要素の text フィールドを拾う（type は問わない）
+        for (const part of item.content) {
+          if (typeof part?.text === "string" && part.text.trim()) {
+            parts.push(part.text.trim());
+          }
+        }
+      } else if (typeof item?.content === "string" && item.content.trim()) {
+        // C) content が文字列
+        parts.push(item.content.trim());
+      } else if (typeof item?.text === "string" && item.text.trim()) {
+        // item 直下の text
+        parts.push(item.text.trim());
+      }
+    }
+    if (parts.length > 0) return parts.join("\n");
+  }
+
+  // D) Chat Completions 互換: choices[0].message.content
+  const choiceContent = (resp as any)?.choices?.[0]?.message?.content;
+  if (typeof choiceContent === "string" && choiceContent.trim()) {
+    return choiceContent.trim();
+  }
+
+  // E) ネストされた resp.response を1段再帰（ループ防止のため1回のみ）
+  if (resp.response && typeof resp.response === "object" && resp.response !== resp) {
+    const nested = extractResponseText(resp.response);
+    if (nested) return nested;
+  }
+
+  return "";
+}
+
 // GET /admin/ai — combined: settings + policy + retention
 app.get("/admin/ai", async (c) => {
   const STAMP = "AI_GET_V1";
@@ -1867,11 +1919,12 @@ app.put("/admin/ai/retention", async (c) => {
   }
 });
 
-// POST /ai/chat — OpenAI Responses API
+// POST /ai/chat — OpenAI Responses API (AI_CHAT_V2)
 app.post("/ai/chat", async (c) => {
-  const STAMP = "AI_CHAT_V1";
+  const STAMP = "AI_CHAT_V2";
   const env = c.env as any;
   let tenantId = "default";
+  const isDebug = c.req.query("debug") === "1";
   try {
     const body: any = await c.req.json().catch(() => ({}));
     tenantId = getTenantId(c, body);
@@ -1940,8 +1993,7 @@ app.post("/ai/chat", async (c) => {
     const openaiPayload = {
       model,
       store: false,
-      max_output_tokens: 400,
-      temperature: 0.3,
+      max_output_tokens: 500,
       input: [
         { role: "system", content: systemContent },
         { role: "user", content: message },
@@ -1970,30 +2022,37 @@ app.post("/ai/chat", async (c) => {
       return c.json({ ok: false, stamp: STAMP, tenantId, error: "upstream_error", detail: String(detail) });
     }
 
-    // 7. テキスト抽出ヘルパー（output_text → output[].content[].text の順で走査）
-    const extractText = (res: any): string => {
-      if (typeof res?.output_text === "string" && res.output_text.trim()) {
-        return res.output_text.trim();
-      }
-      if (Array.isArray(res?.output)) {
-        const parts: string[] = [];
-        for (const item of res.output) {
-          if (Array.isArray(item?.content)) {
-            for (const part of item.content) {
-              if (typeof part?.text === "string" && part.text.trim()) parts.push(part.text.trim());
-            }
-          } else if (typeof item?.text === "string" && item.text.trim()) {
-            parts.push(item.text.trim());
-          }
-        }
-        if (parts.length > 0) return parts.join("\n");
-      }
-      return "";
-    };
-
-    const answer = extractText(openaiRes);
+    // 7. テキスト抽出（モジュールレベルの extractResponseText を使用）
+    const answer = extractResponseText(openaiRes);
     if (!answer) {
-      return c.json({ ok: false, stamp: STAMP, tenantId, error: "empty_response", detail: "No text extracted from OpenAI response" });
+      // debug=1 のときのみ rawHint を付与（APIキーは絶対含めない）
+      const rawHint = isDebug ? {
+        keys: Object.keys(openaiRes),
+        responseStatus: openaiRes?.status,
+        outputLength: Array.isArray(openaiRes?.output) ? openaiRes.output.length : null,
+        outputTypes: Array.isArray(openaiRes?.output)
+          ? openaiRes.output.map((x: any) => x?.type ?? null)
+          : null,
+        hasOutputText: typeof openaiRes?.output_text === "string",
+        outputTextLen: typeof openaiRes?.output_text === "string" ? openaiRes.output_text.length : 0,
+        firstItemKeys: Array.isArray(openaiRes?.output) && openaiRes.output.length > 0
+          ? Object.keys(openaiRes.output[0] || {})
+          : null,
+        firstContentInfo: Array.isArray(openaiRes?.output) && openaiRes.output.length > 0
+          && Array.isArray(openaiRes.output[0]?.content)
+          ? openaiRes.output[0].content.map((x: any) => ({
+              type: x?.type ?? null,
+              hasText: typeof x?.text === "string",
+              textLen: typeof x?.text === "string" ? x.text.length : 0,
+            }))
+          : null,
+      } : undefined;
+      return c.json({
+        ok: false, stamp: STAMP, tenantId,
+        error: "empty_response",
+        detail: isDebug ? "No text extracted (debug)" : "No text extracted",
+        ...(rawHint !== undefined ? { rawHint } : {}),
+      });
     }
 
     // 8. suggestedActions（予約関連キーワードで open_booking_form を提案）
@@ -2009,6 +2068,7 @@ app.post("/ai/chat", async (c) => {
 });
 
 /* === /AI_CONCIERGE_V1 === */
+
 
 
 
