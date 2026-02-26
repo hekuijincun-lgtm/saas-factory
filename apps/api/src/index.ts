@@ -1919,12 +1919,15 @@ app.put("/admin/ai/retention", async (c) => {
   }
 });
 
-// POST /ai/chat — OpenAI Responses API (AI_CHAT_V2)
+// POST /ai/chat — OpenAI Responses API (AI_CHAT_V3)
+// V3変更点: max_output_tokens 1600 (推論モデル対応), incomplete/in_progress retrieve polling
 app.post("/ai/chat", async (c) => {
-  const STAMP = "AI_CHAT_V2";
+  const STAMP = "AI_CHAT_V3";
   const env = c.env as any;
   let tenantId = "default";
   const isDebug = c.req.query("debug") === "1";
+  const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
   try {
     const body: any = await c.req.json().catch(() => ({}));
     tenantId = getTenantId(c, body);
@@ -1941,8 +1944,8 @@ app.post("/ai/chat", async (c) => {
       return c.json({ ok: false, stamp: STAMP, tenantId, error: "missing_message", detail: "message is required" });
     }
 
-    // 3. モデル選択（env.OPENAI_MODEL → "gpt-5"）
-    const model = String(env?.OPENAI_MODEL || "gpt-5").trim() || "gpt-5";
+    // 3. モデル選択（env.OPENAI_MODEL → "gpt-4o"）
+    const model = String(env?.OPENAI_MODEL || "gpt-4o").trim() || "gpt-4o";
 
     // 4. テナントの AI 設定・ポリシー・FAQ を KV から取得
     const kv = env?.SAAS_FACTORY;
@@ -1989,11 +1992,14 @@ app.post("/ai/chat", async (c) => {
       prohibitedBlock,
     ].filter(Boolean).join("\n");
 
-    // 6. OpenAI Responses API 呼び出し（失敗しても 500 にしない）
+    // 6. OpenAI Responses API 呼び出し
+    // - background は送らない（reasoning モデルの incomplete 回避）
+    // - temperature は送らない（reasoning モデル非対応）
+    // - max_output_tokens: 1600（推論トークン消費分の余裕を確保）
     const openaiPayload = {
       model,
       store: false,
-      max_output_tokens: 500,
+      max_output_tokens: 1600,
       input: [
         { role: "system", content: systemContent },
         { role: "user", content: message },
@@ -2022,11 +2028,58 @@ app.post("/ai/chat", async (c) => {
       return c.json({ ok: false, stamp: STAMP, tenantId, error: "upstream_error", detail: String(detail) });
     }
 
-    // 7. テキスト抽出（モジュールレベルの extractResponseText を使用）
+    // 7. retrieve ポーリング（incomplete / in_progress / queued のとき最大 3 回待つ）
+    // incomplete: トークン上限で切れた可能性。retrieve で完了確認を試みる。
+    // in_progress/queued: 非同期処理中。retrieve で completed になるまで待つ。
+    const statusHistory: string[] = [String(openaiRes?.status ?? "unknown")];
+    const RETRY_DELAYS_MS = [250, 400, 650] as const;
+    const responseId: string | undefined = openaiRes?.id;
+    const needsPoll = (s: string) => s === "incomplete" || s === "in_progress" || s === "queued";
+
+    if (responseId && needsPoll(openaiRes?.status)) {
+      for (let i = 0; i < RETRY_DELAYS_MS.length; i++) {
+        await sleep(RETRY_DELAYS_MS[i]);
+        try {
+          const rr = await fetch(`https://api.openai.com/v1/responses/${responseId}`, {
+            method: "GET",
+            headers: { "Authorization": `Bearer ${apiKey}` },
+          });
+          if (rr.ok) {
+            const retrieved: any = await rr.json().catch(() => null);
+            if (retrieved && typeof retrieved === "object") {
+              openaiRes = retrieved;
+              statusHistory.push(String(retrieved?.status ?? "unknown"));
+            }
+          }
+        } catch {
+          // retrieve 失敗は無視して最後の状態を使い続ける
+        }
+        if (!needsPoll(openaiRes?.status)) break;
+      }
+    }
+
+    // 8. polling 後も incomplete なら incomplete エラー（500 にしない）
+    if (openaiRes?.status === "incomplete") {
+      const rawHint = isDebug ? {
+        statusHistory,
+        outputTypes: Array.isArray(openaiRes?.output)
+          ? openaiRes.output.map((x: any) => x?.type ?? null)
+          : null,
+        incompleteDetails: openaiRes?.incomplete_details ?? null,
+      } : undefined;
+      return c.json({
+        ok: false, stamp: STAMP, tenantId,
+        error: "incomplete",
+        detail: "OpenAI response did not complete (token limit exceeded)",
+        ...(rawHint !== undefined ? { rawHint } : {}),
+      });
+    }
+
+    // 9. テキスト抽出（モジュールレベルの extractResponseText を使用）
     const answer = extractResponseText(openaiRes);
     if (!answer) {
-      // debug=1 のときのみ rawHint を付与（APIキーは絶対含めない）
       const rawHint = isDebug ? {
+        statusHistory,
         keys: Object.keys(openaiRes),
         responseStatus: openaiRes?.status,
         outputLength: Array.isArray(openaiRes?.output) ? openaiRes.output.length : null,
@@ -2035,9 +2088,6 @@ app.post("/ai/chat", async (c) => {
           : null,
         hasOutputText: typeof openaiRes?.output_text === "string",
         outputTextLen: typeof openaiRes?.output_text === "string" ? openaiRes.output_text.length : 0,
-        firstItemKeys: Array.isArray(openaiRes?.output) && openaiRes.output.length > 0
-          ? Object.keys(openaiRes.output[0] || {})
-          : null,
         firstContentInfo: Array.isArray(openaiRes?.output) && openaiRes.output.length > 0
           && Array.isArray(openaiRes.output[0]?.content)
           ? openaiRes.output[0].content.map((x: any) => ({
@@ -2055,7 +2105,7 @@ app.post("/ai/chat", async (c) => {
       });
     }
 
-    // 8. suggestedActions（予約関連キーワードで open_booking_form を提案）
+    // 10. suggestedActions（予約関連キーワードで open_booking_form を提案）
     const bookingKw = ["予約", "ご予約", "booking", "reserve", "フォーム", "予約フォーム"];
     const needsBooking = bookingKw.some((k) => answer.includes(k) || message.includes(k));
     const suggestedActions = needsBooking ? [{ type: "open_booking_form", url: "/booking" }] : [];
