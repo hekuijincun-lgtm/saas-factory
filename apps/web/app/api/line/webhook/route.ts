@@ -3,8 +3,8 @@ import { NextResponse } from "next/server";
 export const runtime = "edge";
 
 // ─── version / stamps ────────────────────────────────────────────────────────
-const STAMP_V5  = "LINE_WEBHOOK_V5_20260225_235900"; // bumped: stamp removed from Flex UI, debug probe added
-const STAMP_V4  = "LINE_WEBHOOK_V4_20260215_202858"; // kept for reference / fallback echo
+const STAMP_V6  = "LINE_WEBHOOK_V6_20260226_AI_CHAT"; // V6: ECHO削除 → AI接客統合
+const STAMP_V5  = "LINE_WEBHOOK_V5_20260225_235900";  // kept for reference
 const where     = "api/line/webhook";
 const isDebug   = (process.env.LINE_DEBUG === "1");
 
@@ -50,7 +50,6 @@ async function replyLine(
 
 function buildBookingFlex(bookingUrl: string, stamp: string, userId?: string) {
   // stamp intentionally excluded from UI — kept in server logs and response body only
-  // Embed userId in URL so /reserve can send push notification after booking completes
   const url = userId
     ? `${bookingUrl}${bookingUrl.includes("?") ? "&" : "?"}lu=${encodeURIComponent(userId)}`
     : bookingUrl;
@@ -89,8 +88,52 @@ function buildBookingFlex(bookingUrl: string, stamp: string, userId?: string) {
   };
 }
 
+// ─── AI chat caller ──────────────────────────────────────────────────────────
+// Workers の /ai/chat を HTTP で呼び出す内部ヘルパー。
+// Pages (edge) と Workers は別ランタイムなので直接呼び出しは不可。
+// HTTP 呼び出しは再帰ではなく cross-service 呼び出し（/api/proxy 経由禁止）。
+async function runAiChat(
+  tenantId: string,
+  message: string,
+  ip: string
+): Promise<{ ok: boolean; answer: string; suggestedActions: any[] }> {
+  const EMPTY = { ok: false, answer: "", suggestedActions: [] };
+
+  const apiBase = (
+    process.env.API_BASE ??
+    process.env.NEXT_PUBLIC_API_BASE ??
+    ""
+  ).replace(/\/+$/, "");
+
+  if (!apiBase) return EMPTY;
+
+  try {
+    const res = await fetch(`${apiBase}/ai/chat`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        // IP はレート制限キーに使われる。LINE 経由は userId をキーにする。
+        "cf-connecting-ip": ip,
+        "x-real-ip": ip,
+      },
+      body: JSON.stringify({ message, tenantId }),
+    });
+
+    const data = (await res.json().catch(() => null)) as any;
+    if (data?.ok && data?.answer) {
+      return {
+        ok: true,
+        answer: String(data.answer),
+        suggestedActions: Array.isArray(data.suggestedActions) ? data.suggestedActions : [],
+      };
+    }
+    return EMPTY;
+  } catch {
+    return EMPTY;
+  }
+}
+
 // ─── tenant config resolution ─────────────────────────────────────────────────
-// Priority: KV (via Workers /admin/settings) → process.env (V4 fallback)
 interface TenantLineConfig {
   channelSecret: string;
   channelAccessToken: string;
@@ -119,7 +162,6 @@ async function getTenantLineConfig(
       const r = await fetch(url, { headers });
       if (r.ok) {
         const json = (await r.json()) as any;
-        // Workers returns { ok, data: {...} } or flat { ... }
         const s = json?.data ?? json;
         const line = s?.integrations?.line;
 
@@ -137,7 +179,7 @@ async function getTenantLineConfig(
     }
   }
 
-  // 2) Fallback: process.env — preserves V4 behavior exactly
+  // 2) Fallback: process.env — preserves V4/V5 behavior
   const channelSecret      = process.env.LINE_CHANNEL_SECRET      ?? "";
   const channelAccessToken = process.env.LINE_CHANNEL_ACCESS_TOKEN ?? "";
   const bookingUrl =
@@ -148,13 +190,12 @@ async function getTenantLineConfig(
 }
 
 // ─── GET (debug probe) ────────────────────────────────────────────────────────
-// ?debug=1&text=予約  → returns the exact Flex JSON that would be sent to LINE
-//                       (no LINE request, no credentials in response, safe in prod)
+// ?debug=1&text=営業時間  → returns simulated response (no LINE request)
 export async function GET(req: Request) {
   const { searchParams, origin } = new URL(req.url);
   const tenantId  = searchParams.get("tenantId") ?? "default";
   const debugMode = searchParams.get("debug") === "1";
-  const debugText = searchParams.get("text") ?? "予約";
+  const debugText = searchParams.get("text") ?? "営業時間は？";
 
   const cfg = await getTenantLineConfig(tenantId, origin);
   const allowBadSig = (process.env.LINE_WEBHOOK_ALLOW_BAD_SIGNATURE ?? "0") === "1";
@@ -162,7 +203,7 @@ export async function GET(req: Request) {
   const base = {
     ok: true,
     where,
-    stamp: STAMP_V5,
+    stamp: STAMP_V6,
     tenantId,
     secretLen: cfg.channelSecret.length,
     accessTokenLen: cfg.channelAccessToken.length,
@@ -175,31 +216,31 @@ export async function GET(req: Request) {
     "Cache-Control": "no-store, no-cache, must-revalidate",
     Pragma: "no-cache",
     Expires: "0",
-    "x-stamp": STAMP_V5,
+    "x-stamp": STAMP_V6,
   };
 
   if (debugMode) {
-    // Simulate what POST would send for a given message text
     const normalized = debugText
       .normalize("NFKC")
       .replace(/[\s\u200B-\u200D\uFEFF]/g, "")
       .toLowerCase();
 
-    let messages: any[];
-    let handler: string;
+    // Simulate AI response path
+    const handler = "AI_CHAT";
+    const simulatedAnswer = normalized.includes("予約") || normalized.includes("よやく")
+      ? "予約フォームからご確認ください。"
+      : `(AI response for: ${debugText})`;
+    const simulatedBooking = normalized.includes("予約") || normalized.includes("よやく");
+    const simulatedText = simulatedBooking
+      ? simulatedAnswer + `\n\n予約はこちら👇\n${cfg.bookingUrl}`
+      : simulatedAnswer;
 
-    if (normalized.includes("予約") || normalized.includes("よやく")) {
-      handler = "BOOKING_FLEX";
-      messages = [
-        ...(isDebug
-          ? [{ type: "text", text: `DBG stamp=${STAMP_V5} src=${cfg.source}` }]
-          : []),
-        buildBookingFlex(cfg.bookingUrl, STAMP_V5, "DEBUG_USER_ID"),
-      ];
-    } else {
-      handler = "ECHO";
-      messages = [{ type: "text", text: `ECHO: ${debugText}` }];
-    }
+    const messages: any[] = [
+      ...(isDebug
+        ? [{ type: "text", text: `DBG stamp=${STAMP_V6} src=${cfg.source}` }]
+        : []),
+      { type: "text", text: simulatedText },
+    ];
 
     return NextResponse.json(
       { ...base, debug: true, handler, simulatedText: debugText, messages },
@@ -213,7 +254,6 @@ export async function GET(req: Request) {
 // ─── POST (LINE webhook) ──────────────────────────────────────────────────────
 export async function POST(req: Request) {
   const { searchParams, origin } = new URL(req.url);
-  // Multi-tenant: tenantId from query param (set this in LINE Developers webhook URL)
   const tenantId =
     searchParams.get("tenantId") ??
     process.env.LINE_DEFAULT_TENANT_ID ??
@@ -221,7 +261,7 @@ export async function POST(req: Request) {
 
   const sig         = req.headers.get("x-line-signature") ?? "";
   const allowBadSig = (process.env.LINE_WEBHOOK_ALLOW_BAD_SIGNATURE ?? "0") === "1";
-  const stamp       = STAMP_V5;
+  const stamp       = STAMP_V6;
 
   // Read body once
   const raw = await req.arrayBuffer();
@@ -292,18 +332,9 @@ export async function POST(req: Request) {
 
   const textIn     = String(ev.message.text ?? "");
   const replyToken = String(ev.replyToken);
-
-  const normalized = textIn
-    .normalize("NFKC")
-    .replace(/[\s\u200B-\u200D\uFEFF]/g, "")
-    .toLowerCase();
-
-  let messages: any[];
-
   const lineUserId = String(ev.source?.userId ?? "").trim();
 
   // Best-effort: persist lineUserId to Workers KV so /reserve can send push notifications.
-  // Fire-and-forget — never blocks the reply or fails the webhook.
   if (lineUserId) {
     const _apiBase = (process.env.API_BASE ?? process.env.NEXT_PUBLIC_API_BASE ?? "").replace(/\/+$/, "");
     const _adminToken = process.env.ADMIN_TOKEN ?? "";
@@ -317,17 +348,34 @@ export async function POST(req: Request) {
     }
   }
 
-  if (normalized.includes("予約") || normalized.includes("よやく")) {
-    messages = [
-      ...(isDebug
-        ? [{ type: "text", text: `DBG stamp=${stamp} url=${cfg.bookingUrl} src=${cfg.source} uid=${lineUserId.slice(0, 8)}` }]
-        : []),
-      buildBookingFlex(cfg.bookingUrl, stamp, lineUserId || undefined),
-    ];
-  } else {
-    // Preserve V4 echo behavior for non-booking messages
-    messages = [{ type: "text", text: `ECHO: ${textIn}` }];
+  // ── AI 接客 ──────────────────────────────────────────────────────────────
+  // レート制限キー: LINE経由は "line:{userId先頭12文字}" で web UI と分離
+  const aiIp = lineUserId ? `line:${lineUserId.slice(0, 12)}` : "line";
+  const ai = await runAiChat(tenantId, textIn, aiIp);
+
+  let replyText = ai.ok
+    ? ai.answer
+    : "少し時間をおいて再度お試しください。";
+
+  // suggestedActions に open_booking_form があれば予約URLを末尾追記
+  const hasBooking = ai.suggestedActions.some(
+    (a: any) => a?.type === "open_booking_form"
+  );
+  if (hasBooking) {
+    const bookingLink =
+      cfg.bookingUrl +
+      (cfg.bookingUrl.includes("?") ? "&" : "?") +
+      `tenantId=${encodeURIComponent(tenantId)}` +
+      (lineUserId ? `&lu=${encodeURIComponent(lineUserId)}` : "");
+    replyText += `\n\n予約はこちら👇\n${bookingLink}`;
   }
+
+  const messages: any[] = [
+    ...(isDebug
+      ? [{ type: "text", text: `DBG stamp=${stamp} src=${cfg.source} aiOk=${ai.ok}` }]
+      : []),
+    { type: "text", text: replyText },
+  ];
 
   const rep = await replyLine(cfg.channelAccessToken, replyToken, messages);
 
@@ -344,6 +392,7 @@ export async function POST(req: Request) {
       replyOk: rep.ok,
       replyBody: rep.ok ? null : rep.bodyText?.slice(0, 300) ?? null,
       eventCount: events.length,
+      aiOk: ai.ok,
     },
     { headers: { "x-stamp": stamp } }
   );
