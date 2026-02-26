@@ -1269,9 +1269,22 @@ async function notifyLineReservation(opts: {
     const rid = crypto.randomUUID()
 
     // NOTE: At-least-once safety: add DB uniqueness later (migration) for hard guarantee
+    // Compute followup_at from retention settings (best-effort)
+    let followupAt: string | null = null;
     try {
-    await env.DB.prepare(`INSERT INTO reservations (id, tenant_id, slot_start, duration_minutes, customer_name, customer_phone, staff_id, start_at, end_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(
+      const kv = (env as any).SAAS_FACTORY;
+      if (kv) {
+        const ret = await aiGetJson(kv, `ai:retention:${tenantId}`);
+        if (ret?.enabled) {
+          const delayMin = Number(ret?.followupDelayMin ?? AI_DEFAULT_RETENTION.followupDelayMin) || AI_DEFAULT_RETENTION.followupDelayMin;
+          followupAt = new Date(Date.now() + delayMin * 60 * 1000).toISOString();
+        }
+      }
+    } catch { /* retention KV miss is non-fatal */ }
+
+    try {
+    await env.DB.prepare(`INSERT INTO reservations (id, tenant_id, slot_start, duration_minutes, customer_name, customer_phone, staff_id, start_at, end_at, line_user_id, followup_at, followup_status)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(
       rid,
       tenantId,
       startAt,            // slot_start
@@ -1280,7 +1293,10 @@ async function notifyLineReservation(opts: {
       (body.phone ? String(body.phone) : null), // customer_phone (optional)
       staffId,
       startAt,
-      endAt
+      endAt,
+      lineUserId || null,   // line_user_id
+      followupAt,           // followup_at (null if retention disabled)
+      followupAt ? "pending" : null  // followup_status
     ).run()
   } catch (e: any) {
     const msg = String(e?.message ?? e ?? "")
@@ -1344,7 +1360,7 @@ async function queue(batch: MessageBatch<unknown>): Promise<void> {
   }
 }
 
-export default { fetch: app.fetch, queue };
+export default { fetch: app.fetch, queue, scheduled };
 
 /* === LINE_OAUTH_MIN_ROUTES_V1 ===
    Minimal LINE OAuth routes for production recovery.
@@ -1658,6 +1674,14 @@ const AI_DEFAULT_POLICY = {
 const AI_DEFAULT_RETENTION = {
   enabled: false,
   templates: [] as any[],
+  followupDelayMin: 43200,          // 30 days in minutes
+  followupTemplate: "{{customerName}}様、先日はご来店ありがとうございました！またのご来店をお待ちしております。",
+  nextRecommendationDaysByMenu: {} as Record<string, number>,
+};
+
+const AI_DEFAULT_UPSELL = {
+  enabled: false,
+  items: [] as Array<{ id: string; keyword: string; message: string; enabled: boolean }>,
 };
 
 // helper: safe KV JSON get
@@ -1947,20 +1971,56 @@ app.post("/ai/chat", async (c) => {
     // 3. モデル選択（env.OPENAI_MODEL → "gpt-4o"）
     const model = String(env?.OPENAI_MODEL || "gpt-4o").trim() || "gpt-4o";
 
-    // 4. テナントの AI 設定・ポリシー・FAQ を KV から取得
+    // 4. テナントの AI 設定・ポリシー・FAQ・upsell を KV から取得
     const kv = env?.SAAS_FACTORY;
     let aiSettings: any = { voice: "friendly", character: "", answerLength: "normal" };
     let aiPolicy: any = { prohibitedTopics: [] as string[], hardRules: [] as string[] };
     let aiFaq: any[] = [];
+    let aiUpsell: any = { ...AI_DEFAULT_UPSELL };
     if (kv) {
-      const [s, p, f] = await Promise.all([
+      const [s, p, f, u] = await Promise.all([
         aiGetJson(kv, `ai:settings:${tenantId}`),
         aiGetJson(kv, `ai:policy:${tenantId}`),
         aiGetJson(kv, `ai:faq:${tenantId}`),
+        aiGetJson(kv, `ai:upsell:${tenantId}`),
       ]);
       if (s && typeof s === "object") aiSettings = { ...aiSettings, ...s };
       if (p && typeof p === "object") aiPolicy = { ...aiPolicy, ...p };
       if (Array.isArray(f)) aiFaq = f.filter((x: any) => x.enabled !== false);
+      if (u && typeof u === "object") aiUpsell = { ...AI_DEFAULT_UPSELL, ...u };
+    }
+
+    // 4.5 レート制限（KV, 60 req / 10 min per tenantId+IP）
+    const ip = c.req.header("cf-connecting-ip") || c.req.header("x-real-ip") || "unknown";
+    const rlKey = `ai:rl:${tenantId}:${ip}`;
+    if (kv) {
+      try {
+        const rlRaw = await kv.get(rlKey);
+        const rl = rlRaw ? JSON.parse(rlRaw) : { count: 0, windowStart: Date.now() };
+        const now = Date.now();
+        if (now - rl.windowStart > 600000) { rl.count = 1; rl.windowStart = now; }
+        else { rl.count++; }
+        if (rl.count > 60) {
+          return c.json({ ok: false, stamp: STAMP, tenantId, error: "rate_limited" }, 429);
+        }
+        await kv.put(rlKey, JSON.stringify(rl), { expirationTtl: 700 });
+      } catch { /* RL errors are non-fatal */ }
+    }
+
+    // 4.6 FAQ 優先マッチ：enabled な FAQ に質問が一致したら OpenAI をスキップ
+    const faqMatch = aiFaq.find((fItem: any) => {
+      const q = String(fItem.question ?? "").toLowerCase().trim();
+      const m = message.toLowerCase();
+      return q && (m === q || m.includes(q) || q.includes(m));
+    });
+    if (faqMatch) {
+      const faqAnswer = String(faqMatch.answer ?? "").trim();
+      if (faqAnswer) {
+        const bkw = ["予約", "ご予約", "booking", "reserve", "フォーム", "予約フォーム"];
+        const needsBooking = bkw.some((k) => faqAnswer.includes(k) || message.includes(k));
+        const suggestedActions = needsBooking ? [{ type: "open_booking_form", url: "/booking" }] : [];
+        return c.json({ ok: true, stamp: STAMP, tenantId, answer: faqAnswer, suggestedActions, source: "faq" });
+      }
     }
 
     // 5. system プロンプト構築
@@ -2076,7 +2136,7 @@ app.post("/ai/chat", async (c) => {
     }
 
     // 9. テキスト抽出（モジュールレベルの extractResponseText を使用）
-    const answer = extractResponseText(openaiRes);
+    let answer = extractResponseText(openaiRes);
     if (!answer) {
       const rawHint = isDebug ? {
         statusHistory,
@@ -2110,6 +2170,19 @@ app.post("/ai/chat", async (c) => {
     const needsBooking = bookingKw.some((k) => answer.includes(k) || message.includes(k));
     const suggestedActions = needsBooking ? [{ type: "open_booking_form", url: "/booking" }] : [];
 
+    // 11. Upsell injection: キーワードに一致する upsell メッセージを末尾追記
+    if (aiUpsell.enabled && Array.isArray(aiUpsell.items) && aiUpsell.items.length > 0) {
+      const matchedUpsells = (aiUpsell.items as any[]).filter((item: any) => {
+        if (item.enabled === false) return false;
+        const kw = String(item.keyword ?? "").toLowerCase().trim();
+        return kw && (message.toLowerCase().includes(kw) || answer.toLowerCase().includes(kw));
+      });
+      if (matchedUpsells.length > 0) {
+        const upsellText = matchedUpsells.map((u: any) => String(u.message ?? "")).filter(Boolean).join("\n");
+        if (upsellText) answer = answer + "\n\n" + upsellText;
+      }
+    }
+
     return c.json({ ok: true, stamp: STAMP, tenantId, answer, suggestedActions });
 
   } catch (e: any) {
@@ -2118,6 +2191,152 @@ app.post("/ai/chat", async (c) => {
 });
 
 /* === /AI_CONCIERGE_V1 === */
+
+/* === AI_SALES_OPS_V1 === */
+// KV keys: ai:upsell:{tenantId}
+// DB cols: followup_at, followup_status, followup_sent_at, followup_error (added in 0007)
+
+// GET /admin/ai/upsell
+app.get("/admin/ai/upsell", async (c) => {
+  const STAMP = "AI_UPSELL_GET_V1";
+  const tenantId = getTenantId(c, null);
+  try {
+    const kv = (c.env as any).SAAS_FACTORY;
+    if (!kv) return c.json({ ok: false, stamp: STAMP, error: "kv_missing" }, 500);
+    const u = await aiGetJson(kv, `ai:upsell:${tenantId}`);
+    return c.json({ ok: true, tenantId, stamp: STAMP, upsell: { ...AI_DEFAULT_UPSELL, ...(u || {}) } });
+  } catch (e: any) {
+    return c.json({ ok: false, stamp: STAMP, tenantId, error: "exception", detail: String(e?.message ?? e) }, 500);
+  }
+});
+
+// PUT /admin/ai/upsell
+app.put("/admin/ai/upsell", async (c) => {
+  const STAMP = "AI_UPSELL_PUT_V1";
+  const tenantId = getTenantId(c, null);
+  try {
+    const kv = (c.env as any).SAAS_FACTORY;
+    if (!kv) return c.json({ ok: false, stamp: STAMP, error: "kv_missing" }, 500);
+    const body: any = await c.req.json().catch(() => null);
+    if (!body) return c.json({ ok: false, stamp: STAMP, error: "bad_json" }, 400);
+    const key = `ai:upsell:${tenantId}`;
+    const ex = (await aiGetJson(kv, key)) || {};
+    const merged = { ...AI_DEFAULT_UPSELL, ...ex, ...body };
+    await kv.put(key, JSON.stringify(merged));
+    return c.json({ ok: true, tenantId, stamp: STAMP, upsell: merged });
+  } catch (e: any) {
+    return c.json({ ok: false, stamp: STAMP, tenantId, error: "exception", detail: String(e?.message ?? e) }, 500);
+  }
+});
+
+// GET /admin/ai/followups — last 50 followup rows for a tenant
+app.get("/admin/ai/followups", async (c) => {
+  const STAMP = "AI_FOLLOWUPS_GET_V1";
+  const tenantId = getTenantId(c, null);
+  try {
+    const db = (c.env as any).DB;
+    if (!db) return c.json({ ok: false, stamp: STAMP, error: "db_missing" }, 500);
+    const { results } = await db.prepare(
+      `SELECT id, line_user_id, customer_name, slot_start, followup_at, followup_status, followup_sent_at, followup_error
+       FROM reservations
+       WHERE tenant_id = ? AND followup_status IS NOT NULL
+       ORDER BY followup_at DESC
+       LIMIT 50`
+    ).bind(tenantId).all();
+    return c.json({ ok: true, tenantId, stamp: STAMP, followups: results ?? [] });
+  } catch (e: any) {
+    return c.json({ ok: false, stamp: STAMP, tenantId, error: "exception", detail: String(e?.message ?? e) }, 500);
+  }
+});
+
+/* === /AI_SALES_OPS_V1 === */
+
+// Cron scheduled handler — AI followup LINE送信 (*/5 * * * *)
+async function scheduled(_event: any, env: Env, _ctx: any): Promise<void> {
+  const STAMP = "AI_FOLLOWUP_CRON_V1";
+  const kv = (env as any).SAAS_FACTORY;
+  const db = (env as any).DB;
+  if (!kv || !db) return;
+
+  try {
+    const now = new Date().toISOString();
+    const { results } = await db.prepare(
+      `SELECT id, tenant_id, line_user_id, customer_name, slot_start
+       FROM reservations
+       WHERE followup_status = 'pending'
+         AND followup_at IS NOT NULL
+         AND followup_at <= ?
+       LIMIT 50`
+    ).bind(now).all();
+
+    if (!results || results.length === 0) return;
+
+    for (const row of results) {
+      const { id, tenant_id: tId, line_user_id: lineUserId, customer_name: custName, slot_start: slotStart } = row as any;
+
+      // No LINE user → skip
+      if (!lineUserId) {
+        await db.prepare(`UPDATE reservations SET followup_status = 'skipped', followup_sent_at = ? WHERE id = ?`)
+          .bind(now, id).run().catch(() => null);
+        continue;
+      }
+
+      // Fetch channelAccessToken from KV settings
+      let channelAccessToken: string | null = null;
+      try {
+        const settingsRaw = await kv.get(`settings:${tId}`);
+        if (settingsRaw) {
+          const s = JSON.parse(settingsRaw);
+          channelAccessToken = s?.integrations?.line?.channelAccessToken ?? null;
+        }
+      } catch { /* ignore */ }
+
+      if (!channelAccessToken) {
+        await db.prepare(`UPDATE reservations SET followup_status = 'skipped', followup_sent_at = ?, followup_error = ? WHERE id = ?`)
+          .bind(now, "no_channel_token", id).run().catch(() => null);
+        continue;
+      }
+
+      // Fetch retention template
+      let template = "{{customerName}}様、先日はご来店ありがとうございました！またのご来店をお待ちしております。";
+      try {
+        const ret = await aiGetJson(kv, `ai:retention:${tId}`);
+        if (ret?.enabled && ret?.followupTemplate) template = String(ret.followupTemplate);
+      } catch { /* ignore */ }
+
+      // Build message
+      const visitDate = slotStart ? new Date(slotStart).toLocaleDateString("ja-JP") : "";
+      const msg = template
+        .replace("{{customerName}}", custName || "お客様")
+        .replace("{{visitDate}}", visitDate);
+
+      // Send LINE push
+      try {
+        const lineRes = await fetch("https://api.line.me/v2/bot/message/push", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${channelAccessToken}`,
+          },
+          body: JSON.stringify({ to: lineUserId, messages: [{ type: "text", text: msg }] }),
+        });
+        if (lineRes.ok) {
+          await db.prepare(`UPDATE reservations SET followup_status = 'sent', followup_sent_at = ? WHERE id = ?`)
+            .bind(now, id).run().catch(() => null);
+        } else {
+          const errText = await lineRes.text().catch(() => `HTTP ${lineRes.status}`);
+          await db.prepare(`UPDATE reservations SET followup_status = 'failed', followup_sent_at = ?, followup_error = ? WHERE id = ?`)
+            .bind(now, errText.slice(0, 200), id).run().catch(() => null);
+        }
+      } catch (sendErr: any) {
+        await db.prepare(`UPDATE reservations SET followup_status = 'failed', followup_sent_at = ?, followup_error = ? WHERE id = ?`)
+          .bind(now, String(sendErr?.message ?? sendErr).slice(0, 200), id).run().catch(() => null);
+      }
+    }
+  } catch (e: any) {
+    console.error(`[${STAMP}] error:`, String(e?.message ?? e));
+  }
+}
 
 
 
