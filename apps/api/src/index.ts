@@ -2251,6 +2251,27 @@ app.get("/admin/ai/followups", async (c) => {
 
 /* === /AI_SALES_OPS_V1 === */
 
+// POST /ai/dedup — LINE イベント重複排除 check-and-set (管理者認証不要)
+// key: "ai:evt:{tenantId}:{eventKey}"  TTL: 30-300秒
+// 返却: { isNew: true } → 未処理（続行可）  { isNew: false } → 重複（スキップ推奨）
+app.post("/ai/dedup", async (c) => {
+  try {
+    const kv = (c.env as any).SAAS_FACTORY;
+    if (!kv) return c.json({ isNew: true });
+    const body: any = await c.req.json().catch(() => null);
+    const key = body?.key ? String(body.key) : "";
+    // セキュリティ: ai:evt: プレフィックスのみ許可
+    if (!key || !key.startsWith("ai:evt:")) return c.json({ isNew: true });
+    const ttl = Math.min(300, Math.max(30, Number(body.ttlSeconds ?? 120)));
+    const existing = await kv.get(key);
+    if (existing !== null) return c.json({ isNew: false });
+    await kv.put(key, "1", { expirationTtl: ttl });
+    return c.json({ isNew: true });
+  } catch {
+    return c.json({ isNew: true }); // エラー時は処理継続（best-effort）
+  }
+});
+
 // Cron scheduled handler — AI followup LINE送信 (*/5 * * * *)
 async function scheduled(_event: any, env: Env, _ctx: any): Promise<void> {
   const STAMP = "AI_FOLLOWUP_CRON_V1";
