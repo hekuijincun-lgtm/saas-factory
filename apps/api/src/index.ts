@@ -2272,6 +2272,33 @@ app.post("/ai/dedup", async (c) => {
   }
 });
 
+// POST /ai/pushq — push 送信失敗時のリトライキュー enqueue (管理者認証不要)
+// key: ai:pushq:{tenantId}:{id}  TTL: 最大 600秒（10分）
+// token は受け取らず、tenantId + userId + messages のみ保存。
+// 再送信時は Workers が config を KV から再取得する設計（実装は別途）。
+app.post("/ai/pushq", async (c) => {
+  try {
+    const kv = (c.env as any).SAAS_FACTORY;
+    if (!kv) return c.json({ ok: false, error: "no_kv" });
+    const body: any = await c.req.json().catch(() => null);
+    const tenantId = String(body?.tenantId ?? "").trim();
+    const userId   = String(body?.userId   ?? "").trim();
+    if (!tenantId || !userId) return c.json({ ok: false, error: "missing_fields" });
+    const ttl = Math.min(600, Math.max(60, Number(body.ttlSeconds ?? 600)));
+    const id  = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const key = `ai:pushq:${tenantId}:${id}`;
+    await kv.put(key, JSON.stringify({
+      tenantId,
+      userId,
+      messages: Array.isArray(body.messages) ? body.messages : [],
+      enqueuedAt: new Date().toISOString(),
+    }), { expirationTtl: ttl });
+    return c.json({ ok: true, key });
+  } catch {
+    return c.json({ ok: false, error: "internal" });
+  }
+});
+
 // Cron scheduled handler — AI followup LINE送信 (*/5 * * * *)
 async function scheduled(_event: any, env: Env, _ctx: any): Promise<void> {
   const STAMP = "AI_FOLLOWUP_CRON_V1";
