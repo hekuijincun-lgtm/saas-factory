@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import AdminTopBar from "../../_components/ui/AdminTopBar";
-import { Bot, Plus, Trash2, Save, RefreshCw, ChevronDown, ChevronUp } from "lucide-react";
+import { Bot, Plus, Trash2, Save, RefreshCw, ChevronDown, ChevronUp, MessageSquare, TrendingUp, Clock } from "lucide-react";
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -21,6 +21,9 @@ interface AIPolicy {
 interface AIRetention {
   enabled: boolean;
   templates: any[];
+  followupDelayMin: number;
+  followupTemplate: string;
+  nextRecommendationDaysByMenu: Record<string, number>;
 }
 
 interface FAQItem {
@@ -30,6 +33,29 @@ interface FAQItem {
   tags: string[];
   enabled: boolean;
   updatedAt: number;
+}
+
+interface UpsellItem {
+  id: string;
+  keyword: string;
+  message: string;
+  enabled: boolean;
+}
+
+interface AIUpsell {
+  enabled: boolean;
+  items: UpsellItem[];
+}
+
+interface FollowupEntry {
+  id: string;
+  line_user_id: string | null;
+  customer_name: string | null;
+  slot_start: string | null;
+  followup_at: string | null;
+  followup_status: string | null;
+  followup_sent_at: string | null;
+  followup_error: string | null;
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
@@ -44,7 +70,12 @@ function apiBase(path: string, tenantId: string): string {
   return `/api/proxy/${path}?tenantId=${encodeURIComponent(tenantId)}`;
 }
 
-// ─── Section Card ──────────────────────────────────────────────────────────
+function fmtDate(iso: string | null): string {
+  if (!iso) return "—";
+  try { return new Date(iso).toLocaleString("ja-JP"); } catch { return iso; }
+}
+
+// ─── UI Primitives ─────────────────────────────────────────────────────────
 
 function SectionCard({
   title,
@@ -79,8 +110,6 @@ function SectionCard({
   );
 }
 
-// ─── Toggle ────────────────────────────────────────────────────────────────
-
 function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label: string }) {
   return (
     <label className="flex items-center gap-3 cursor-pointer select-none">
@@ -103,18 +132,14 @@ function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: 
   );
 }
 
-// ─── Field Row ─────────────────────────────────────────────────────────────
-
 function FieldRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex flex-col sm:flex-row sm:items-center gap-2 py-3 border-b border-gray-50 last:border-0">
-      <label className="text-sm font-medium text-gray-600 sm:w-40 shrink-0">{label}</label>
+      <label className="text-sm font-medium text-gray-600 sm:w-44 shrink-0">{label}</label>
       <div className="flex-1">{children}</div>
     </div>
   );
 }
-
-// ─── SaveButton ────────────────────────────────────────────────────────────
 
 function SaveButton({ saving, onClick, label = "保存" }: { saving: boolean; onClick: () => void; label?: string }) {
   return (
@@ -130,8 +155,6 @@ function SaveButton({ saving, onClick, label = "保存" }: { saving: boolean; on
   );
 }
 
-// ─── StatusBanner ─────────────────────────────────────────────────────────
-
 function StatusBanner({ msg, kind }: { msg: string; kind: "success" | "error" | null }) {
   if (!msg || !kind) return null;
   return (
@@ -146,6 +169,17 @@ function StatusBanner({ msg, kind }: { msg: string; kind: "success" | "error" | 
   );
 }
 
+function StatusBadge({ status }: { status: string | null }) {
+  const map: Record<string, string> = {
+    pending:  "bg-yellow-100 text-yellow-800",
+    sent:     "bg-green-100 text-green-800",
+    skipped:  "bg-gray-100 text-gray-600",
+    failed:   "bg-red-100 text-red-700",
+  };
+  const cls = map[status ?? ""] ?? "bg-gray-100 text-gray-500";
+  return <span className={`inline-block px-2 py-0.5 rounded text-[11px] font-medium ${cls}`}>{status ?? "—"}</span>;
+}
+
 // ─── Main Component ────────────────────────────────────────────────────────
 
 export default function AdminAIClient() {
@@ -153,18 +187,26 @@ export default function AdminAIClient() {
 
   // --- data state ---
   const [settings, setSettings] = useState<AISettings>({
-    enabled: false,
-    voice: "friendly",
-    answerLength: "normal",
-    character: "",
+    enabled: false, voice: "friendly", answerLength: "normal", character: "",
   });
   const [policy, setPolicy] = useState<AIPolicy>({ prohibitedTopics: [], hardRules: [] });
-  const [retention, setRetention] = useState<AIRetention>({ enabled: false, templates: [] });
+  const [retention, setRetention] = useState<AIRetention>({
+    enabled: false, templates: [],
+    followupDelayMin: 43200,
+    followupTemplate: "{{customerName}}様、先日はご来店ありがとうございました！またのご来店をお待ちしております。",
+    nextRecommendationDaysByMenu: {},
+  });
   const [faq, setFaq] = useState<FAQItem[]>([]);
+  const [upsell, setUpsell] = useState<AIUpsell>({ enabled: false, items: [] });
+  const [followups, setFollowups] = useState<FollowupEntry[]>([]);
 
   // --- form state for new FAQ ---
   const [newQ, setNewQ] = useState("");
   const [newA, setNewA] = useState("");
+
+  // --- form state for new Upsell item ---
+  const [newUkw, setNewUkw] = useState("");
+  const [newUmsg, setNewUmsg] = useState("");
 
   // --- UI state ---
   const [loading, setLoading] = useState(true);
@@ -172,15 +214,19 @@ export default function AdminAIClient() {
   const [savingSettings, setSavingSettings] = useState(false);
   const [savingPolicy, setSavingPolicy] = useState(false);
   const [savingRetention, setSavingRetention] = useState(false);
+  const [savingUpsell, setSavingUpsell] = useState(false);
   const [addingFaq, setAddingFaq] = useState(false);
   const [deletingFaqId, setDeletingFaqId] = useState<string | null>(null);
+  const [addingUpsell, setAddingUpsell] = useState(false);
+  const [deletingUpsellId, setDeletingUpsellId] = useState<string | null>(null);
+  const [loadingFollowups, setLoadingFollowups] = useState(false);
   const [banner, setBanner] = useState<{ msg: string; kind: "success" | "error" } | null>(null);
 
   // policy form: textarea helpers
   const [hardRulesText, setHardRulesText] = useState("");
   const [prohibitedText, setProhibitedText] = useState("");
 
-  // retention JSON textarea
+  // retention JSON textarea (legacy templates)
   const [retentionTemplatesText, setRetentionTemplatesText] = useState("[]");
 
   // --- Load ---
@@ -188,12 +234,14 @@ export default function AdminAIClient() {
     setLoading(true);
     setLoadErr(null);
     try {
-      const [mainRes, faqRes] = await Promise.all([
+      const [mainRes, faqRes, upsellRes] = await Promise.all([
         fetch(apiBase("admin/ai", tid)),
         fetch(apiBase("admin/ai/faq", tid)),
+        fetch(apiBase("admin/ai/upsell", tid)),
       ]);
       const main = await mainRes.json() as any;
       const faqData = await faqRes.json() as any;
+      const upsellData = await upsellRes.json() as any;
 
       if (main?.settings) setSettings({ ...main.settings });
       if (main?.policy) {
@@ -202,14 +250,26 @@ export default function AdminAIClient() {
         setProhibitedText((main.policy.prohibitedTopics || []).join(", "));
       }
       if (main?.retention) {
-        setRetention({ ...main.retention });
+        setRetention((r) => ({ ...r, ...main.retention }));
         setRetentionTemplatesText(JSON.stringify(main.retention.templates || [], null, 2));
       }
       if (Array.isArray(faqData?.faq)) setFaq(faqData.faq);
+      if (upsellData?.upsell) setUpsell({ enabled: false, items: [], ...upsellData.upsell });
     } catch (e: any) {
       setLoadErr("データ読み込みに失敗しました: " + String(e?.message ?? e));
     } finally {
       setLoading(false);
+    }
+  }, []);
+
+  const loadFollowups = useCallback(async (tid: string) => {
+    setLoadingFollowups(true);
+    try {
+      const res = await fetch(apiBase("admin/ai/followups", tid));
+      const data = await res.json() as any;
+      if (Array.isArray(data?.followups)) setFollowups(data.followups);
+    } catch { /* ignore */ } finally {
+      setLoadingFollowups(false);
     }
   }, []);
 
@@ -219,7 +279,6 @@ export default function AdminAIClient() {
     loadAll(tid);
   }, [loadAll]);
 
-  // --- flash banner helper ---
   const flash = (msg: string, kind: "success" | "error") => {
     setBanner({ msg, kind });
     setTimeout(() => setBanner(null), 3500);
@@ -267,7 +326,7 @@ export default function AdminAIClient() {
     }
   };
 
-  // ── Save: Retention ───────────────────────────────────────────────────
+  // ── Save: Retention ────────────────────────────────────────────────────
 
   const saveRetention = async () => {
     setSavingRetention(true);
@@ -295,13 +354,35 @@ export default function AdminAIClient() {
     }
   };
 
+  // ── Save: Upsell ──────────────────────────────────────────────────────
+
+  const saveUpsell = async (updated?: AIUpsell) => {
+    setSavingUpsell(true);
+    const payload = updated ?? upsell;
+    try {
+      const r = await fetch(apiBase("admin/ai/upsell", tenantId), {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const j = await r.json() as any;
+      if (j?.ok) {
+        if (j.upsell) setUpsell(j.upsell);
+        flash("アップセル設定を保存しました", "success");
+      } else {
+        flash("保存失敗: " + (j?.error || "unknown"), "error");
+      }
+    } catch (e: any) {
+      flash("保存エラー: " + String(e?.message ?? e), "error");
+    } finally {
+      setSavingUpsell(false);
+    }
+  };
+
   // ── Add FAQ ────────────────────────────────────────────────────────────
 
   const addFaq = async () => {
-    if (!newQ.trim() || !newA.trim()) {
-      flash("質問と回答を入力してください", "error");
-      return;
-    }
+    if (!newQ.trim() || !newA.trim()) { flash("質問と回答を入力してください", "error"); return; }
     setAddingFaq(true);
     try {
       const r = await fetch(apiBase("admin/ai/faq", tenantId), {
@@ -312,8 +393,7 @@ export default function AdminAIClient() {
       const j = await r.json() as any;
       if (j?.ok && j?.item) {
         setFaq((prev) => [...prev, j.item]);
-        setNewQ("");
-        setNewA("");
+        setNewQ(""); setNewA("");
         flash("FAQを追加しました", "success");
       } else {
         flash("追加失敗: " + (j?.error || "unknown"), "error");
@@ -335,17 +415,41 @@ export default function AdminAIClient() {
         { method: "DELETE" }
       );
       const j = await r.json() as any;
-      if (j?.ok) {
-        setFaq((prev) => prev.filter((f) => f.id !== id));
-        flash("FAQを削除しました", "success");
-      } else {
-        flash("削除失敗: " + (j?.error || "unknown"), "error");
-      }
+      if (j?.ok) { setFaq((prev) => prev.filter((f) => f.id !== id)); flash("FAQを削除しました", "success"); }
+      else flash("削除失敗: " + (j?.error || "unknown"), "error");
     } catch (e: any) {
       flash("削除エラー: " + String(e?.message ?? e), "error");
     } finally {
       setDeletingFaqId(null);
     }
+  };
+
+  // ── Add Upsell item ────────────────────────────────────────────────────
+
+  const addUpsellItem = async () => {
+    if (!newUkw.trim() || !newUmsg.trim()) { flash("キーワードとメッセージを入力してください", "error"); return; }
+    setAddingUpsell(true);
+    const newItem: UpsellItem = {
+      id: crypto.randomUUID(),
+      keyword: newUkw.trim(),
+      message: newUmsg.trim(),
+      enabled: true,
+    };
+    const updated = { ...upsell, items: [...upsell.items, newItem] };
+    setUpsell(updated);
+    setNewUkw(""); setNewUmsg("");
+    await saveUpsell(updated);
+    setAddingUpsell(false);
+  };
+
+  // ── Delete Upsell item ─────────────────────────────────────────────────
+
+  const deleteUpsellItem = async (id: string) => {
+    setDeletingUpsellId(id);
+    const updated = { ...upsell, items: upsell.items.filter((x) => x.id !== id) };
+    setUpsell(updated);
+    await saveUpsell(updated);
+    setDeletingUpsellId(null);
   };
 
   // ── Render ─────────────────────────────────────────────────────────────
@@ -367,14 +471,12 @@ export default function AdminAIClient() {
 
       <div className="max-w-3xl mx-auto">
         {loadErr && (
-          <div className="mb-4 px-4 py-3 bg-red-50 text-red-800 border border-red-200 rounded-lg text-sm">
-            {loadErr}
-          </div>
+          <div className="mb-4 px-4 py-3 bg-red-50 text-red-800 border border-red-200 rounded-lg text-sm">{loadErr}</div>
         )}
 
         <StatusBanner msg={banner?.msg ?? ""} kind={banner?.kind ?? null} />
 
-        {/* ── 1. 基本設定 ────────────────────────────────────────────── */}
+        {/* ── 1. 基本設定 ──────────────────────────────────────────── */}
         <SectionCard title="基本設定" icon={<Bot className="w-4 h-4 text-indigo-500" />}>
           <div className="space-y-1">
             <FieldRow label="AI接客を有効化">
@@ -384,7 +486,6 @@ export default function AdminAIClient() {
                 label={settings.enabled ? "有効" : "無効"}
               />
             </FieldRow>
-
             <FieldRow label="トーン（voice）">
               <select
                 value={settings.voice}
@@ -397,7 +498,6 @@ export default function AdminAIClient() {
                 <option value="professional">プロフェッショナル（professional）</option>
               </select>
             </FieldRow>
-
             <FieldRow label="回答の長さ">
               <select
                 value={settings.answerLength}
@@ -409,7 +509,6 @@ export default function AdminAIClient() {
                 <option value="detailed">詳細（detailed）</option>
               </select>
             </FieldRow>
-
             <FieldRow label="キャラクター設定">
               <input
                 type="text"
@@ -420,19 +519,16 @@ export default function AdminAIClient() {
               />
             </FieldRow>
           </div>
-
           <div className="mt-4 flex justify-end">
             <SaveButton saving={savingSettings} onClick={saveSettings} />
           </div>
         </SectionCard>
 
-        {/* ── 2. ポリシー ────────────────────────────────────────────── */}
+        {/* ── 2. ポリシー ──────────────────────────────────────────── */}
         <SectionCard title="禁止事項・ポリシー" collapsible>
           <div className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                ハードルール（1行1ルール）
-              </label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">ハードルール（1行1ルール）</label>
               <textarea
                 rows={5}
                 value={hardRulesText}
@@ -443,9 +539,7 @@ export default function AdminAIClient() {
               <p className="text-xs text-gray-400 mt-1">1行に1つのルールを記述してください。</p>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                禁止トピック（カンマ区切り）
-              </label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">禁止トピック（カンマ区切り）</label>
               <input
                 type="text"
                 value={prohibitedText}
@@ -460,8 +554,8 @@ export default function AdminAIClient() {
           </div>
         </SectionCard>
 
-        {/* ── 3. FAQ ─────────────────────────────────────────────────── */}
-        <SectionCard title={`FAQ管理（${faq.length}件）`} collapsible>
+        {/* ── 3. FAQ ───────────────────────────────────────────────── */}
+        <SectionCard title={`FAQ管理（${faq.length}件）`} icon={<MessageSquare className="w-4 h-4 text-indigo-500" />} collapsible>
           {/* 追加フォーム */}
           <div className="bg-gray-50 rounded-lg p-4 mb-5 border border-gray-100">
             <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">新規FAQ追加</p>
@@ -493,7 +587,6 @@ export default function AdminAIClient() {
               </button>
             </div>
           </div>
-
           {/* FAQ一覧 */}
           {faq.length === 0 ? (
             <p className="text-sm text-gray-400 text-center py-6">FAQがまだありません。上のフォームから追加してください。</p>
@@ -513,11 +606,7 @@ export default function AdminAIClient() {
                     className="shrink-0 p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-30"
                     aria-label="削除"
                   >
-                    {deletingFaqId === item.id ? (
-                      <RefreshCw className="w-4 h-4 animate-spin" />
-                    ) : (
-                      <Trash2 className="w-4 h-4" />
-                    )}
+                    {deletingFaqId === item.id ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
                   </button>
                 </div>
               ))}
@@ -525,33 +614,191 @@ export default function AdminAIClient() {
           )}
         </SectionCard>
 
-        {/* ── 4. リピート促進 ────────────────────────────────────────── */}
-        <SectionCard title="リピート促進（v1: 設定のみ）" collapsible>
+        {/* ── 4. アップセル ────────────────────────────────────────── */}
+        <SectionCard title="アップセル設定" icon={<TrendingUp className="w-4 h-4 text-emerald-500" />} collapsible>
+          <div className="mb-4">
+            <Toggle
+              checked={upsell.enabled}
+              onChange={(v) => setUpsell((u) => ({ ...u, enabled: v }))}
+              label="アップセルメッセージを有効化"
+            />
+            <p className="text-xs text-gray-400 mt-2">
+              キーワードがユーザーの発言またはAI回答に含まれる場合、指定メッセージを回答末尾に追記します。
+            </p>
+          </div>
+
+          {/* 追加フォーム */}
+          <div className="bg-gray-50 rounded-lg p-4 mb-5 border border-gray-100">
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">新規アップセル追加</p>
+            <div className="grid sm:grid-cols-2 gap-2">
+              <input
+                type="text"
+                value={newUkw}
+                onChange={(e) => setNewUkw(e.target.value)}
+                placeholder="キーワード（例: カット, ヘアカラー）"
+                className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-300"
+              />
+              <input
+                type="text"
+                value={newUmsg}
+                onChange={(e) => setNewUmsg(e.target.value)}
+                placeholder="追加メッセージ（例: セットもお得です！）"
+                className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-300"
+              />
+            </div>
+            <div className="mt-3 flex justify-end">
+              <button
+                type="button"
+                disabled={addingUpsell}
+                onClick={addUpsellItem}
+                className="flex items-center gap-2 px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-300 text-white text-sm font-medium rounded-lg transition-colors"
+              >
+                {addingUpsell ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+                追加
+              </button>
+            </div>
+          </div>
+
+          {/* アップセル一覧 */}
+          {upsell.items.length === 0 ? (
+            <p className="text-sm text-gray-400 text-center py-4">アップセル設定がありません。上のフォームから追加してください。</p>
+          ) : (
+            <div className="space-y-2 mb-4">
+              {upsell.items.map((item) => (
+                <div key={item.id} className="flex gap-3 items-center p-3 bg-white border border-gray-100 rounded-lg shadow-sm">
+                  <div className="flex-1 min-w-0 grid sm:grid-cols-2 gap-2">
+                    <span className="text-xs font-medium text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded truncate">
+                      🔑 {item.keyword}
+                    </span>
+                    <span className="text-xs text-gray-600 truncate">{item.message}</span>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={deletingUpsellId === item.id}
+                    onClick={() => deleteUpsellItem(item.id)}
+                    className="shrink-0 p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-30"
+                    aria-label="削除"
+                  >
+                    {deletingUpsellId === item.id ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="mt-4 flex justify-end">
+            <SaveButton saving={savingUpsell} onClick={() => saveUpsell()} label="アップセル設定を保存" />
+          </div>
+        </SectionCard>
+
+        {/* ── 5. リピート促進 ──────────────────────────────────────── */}
+        <SectionCard title="リピート促進・フォローアップ" collapsible>
           <div className="space-y-4">
             <Toggle
               checked={retention.enabled}
               onChange={(v) => setRetention((r) => ({ ...r, enabled: v }))}
-              label="リピート促進メッセージを有効化"
+              label="フォローアップLINE送信を有効化"
             />
+
+            <FieldRow label="送信タイミング（日後）">
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  min={1}
+                  max={365}
+                  value={Math.round((retention.followupDelayMin || 43200) / 1440)}
+                  onChange={(e) => {
+                    const days = Math.max(1, Math.min(365, Number(e.target.value) || 30));
+                    setRetention((r) => ({ ...r, followupDelayMin: days * 1440 }));
+                  }}
+                  className="w-24 border border-gray-200 rounded-lg px-3 py-1.5 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                />
+                <span className="text-sm text-gray-500">日後に送信</span>
+              </div>
+              <p className="text-xs text-gray-400 mt-1">予約完了から指定日数後にLINEメッセージを送信します。</p>
+            </FieldRow>
+
+            <FieldRow label="フォローアップ文面">
+              <textarea
+                rows={3}
+                value={retention.followupTemplate}
+                onChange={(e) => setRetention((r) => ({ ...r, followupTemplate: e.target.value }))}
+                placeholder={"{{customerName}}様、先日はご来店ありがとうございました！またのご来店をお待ちしております。"}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-300 resize-y"
+              />
+              <p className="text-xs text-gray-400 mt-1">
+                変数: <code className="bg-gray-100 px-1 rounded">{"{{customerName}}"}</code> <code className="bg-gray-100 px-1 rounded">{"{{visitDate}}"}</code>
+              </p>
+            </FieldRow>
+
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                テンプレート設定（JSON）
+                旧テンプレート設定（JSON・後方互換）
               </label>
               <textarea
-                rows={6}
+                rows={4}
                 value={retentionTemplatesText}
                 onChange={(e) => setRetentionTemplatesText(e.target.value)}
                 className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 font-mono focus:outline-none focus:ring-2 focus:ring-indigo-300 resize-y"
                 placeholder={'[\n  {"id":"t1","triggerDays":7,"message":"またのご来店をお待ちしています！"}\n]'}
               />
-              <p className="text-xs text-gray-400 mt-1">
-                例: <code className="bg-gray-100 px-1 rounded">{"[{\"id\":\"t1\",\"triggerDays\":7,\"message\":\"メッセージ\"}]"}</code>
-              </p>
             </div>
           </div>
           <div className="mt-4 flex justify-end">
-            <SaveButton saving={savingRetention} onClick={saveRetention} label="保存" />
+            <SaveButton saving={savingRetention} onClick={saveRetention} label="リピート促進設定を保存" />
           </div>
+        </SectionCard>
+
+        {/* ── 6. フォローアップ履歴 ────────────────────────────────── */}
+        <SectionCard
+          title="フォローアップ履歴"
+          icon={<Clock className="w-4 h-4 text-violet-500" />}
+          collapsible
+        >
+          <div className="flex justify-end mb-3">
+            <button
+              type="button"
+              onClick={() => loadFollowups(tenantId)}
+              disabled={loadingFollowups}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${loadingFollowups ? "animate-spin" : ""}`} />
+              更新
+            </button>
+          </div>
+
+          {followups.length === 0 ? (
+            <p className="text-sm text-gray-400 text-center py-6">
+              フォローアップ履歴がありません。「更新」ボタンで読み込んでください。
+            </p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs text-left border-collapse">
+                <thead>
+                  <tr className="bg-gray-50 border-b border-gray-100">
+                    <th className="px-3 py-2 font-medium text-gray-500 whitespace-nowrap">お客様名</th>
+                    <th className="px-3 py-2 font-medium text-gray-500 whitespace-nowrap">来店日</th>
+                    <th className="px-3 py-2 font-medium text-gray-500 whitespace-nowrap">送信予定</th>
+                    <th className="px-3 py-2 font-medium text-gray-500 whitespace-nowrap">ステータス</th>
+                    <th className="px-3 py-2 font-medium text-gray-500 whitespace-nowrap">送信日時</th>
+                    <th className="px-3 py-2 font-medium text-gray-500 whitespace-nowrap">エラー</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {followups.map((f) => (
+                    <tr key={f.id} className="border-b border-gray-50 hover:bg-gray-50/50">
+                      <td className="px-3 py-2 text-gray-800 whitespace-nowrap">{f.customer_name || "—"}</td>
+                      <td className="px-3 py-2 text-gray-600 whitespace-nowrap">{fmtDate(f.slot_start)}</td>
+                      <td className="px-3 py-2 text-gray-600 whitespace-nowrap">{fmtDate(f.followup_at)}</td>
+                      <td className="px-3 py-2 whitespace-nowrap"><StatusBadge status={f.followup_status} /></td>
+                      <td className="px-3 py-2 text-gray-600 whitespace-nowrap">{fmtDate(f.followup_sent_at)}</td>
+                      <td className="px-3 py-2 text-red-500 max-w-[160px] truncate">{f.followup_error || "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </SectionCard>
       </div>
     </>
