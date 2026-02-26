@@ -1635,6 +1635,258 @@ app.get("/admin/integrations/line/last-user", async (c) => {
 
 /* === /LINE_MESSAGING_ROUTES_V1 === */
 
+/* === AI_CONCIERGE_V1 === */
+// AI接客設定 endpoints
+// KV keys: ai:settings:{tenantId} / ai:policy:{tenantId} / ai:faq:{tenantId} / ai:retention:{tenantId}
+
+const AI_DEFAULT_SETTINGS = {
+  enabled: false,
+  voice: "friendly",
+  answerLength: "normal",
+  character: "",
+};
+
+const AI_DEFAULT_POLICY = {
+  prohibitedTopics: [] as string[],
+  hardRules: [
+    "Do not confirm prices or availability without checking official info.",
+    "Do not provide medical/illegal advice.",
+    "Never claim actions were taken (booking created) — booking is form-only.",
+  ],
+};
+
+const AI_DEFAULT_RETENTION = {
+  enabled: false,
+  templates: [] as any[],
+};
+
+// helper: safe KV JSON get
+async function aiGetJson(kv: any, key: string): Promise<any> {
+  try {
+    const v = await kv.get(key, "json");
+    return v || null;
+  } catch {
+    try {
+      const v2 = await kv.get(key);
+      return v2 ? JSON.parse(v2) : null;
+    } catch {
+      return null;
+    }
+  }
+}
+
+// GET /admin/ai — combined: settings + policy + retention
+app.get("/admin/ai", async (c) => {
+  const STAMP = "AI_GET_V1";
+  const tenantId = getTenantId(c, null);
+  try {
+    const kv = (c.env as any).SAAS_FACTORY;
+    if (!kv) return c.json({ ok: false, stamp: STAMP, error: "kv_missing" }, 500);
+    const [s, p, r] = await Promise.all([
+      aiGetJson(kv, `ai:settings:${tenantId}`),
+      aiGetJson(kv, `ai:policy:${tenantId}`),
+      aiGetJson(kv, `ai:retention:${tenantId}`),
+    ]);
+    return c.json({
+      ok: true, tenantId, stamp: STAMP,
+      settings: { ...AI_DEFAULT_SETTINGS, ...(s || {}) },
+      policy: { ...AI_DEFAULT_POLICY, ...(p || {}) },
+      retention: { ...AI_DEFAULT_RETENTION, ...(r || {}) },
+    });
+  } catch (e: any) {
+    return c.json({ ok: false, stamp: STAMP, tenantId, error: "exception", detail: String(e?.message ?? e) }, 500);
+  }
+});
+
+// PUT /admin/ai — save settings/policy/retention (partial merge)
+app.put("/admin/ai", async (c) => {
+  const STAMP = "AI_PUT_V1";
+  const tenantId = getTenantId(c, null);
+  try {
+    const kv = (c.env as any).SAAS_FACTORY;
+    if (!kv) return c.json({ ok: false, stamp: STAMP, error: "kv_missing" }, 500);
+    const body: any = await c.req.json().catch(() => null);
+    if (!body) return c.json({ ok: false, stamp: STAMP, error: "bad_json" }, 400);
+    const saved: string[] = [];
+    if (body.settings != null && typeof body.settings === "object") {
+      const key = `ai:settings:${tenantId}`;
+      const ex = (await aiGetJson(kv, key)) || {};
+      await kv.put(key, JSON.stringify({ ...AI_DEFAULT_SETTINGS, ...ex, ...body.settings }));
+      saved.push("settings");
+    }
+    if (body.policy != null && typeof body.policy === "object") {
+      const key = `ai:policy:${tenantId}`;
+      const ex = (await aiGetJson(kv, key)) || {};
+      await kv.put(key, JSON.stringify({ ...AI_DEFAULT_POLICY, ...ex, ...body.policy }));
+      saved.push("policy");
+    }
+    if (body.retention != null && typeof body.retention === "object") {
+      const key = `ai:retention:${tenantId}`;
+      const ex = (await aiGetJson(kv, key)) || {};
+      await kv.put(key, JSON.stringify({ ...AI_DEFAULT_RETENTION, ...ex, ...body.retention }));
+      saved.push("retention");
+    }
+    return c.json({ ok: true, tenantId, stamp: STAMP, saved });
+  } catch (e: any) {
+    return c.json({ ok: false, stamp: STAMP, tenantId, error: "exception", detail: String(e?.message ?? e) }, 500);
+  }
+});
+
+// GET /admin/ai/faq
+app.get("/admin/ai/faq", async (c) => {
+  const STAMP = "AI_FAQ_GET_V1";
+  const tenantId = getTenantId(c, null);
+  try {
+    const kv = (c.env as any).SAAS_FACTORY;
+    if (!kv) return c.json({ ok: false, stamp: STAMP, error: "kv_missing" }, 500);
+    const faqRaw = await aiGetJson(kv, `ai:faq:${tenantId}`);
+    const faq = Array.isArray(faqRaw) ? faqRaw : [];
+    return c.json({ ok: true, tenantId, stamp: STAMP, faq });
+  } catch (e: any) {
+    return c.json({ ok: false, stamp: STAMP, tenantId, error: "exception", detail: String(e?.message ?? e) }, 500);
+  }
+});
+
+// POST /admin/ai/faq
+app.post("/admin/ai/faq", async (c) => {
+  const STAMP = "AI_FAQ_POST_V1";
+  const tenantId = getTenantId(c, null);
+  try {
+    const kv = (c.env as any).SAAS_FACTORY;
+    if (!kv) return c.json({ ok: false, stamp: STAMP, error: "kv_missing" }, 500);
+    const body: any = await c.req.json().catch(() => null);
+    if (!body?.question || !body?.answer) {
+      return c.json({ ok: false, stamp: STAMP, error: "missing_fields", hint: "question and answer required" }, 400);
+    }
+    const key = `ai:faq:${tenantId}`;
+    const faqRaw = await aiGetJson(kv, key);
+    const faq: any[] = Array.isArray(faqRaw) ? faqRaw : [];
+    const item = {
+      id: crypto.randomUUID(),
+      question: String(body.question).trim(),
+      answer: String(body.answer).trim(),
+      tags: Array.isArray(body.tags) ? body.tags : [],
+      enabled: body.enabled !== false,
+      updatedAt: Date.now(),
+    };
+    faq.push(item);
+    await kv.put(key, JSON.stringify(faq));
+    return c.json({ ok: true, tenantId, stamp: STAMP, item });
+  } catch (e: any) {
+    return c.json({ ok: false, stamp: STAMP, tenantId, error: "exception", detail: String(e?.message ?? e) }, 500);
+  }
+});
+
+// DELETE /admin/ai/faq/:id
+app.delete("/admin/ai/faq/:id", async (c) => {
+  const STAMP = "AI_FAQ_DELETE_V1";
+  const tenantId = getTenantId(c, null);
+  const id = c.req.param("id");
+  try {
+    const kv = (c.env as any).SAAS_FACTORY;
+    if (!kv) return c.json({ ok: false, stamp: STAMP, error: "kv_missing" }, 500);
+    const key = `ai:faq:${tenantId}`;
+    const faqRaw = await aiGetJson(kv, key);
+    const faq: any[] = Array.isArray(faqRaw) ? faqRaw : [];
+    const before = faq.length;
+    const next = faq.filter((f: any) => f.id !== id);
+    await kv.put(key, JSON.stringify(next));
+    return c.json({ ok: true, tenantId, stamp: STAMP, id, deleted: before - next.length });
+  } catch (e: any) {
+    return c.json({ ok: false, stamp: STAMP, tenantId, error: "exception", detail: String(e?.message ?? e) }, 500);
+  }
+});
+
+// GET /admin/ai/policy
+app.get("/admin/ai/policy", async (c) => {
+  const STAMP = "AI_POLICY_GET_V1";
+  const tenantId = getTenantId(c, null);
+  try {
+    const kv = (c.env as any).SAAS_FACTORY;
+    if (!kv) return c.json({ ok: false, stamp: STAMP, error: "kv_missing" }, 500);
+    const p = await aiGetJson(kv, `ai:policy:${tenantId}`);
+    return c.json({ ok: true, tenantId, stamp: STAMP, policy: { ...AI_DEFAULT_POLICY, ...(p || {}) } });
+  } catch (e: any) {
+    return c.json({ ok: false, stamp: STAMP, tenantId, error: "exception", detail: String(e?.message ?? e) }, 500);
+  }
+});
+
+// PUT /admin/ai/policy
+app.put("/admin/ai/policy", async (c) => {
+  const STAMP = "AI_POLICY_PUT_V1";
+  const tenantId = getTenantId(c, null);
+  try {
+    const kv = (c.env as any).SAAS_FACTORY;
+    if (!kv) return c.json({ ok: false, stamp: STAMP, error: "kv_missing" }, 500);
+    const body: any = await c.req.json().catch(() => null);
+    if (!body) return c.json({ ok: false, stamp: STAMP, error: "bad_json" }, 400);
+    const key = `ai:policy:${tenantId}`;
+    const ex = (await aiGetJson(kv, key)) || {};
+    const merged = {
+      ...AI_DEFAULT_POLICY, ...ex,
+      ...(body.prohibitedTopics != null ? { prohibitedTopics: Array.isArray(body.prohibitedTopics) ? body.prohibitedTopics : [] } : {}),
+      ...(body.hardRules != null ? { hardRules: Array.isArray(body.hardRules) ? body.hardRules : [] } : {}),
+    };
+    await kv.put(key, JSON.stringify(merged));
+    return c.json({ ok: true, tenantId, stamp: STAMP, policy: merged });
+  } catch (e: any) {
+    return c.json({ ok: false, stamp: STAMP, tenantId, error: "exception", detail: String(e?.message ?? e) }, 500);
+  }
+});
+
+// GET /admin/ai/retention
+app.get("/admin/ai/retention", async (c) => {
+  const STAMP = "AI_RETENTION_GET_V1";
+  const tenantId = getTenantId(c, null);
+  try {
+    const kv = (c.env as any).SAAS_FACTORY;
+    if (!kv) return c.json({ ok: false, stamp: STAMP, error: "kv_missing" }, 500);
+    const r = await aiGetJson(kv, `ai:retention:${tenantId}`);
+    return c.json({ ok: true, tenantId, stamp: STAMP, retention: { ...AI_DEFAULT_RETENTION, ...(r || {}) } });
+  } catch (e: any) {
+    return c.json({ ok: false, stamp: STAMP, tenantId, error: "exception", detail: String(e?.message ?? e) }, 500);
+  }
+});
+
+// PUT /admin/ai/retention
+app.put("/admin/ai/retention", async (c) => {
+  const STAMP = "AI_RETENTION_PUT_V1";
+  const tenantId = getTenantId(c, null);
+  try {
+    const kv = (c.env as any).SAAS_FACTORY;
+    if (!kv) return c.json({ ok: false, stamp: STAMP, error: "kv_missing" }, 500);
+    const body: any = await c.req.json().catch(() => null);
+    if (!body) return c.json({ ok: false, stamp: STAMP, error: "bad_json" }, 400);
+    const key = `ai:retention:${tenantId}`;
+    const ex = (await aiGetJson(kv, key)) || {};
+    const merged = { ...AI_DEFAULT_RETENTION, ...ex, ...body };
+    await kv.put(key, JSON.stringify(merged));
+    return c.json({ ok: true, tenantId, stamp: STAMP, retention: merged });
+  } catch (e: any) {
+    return c.json({ ok: false, stamp: STAMP, tenantId, error: "exception", detail: String(e?.message ?? e) }, 500);
+  }
+});
+
+// POST /ai/chat — STUB（OpenAI未接続）
+app.post("/ai/chat", async (c) => {
+  const STAMP = "AI_CHAT_STUB_V1";
+  try {
+    const body: any = await c.req.json().catch(() => ({}));
+    const tenantId = getTenantId(c, body);
+    // OPENAI_API_KEY が未設定の場合は not_configured を返す（絶対に 500 にしない）
+    const apiKey = (c.env as any)?.OPENAI_API_KEY;
+    if (!apiKey) {
+      return c.json({ ok: false, stamp: STAMP, tenantId, error: "not_configured", detail: "OPENAI_API_KEY missing" });
+    }
+    // キーは存在するが OpenAI 連携未実装
+    return c.json({ ok: false, stamp: STAMP, tenantId, error: "not_implemented", detail: "OpenAI integration coming soon" });
+  } catch (e: any) {
+    return c.json({ ok: false, stamp: STAMP, error: "exception", detail: String(e?.message ?? e) }, 500);
+  }
+});
+
+/* === /AI_CONCIERGE_V1 === */
+
 
 
 
