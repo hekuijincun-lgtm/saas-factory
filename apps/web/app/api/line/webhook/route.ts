@@ -3,10 +3,14 @@ import { NextResponse } from "next/server";
 export const runtime = "edge";
 
 // ─── version / stamps ────────────────────────────────────────────────────────
-const STAMP_V6  = "LINE_WEBHOOK_V6_20260226_AI_CHAT"; // V6: ECHO削除 → AI接客統合
-const STAMP_V5  = "LINE_WEBHOOK_V5_20260225_235900";  // kept for reference
+// V7: 全メッセージ返信 + pushLine fallback + POST debug=1 + 予約キーワード検出
+const STAMP_V7  = "LINE_WEBHOOK_V7_20260226_FULLREPLY";
+const STAMP_V6  = "LINE_WEBHOOK_V6_20260226_AI_CHAT"; // kept for reference
 const where     = "api/line/webhook";
 const isDebug   = (process.env.LINE_DEBUG === "1");
+
+// 予約関連キーワード（メッセージ本文からも検出する）
+const BOOKING_KW = ["予約", "よやく", "booking", "reserve"] as const;
 
 // ─── utils ───────────────────────────────────────────────────────────────────
 function base64FromBytes(bytes: Uint8Array): string {
@@ -31,6 +35,7 @@ async function verifyLineSignature(
   return base64FromBytes(new Uint8Array(mac)) === signature;
 }
 
+// LINE reply API — replyToken を使用（1回限り有効）
 async function replyLine(
   accessToken: string,
   replyToken: string,
@@ -48,8 +53,25 @@ async function replyLine(
   return { ok: res.ok, status: res.status, bodyText };
 }
 
+// LINE push API — replyToken 失効時のフォールバック（userId が必要）
+async function pushLine(
+  accessToken: string,
+  userId: string,
+  messages: any[]
+): Promise<{ ok: boolean; status: number; bodyText: string }> {
+  const res = await fetch("https://api.line.me/v2/bot/message/push", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: "Bearer " + accessToken,
+    },
+    body: JSON.stringify({ to: userId, messages }),
+  });
+  const bodyText = await res.text().catch(() => "");
+  return { ok: res.ok, status: res.status, bodyText };
+}
+
 function buildBookingFlex(bookingUrl: string, stamp: string, userId?: string) {
-  // stamp intentionally excluded from UI — kept in server logs and response body only
   const url = userId
     ? `${bookingUrl}${bookingUrl.includes("?") ? "&" : "?"}lu=${encodeURIComponent(userId)}`
     : bookingUrl;
@@ -64,12 +86,7 @@ function buildBookingFlex(bookingUrl: string, stamp: string, userId?: string) {
         spacing: "md",
         contents: [
           { type: "text", text: "予約ページ", weight: "bold", size: "xl" },
-          {
-            type: "text",
-            text: "下のボタンから予約を開始してね😉",
-            wrap: true,
-            color: "#666666",
-          },
+          { type: "text", text: "下のボタンから予約を開始してね😉", wrap: true, color: "#666666" },
         ],
       },
       footer: {
@@ -77,11 +94,7 @@ function buildBookingFlex(bookingUrl: string, stamp: string, userId?: string) {
         layout: "vertical",
         spacing: "sm",
         contents: [
-          {
-            type: "button",
-            style: "primary",
-            action: { type: "uri", label: "予約を開始", uri: url },
-          },
+          { type: "button", style: "primary", action: { type: "uri", label: "予約を開始", uri: url } },
         ],
       },
     },
@@ -89,9 +102,8 @@ function buildBookingFlex(bookingUrl: string, stamp: string, userId?: string) {
 }
 
 // ─── AI chat caller ──────────────────────────────────────────────────────────
-// Workers の /ai/chat を HTTP で呼び出す内部ヘルパー。
-// Pages (edge) と Workers は別ランタイムなので直接呼び出しは不可。
-// HTTP 呼び出しは再帰ではなく cross-service 呼び出し（/api/proxy 経由禁止）。
+// Workers の /ai/chat を HTTP cross-service で呼び出すヘルパー。
+// Pages (edge) と Workers は別ランタイム。再帰呼び出しではない。
 async function runAiChat(
   tenantId: string,
   message: string,
@@ -112,7 +124,7 @@ async function runAiChat(
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        // IP はレート制限キーに使われる。LINE 経由は userId をキーにする。
+        // レート制限キー: LINE経由は "line:{userId先頭12文字}" で web UI と分離
         "cf-connecting-ip": ip,
         "x-real-ip": ip,
       },
@@ -131,6 +143,17 @@ async function runAiChat(
   } catch {
     return EMPTY;
   }
+}
+
+// ─── 予約URL組み立て ──────────────────────────────────────────────────────────
+function buildBookingLink(bookingUrl: string, tenantId: string, lineUserId: string): string {
+  const sep = bookingUrl.includes("?") ? "&" : "?";
+  return (
+    bookingUrl +
+    sep +
+    `tenantId=${encodeURIComponent(tenantId)}` +
+    (lineUserId ? `&lu=${encodeURIComponent(lineUserId)}` : "")
+  );
 }
 
 // ─── tenant config resolution ─────────────────────────────────────────────────
@@ -179,7 +202,7 @@ async function getTenantLineConfig(
     }
   }
 
-  // 2) Fallback: process.env — preserves V4/V5 behavior
+  // 2) Fallback: process.env
   const channelSecret      = process.env.LINE_CHANNEL_SECRET      ?? "";
   const channelAccessToken = process.env.LINE_CHANNEL_ACCESS_TOKEN ?? "";
   const bookingUrl =
@@ -190,7 +213,7 @@ async function getTenantLineConfig(
 }
 
 // ─── GET (debug probe) ────────────────────────────────────────────────────────
-// ?debug=1&text=営業時間  → returns simulated response (no LINE request)
+// ?debug=1&text=営業時間  → 実際のLINE送信なし、シミュレーション結果を返す
 export async function GET(req: Request) {
   const { searchParams, origin } = new URL(req.url);
   const tenantId  = searchParams.get("tenantId") ?? "default";
@@ -203,7 +226,7 @@ export async function GET(req: Request) {
   const base = {
     ok: true,
     where,
-    stamp: STAMP_V6,
+    stamp: STAMP_V7,
     tenantId,
     secretLen: cfg.channelSecret.length,
     accessTokenLen: cfg.channelAccessToken.length,
@@ -216,7 +239,7 @@ export async function GET(req: Request) {
     "Cache-Control": "no-store, no-cache, must-revalidate",
     Pragma: "no-cache",
     Expires: "0",
-    "x-stamp": STAMP_V6,
+    "x-stamp": STAMP_V7,
   };
 
   if (debugMode) {
@@ -225,25 +248,26 @@ export async function GET(req: Request) {
       .replace(/[\s\u200B-\u200D\uFEFF]/g, "")
       .toLowerCase();
 
-    // Simulate AI response path
-    const handler = "AI_CHAT";
-    const simulatedAnswer = normalized.includes("予約") || normalized.includes("よやく")
+    const simulatedBooking = BOOKING_KW.some(k => normalized.includes(k));
+    const simulatedAnswer = simulatedBooking
       ? "予約フォームからご確認ください。"
       : `(AI response for: ${debugText})`;
-    const simulatedBooking = normalized.includes("予約") || normalized.includes("よやく");
-    const simulatedText = simulatedBooking
-      ? simulatedAnswer + `\n\n予約はこちら👇\n${cfg.bookingUrl}`
+    const bookingLink = simulatedBooking
+      ? buildBookingLink(cfg.bookingUrl, tenantId, "DEBUG_USER_ID")
+      : null;
+    const simulatedText = bookingLink
+      ? simulatedAnswer + `\n\n予約はこちら👇\n${bookingLink}`
       : simulatedAnswer;
 
     const messages: any[] = [
       ...(isDebug
-        ? [{ type: "text", text: `DBG stamp=${STAMP_V6} src=${cfg.source}` }]
+        ? [{ type: "text", text: `DBG stamp=${STAMP_V7} src=${cfg.source}` }]
         : []),
       { type: "text", text: simulatedText },
     ];
 
     return NextResponse.json(
-      { ...base, debug: true, handler, simulatedText: debugText, messages },
+      { ...base, debug: true, handler: "AI_CHAT", simulatedText: debugText, messages },
       { headers: cacheHeaders }
     );
   }
@@ -258,10 +282,12 @@ export async function POST(req: Request) {
     searchParams.get("tenantId") ??
     process.env.LINE_DEFAULT_TENANT_ID ??
     "default";
+  // POST debug=1: reply/push を実行せず、想定メッセージを JSON で返す（安全）
+  const postDebug = searchParams.get("debug") === "1";
 
   const sig         = req.headers.get("x-line-signature") ?? "";
   const allowBadSig = (process.env.LINE_WEBHOOK_ALLOW_BAD_SIGNATURE ?? "0") === "1";
-  const stamp       = STAMP_V6;
+  const stamp       = STAMP_V7;
 
   // Read body once
   const raw = await req.arrayBuffer();
@@ -282,19 +308,13 @@ export async function POST(req: Request) {
     );
   }
 
-  // Signature verification
+  // Signature verification（debug=1 + allowBadSig=1 でローカルテスト可）
   const verified = sig ? await verifyLineSignature(raw, sig, cfg.channelSecret) : false;
   if (!verified && !allowBadSig) {
     return NextResponse.json(
       {
-        ok: false,
-        stamp,
-        where,
-        tenantId,
-        error: "bad_signature",
-        verified,
-        hasSig: !!sig,
-        bodyLen: raw.byteLength,
+        ok: false, stamp, where, tenantId,
+        error: "bad_signature", verified, hasSig: !!sig, bodyLen: raw.byteLength,
       },
       { status: 401 }
     );
@@ -319,14 +339,8 @@ export async function POST(req: Request) {
 
   if (!ev) {
     return NextResponse.json({
-      ok: true,
-      stamp,
-      where,
-      tenantId,
-      source: cfg.source,
-      verified,
-      replied: false,
-      eventCount: events.length,
+      ok: true, stamp, where, tenantId, source: cfg.source,
+      verified, replied: false, eventCount: events.length,
     });
   }
 
@@ -334,8 +348,8 @@ export async function POST(req: Request) {
   const replyToken = String(ev.replyToken);
   const lineUserId = String(ev.source?.userId ?? "").trim();
 
-  // Best-effort: persist lineUserId to Workers KV so /reserve can send push notifications.
-  if (lineUserId) {
+  // Best-effort: persist lineUserId to Workers KV（/reserve の push 通知用）
+  if (lineUserId && !postDebug) {
     const _apiBase = (process.env.API_BASE ?? process.env.NEXT_PUBLIC_API_BASE ?? "").replace(/\/+$/, "");
     const _adminToken = process.env.ADMIN_TOKEN ?? "";
     if (_apiBase) {
@@ -349,7 +363,6 @@ export async function POST(req: Request) {
   }
 
   // ── AI 接客 ──────────────────────────────────────────────────────────────
-  // レート制限キー: LINE経由は "line:{userId先頭12文字}" で web UI と分離
   const aiIp = lineUserId ? `line:${lineUserId.slice(0, 12)}` : "line";
   const ai = await runAiChat(tenantId, textIn, aiIp);
 
@@ -357,17 +370,17 @@ export async function POST(req: Request) {
     ? ai.answer
     : "少し時間をおいて再度お試しください。";
 
-  // suggestedActions に open_booking_form があれば予約URLを末尾追記
-  const hasBooking = ai.suggestedActions.some(
-    (a: any) => a?.type === "open_booking_form"
-  );
-  if (hasBooking) {
-    const bookingLink =
-      cfg.bookingUrl +
-      (cfg.bookingUrl.includes("?") ? "&" : "?") +
-      `tenantId=${encodeURIComponent(tenantId)}` +
-      (lineUserId ? `&lu=${encodeURIComponent(lineUserId)}` : "");
-    replyText += `\n\n予約はこちら👇\n${bookingLink}`;
+  // 予約URL付与: メッセージキーワード OR suggestedActions の open_booking_form
+  const normalizedIn = textIn
+    .normalize("NFKC")
+    .replace(/[\s\u200B-\u200D\uFEFF]/g, "")
+    .toLowerCase();
+  const hasBookingKw     = BOOKING_KW.some(k => normalizedIn.includes(k));
+  const hasBookingAction = ai.suggestedActions.some((a: any) => a?.type === "open_booking_form");
+  const shouldAttachBooking = hasBookingKw || hasBookingAction;
+
+  if (shouldAttachBooking) {
+    replyText += `\n\n予約はこちら👇\n${buildBookingLink(cfg.bookingUrl, tenantId, lineUserId)}`;
   }
 
   const messages: any[] = [
@@ -377,8 +390,26 @@ export async function POST(req: Request) {
     { type: "text", text: replyText },
   ];
 
+  // ── POST debug=1: 送信せず想定メッセージを返す ───────────────────────────
+  if (postDebug) {
+    return NextResponse.json({
+      ok: true, stamp, where, tenantId, debug: true,
+      textIn, replyText, shouldAttachBooking, aiOk: ai.ok,
+      messages, eventCount: events.length,
+    });
+  }
+
+  // ── reply → push fallback ────────────────────────────────────────────────
   const rep = await replyLine(cfg.channelAccessToken, replyToken, messages);
 
+  let pushRep: { ok: boolean; status: number; bodyText: string } | null = null;
+  // replyToken 失効（"invalid reply token"）かつ userId がある場合は push で救済
+  if (!rep.ok && lineUserId && rep.bodyText.toLowerCase().includes("invalid reply token")) {
+    pushRep = await pushLine(cfg.channelAccessToken, lineUserId, messages)
+      .catch(() => ({ ok: false, status: 0, bodyText: "push_exception" }));
+  }
+
+  // 500 は返さない — LINE は 200 を期待する
   return NextResponse.json(
     {
       ok: true,
@@ -391,6 +422,8 @@ export async function POST(req: Request) {
       replyStatus: rep.status,
       replyOk: rep.ok,
       replyBody: rep.ok ? null : rep.bodyText?.slice(0, 300) ?? null,
+      pushFallback: pushRep !== null,
+      pushOk: pushRep?.ok ?? null,
       eventCount: events.length,
       aiOk: ai.ok,
     },
