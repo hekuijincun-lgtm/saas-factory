@@ -1,19 +1,17 @@
 // route: /admin/customers
-"use client";
+'use client';
 
-import AdminTopBar from "../../_components/ui/AdminTopBar";
+import { useState, useEffect } from 'react';
+import { useSearchParams } from 'next/navigation';
+import AdminTopBar from '../../_components/ui/AdminTopBar';
 
-// 将来 API 接続時に置き換える型
 interface Customer {
   id: string;
   name: string;
-  phone: string;
+  phone: string | null;
   visitCount: number;
-  lastVisit: string | null;
+  lastVisitAt: string | null;
 }
-
-// 空データ（API 接続前のプレースホルダー）
-const MOCK_CUSTOMERS: Customer[] = [];
 
 function EmptyState() {
   return (
@@ -40,7 +38,29 @@ function EmptyState() {
 }
 
 export default function CustomersPage() {
-  const customers = MOCK_CUSTOMERS;
+  const searchParams = useSearchParams();
+  const tenantId = searchParams?.get('tenantId') || 'default';
+
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch(
+      `/api/proxy/admin/customers?tenantId=${encodeURIComponent(tenantId)}`,
+      { cache: 'no-store' }
+    )
+      .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
+      .then((json: any) => {
+        if (json?.ok) {
+          setCustomers(json.customers ?? []);
+        } else {
+          setError('顧客データの取得に失敗しました');
+        }
+      })
+      .catch(() => setError('顧客データの取得に失敗しました'))
+      .finally(() => setLoading(false));
+  }, [tenantId]);
 
   return (
     <>
@@ -51,7 +71,19 @@ export default function CustomersPage() {
 
       <div className="px-6 pb-8">
         <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
-          {customers.length === 0 ? (
+          {loading ? (
+            <div className="py-20 text-center text-sm text-gray-400">読み込み中...</div>
+          ) : error ? (
+            <div className="py-20 text-center">
+              <p className="text-sm text-red-500">{error}</p>
+              <button
+                onClick={() => window.location.reload()}
+                className="mt-3 text-xs text-gray-500 underline"
+              >
+                再読み込み
+              </button>
+            </div>
+          ) : customers.length === 0 ? (
             <EmptyState />
           ) : (
             <div className="overflow-x-auto">
@@ -76,16 +108,16 @@ export default function CustomersPage() {
                   {customers.map((c) => (
                     <tr key={c.id} className="hover:bg-gray-50 transition-colors">
                       <td className="px-5 py-3.5 font-medium text-gray-900">
-                        {c.name}
+                        {c.name || '—'}
                       </td>
                       <td className="px-5 py-3.5 text-gray-600 tabular-nums">
-                        {c.phone || "—"}
+                        {c.phone ?? '—'}
                       </td>
                       <td className="px-5 py-3.5 text-gray-600 text-right tabular-nums">
                         {c.visitCount}
                       </td>
                       <td className="px-5 py-3.5 text-gray-500 text-right tabular-nums">
-                        {c.lastVisit ?? "—"}
+                        {c.lastVisitAt ?? '—'}
                       </td>
                     </tr>
                   ))}

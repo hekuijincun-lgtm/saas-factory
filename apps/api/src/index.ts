@@ -1122,6 +1122,125 @@ app.put("/admin/availability", async (c) => {
 });
 
 /** =========================
+ * Admin Customers
+ * GET /admin/customers?tenantId=
+ * ========================= */
+app.get("/admin/customers", async (c) => {
+  const STAMP = "ADMIN_CUSTOMERS_V1";
+  const tenantId = getTenantId(c, null);
+  const db = (c.env as any).DB;
+  if (!db) return c.json({ ok: false, stamp: STAMP, error: "DB_not_bound" }, 500);
+
+  try {
+    const result = await db
+      .prepare(
+        `SELECT id, name, phone, visit_count, last_visit_at, created_at
+         FROM customers
+         WHERE tenant_id = ?
+         ORDER BY updated_at DESC
+         LIMIT 200`
+      )
+      .bind(tenantId)
+      .all();
+
+    const customers = (result.results || []).map((r: any) => ({
+      id: r.id,
+      name: r.name ?? "",
+      phone: r.phone ?? null,
+      visitCount: r.visit_count ?? 0,
+      lastVisitAt: r.last_visit_at ?? null,
+    }));
+
+    return c.json({ ok: true, stamp: STAMP, tenantId, customers });
+  } catch (e: any) {
+    return c.json({ ok: false, stamp: STAMP, error: "Failed to fetch customers", message: String(e?.message ?? e) }, 500);
+  }
+});
+
+/** =========================
+ * Admin Dashboard
+ * GET /admin/dashboard?tenantId=&date=YYYY-MM-DD
+ * Returns: kpis, schedule (today's reservations), customers (recent)
+ * ========================= */
+app.get("/admin/dashboard", async (c) => {
+  const STAMP = "ADMIN_DASHBOARD_V1";
+  const tenantId = getTenantId(c, null);
+  const db = (c.env as any).DB;
+  if (!db) return c.json({ ok: false, stamp: STAMP, error: "DB_not_bound" }, 500);
+
+  // Resolve date: query param → JST today fallback
+  let date = (c.req.query("date") || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    const jst = new Date(Date.now() + 9 * 60 * 60 * 1000);
+    date = jst.toISOString().slice(0, 10);
+  }
+  const like = `${date}T%`;
+
+  try {
+    const [resResult, cusResult] = await Promise.all([
+      db
+        .prepare(
+          `SELECT id, slot_start, start_at, customer_name, customer_phone, staff_id, duration_minutes
+           FROM reservations
+           WHERE tenant_id = ? AND slot_start LIKE ? AND status != 'cancelled'
+           ORDER BY slot_start ASC`
+        )
+        .bind(tenantId, like)
+        .all(),
+      db
+        .prepare(
+          `SELECT id, name, phone, visit_count, last_visit_at
+           FROM customers
+           WHERE tenant_id = ?
+           ORDER BY updated_at DESC
+           LIMIT 50`
+        )
+        .bind(tenantId)
+        .all(),
+    ]);
+
+    const rows: any[] = resResult.results || [];
+    const reservationsToday = rows.length;
+
+    const schedule = rows.map((r: any) => {
+      const slotStr = String(r.slot_start || r.start_at || "");
+      const timeMatch = /T(\d{2}:\d{2})/.exec(slotStr);
+      return {
+        time: timeMatch ? timeMatch[1] : "",
+        reservationId: r.id,
+        customerName: r.customer_name ?? "",
+        customerPhone: r.customer_phone ?? null,
+        staffId: r.staff_id ?? "",
+        durationMin: r.duration_minutes ?? 60,
+      };
+    });
+
+    const customers = (cusResult.results || []).map((r: any) => ({
+      id: r.id,
+      name: r.name ?? "",
+      phone: r.phone ?? null,
+      visitCount: r.visit_count ?? 0,
+      lastVisitAt: r.last_visit_at ?? null,
+    }));
+
+    return c.json({
+      ok: true,
+      stamp: STAMP,
+      tenantId,
+      date,
+      kpis: {
+        reservationsToday,
+        revenueExpectedToday: 0, // Phase 1: no price in reservations table
+      },
+      schedule,
+      customers,
+    });
+  } catch (e: any) {
+    return c.json({ ok: false, stamp: STAMP, error: "dashboard_error", message: String(e?.message ?? e) }, 500);
+  }
+});
+
+/** =========================
  * Debug: list registered routes
  * ========================= */
 app.get("/__debug/routes", (c) => {
@@ -1208,6 +1327,50 @@ async function notifyLineReservation(opts: {
     console.log(`[${STAMP}] notify.sent tenantId=${opts.tenantId} userId=${opts.lineUserId} status=${res.status} ok=${res.ok} body=${bodyText.slice(0, 200)}`);
   } catch (e: any) {
     console.log(`[${STAMP}] notify.error tenantId=${opts.tenantId} userId=${opts.lineUserId} err=${String(e?.message ?? e)}`);
+  }
+}
+
+// ---- CUSTOMER UPSERT (CRM) ----
+// upsert by (tenant_id, phone) when phone exists, else insert new.
+// Best-effort: never throws; returns customerId or null on failure.
+async function upsertCustomer(
+  db: any,
+  opts: { tenantId: string; name: string | null; phone: string | null; visitAt: string }
+): Promise<string | null> {
+  try {
+    const now = new Date().toISOString();
+    const visitDate = opts.visitAt.slice(0, 10); // YYYY-MM-DD
+
+    if (opts.phone) {
+      const existing: any = await db
+        .prepare("SELECT id, visit_count FROM customers WHERE tenant_id = ? AND phone = ? LIMIT 1")
+        .bind(opts.tenantId, opts.phone)
+        .first();
+
+      if (existing) {
+        const newCount = (existing.visit_count || 0) + 1;
+        await db
+          .prepare(
+            "UPDATE customers SET name = COALESCE(?, name), visit_count = ?, last_visit_at = ?, updated_at = ? WHERE id = ?"
+          )
+          .bind(opts.name, newCount, visitDate, now, existing.id)
+          .run();
+        return existing.id;
+      }
+    }
+
+    // New customer
+    const cid = crypto.randomUUID();
+    await db
+      .prepare(
+        "INSERT INTO customers (id, tenant_id, name, phone, created_at, updated_at, last_visit_at, visit_count) VALUES (?, ?, ?, ?, ?, ?, ?, 1)"
+      )
+      .bind(cid, opts.tenantId, opts.name, opts.phone, now, now, visitDate)
+      .run();
+    return cid;
+  } catch (e: any) {
+    console.error("[CUSTOMER_UPSERT] error:", String(e?.message ?? e));
+    return null;
   }
 }
 
@@ -1312,6 +1475,17 @@ async function notifyLineReservation(opts: {
     tenantId, lineUserId, customerName, startAt, staffId,
     flag: String((env as any).LINE_NOTIFY_ON_RESERVE ?? "0").trim(),
   }).catch(() => null);
+
+  // Customer upsert — best-effort, does NOT affect reservation result
+  const phone = body.phone ? String(body.phone) : null;
+  const customerId = await upsertCustomer(env.DB, { tenantId, name: customerName, phone, visitAt: startAt });
+  if (customerId) {
+    await env.DB.prepare("UPDATE reservations SET customer_id = ? WHERE id = ?")
+      .bind(customerId, rid)
+      .run()
+      .catch((e: any) => console.error("[RESERVE_CUSTOMER_LINK] error:", String(e?.message ?? e)));
+  }
+
   return c.json({ ok:true, id: rid, tenantId, staffId, startAt, endAt })
   } finally {
     // best-effort unlock
