@@ -2299,90 +2299,158 @@ app.post("/ai/pushq", async (c) => {
   }
 });
 
-// Cron scheduled handler — AI followup LINE送信 (*/5 * * * *)
+// Cron scheduled handler — AI followup LINE送信 + pushq consumer (*/5 * * * *)
 async function scheduled(_event: any, env: Env, _ctx: any): Promise<void> {
-  const STAMP = "AI_FOLLOWUP_CRON_V1";
   const kv = (env as any).SAAS_FACTORY;
+  if (!kv) return;
+
+  // ── AI followup (D1 が必要) ────────────────────────────────────────────────
   const db = (env as any).DB;
-  if (!kv || !db) return;
+  if (db) {
+    const STAMP = "AI_FOLLOWUP_CRON_V1";
+    try {
+      const now = new Date().toISOString();
+      const { results } = await db.prepare(
+        `SELECT id, tenant_id, line_user_id, customer_name, slot_start
+         FROM reservations
+         WHERE followup_status = 'pending'
+           AND followup_at IS NOT NULL
+           AND followup_at <= ?
+         LIMIT 50`
+      ).bind(now).all();
 
+      if (results && results.length > 0) {
+        for (const row of results) {
+          const { id, tenant_id: tId, line_user_id: lineUserId, customer_name: custName, slot_start: slotStart } = row as any;
+
+          // No LINE user → skip
+          if (!lineUserId) {
+            await db.prepare(`UPDATE reservations SET followup_status = 'skipped', followup_sent_at = ? WHERE id = ?`)
+              .bind(now, id).run().catch(() => null);
+            continue;
+          }
+
+          // Fetch channelAccessToken from KV settings
+          let channelAccessToken: string | null = null;
+          try {
+            const settingsRaw = await kv.get(`settings:${tId}`);
+            if (settingsRaw) {
+              const s = JSON.parse(settingsRaw);
+              channelAccessToken = s?.integrations?.line?.channelAccessToken ?? null;
+            }
+          } catch { /* ignore */ }
+
+          if (!channelAccessToken) {
+            await db.prepare(`UPDATE reservations SET followup_status = 'skipped', followup_sent_at = ?, followup_error = ? WHERE id = ?`)
+              .bind(now, "no_channel_token", id).run().catch(() => null);
+            continue;
+          }
+
+          // Fetch retention template
+          let template = "{{customerName}}様、先日はご来店ありがとうございました！またのご来店をお待ちしております。";
+          try {
+            const ret = await aiGetJson(kv, `ai:retention:${tId}`);
+            if (ret?.enabled && ret?.followupTemplate) template = String(ret.followupTemplate);
+          } catch { /* ignore */ }
+
+          // Build message
+          const visitDate = slotStart ? new Date(slotStart).toLocaleDateString("ja-JP") : "";
+          const msg = template
+            .replace("{{customerName}}", custName || "お客様")
+            .replace("{{visitDate}}", visitDate);
+
+          // Send LINE push
+          try {
+            const lineRes = await fetch("https://api.line.me/v2/bot/message/push", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${channelAccessToken}`,
+              },
+              body: JSON.stringify({ to: lineUserId, messages: [{ type: "text", text: msg }] }),
+            });
+            if (lineRes.ok) {
+              await db.prepare(`UPDATE reservations SET followup_status = 'sent', followup_sent_at = ? WHERE id = ?`)
+                .bind(now, id).run().catch(() => null);
+            } else {
+              const errText = await lineRes.text().catch(() => `HTTP ${lineRes.status}`);
+              await db.prepare(`UPDATE reservations SET followup_status = 'failed', followup_sent_at = ?, followup_error = ? WHERE id = ?`)
+                .bind(now, errText.slice(0, 200), id).run().catch(() => null);
+            }
+          } catch (sendErr: any) {
+            await db.prepare(`UPDATE reservations SET followup_status = 'failed', followup_sent_at = ?, followup_error = ? WHERE id = ?`)
+              .bind(now, String(sendErr?.message ?? sendErr).slice(0, 200), id).run().catch(() => null);
+          }
+        }
+      }
+    } catch (e: any) {
+      console.error(`[${STAMP}] error:`, String(e?.message ?? e));
+    }
+  }
+
+  // ── pushq consumer: push 失敗リトライ (KV のみ・token 不保持設計) ──────────
+  // key: ai:pushq:{tenantId}:{id}  → channelAccessToken は settings KV から再取得
+  const PUSHQ_STAMP = "PUSHQ_CONSUMER_V1";
   try {
-    const now = new Date().toISOString();
-    const { results } = await db.prepare(
-      `SELECT id, tenant_id, line_user_id, customer_name, slot_start
-       FROM reservations
-       WHERE followup_status = 'pending'
-         AND followup_at IS NOT NULL
-         AND followup_at <= ?
-       LIMIT 50`
-    ).bind(now).all();
+    const { keys } = await kv.list({ prefix: "ai:pushq:", limit: 50 });
+    if (keys && keys.length > 0) {
+      console.log(`[${PUSHQ_STAMP}] processing ${keys.length} items`);
+      for (const { name: qKey } of keys) {
+        try {
+          const raw = await kv.get(qKey);
+          if (!raw) continue; // already expired/deleted
 
-    if (!results || results.length === 0) return;
+          const item = JSON.parse(raw) as { tenantId: string; userId: string; messages: any[] };
+          const { tenantId: tId, userId, messages } = item;
+          if (!tId || !userId || !Array.isArray(messages)) {
+            await kv.delete(qKey);
+            continue;
+          }
 
-    for (const row of results) {
-      const { id, tenant_id: tId, line_user_id: lineUserId, customer_name: custName, slot_start: slotStart } = row as any;
+          // channelAccessToken を settings KV から再取得（token は pushq に保存しない）
+          let channelAccessToken: string | null = null;
+          try {
+            const settingsRaw = await kv.get(`settings:${tId}`);
+            if (settingsRaw) {
+              const s = JSON.parse(settingsRaw);
+              channelAccessToken = s?.integrations?.line?.channelAccessToken ?? null;
+            }
+          } catch { /* ignore */ }
 
-      // No LINE user → skip
-      if (!lineUserId) {
-        await db.prepare(`UPDATE reservations SET followup_status = 'skipped', followup_sent_at = ? WHERE id = ?`)
-          .bind(now, id).run().catch(() => null);
-        continue;
-      }
+          if (!channelAccessToken) {
+            // token が消えた場合はリトライ不可 → 破棄
+            console.log(`[${PUSHQ_STAMP}] discard key=...${qKey.slice(-12)} reason=no_token`);
+            await kv.delete(qKey);
+            continue;
+          }
 
-      // Fetch channelAccessToken from KV settings
-      let channelAccessToken: string | null = null;
-      try {
-        const settingsRaw = await kv.get(`settings:${tId}`);
-        if (settingsRaw) {
-          const s = JSON.parse(settingsRaw);
-          channelAccessToken = s?.integrations?.line?.channelAccessToken ?? null;
+          const pushRes = await fetch("https://api.line.me/v2/bot/message/push", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${channelAccessToken}`,
+            },
+            body: JSON.stringify({ to: userId, messages }),
+          });
+          const pushBody = await pushRes.text().catch(() => "");
+
+          // uid/token は先頭6文字のみログ
+          console.log(
+            `[${PUSHQ_STAMP}] tenant=${tId} uid=${userId.slice(0, 6)}*** ` +
+            `st=${pushRes.status} ok=${pushRes.ok} body=${pushBody.slice(0, 80)}`
+          );
+
+          if (pushRes.ok) {
+            await kv.delete(qKey); // 成功 → キューから削除
+          }
+          // 失敗時は TTL 切れまで残す（次の cron で再試行）
+        } catch (itemErr: any) {
+          console.error(`[${PUSHQ_STAMP}] item error:`, String(itemErr?.message ?? itemErr));
         }
-      } catch { /* ignore */ }
-
-      if (!channelAccessToken) {
-        await db.prepare(`UPDATE reservations SET followup_status = 'skipped', followup_sent_at = ?, followup_error = ? WHERE id = ?`)
-          .bind(now, "no_channel_token", id).run().catch(() => null);
-        continue;
-      }
-
-      // Fetch retention template
-      let template = "{{customerName}}様、先日はご来店ありがとうございました！またのご来店をお待ちしております。";
-      try {
-        const ret = await aiGetJson(kv, `ai:retention:${tId}`);
-        if (ret?.enabled && ret?.followupTemplate) template = String(ret.followupTemplate);
-      } catch { /* ignore */ }
-
-      // Build message
-      const visitDate = slotStart ? new Date(slotStart).toLocaleDateString("ja-JP") : "";
-      const msg = template
-        .replace("{{customerName}}", custName || "お客様")
-        .replace("{{visitDate}}", visitDate);
-
-      // Send LINE push
-      try {
-        const lineRes = await fetch("https://api.line.me/v2/bot/message/push", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${channelAccessToken}`,
-          },
-          body: JSON.stringify({ to: lineUserId, messages: [{ type: "text", text: msg }] }),
-        });
-        if (lineRes.ok) {
-          await db.prepare(`UPDATE reservations SET followup_status = 'sent', followup_sent_at = ? WHERE id = ?`)
-            .bind(now, id).run().catch(() => null);
-        } else {
-          const errText = await lineRes.text().catch(() => `HTTP ${lineRes.status}`);
-          await db.prepare(`UPDATE reservations SET followup_status = 'failed', followup_sent_at = ?, followup_error = ? WHERE id = ?`)
-            .bind(now, errText.slice(0, 200), id).run().catch(() => null);
-        }
-      } catch (sendErr: any) {
-        await db.prepare(`UPDATE reservations SET followup_status = 'failed', followup_sent_at = ?, followup_error = ? WHERE id = ?`)
-          .bind(now, String(sendErr?.message ?? sendErr).slice(0, 200), id).run().catch(() => null);
       }
     }
-  } catch (e: any) {
-    console.error(`[${STAMP}] error:`, String(e?.message ?? e));
+  } catch (pushqErr: any) {
+    console.error(`[${PUSHQ_STAMP}] list error:`, String(pushqErr?.message ?? pushqErr));
   }
 }
 

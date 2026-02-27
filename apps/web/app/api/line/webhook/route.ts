@@ -1,13 +1,17 @@
 import { NextResponse } from "next/server";
+import { getRequestContext } from "@cloudflare/next-on-pages";
 
 export const runtime = "edge";
 
 // ─── version / stamps ────────────────────────────────────────────────────────
-// V8.1: debug=1 に実送信+診断出力 / dedupKey を message.id 優先 / push 429/5xx → retry enqueue
-const STAMP     = "LINE_WEBHOOK_V8_1_20260226_DIAG";
-const STAMP_V8  = "LINE_WEBHOOK_V8_20260226_ACK_PUSH"; // prev, kept for reference
-const where     = "api/line/webhook";
-const isDebug   = (process.env.LINE_DEBUG === "1");
+// V9: waitUntil 対応
+//   normal  → dedup → ACK reply → waitUntil(AI+push) → 即時 200 返却
+//             push 結果を console.log（先頭マスク） + 429/5xx は /ai/pushq に enqueue
+//   debug=1 → ACK 送信 + waitUntil(AI+push) 登録 → { queued:true } を即時返却
+//   debug=2 → push のみ同期実送信して pushStatus を返す（ack なし・テスト用）
+const STAMP = "LINE_WEBHOOK_V9_20260227_WAITUNTIL";
+const where  = "api/line/webhook";
+const isDebug = (process.env.LINE_DEBUG === "1");
 
 const ACK_TEXT      = "確認しますね！少々お待ちください😊";
 const FALLBACK_TEXT = "少し時間をおいて再度お試しください。";
@@ -43,10 +47,9 @@ async function verifyLineSignature(
   return base64FromBytes(new Uint8Array(mac)) === signature;
 }
 
-// SHA-256 の先頭 4 バイトを hex で返す（dedup key のサフィックスに使用）
+// SHA-256 先頭4バイトを hex で返す（dedup key のサフィックス用）
 async function shortHash(text: string): Promise<string> {
-  const data = new TextEncoder().encode(text);
-  const buf = await crypto.subtle.digest("SHA-256", data);
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
   return Array.from(new Uint8Array(buf).slice(0, 4))
     .map(b => b.toString(16).padStart(2, "0"))
     .join("");
@@ -54,14 +57,10 @@ async function shortHash(text: string): Promise<string> {
 
 // dedup key 生成
 // 優先: event.message.id（LINE が付与する一意 ID）
-// fallback: {userId}:{timestamp末尾10桁}:{text の shortHash}
+// fallback: {userId}:{timestamp末尾10桁}:{shortHash(text)}
 async function buildDedupKey(tenantId: string, ev: any): Promise<string> {
   const msgId = String(ev.message?.id ?? "").trim();
-  if (msgId) {
-    // message.id は LINE が保証する一意値 — これが最良のキー
-    return `ai:evt:${tenantId}:msg:${msgId}`;
-  }
-  // フォールバック
+  if (msgId) return `ai:evt:${tenantId}:msg:${msgId}`;
   const userId = String(ev.source?.userId ?? "unknown").slice(0, 20)
     .replace(/[^a-zA-Z0-9_-]/g, "_");
   const ts = String(ev.timestamp ?? Date.now()).slice(-10);
@@ -70,7 +69,6 @@ async function buildDedupKey(tenantId: string, ev: any): Promise<string> {
 }
 
 // ─── LINE API ─────────────────────────────────────────────────────────────────
-// reply — replyToken を使用（1回限り、数秒〜30秒で失効）
 async function replyLine(
   accessToken: string,
   replyToken: string,
@@ -88,7 +86,6 @@ async function replyLine(
   return { ok: res.ok, status: res.status, bodyText };
 }
 
-// push — replyToken 不要（userId が必要、AI処理後の最終回答に使用）
 async function pushLine(
   accessToken: string,
   userId: string,
@@ -108,18 +105,16 @@ async function pushLine(
 
 // ─── KV dedup via Workers /ai/dedup ─────────────────────────────────────────
 // 500ms タイムアウト付き（best-effort）
-// 戻り値: true = 新規、false = 重複
 async function dedupEvent(
   apiBase: string,
   key: string,
   ttlSeconds = 120
 ): Promise<boolean> {
-  if (!apiBase || !key) return true;
+  if (!apiBase || !key) return true; // フォールバック: 常に新規扱い
 
   const timeout = new Promise<boolean>(resolve =>
     setTimeout(() => resolve(true), 500)
   );
-
   const check = fetch(`${apiBase}/ai/dedup`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -133,8 +128,7 @@ async function dedupEvent(
 }
 
 // ─── push retry enqueue via Workers /ai/pushq ────────────────────────────────
-// 429 / 5xx 時のみ呼び出す（tokenは送らず tenantId + userId + messages のみ）
-// Workers が再試行時に KV から config を再取得する設計
+// 429 / 5xx 時のみ（token は送らない）
 async function enqueuePushRetry(
   apiBase: string,
   tenantId: string,
@@ -146,37 +140,7 @@ async function enqueuePushRetry(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ tenantId, userId, messages, ttlSeconds: 600 }),
-  }).catch(() => null); // best-effort、失敗しても握り潰す
-}
-
-function buildBookingFlex(bookingUrl: string, _stamp: string, userId?: string) {
-  const url = userId
-    ? `${bookingUrl}${bookingUrl.includes("?") ? "&" : "?"}lu=${encodeURIComponent(userId)}`
-    : bookingUrl;
-  return {
-    type: "flex",
-    altText: "予約ページを開く",
-    contents: {
-      type: "bubble",
-      body: {
-        type: "box",
-        layout: "vertical",
-        spacing: "md",
-        contents: [
-          { type: "text", text: "予約ページ", weight: "bold", size: "xl" },
-          { type: "text", text: "下のボタンから予約を開始してね😉", wrap: true, color: "#666666" },
-        ],
-      },
-      footer: {
-        type: "box",
-        layout: "vertical",
-        spacing: "sm",
-        contents: [
-          { type: "button", style: "primary", action: { type: "uri", label: "予約を開始", uri: url } },
-        ],
-      },
-    },
-  };
+  }).catch(() => null);
 }
 
 // ─── AI chat caller ──────────────────────────────────────────────────────────
@@ -205,7 +169,6 @@ async function runAiChat(
       },
       body: JSON.stringify({ message, tenantId }),
     });
-
     const data = (await res.json().catch(() => null)) as any;
     if (data?.ok && data?.answer) {
       return {
@@ -229,6 +192,32 @@ function buildBookingLink(bookingUrl: string, tenantId: string, lineUserId: stri
     `tenantId=${encodeURIComponent(tenantId)}` +
     (lineUserId ? `&lu=${encodeURIComponent(lineUserId)}` : "")
   );
+}
+
+// ─── 最終メッセージ組み立て（共通）──────────────────────────────────────────
+function buildFinalMessages(
+  finalText: string,
+  stamp: string,
+  source: string,
+  aiOk: boolean
+): any[] {
+  return [
+    ...(isDebug
+      ? [{ type: "text", text: `DBG stamp=${stamp} src=${source} aiOk=${aiOk}` }]
+      : []),
+    { type: "text", text: finalText },
+  ];
+}
+
+// ─── 予約キーワード判定 ───────────────────────────────────────────────────────
+function detectBooking(textIn: string, suggestedActions: any[]): boolean {
+  const normalized = textIn
+    .normalize("NFKC")
+    .replace(/[\s\u200B-\u200D\uFEFF]/g, "")
+    .toLowerCase();
+  const hasKw     = BOOKING_KW.some(k => normalized.includes(k));
+  const hasAction = suggestedActions.some((a: any) => a?.type === "open_booking_form");
+  return hasKw || hasAction;
 }
 
 // ─── tenant config resolution ─────────────────────────────────────────────────
@@ -319,9 +308,8 @@ export async function GET(req: Request) {
       .normalize("NFKC")
       .replace(/[\s\u200B-\u200D\uFEFF]/g, "")
       .toLowerCase();
-
-    const simulatedBooking = BOOKING_KW.some(k => normalized.includes(k));
-    const simulatedAnswer  = simulatedBooking
+    const simulatedBooking  = BOOKING_KW.some(k => normalized.includes(k));
+    const simulatedAnswer   = simulatedBooking
       ? "予約フォームからご確認ください。"
       : `(AI response for: ${debugText})`;
     const bookingLink = simulatedBooking
@@ -339,8 +327,6 @@ export async function GET(req: Request) {
         ackText: ACK_TEXT,
         finalText: simulatedFinalText,
         shouldAttachBooking: simulatedBooking,
-        ackMessages: [{ type: "text", text: ACK_TEXT }],
-        finalMessages: [{ type: "text", text: simulatedFinalText }],
       },
       { headers: cacheHeaders }
     );
@@ -356,8 +342,9 @@ export async function POST(req: Request) {
     searchParams.get("tenantId") ??
     process.env.LINE_DEFAULT_TENANT_ID ??
     "default";
-  // debug=1: 実際に LINE API を呼び出し、status/bodySnippet を含む診断 JSON を返す
-  const postDebug = searchParams.get("debug") === "1";
+
+  // debug モード: "1" = AI のみ (LINE 送信なし), "2" = push のみ実送信
+  const debugMode = searchParams.get("debug"); // "1" | "2" | null
 
   const sig         = req.headers.get("x-line-signature") ?? "";
   const allowBadSig = (process.env.LINE_WEBHOOK_ALLOW_BAD_SIGNATURE ?? "0") === "1";
@@ -420,110 +407,132 @@ export async function POST(req: Request) {
     process.env.API_BASE ?? process.env.NEXT_PUBLIC_API_BASE ?? ""
   ).replace(/\/+$/, "");
 
-  // dedup key（debug=1 でも計算するが check/set はしない）
-  const dedupKey = await buildDedupKey(tenantId, ev);
+  const aiIp = lineUserId ? `line:${lineUserId.slice(0, 12)}` : "line";
 
-  // ── KV dedup（通常モードのみ）────────────────────────────────────────────
-  let dedupHit = false;
-  if (!postDebug) {
-    const isNew = await dedupEvent(apiBase, dedupKey, 120);
-    if (!isNew) {
-      dedupHit = true;
-      return NextResponse.json({
-        ok: true, stamp: STAMP, where, tenantId, source: cfg.source,
-        verified, skipped: true, reason: "duplicate_event",
-        dedupKey, eventCount: events.length,
-      });
+  // ── waitUntil 取得（Cloudflare Pages edge context）────────────────────────
+  // ローカル開発では getRequestContext() が投げるので fallback: 即時実行（fire-and-forget）
+  let waitUntilFn: (p: Promise<any>) => void = (p) => void p.catch(() => null);
+  try {
+    const { ctx } = getRequestContext();
+    waitUntilFn = (p) => ctx.waitUntil(p);
+  } catch { /* ローカル開発 / テスト環境 */ }
+
+  // ── AI + push: waitUntil に渡す共通処理 ─────────────────────────────────
+  const runAiAndPush = async (): Promise<void> => {
+    try {
+      const aiStart = Date.now();
+      const ai      = await runAiChat(tenantId, textIn, aiIp);
+      const aiMs    = Date.now() - aiStart;
+
+      const shouldAttachBooking = detectBooking(textIn, ai.suggestedActions);
+      let finalText = ai.ok ? ai.answer : FALLBACK_TEXT;
+      if (shouldAttachBooking) {
+        finalText += `\n\n予約はこちら👇\n${buildBookingLink(cfg.bookingUrl, tenantId, lineUserId)}`;
+      }
+      const finalMessages = buildFinalMessages(finalText, STAMP, cfg.source, ai.ok);
+
+      if (lineUserId) {
+        const pushRep = await pushLine(cfg.channelAccessToken, lineUserId, finalMessages)
+          .catch(() => ({ ok: false, status: 0, bodyText: "push_exception" }));
+
+        // ログ: token/userId 丸出し禁止 — 先頭6文字のみ
+        console.log(
+          `[LINE_PUSH] tenant=${tenantId} uid=${lineUserId.slice(0, 6)}*** ` +
+          `aiMs=${aiMs}ms st=${pushRep.status} ok=${pushRep.ok} ` +
+          `body=${pushRep.bodyText.slice(0, 500)}`
+        );
+
+        // 429 / 5xx → retry キューに積む（TTL 10分）
+        if (!pushRep.ok) {
+          const s = pushRep.status;
+          if (s === 429 || (s >= 500 && s < 600)) {
+            enqueuePushRetry(apiBase, tenantId, lineUserId, finalMessages);
+          }
+        }
+      }
+    } catch (bgErr: any) {
+      console.error(`[LINE_PUSH_BG] error:`, String(bgErr?.message ?? bgErr));
     }
+  };
+
+  // ── debug=1: ACK + waitUntil(AI+push) + 即時 { queued:true } 返却 ────────
+  if (debugMode === "1") {
+    const ackRep1 = await replyLine(
+      cfg.channelAccessToken, replyToken, [{ type: "text", text: ACK_TEXT }]
+    ).catch(() => ({ ok: false, status: 0, bodyText: "reply_exception" }));
+
+    waitUntilFn(runAiAndPush());
+
+    return NextResponse.json({
+      ok: true, stamp: STAMP, where, tenantId, debug: 1,
+      queued: true, ackOk: ackRep1.ok, ackStatus: ackRep1.status,
+    });
   }
 
-  // Best-effort: persist lineUserId to Workers KV（通常モードのみ）
-  if (lineUserId && !postDebug) {
+  // ── debug=2: push のみ同期実送信（ack reply はしない・テスト用）────────────
+  if (debugMode === "2") {
+    const ai = await runAiChat(tenantId, textIn, aiIp);
+
+    const shouldAttachBooking = detectBooking(textIn, ai.suggestedActions);
+    let finalText = ai.ok ? ai.answer : FALLBACK_TEXT;
+    if (shouldAttachBooking) {
+      finalText += `\n\n予約はこちら👇\n${buildBookingLink(cfg.bookingUrl, tenantId, lineUserId)}`;
+    }
+    const finalMessages = buildFinalMessages(finalText, STAMP, cfg.source, ai.ok);
+
+    let pushRep: { ok: boolean; status: number; bodyText: string } | null = null;
+    if (lineUserId) {
+      pushRep = await pushLine(cfg.channelAccessToken, lineUserId, finalMessages)
+        .catch(() => ({ ok: false, status: 0, bodyText: "push_exception" }));
+    }
+
+    return NextResponse.json({
+      ok: true, stamp: STAMP, where, tenantId, debug: 2,
+      hasUserId: !!lineUserId,
+      shouldAttachBooking,
+      finalText,
+      pushStatus:      pushRep?.status      ?? null,
+      pushOk:          pushRep?.ok          ?? null,
+      pushBodySnippet: pushRep?.bodyText?.slice(0, 500) ?? null,
+    });
+  }
+
+  // ── 通常モード: dedup → ACK reply → waitUntil(AI+push) → 即時 200 ─────────
+
+  // KV dedup（重複イベントをスキップ）
+  const dedupKey = await buildDedupKey(tenantId, ev);
+  const isNew    = await dedupEvent(apiBase, dedupKey, 120);
+  if (!isNew) {
+    return NextResponse.json({
+      ok: true, stamp: STAMP, where, tenantId, source: cfg.source,
+      verified, skipped: true, reason: "duplicate_event",
+      dedupKey, eventCount: events.length,
+    });
+  }
+
+  // Best-effort: persist lineUserId to Workers KV
+  if (lineUserId) {
     const _adminToken = process.env.ADMIN_TOKEN ?? "";
     if (apiBase) {
-      const _headers: Record<string, string> = { "Content-Type": "application/json" };
-      if (_adminToken) _headers["X-Admin-Token"] = _adminToken;
+      const _h: Record<string, string> = { "Content-Type": "application/json" };
+      if (_adminToken) _h["X-Admin-Token"] = _adminToken;
       fetch(
         `${apiBase}/admin/integrations/line/last-user?tenantId=${encodeURIComponent(tenantId)}`,
-        { method: "POST", headers: _headers, body: JSON.stringify({ userId: lineUserId }) }
+        { method: "POST", headers: _h, body: JSON.stringify({ userId: lineUserId }) }
       ).catch(() => null);
     }
   }
 
-  // ── 予約キーワード判定 ────────────────────────────────────────────────────
-  const normalizedIn = textIn
-    .normalize("NFKC")
-    .replace(/[\s\u200B-\u200D\uFEFF]/g, "")
-    .toLowerCase();
-  const hasBookingKw = BOOKING_KW.some(k => normalizedIn.includes(k));
-
-  // ── Step 1: ack reply ────────────────────────────────────────────────────
-  const ackMessages: any[] = [{ type: "text", text: ACK_TEXT }];
+  // Step 1: ACK reply（replyToken が生きているうちに即送信）
+  const ackMessages = [{ type: "text", text: ACK_TEXT }];
   const ackRep = await replyLine(cfg.channelAccessToken, replyToken, ackMessages)
     .catch(() => ({ ok: false, status: 0, bodyText: "reply_exception" }));
 
-  // ── Step 2: AI 接客 ───────────────────────────────────────────────────────
-  const aiStart = Date.now();
-  const aiIp    = lineUserId ? `line:${lineUserId.slice(0, 12)}` : "line";
-  const ai      = await runAiChat(tenantId, textIn, aiIp);
-  const aiMs    = Date.now() - aiStart;
+  // Step 2+3: AI + push を waitUntil に登録してレスポンスを即時返却
+  // （Cloudflare が worker の実行を保持し、レスポンス送信後も継続）
+  waitUntilFn(runAiAndPush());
 
-  const hasBookingAction    = ai.suggestedActions.some((a: any) => a?.type === "open_booking_form");
-  const shouldAttachBooking = hasBookingKw || hasBookingAction;
-
-  let finalText = ai.ok ? ai.answer : FALLBACK_TEXT;
-  if (shouldAttachBooking) {
-    finalText += `\n\n予約はこちら👇\n${buildBookingLink(cfg.bookingUrl, tenantId, lineUserId)}`;
-  }
-
-  const finalMessages: any[] = [
-    ...(isDebug
-      ? [{ type: "text", text: `DBG stamp=${STAMP} src=${cfg.source} aiOk=${ai.ok}` }]
-      : []),
-    { type: "text", text: finalText },
-  ];
-
-  // ── Step 3: push で最終回答 ───────────────────────────────────────────────
-  let pushRep: { ok: boolean; status: number; bodyText: string } | null = null;
-  if (lineUserId) {
-    pushRep = await pushLine(cfg.channelAccessToken, lineUserId, finalMessages)
-      .catch(() => ({ ok: false, status: 0, bodyText: "push_exception" }));
-
-    // 429 / 5xx → retry キューに積む（best-effort、通常モードのみ）
-    if (!postDebug && pushRep && !pushRep.ok) {
-      const s = pushRep.status;
-      if (s === 429 || (s >= 500 && s < 600)) {
-        enqueuePushRetry(apiBase, tenantId, lineUserId, finalMessages);
-      }
-    }
-  }
-
-  // ── debug=1: 診断情報を JSON で返す ──────────────────────────────────────
-  // token 類は含めない。status/bodySnippet(500文字) のみ
-  if (postDebug) {
-    return NextResponse.json({
-      ok: true, stamp: STAMP, where, tenantId, debug: true,
-      userId: lineUserId || null,
-      dedupKey,
-      dedupHit,  // debug=1 では常に false（dedup skip）
-      aiMs,
-      aiOk: ai.ok,
-      shouldAttachBooking,
-      finalText,
-      // ack（reply）の診断
-      replyStatus:      ackRep.status,
-      replyOk:          ackRep.ok,
-      replyBodySnippet: ackRep.bodyText.slice(0, 500) || null,
-      // push の診断
-      pushStatus:      pushRep?.status ?? null,
-      pushOk:          pushRep?.ok ?? null,
-      pushBodySnippet: pushRep?.bodyText?.slice(0, 500) ?? null,
-      hasUserId:   !!lineUserId,
-      eventCount:  events.length,
-    });
-  }
-
-  // ── 通常モード: LINE は 200 を期待する ───────────────────────────────────
+  // LINE は 200 を期待する — ACK 後は即時返却（AI+push は waitUntil で継続）
   return NextResponse.json(
     {
       ok: true,
@@ -534,11 +543,8 @@ export async function POST(req: Request) {
       verified,
       ackOk:     ackRep.ok,
       ackStatus: ackRep.status,
-      pushOk:    pushRep?.ok ?? null,
-      pushStatus: pushRep?.status ?? null,
       hasUserId: !!lineUserId,
-      aiOk:      ai.ok,
-      shouldAttachBooking,
+      queued:    true,
       eventCount: events.length,
     },
     { headers: { "x-stamp": STAMP } }
