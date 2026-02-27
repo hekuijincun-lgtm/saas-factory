@@ -4,6 +4,10 @@ import { useEffect, useState, useCallback } from "react";
 import AdminTopBar from "../../_components/ui/AdminTopBar";
 import { Bot, Plus, Trash2, Save, RefreshCw, ChevronDown, ChevronUp, MessageSquare, TrendingUp, Clock } from "lucide-react";
 
+// ─── Defaults ─────────────────────────────────────────────────────────────
+const DEFAULT_HARD_RULES =
+  "公式情報を確認せずに料金・空き状況を断定しない\n医療/違法行為の助言はしない\n予約が作成されたと断言しない（予約はフォーム入力のみ）";
+
 // ─── Types ─────────────────────────────────────────────────────────────────
 
 interface AISettings {
@@ -246,7 +250,8 @@ export default function AdminAIClient() {
       if (main?.settings) setSettings({ ...main.settings });
       if (main?.policy) {
         setPolicy({ ...main.policy });
-        setHardRulesText((main.policy.hardRules || []).join("\n"));
+        const rules = main.policy.hardRules || [];
+        setHardRulesText(rules.length > 0 ? rules.join("\n") : DEFAULT_HARD_RULES);
         setProhibitedText((main.policy.prohibitedTopics || []).join(", "));
       }
       if (main?.retention) {
