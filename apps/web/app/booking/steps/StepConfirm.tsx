@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { createReservation } from '@/src/lib/bookingApi';
 import type { BookingState } from '../BookingFlow';
 
@@ -8,6 +8,17 @@ interface Props {
   booking: BookingState;
   onBack: () => void;
   onDone: () => void;
+  consentText?: string;
+}
+
+const DEFAULT_CONSENT = '予約内容を確認し、同意の上で予約を確定します';
+
+/** 409 duplicate_slot など raw エラーコードをユーザー向け日本語に変換 */
+function mapError(msg: string): string {
+  if (msg.includes('duplicate_slot')) {
+    return 'この時間帯はすでに予約で埋まっています。前の画面に戻って別の日時を選んでください。';
+  }
+  return msg || '予約に失敗しました。もう一度お試しください。';
 }
 
 function Row({ label, value }: { label: string; value: string }) {
@@ -39,13 +50,16 @@ function SuccessScreen({ booking, onDone }: { booking: BookingState; onDone: () 
   );
 }
 
-export default function StepConfirm({ booking, onBack, onDone }: Props) {
+export default function StepConfirm({ booking, onBack, onDone, consentText }: Props) {
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [agreed, setAgreed] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isDuplicate, setIsDuplicate] = useState(false);
   const [done, setDone] = useState(false);
+  // 二重送信防止用フラグ（React の state 非同期更新を補完する ref ガード）
+  const submittingRef = useRef(false);
 
   if (done) {
     return <SuccessScreen booking={booking} onDone={onDone} />;
@@ -54,9 +68,15 @@ export default function StepConfirm({ booking, onBack, onDone }: Props) {
   const canSubmit = name.trim().length > 0 && agreed && !loading;
 
   const handleSubmit = async () => {
+    // ref ガード: 連打・二重発火を完全に防止
+    if (submittingRef.current) return;
     if (!booking.date || !booking.time || !name.trim()) return;
+    if (!canSubmit) return;
+
+    submittingRef.current = true;
     setLoading(true);
     setError(null);
+    setIsDuplicate(false);
     try {
       await createReservation({
         date: booking.date,
@@ -69,12 +89,17 @@ export default function StepConfirm({ booking, onBack, onDone }: Props) {
       });
       setDone(true);
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : '予約に失敗しました';
-      setError(msg);
+      const raw = e instanceof Error ? e.message : '予約に失敗しました';
+      const mapped = mapError(raw);
+      setError(mapped);
+      setIsDuplicate(raw.includes('duplicate_slot'));
     } finally {
       setLoading(false);
+      submittingRef.current = false;
     }
   };
+
+  const displayConsent = consentText || DEFAULT_CONSENT;
 
   return (
     <div className="space-y-5">
@@ -149,13 +174,21 @@ export default function StepConfirm({ booking, onBack, onDone }: Props) {
           className="mt-0.5 w-4 h-4 text-brand-primary border-brand-border rounded focus:ring-brand-primary"
         />
         <span className="text-sm text-brand-text leading-relaxed">
-          予約内容を確認し、同意の上で予約を確定します
+          {displayConsent}
         </span>
       </label>
 
       {error && (
-        <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700">
-          {error}
+        <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700 space-y-2">
+          <p>{error}</p>
+          {isDuplicate && (
+            <button
+              onClick={onBack}
+              className="text-sm font-medium text-red-700 underline hover:text-red-900"
+            >
+              別の日時を選ぶ
+            </button>
+          )}
         </div>
       )}
 

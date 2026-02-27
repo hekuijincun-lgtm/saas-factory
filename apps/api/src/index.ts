@@ -177,6 +177,8 @@ app.get("/__build", (c) => c.json({ ok: true, stamp: "API_BUILD_V1" }));
       closeTime: "19:00",
       slotIntervalMin: 30,
       storeAddress: "",
+      consentText: "予約内容を確認し、同意の上で予約を確定します",
+      staffSelectionEnabled: true,
     }
 
     const deepMerge = (a: any, b: any) => {
@@ -250,6 +252,8 @@ app.get("/__build", (c) => c.json({ ok: true, stamp: "API_BUILD_V1" }));
     const patch: any = {}
     if(body.storeName != null) patch.storeName = String(body.storeName)
     if(body.storeAddress != null) patch.storeAddress = String(body.storeAddress)
+    if(body.consentText != null) patch.consentText = String(body.consentText)
+    if(body.staffSelectionEnabled != null) patch.staffSelectionEnabled = Boolean(body.staffSelectionEnabled)
     if(body.businessName != null) patch.businessName = String(body.businessName)
     if(body.timezone != null) patch.timezone = String(body.timezone)
     if(body.openTime != null) patch.openTime = normTime(body.openTime, "10:00")

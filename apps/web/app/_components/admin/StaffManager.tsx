@@ -12,6 +12,7 @@ import StaffShiftEditor from './StaffShiftEditor';
 import type { StaffShift, TimeStr } from '@/src/types/shift';
 import { generateTimeOptions } from '@/src/lib/shiftUtils';
 import { useAdminSettings } from '../../admin/_lib/useAdminSettings';
+import { fetchAdminSettings, saveAdminSettings } from '../../lib/adminApi';
 
 export default function StaffManager() {
   const searchParams = useSearchParams();
@@ -19,6 +20,10 @@ export default function StaffManager() {
   const { settings: bizSettings } = useAdminSettings(tenantId);
   // settings 由来の時刻選択肢（fallback: 10:00-20:00/30min）
   const settingsTimeOptions = generateTimeOptions(bizSettings.open, bizSettings.close, bizSettings.interval) as TimeStr[];
+
+  // staffSelectionEnabled: 予約フローでスタッフ選択を表示するか
+  const [staffSelectionEnabled, setStaffSelectionEnabled] = useState<boolean>(true);
+  const [staffSelectionSaving, setStaffSelectionSaving] = useState<boolean>(false);
 
   const [staffList, setStaffList] = useState<Staff[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
@@ -34,6 +39,25 @@ export default function StaffManager() {
     active: true,
     sortOrder: 0,
   });
+
+  // staffSelectionEnabled の読み込み
+  useEffect(() => {
+    fetchAdminSettings(tenantId).then(s => {
+      const raw = s as any;
+      setStaffSelectionEnabled(raw.staffSelectionEnabled !== false);
+    }).catch(() => { /* fallback: true のまま */ });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantId]);
+
+  const handleStaffSelectionToggle = async (enabled: boolean) => {
+    setStaffSelectionSaving(true);
+    try {
+      await saveAdminSettings({ staffSelectionEnabled: enabled } as any, tenantId);
+      setStaffSelectionEnabled(enabled);
+    } catch { /* ignore */ } finally {
+      setStaffSelectionSaving(false);
+    }
+  };
 
   const fetchStaff = async () => {
     setLoading(true);
@@ -143,6 +167,30 @@ export default function StaffManager() {
 
   return (
     <div className="space-y-6">
+      {/* スタッフ選択ON/OFFトグル */}
+      <div className="flex items-center justify-between p-4 bg-white border border-gray-200 rounded-xl shadow-sm">
+        <div>
+          <p className="text-sm font-semibold text-gray-900">スタッフ選択を有効にする</p>
+          <p className="text-xs text-gray-500 mt-0.5">OFFにすると予約フローのスタッフ選択画面がスキップされます</p>
+        </div>
+        <button
+          type="button"
+          disabled={staffSelectionSaving}
+          onClick={() => handleStaffSelectionToggle(!staffSelectionEnabled)}
+          className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:opacity-50 ${
+            staffSelectionEnabled ? 'bg-indigo-600' : 'bg-gray-300'
+          }`}
+          aria-checked={staffSelectionEnabled}
+          role="switch"
+        >
+          <span
+            className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+              staffSelectionEnabled ? 'translate-x-6' : 'translate-x-1'
+            }`}
+          />
+        </button>
+      </div>
+
       <div className="flex justify-end mb-6">
         <button
           onClick={handleCreate}

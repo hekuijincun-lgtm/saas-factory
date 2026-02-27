@@ -69,6 +69,8 @@ export interface OnboardingSettings {
 export interface AdminSettings {
   storeName?: string; // 店舗名（表示用）
   storeAddress?: string; // 店舗住所（LINE通知等に使用）
+  consentText?: string; // 予約確認画面の同意チェックボックス文言
+  staffSelectionEnabled?: boolean; // スタッフ選択を予約フローで表示するか（デフォルト: true）
   publicDays: number; // 今日から何日後まで公開
   tenant: TenantInfo;
   businessHours: BusinessHours;
@@ -86,6 +88,8 @@ export interface AdminSettings {
  */
 export const DEFAULT_ADMIN_SETTINGS: AdminSettings = {
   storeAddress: "",
+  consentText: "予約内容を確認し、同意の上で予約を確定します",
+  staffSelectionEnabled: true,
   publicDays: 14,
   tenant: {
     name: '',

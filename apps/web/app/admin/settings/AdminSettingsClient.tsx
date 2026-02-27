@@ -55,6 +55,10 @@ export default function AdminSettingsClient() {
   // storeAddress: storeName と同階層のフラットフィールドとして保存（Workers deepMerge で透過保存）
   const [storeAddress, setStoreAddress] = useState('');
   const [savedStoreAddress, setSavedStoreAddress] = useState('');
+  // consentText: 予約確認画面の同意チェックボックス文言
+  const DEFAULT_CONSENT = '予約内容を確認し、同意の上で予約を確定します';
+  const [consentText, setConsentText] = useState(DEFAULT_CONSENT);
+  const [savedConsentText, setSavedConsentText] = useState(DEFAULT_CONSENT);
 
   // --- API由来の営業時間設定 ---
   const [openTime, setOpenTime] = useState('10:00');
@@ -111,6 +115,8 @@ export default function AdminSettingsClient() {
       setSlotIntervalMin(si); setSavedSlotIntervalMin(si);
       const sa = raw.storeAddress || '';
       setStoreAddress(sa); setSavedStoreAddress(sa);
+      const cv = raw.consentText || DEFAULT_CONSENT;
+      setConsentText(cv); setSavedConsentText(cv);
     } catch (error) {
       const msg = error instanceof ApiClientError
         ? error.message
@@ -232,13 +238,14 @@ export default function AdminSettingsClient() {
   const handleSave = async () => {
     setIsSaving(true);
     try {
-      // API に storeName + 営業時間設定 + 住所を保存
-      await saveAdminSettings({ storeName: storeNameInput, openTime, closeTime, slotIntervalMin, storeAddress } as any, tenantId);
+      // API に storeName + 営業時間設定 + 住所 + 同意文を保存
+      await saveAdminSettings({ storeName: storeNameInput, openTime, closeTime, slotIntervalMin, storeAddress, consentText } as any, tenantId);
       setStoreName(storeNameInput);
       setSavedOpenTime(openTime);
       setSavedCloseTime(closeTime);
       setSavedSlotIntervalMin(slotIntervalMin);
       setSavedStoreAddress(storeAddress);
+      setSavedConsentText(consentText);
 
       // localStorage にローカル設定を保存（営業日等）
       try {
@@ -263,6 +270,7 @@ export default function AdminSettingsClient() {
     setCloseTime(savedCloseTime);
     setSlotIntervalMin(savedSlotIntervalMin);
     setStoreAddress(savedStoreAddress);
+    setConsentText(savedConsentText);
   };
 
   const toggleDay = (dayIndex: number) => {
@@ -403,6 +411,22 @@ export default function AdminSettingsClient() {
                 onChange={e => setStoreAddress(e.target.value)}
                 placeholder="例: 東京都渋谷区神宮前1-2-3"
               />
+            </div>
+
+            {/* 同意文（consentText: 予約確認画面のチェックボックス文言） */}
+            <div className="md:col-span-2">
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                予約確認の同意文
+                <span className="ml-1 text-xs text-indigo-600 font-normal">（予約フローの確認画面に表示）</span>
+              </label>
+              <textarea
+                rows={2}
+                className="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all resize-none"
+                value={consentText}
+                onChange={e => setConsentText(e.target.value)}
+                placeholder="予約内容を確認し、同意の上で予約を確定します"
+              />
+              <p className="mt-1 text-xs text-gray-400">未入力の場合はデフォルト文言を使用します</p>
             </div>
           </div>
         </div>

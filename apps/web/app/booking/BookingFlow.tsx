@@ -1,12 +1,13 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useSearchParams } from 'next/navigation';
 import StepMenu from './steps/StepMenu';
 import StepStaff from './steps/StepStaff';
 import StepDatetime from './steps/StepDatetime';
 import StepConfirm from './steps/StepConfirm';
 import type { MenuItem } from '@/src/lib/bookingApi';
+import { fetchAdminSettings } from '../lib/adminApi';
 
 export interface BookingState {
   menuId: string | null;
@@ -32,12 +33,13 @@ const INITIAL: BookingState = {
   lineUserId: null,
 };
 
-const STEP_LABELS = ['メニュー', 'スタッフ', '日時', '確認'];
+const DEFAULT_CONSENT = '予約内容を確認し、同意の上で予約を確定します';
 
-function StepIndicator({ current }: { current: number }) {
+// ステップインジケーター（表示用ラベル・現在ステップを受け取る）
+function StepIndicator({ labels, current }: { labels: string[]; current: number }) {
   return (
     <div className="flex items-center mb-8">
-      {STEP_LABELS.map((label, i) => {
+      {labels.map((label, i) => {
         const step = i + 1;
         const done = current > step;
         const active = current === step;
@@ -63,7 +65,7 @@ function StepIndicator({ current }: { current: number }) {
                 {label}
               </span>
             </div>
-            {i < STEP_LABELS.length - 1 && (
+            {i < labels.length - 1 && (
               <div
                 className={`h-px w-4 mb-4 flex-shrink-0 ${
                   done ? 'bg-green-500' : 'bg-brand-border'
@@ -85,11 +87,34 @@ export default function BookingFlow() {
   const [step, setStep] = useState(1);
   const [state, setState] = useState<BookingState>({ ...INITIAL, lineUserId });
 
+  // 管理者設定（consentText, staffSelectionEnabled）
+  const [consentText, setConsentText] = useState(DEFAULT_CONSENT);
+  const [staffSelectionEnabled, setStaffSelectionEnabled] = useState(true);
+
+  useEffect(() => {
+    fetchAdminSettings(tenantId).then(settings => {
+      const raw = settings as any;
+      if (raw.consentText) setConsentText(raw.consentText);
+      // staffSelectionEnabled が明示的に false の場合のみ無効化
+      if (raw.staffSelectionEnabled === false) setStaffSelectionEnabled(false);
+    }).catch(() => { /* fallback: default values のまま */ });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantId]);
+
+  // staffSelectionEnabled が false のとき内部 step 1→3→4 で進む（step 2 スキップ）
+  // 表示ラベルは staffSelectionEnabled で切替
+  const STEP_LABELS_FULL = ['メニュー', 'スタッフ', '日時', '確認'];
+  const STEP_LABELS_NO_STAFF = ['メニュー', '日時', '確認'];
+  const stepLabels = staffSelectionEnabled ? STEP_LABELS_FULL : STEP_LABELS_NO_STAFF;
+
+  // 内部 step → 表示 step 番号（staffSelectionEnabled=false のとき step 2 が存在しないため）
+  const displayStep = staffSelectionEnabled
+    ? step
+    : step === 1 ? 1 : step === 3 ? 2 : step === 4 ? 3 : step;
+
   const update = (patch: Partial<BookingState>) =>
     setState(prev => ({ ...prev, ...patch }));
-  const next = () => setStep(s => s + 1);
-  const back = () => setStep(s => Math.max(1, s - 1));
-  const reset = () => { setState(INITIAL); setStep(1); };
+  const reset = () => { setState({ ...INITIAL, lineUserId }); setStep(1); };
 
   const handleMenuSelect = (menu: MenuItem) => {
     update({
@@ -98,38 +123,57 @@ export default function BookingFlow() {
       menuPrice: menu.price,
       menuDurationMin: menu.durationMin,
     });
-    next();
+    if (!staffSelectionEnabled) {
+      // スタッフ選択をスキップ → any を自動セットして日時ステップへ
+      update({ staffId: 'any', staffName: '指名なし' });
+      setStep(3);
+    } else {
+      setStep(2);
+    }
   };
 
   const handleStaffSelect = (staff: StaffOption) => {
     update({ staffId: staff.id, staffName: staff.name });
-    next();
+    setStep(3);
   };
 
   const handleDatetimeSelect = (date: string, time: string) => {
     update({ date, time });
-    next();
+    setStep(4);
+  };
+
+  // back ナビゲーション（スタッフスキップ時は step 3→1 に戻る）
+  const handleBackFromDatetime = () => {
+    setStep(staffSelectionEnabled ? 2 : 1);
+  };
+  const handleBackFromConfirm = () => {
+    setStep(3);
   };
 
   return (
     <div>
-      <StepIndicator current={step} />
+      <StepIndicator labels={stepLabels} current={displayStep} />
 
       {step === 1 && (
         <StepMenu tenantId={tenantId} onSelect={handleMenuSelect} />
       )}
-      {step === 2 && (
-        <StepStaff onSelect={handleStaffSelect} onBack={back} />
+      {step === 2 && staffSelectionEnabled && (
+        <StepStaff onSelect={handleStaffSelect} onBack={() => setStep(1)} />
       )}
       {step === 3 && (
         <StepDatetime
           staffId={state.staffId}
           onSelect={handleDatetimeSelect}
-          onBack={back}
+          onBack={handleBackFromDatetime}
         />
       )}
       {step === 4 && (
-        <StepConfirm booking={state} onBack={back} onDone={reset} />
+        <StepConfirm
+          booking={state}
+          onBack={handleBackFromConfirm}
+          onDone={reset}
+          consentText={consentText}
+        />
       )}
     </div>
   );
