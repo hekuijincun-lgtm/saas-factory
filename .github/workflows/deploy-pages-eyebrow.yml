@@ -31,6 +31,24 @@ jobs:
         working-directory: apps/web-eyebrow
         run: pnpm dlx @cloudflare/next-on-pages
 
+      - name: Set ADMIN_TOKEN on Pages project
+        if: ${{ secrets.ADMIN_TOKEN != '' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+        run: |
+          echo "${{ secrets.ADMIN_TOKEN }}" | pnpm dlx wrangler pages secret put ADMIN_TOKEN \
+            --project-name "saas-factory-web-eyebrow"
+
+      - name: Ensure nodejs_compat flag
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+        run: |
+          curl -sf -X PATCH \
+            "https://api.cloudflare.com/client/v4/accounts/${{ secrets.CF_ACCOUNT_ID }}/pages/projects/saas-factory-web-eyebrow" \
+            -H "Authorization: Bearer ${{ secrets.CF_API_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d '{"deployment_configs":{"production":{"compatibility_flags":["nodejs_compat"],"compatibility_date":"2026-02-27"},"preview":{"compatibility_flags":["nodejs_compat"],"compatibility_date":"2026-02-27"}}}'
+
       - name: Deploy to Cloudflare Pages
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
