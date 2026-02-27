@@ -1,0 +1,61 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --brow-bg:      #fdf8f3;
+  --brow-card:    #fffbf7;
+  --brow-border:  #e8d5c4;
+  --brow-primary: #7c4f2a;
+  --brow-hover:   #6b4123;
+  --brow-accent:  #c4874a;
+  --brow-text:    #2c1810;
+  --brow-muted:   #8a6756;
+  --brow-light:   #f0e4d4;
+}
+
+html, body {
+  background-color: var(--brow-bg);
+  color: var(--brow-text);
+  font-family: "Hiragino Kaku Gothic ProN", "Hiragino Sans",
+               "BIZ UDPGothic", Meiryo, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ボタン共通 */
+.btn-primary {
+  @apply inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl font-semibold text-white transition-all;
+  background-color: var(--brow-primary);
+}
+.btn-primary:hover  { background-color: var(--brow-hover); }
+.btn-primary:active { opacity: 0.85; transform: scale(0.98); }
+.btn-primary:disabled {
+  @apply opacity-50 cursor-not-allowed;
+}
+
+.btn-outline {
+  @apply inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl font-semibold transition-all;
+  border: 1.5px solid var(--brow-border);
+  color: var(--brow-text);
+}
+.btn-outline:hover { background-color: var(--brow-light); }
+
+/* カード */
+.card {
+  @apply rounded-2xl p-5;
+  background-color: var(--brow-card);
+  border: 1px solid var(--brow-border);
+}
+
+/* フォーム入力 */
+.input {
+  @apply w-full px-4 py-3 rounded-xl text-sm outline-none transition-all;
+  border: 1.5px solid var(--brow-border);
+  background: white;
+  color: var(--brow-text);
+}
+.input:focus {
+  border-color: var(--brow-accent);
+  box-shadow: 0 0 0 3px rgba(196,135,74,0.15);
+}
+.input::placeholder { color: var(--brow-muted); opacity: 0.7; }
