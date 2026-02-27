@@ -1122,6 +1122,41 @@ app.put("/admin/availability", async (c) => {
 });
 
 /** =========================
+ * Admin Staff Shift (weekly pattern, KV-backed)
+ * GET /admin/staff/:id/shift?tenantId=
+ * PUT /admin/staff/:id/shift?tenantId=  body: StaffShift
+ * KV key: admin:staff:shift:${tenantId}:${staffId}
+ * ========================= */
+app.get("/admin/staff/:id/shift", async (c) => {
+  const tenantId = getTenantId(c, null);
+  const staffId = c.req.param("id");
+  const kv = (c.env as any).SAAS_FACTORY;
+  if (!kv) return c.json({ ok: false, error: "kv_binding_missing" }, 500);
+  try {
+    const raw = await kv.get(`admin:staff:shift:${tenantId}:${staffId}`);
+    const data = raw ? JSON.parse(raw) : { staffId, weekly: [], exceptions: [] };
+    return c.json({ ok: true, tenantId, data });
+  } catch (e: any) {
+    return c.json({ ok: false, error: String(e?.message ?? e) }, 500);
+  }
+});
+
+app.put("/admin/staff/:id/shift", async (c) => {
+  const tenantId = getTenantId(c, null);
+  const staffId = c.req.param("id");
+  const kv = (c.env as any).SAAS_FACTORY;
+  if (!kv) return c.json({ ok: false, error: "kv_binding_missing" }, 500);
+  try {
+    const body = await c.req.json().catch(() => null);
+    if (!body) return c.json({ ok: false, error: "bad_json" }, 400);
+    await kv.put(`admin:staff:shift:${tenantId}:${staffId}`, JSON.stringify(body));
+    return c.json({ ok: true, tenantId, data: body });
+  } catch (e: any) {
+    return c.json({ ok: false, error: String(e?.message ?? e) }, 500);
+  }
+});
+
+/** =========================
  * Admin Customers
  * GET /admin/customers?tenantId=
  * ========================= */
