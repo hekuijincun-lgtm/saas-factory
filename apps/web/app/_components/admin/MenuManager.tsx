@@ -18,10 +18,10 @@ const [loading, setLoading] = useState<boolean>(false);
 const [error, setError] = useState<string | null>(null);
 const [showModal, setShowModal] = useState<boolean>(false);
 const [editingItem, setEditingItem] = useState<MenuItem | null>(null);
-const [formData, setFormData] = useState<{ name: string; price: number; durationMin: number; active: boolean; sortOrder: number }>({
+const [formData, setFormData] = useState<{ name: string; price: string; durationMin: string; active: boolean; sortOrder: number }>({
 name: '',
-    price: 0,
-    durationMin: 60,
+    price: '0',
+    durationMin: '60',
     active: true,
     sortOrder: 0,
   });
@@ -62,7 +62,7 @@ name: '',
 
   const handleCreate = () => {
     setEditingItem(null);
-    setFormData({ name: '', price: 0, durationMin: 60, active: true, sortOrder: menuList.length });
+    setFormData({ name: '', price: '0', durationMin: '60', active: true, sortOrder: menuList.length });
     setShowModal(true);
   };
 
@@ -70,8 +70,8 @@ name: '',
     setEditingItem(item);
     setFormData({
       name: item.name,
-      price: item.price,
-      durationMin: item.durationMin,
+      price: String(item.price),
+      durationMin: String(item.durationMin),
       active: item.active,
       sortOrder: item.sortOrder,
     });
@@ -83,11 +83,11 @@ name: '',
     setError('メニュー名は必須です');
     return;
   }
-  if (formData.price < 0) {
+  if (Number(formData.price) < 0) {
     setError('価格は0以上である必要があります');
     return;
   }
-  if (formData.durationMin <= 0) {
+  if (Number(formData.durationMin) <= 0) {
     setError('所要時間は1分以上である必要があります');
     return;
   }
@@ -102,16 +102,16 @@ name: '',
       const id = editingItem.id;
       saved = await updateMenuItem(id, {
         name: formData.name.trim(),
-        price: formData.price,
-        durationMin: formData.durationMin,
+        price: Number(formData.price),
+        durationMin: Number(formData.durationMin),
         active: formData.active,
         sortOrder: formData.sortOrder,
       });
     } else {
       saved = await createMenuItem({
         name: formData.name.trim(),
-        price: formData.price,
-        durationMin: formData.durationMin,
+        price: Number(formData.price),
+        durationMin: Number(formData.durationMin),
         active: formData.active,
         sortOrder: formData.sortOrder,
       });
@@ -269,7 +269,7 @@ return(
               <input
                 type="number"
                 value={formData.price}
-                onChange={(e) => setFormData({ ...formData, price: parseInt(e.target.value) || 0 })}
+                onChange={(e) => setFormData({ ...formData, price: e.target.value })}
                 className="w-full px-4 py-3 border border-brand-border rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary"
                 min="0"
                 placeholder="0"
@@ -281,7 +281,7 @@ return(
               <input
                 type="number"
                 value={formData.durationMin}
-                onChange={(e) => setFormData({ ...formData, durationMin: parseInt(e.target.value) || 60 })}
+                onChange={(e) => setFormData({ ...formData, durationMin: e.target.value })}
                 className="w-full px-4 py-3 border border-brand-border rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary"
                 min="1"
                 placeholder="60"
