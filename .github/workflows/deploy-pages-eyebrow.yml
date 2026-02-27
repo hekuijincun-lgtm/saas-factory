@@ -31,21 +31,27 @@ jobs:
         working-directory: apps/web-eyebrow
         run: pnpm dlx @cloudflare/next-on-pages
 
-      - name: Set ADMIN_TOKEN on Pages project
-        if: ${{ secrets.ADMIN_TOKEN != '' }}
+      - name: Set ADMIN_TOKEN on Pages project (if secret is configured)
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          ADMIN_TOKEN_VALUE: ${{ secrets.ADMIN_TOKEN }}
         run: |
-          echo "${{ secrets.ADMIN_TOKEN }}" | pnpm dlx wrangler pages secret put ADMIN_TOKEN \
-            --project-name "saas-factory-web-eyebrow"
+          if [ -n "$ADMIN_TOKEN_VALUE" ]; then
+            echo "$ADMIN_TOKEN_VALUE" | pnpm dlx wrangler pages secret put ADMIN_TOKEN \
+              --project-name "saas-factory-web-eyebrow"
+            echo "ADMIN_TOKEN set on Pages project"
+          else
+            echo "ADMIN_TOKEN secret not configured — skipping (menu page falls back to presets)"
+          fi
 
       - name: Ensure nodejs_compat flag
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
         run: |
           curl -sf -X PATCH \
-            "https://api.cloudflare.com/client/v4/accounts/${{ secrets.CF_ACCOUNT_ID }}/pages/projects/saas-factory-web-eyebrow" \
-            -H "Authorization: Bearer ${{ secrets.CF_API_TOKEN }}" \
+            "https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/pages/projects/saas-factory-web-eyebrow" \
+            -H "Authorization: Bearer ${CF_API_TOKEN}" \
             -H "Content-Type: application/json" \
             -d '{"deployment_configs":{"production":{"compatibility_flags":["nodejs_compat"],"compatibility_date":"2026-02-27"},"preview":{"compatibility_flags":["nodejs_compat"],"compatibility_date":"2026-02-27"}}}'
 
