@@ -5,7 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Settings,
-  UtensilsCrossed,
+  ClipboardList,
   Users,
   Calendar,
   Menu,
@@ -26,7 +26,7 @@ const FALLBACK_STORE_NAME = "Lumiere 表参道";
 // href → lucide-react icon のマッピング
 const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   "/admin":              LayoutDashboard,
-  "/admin/menu":         UtensilsCrossed,
+  "/admin/menu":         ClipboardList,
   "/admin/staff":        Users,
   "/admin/reservations": Calendar,
   "/admin/customers":    UserCircle,
