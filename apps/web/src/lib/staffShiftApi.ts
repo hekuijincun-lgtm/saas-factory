@@ -12,7 +12,7 @@ import type { ApiResponse } from '../types';
  */
 export async function getStaffShift(staffId: string): Promise<StaffShift> {
   try {
-    const response = await apiGet<ApiResponse<StaffShift>>(`/admin/staff/${encodeURIComponent(staffId)}/shift`);
+    const response = await apiGet<ApiResponse<StaffShift>>(`/api/proxy/admin/staff/${encodeURIComponent(staffId)}/shift`);
     if (response.ok && response.data) {
       return response.data;
     }
@@ -38,7 +38,7 @@ export async function getStaffShift(staffId: string): Promise<StaffShift> {
  */
 export async function updateStaffShift(staffId: string, shift: StaffShift): Promise<void> {
   try {
-    const response = await apiPut<ApiResponse<StaffShift>>(`/admin/staff/${encodeURIComponent(staffId)}/shift`, shift);
+    const response = await apiPut<ApiResponse<StaffShift>>(`/api/proxy/admin/staff/${encodeURIComponent(staffId)}/shift`, shift);
     if (!response.ok) {
       throw new ApiClientError((('error' in response) && response.error) ? response.error : 'Failed to update shift');
     }
