@@ -6,7 +6,7 @@ import { Bot, Plus, Trash2, Save, RefreshCw, ChevronDown, ChevronUp, MessageSqua
 
 // ─── Defaults ─────────────────────────────────────────────────────────────
 const DEFAULT_HARD_RULES =
-  "公式情報を確認せずに料金・空き状況を断定しない\n医療/違法行為の助言はしない\n予約が作成されたと断言しない（予約はフォーム入力のみ）";
+  "公式情報を確認せずに料金・空き状況を断定しない\n医療・違法行為の助言はしない\n予約が作成されたと断言しない（予約はフォーム入力のみ）";
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -226,8 +226,8 @@ export default function AdminAIClient() {
   const [loadingFollowups, setLoadingFollowups] = useState(false);
   const [banner, setBanner] = useState<{ msg: string; kind: "success" | "error" } | null>(null);
 
-  // policy form: textarea helpers
-  const [hardRulesText, setHardRulesText] = useState("");
+  // policy form: textarea helpers（未保存時は日本語デフォルトを表示）
+  const [hardRulesText, setHardRulesText] = useState(DEFAULT_HARD_RULES);
   const [prohibitedText, setProhibitedText] = useState("");
 
   // retention JSON textarea (legacy templates)
