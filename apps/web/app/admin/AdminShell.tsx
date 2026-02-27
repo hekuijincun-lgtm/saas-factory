@@ -12,7 +12,10 @@ import {
   X,
   Store,
   Bot,
+  LayoutDashboard,
+  UserCircle,
 } from "lucide-react";
+import { adminNavItems } from "./nav.config";
 
 // ============================================================
 // 定数
@@ -20,13 +23,16 @@ import {
 
 const FALLBACK_STORE_NAME = "Lumiere 表参道";
 
-const NAV_ITEMS = [
-  { href: "/admin/menu", label: "メニュー管理", icon: UtensilsCrossed },
-  { href: "/admin/staff", label: "スタッフ管理", icon: Users },
-  { href: "/admin/reservations", label: "予約管理", icon: Calendar },
-  { href: "/admin/ai", label: "AI接客設定", icon: Bot },
-  { href: "/admin/settings", label: "管理者設定", icon: Settings },
-];
+// href → lucide-react icon のマッピング
+const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
+  "/admin":              LayoutDashboard,
+  "/admin/menu":         UtensilsCrossed,
+  "/admin/staff":        Users,
+  "/admin/reservations": Calendar,
+  "/admin/customers":    UserCircle,
+  "/admin/ai":           Bot,
+  "/admin/settings":     Settings,
+};
 
 // ============================================================
 // サイドバー内部
@@ -91,9 +97,13 @@ function Sidebar({
 
         {/* ナビゲーション */}
         <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
-          {NAV_ITEMS.map(({ href, label, icon: Icon }) => {
+          {adminNavItems.map(({ href, label }) => {
+            const Icon = ICON_MAP[href] ?? Settings;
+            // ダッシュボード(/admin)は完全一致のみ active
             const isActive =
-              pathname === href || pathname?.startsWith(href + "/");
+              href === "/admin"
+                ? pathname === "/admin"
+                : pathname === href || pathname?.startsWith(href + "/");
             return (
               <Link
                 key={href}
