@@ -52,6 +52,9 @@ export default function AdminSettingsClient() {
   const [storeName, setStoreName] = useState(FALLBACK_STORE_NAME);
   const [storeNameInput, setStoreNameInput] = useState(FALLBACK_STORE_NAME);
   const [contactEmail, setContactEmail] = useState('info@lumiere.demo');
+  // storeAddress: storeName と同階層のフラットフィールドとして保存（Workers deepMerge で透過保存）
+  const [storeAddress, setStoreAddress] = useState('');
+  const [savedStoreAddress, setSavedStoreAddress] = useState('');
 
   // --- API由来の営業時間設定 ---
   const [openTime, setOpenTime] = useState('10:00');
@@ -106,6 +109,8 @@ export default function AdminSettingsClient() {
       setOpenTime(ot); setSavedOpenTime(ot);
       setCloseTime(ct); setSavedCloseTime(ct);
       setSlotIntervalMin(si); setSavedSlotIntervalMin(si);
+      const sa = raw.storeAddress || '';
+      setStoreAddress(sa); setSavedStoreAddress(sa);
     } catch (error) {
       const msg = error instanceof ApiClientError
         ? error.message
@@ -227,12 +232,13 @@ export default function AdminSettingsClient() {
   const handleSave = async () => {
     setIsSaving(true);
     try {
-      // API に storeName + 営業時間設定を保存
-      await saveAdminSettings({ storeName: storeNameInput, openTime, closeTime, slotIntervalMin } as any, tenantId);
+      // API に storeName + 営業時間設定 + 住所を保存
+      await saveAdminSettings({ storeName: storeNameInput, openTime, closeTime, slotIntervalMin, storeAddress } as any, tenantId);
       setStoreName(storeNameInput);
       setSavedOpenTime(openTime);
       setSavedCloseTime(closeTime);
       setSavedSlotIntervalMin(slotIntervalMin);
+      setSavedStoreAddress(storeAddress);
 
       // localStorage にローカル設定を保存（営業日等）
       try {
@@ -256,6 +262,7 @@ export default function AdminSettingsClient() {
     setOpenTime(savedOpenTime);
     setCloseTime(savedCloseTime);
     setSlotIntervalMin(savedSlotIntervalMin);
+    setStoreAddress(savedStoreAddress);
   };
 
   const toggleDay = (dayIndex: number) => {
@@ -381,6 +388,20 @@ export default function AdminSettingsClient() {
                 value={contactEmail}
                 onChange={e => setContactEmail(e.target.value)}
                 placeholder="info@example.com"
+              />
+            </div>
+
+            {/* 住所（storeAddress: storeName と同階層で KV に保存） */}
+            <div className="md:col-span-2">
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                店舗住所
+              </label>
+              <input
+                type="text"
+                className="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
+                value={storeAddress}
+                onChange={e => setStoreAddress(e.target.value)}
+                placeholder="例: 東京都渋谷区神宮前1-2-3"
               />
             </div>
           </div>
