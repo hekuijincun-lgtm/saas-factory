@@ -4,16 +4,13 @@
  */
 export const runtime = "edge";
 
-type Ctx = { params: Promise<{ path: string[] }> | { path: string[] } };
-
-function isPromise(x: unknown): x is Promise<unknown> {
-  return !!x && typeof (x as Record<string, unknown>).then === "function";
-}
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Ctx = { params: any };
 
 async function getSegments(ctx: Ctx): Promise<string[]> {
   const p = ctx?.params;
-  const params = isPromise(p) ? await p : p;
-  const segs = (params as { path?: string[] })?.path;
+  const params = p && typeof p.then === "function" ? await p : p;
+  const segs = params?.path;
   return Array.isArray(segs) ? segs : [];
 }
 
