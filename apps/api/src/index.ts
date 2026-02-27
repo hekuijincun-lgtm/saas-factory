@@ -176,6 +176,7 @@ app.get("/__build", (c) => c.json({ ok: true, stamp: "API_BUILD_V1" }));
       openTime: "10:00",
       closeTime: "19:00",
       slotIntervalMin: 30,
+      storeAddress: "",
     }
 
     const deepMerge = (a: any, b: any) => {
@@ -1324,12 +1325,14 @@ async function notifyLineReservation(opts: {
     return;
   }
   try {
-    // Read channelAccessToken from KV (inline to avoid function ordering dependency)
+    // Read channelAccessToken and storeAddress from KV (inline to avoid function ordering dependency)
     let accessToken = "";
+    let storeAddress = "";
     try {
       const raw = await opts.kv.get(`settings:${opts.tenantId}`);
       const s = raw ? JSON.parse(raw) : {};
       accessToken = String(s?.integrations?.line?.channelAccessToken ?? "").trim();
+      storeAddress = String(s?.storeAddress ?? "").trim();
     } catch { /* ignore KV read failure */ }
     if (!accessToken) {
       console.log(`[${STAMP}] skip: no channelAccessToken tenantId=${opts.tenantId}`);
@@ -1346,7 +1349,8 @@ async function notifyLineReservation(opts: {
       } catch { return iso; }
     };
     const nameStr = opts.customerName ? `\nお名前: ${opts.customerName}` : "";
-    const text = `予約が確定しました✅\n日時: ${jst(opts.startAt)}${nameStr}`;
+    const addressStr = storeAddress ? `\n📍店舗住所\n${storeAddress}` : "";
+    const text = `予約が確定しました✅\n日時: ${jst(opts.startAt)}${nameStr}${addressStr}`;
     const ac = new AbortController();
     const tid = setTimeout(() => ac.abort(), 5000);
     const res = await fetch("https://api.line.me/v2/bot/message/push", {

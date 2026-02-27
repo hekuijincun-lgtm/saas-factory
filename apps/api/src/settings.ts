@@ -68,6 +68,7 @@ export interface OnboardingSettings {
 
 export interface AdminSettings {
   storeName?: string; // 店舗名（表示用）
+  storeAddress?: string; // 店舗住所（LINE通知等に使用）
   publicDays: number; // 今日から何日後まで公開
   tenant: TenantInfo;
   businessHours: BusinessHours;
@@ -84,6 +85,7 @@ export interface AdminSettings {
  * デフォルト設定
  */
 export const DEFAULT_ADMIN_SETTINGS: AdminSettings = {
+  storeAddress: "",
   publicDays: 14,
   tenant: {
     name: '',
@@ -279,6 +281,7 @@ function timeToMinutes(time: string): number {
 export function mergeSettings(defaults: AdminSettings, partial: Partial<AdminSettings>): AdminSettings {
   return {
     storeName: partial.storeName ?? defaults.storeName,
+    storeAddress: partial.storeAddress ?? defaults.storeAddress,
     publicDays: partial.publicDays ?? defaults.publicDays,
     tenant: {
       name: partial.tenant?.name ?? defaults.tenant.name,
