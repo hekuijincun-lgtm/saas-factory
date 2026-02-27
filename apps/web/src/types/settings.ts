@@ -5,6 +5,7 @@
 export interface TenantInfo {
   name: string;
   email: string;
+  address?: string;
 }
 
 export interface BusinessHours {

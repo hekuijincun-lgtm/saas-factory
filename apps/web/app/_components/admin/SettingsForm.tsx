@@ -401,6 +401,22 @@ export default function SettingsForm() {
               <p className="text-xs text-red-600 mt-1">{fieldErrors.tenantEmail}</p>
             )}
           </div>
+
+          <div>
+            <label className="block text-sm font-medium text-brand-text mb-2">住所</label>
+            <input
+              type="text"
+              value={formData.tenant?.address ?? ''}
+              onChange={(e) =>
+                setFormData({
+                  ...formData,
+                  tenant: { ...(formData.tenant || { name: '', email: '' }), address: e.target.value },
+                })
+              }
+              className="w-full px-4 py-3 border border-brand-border rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary"
+              placeholder="例: 東京都渋谷区神宮前1-1-1"
+            />
+          </div>
         </div>
       </Card>
 
