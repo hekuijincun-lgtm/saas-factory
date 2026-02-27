@@ -2299,6 +2299,74 @@ app.post("/ai/pushq", async (c) => {
   }
 });
 
+// POST /ai/linelog — LINE push 結果ログを KV に記録（直近50件・認証不要）
+// key: ai:linelog:{tenantId}  TTL: 7日
+// body: { tenantId, type, uid(先頭8文字), pushStatus, pushBodySnippet, aiMs }
+app.post("/ai/linelog", async (c) => {
+  try {
+    const kv = (c.env as any).SAAS_FACTORY;
+    if (!kv) return c.json({ ok: false, error: "no_kv" });
+
+    const body: any = await c.req.json().catch(() => null);
+    const tenantId = String(body?.tenantId ?? "").trim();
+    if (!tenantId) return c.json({ ok: false, error: "missing_tenantId" });
+
+    const entry = {
+      ts:              new Date().toISOString(),
+      type:            String(body?.type            ?? "unknown").slice(0, 32),
+      uid:             String(body?.uid             ?? "").slice(0, 12),
+      pushStatus:      Number(body?.pushStatus      ?? 0),
+      pushBodySnippet: String(body?.pushBodySnippet ?? "").slice(0, 200),
+      aiMs:            Number(body?.aiMs            ?? 0),
+    };
+
+    const kvKey = `ai:linelog:${tenantId}`;
+    let logs: any[] = [];
+    try {
+      const raw = await kv.get(kvKey);
+      if (raw) logs = JSON.parse(raw);
+    } catch { /* ignore */ }
+
+    logs.unshift(entry);               // 最新を先頭に
+    if (logs.length > 50) logs = logs.slice(0, 50);
+
+    await kv.put(kvKey, JSON.stringify(logs), { expirationTtl: 86400 * 7 });
+    return c.json({ ok: true });
+  } catch {
+    return c.json({ ok: false, error: "internal" });
+  }
+});
+
+// GET /ai/linelog?tenantId=xxx — ログ取得（ADMIN_TOKEN 必須）
+app.get("/ai/linelog", async (c) => {
+  const env = c.env as any;
+  const kv  = env.SAAS_FACTORY;
+  if (!kv) return c.json({ ok: false, error: "no_kv" }, 500);
+
+  // 簡易 admin 認証（X-Admin-Token ヘッダー or ?token= クエリ）
+  const adminToken = String(env.ADMIN_TOKEN ?? "").trim();
+  if (adminToken) {
+    const provided =
+      c.req.header("X-Admin-Token") ??
+      c.req.query("token") ??
+      "";
+    if (provided !== adminToken) {
+      return c.json({ ok: false, error: "unauthorized" }, 401);
+    }
+  }
+
+  const tenantId = c.req.query("tenantId") ?? "";
+  if (!tenantId) return c.json({ ok: false, error: "missing_tenantId" }, 400);
+
+  let logs: any[] = [];
+  try {
+    const raw = await kv.get(`ai:linelog:${tenantId}`);
+    if (raw) logs = JSON.parse(raw);
+  } catch { /* ignore */ }
+
+  return c.json({ ok: true, tenantId, count: logs.length, logs });
+});
+
 // Cron scheduled handler — AI followup LINE送信 + pushq consumer (*/5 * * * *)
 async function scheduled(_event: any, env: Env, _ctx: any): Promise<void> {
   const kv = (env as any).SAAS_FACTORY;

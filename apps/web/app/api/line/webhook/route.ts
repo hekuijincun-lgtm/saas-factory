@@ -442,6 +442,22 @@ export async function POST(req: Request) {
           `body=${pushRep.bodyText.slice(0, 500)}`
         );
 
+        // linelog: Workers KV に記録（直近50件・fire-and-forget）
+        if (apiBase) {
+          fetch(`${apiBase}/ai/linelog`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              tenantId,
+              type: "webhook_push",
+              uid: lineUserId.slice(0, 8),
+              pushStatus: pushRep.status,
+              pushBodySnippet: pushRep.bodyText.slice(0, 200),
+              aiMs,
+            }),
+          }).catch(() => null);
+        }
+
         // 429 / 5xx → retry キューに積む（TTL 10分）
         if (!pushRep.ok) {
           const s = pushRep.status;
