@@ -79,6 +79,11 @@ export default function StepConfirm({ booking, onBack, onDone, consentText }: Pr
     setError(null);
     setIsDuplicate(false);
     try {
+      // meta: menuStyleType があれば eyebrowDesign.styleType として付与
+      const metaPayload: Record<string, any> = {};
+      if (booking.menuStyleType) {
+        metaPayload.eyebrowDesign = { styleType: booking.menuStyleType };
+      }
       await createReservation({
         date: booking.date,
         time: booking.time,
@@ -88,6 +93,7 @@ export default function StepConfirm({ booking, onBack, onDone, consentText }: Pr
         staffId:
           booking.staffId === 'any' ? undefined : (booking.staffId ?? undefined),
         lineUserId: booking.lineUserId ?? undefined,
+        ...(Object.keys(metaPayload).length > 0 ? { meta: metaPayload } : {}),
       });
       setDone(true);
     } catch (e: unknown) {

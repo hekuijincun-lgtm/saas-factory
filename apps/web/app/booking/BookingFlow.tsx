@@ -14,6 +14,7 @@ export interface BookingState {
   menuName: string | null;
   menuPrice: number | null;
   menuDurationMin: number | null;
+  menuStyleType?: string | null; // menu.eyebrow.styleType（予約時styleBreakdown用）
   staffId: string | null;
   staffName: string | null;
   date: string | null;
@@ -28,7 +29,7 @@ export interface StaffOption {
 }
 
 const INITIAL: BookingState = {
-  menuId: null, menuName: null, menuPrice: null, menuDurationMin: null,
+  menuId: null, menuName: null, menuPrice: null, menuDurationMin: null, menuStyleType: null,
   staffId: null, staffName: null, date: null, time: null,
   lineUserId: null,
 };
@@ -174,6 +175,7 @@ export default function BookingFlow() {
       menuName: menu.name,
       menuPrice: menu.price,
       menuDurationMin: menu.durationMin,
+      menuStyleType: menu.eyebrow?.styleType ?? null,
     });
     if (!staffSelectionEnabled) {
       update({ staffId: 'any', staffName: '指名なし' });

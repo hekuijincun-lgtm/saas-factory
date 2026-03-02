@@ -27,6 +27,7 @@ export interface CreateReservationPayload {
   email?: string;
   staffId?: string;
   lineUserId?: string;
+  meta?: Record<string, any>; // 眉毛カルテ等の拡張メタ（任意）
 }
 
 export interface ReservationResponse {
@@ -218,6 +219,7 @@ export async function createReservation(
       phone: payload.phone ?? null,
       ...(payload.email ? { email: payload.email.toLowerCase().trim() } : {}),
       ...(payload.lineUserId ? { lineUserId: payload.lineUserId } : {}),
+      ...(payload.meta ? { meta: payload.meta } : {}),
     };
 
     console.log("[createReservation payload->newPayload]", { payload, newPayload });

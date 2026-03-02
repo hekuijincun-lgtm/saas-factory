@@ -1997,14 +1997,16 @@ async function upsertCustomer(
       .catch((e: any) => console.error("[RESERVE_CUSTOMER_LINK] error:", String(e?.message ?? e)));
   }
 
-  // customerKey for repeat-customer KPI — best-effort
+  // customerKey + body.meta マージ — best-effort (eyebrowDesign.styleType 等を保持)
   const email = body.email ? String(body.email).trim().toLowerCase() : null;
   const customerKey = buildCustomerKey({ lineUserId, phone, email });
-  if (customerKey) {
+  const bodyMeta: Record<string, any> = (body.meta && typeof body.meta === 'object' && !Array.isArray(body.meta)) ? body.meta : {};
+  const finalMeta = { ...bodyMeta, ...(customerKey ? { customerKey } : {}) };
+  if (Object.keys(finalMeta).length > 0) {
     await env.DB.prepare("UPDATE reservations SET meta = ? WHERE id = ?")
-      .bind(JSON.stringify({ customerKey }), rid)
+      .bind(JSON.stringify(finalMeta), rid)
       .run()
-      .catch((e: any) => console.error("[RESERVE_CUSTOMER_KEY] error:", String(e?.message ?? e)));
+      .catch((e: any) => console.error("[RESERVE_META] error:", String(e?.message ?? e)));
   }
 
   return c.json({ ok:true, id: rid, tenantId, staffId, startAt, endAt })
