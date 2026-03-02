@@ -2,12 +2,12 @@
 
 import { useState, useEffect } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { getStaff, createStaff, updateStaff, type Staff } from '@/src/lib/bookingApi';
+import { getStaff, createStaff, updateStaff, type Staff, type StaffEyebrow } from '@/src/lib/bookingApi';
 import { ApiClientError } from '@/src/lib/apiClient';
 import Card from '../ui/Card';
 import DataTable from '../ui/DataTable';
 import Badge from '../ui/Badge';
-import { Plus, Edit2, X, Calendar } from 'lucide-react';
+import { Plus, Edit2, X, Calendar, Scissors } from 'lucide-react';
 import StaffShiftEditor from './StaffShiftEditor';
 import type { StaffShift, TimeStr } from '@/src/types/shift';
 import { generateTimeOptions } from '@/src/lib/shiftUtils';
@@ -33,11 +33,17 @@ export default function StaffManager() {
   const [showShiftEditor, setShowShiftEditor] = useState<boolean>(false);
   const [shiftEditorStaffId, setShiftEditorStaffId] = useState<string>('');
   const [shiftEditorStaffName, setShiftEditorStaffName] = useState<string>('');
-  const [formData, setFormData] = useState<{ name: string; role: string; active: boolean; sortOrder: number }>({
+  const [formData, setFormData] = useState<{
+    name: string; role: string; active: boolean; sortOrder: number;
+    eyebrow: StaffEyebrow;
+    specialtyInput: string;
+  }>({
     name: '',
     role: '',
     active: true,
     sortOrder: 0,
+    eyebrow: { skillLevel: undefined, specialties: [] },
+    specialtyInput: '',
   });
 
   // staffSelectionEnabled の読み込み
@@ -91,7 +97,7 @@ export default function StaffManager() {
 
   const handleCreate = () => {
     setEditingStaff(null);
-    setFormData({ name: '', role: '', active: true, sortOrder: staffList.length });
+    setFormData({ name: '', role: '', active: true, sortOrder: staffList.length, eyebrow: { skillLevel: undefined, specialties: [] }, specialtyInput: '' });
     setShowModal(true);
   };
 
@@ -102,6 +108,11 @@ export default function StaffManager() {
       role: staff.role || '',
       active: staff.active,
       sortOrder: staff.sortOrder,
+      eyebrow: {
+        skillLevel: staff.eyebrow?.skillLevel,
+        specialties: staff.eyebrow?.specialties ?? [],
+      },
+      specialtyInput: '',
     });
     setShowModal(true);
   };
@@ -116,12 +127,20 @@ export default function StaffManager() {
     setError(null);
 
     try {
+      const eyebrowPayload: StaffEyebrow = {};
+      if (formData.eyebrow.skillLevel) eyebrowPayload.skillLevel = formData.eyebrow.skillLevel;
+      if (formData.eyebrow.specialties && formData.eyebrow.specialties.length > 0) {
+        eyebrowPayload.specialties = formData.eyebrow.specialties;
+      }
+      const eyebrow = Object.keys(eyebrowPayload).length > 0 ? eyebrowPayload : undefined;
+
       if (editingStaff) {
         await updateStaff(editingStaff.id, {
           name: formData.name.trim(),
           role: formData.role.trim() || undefined,
           active: formData.active,
           sortOrder: formData.sortOrder,
+          eyebrow,
         });
       } else {
         await createStaff({
@@ -129,6 +148,7 @@ export default function StaffManager() {
           role: formData.role.trim() || undefined,
           active: formData.active,
           sortOrder: formData.sortOrder,
+          eyebrow,
         });
       }
       await fetchStaff();
@@ -293,6 +313,89 @@ export default function StaffManager() {
                 className="w-4 h-4 text-brand-primary border-brand-border rounded focus:ring-brand-primary"
               />
               <label htmlFor="active" className="text-sm text-brand-text">有効</label>
+            </div>
+
+            {/* 眉毛スキルセクション */}
+            <div className="border-t border-gray-100 pt-4">
+              <div className="flex items-center gap-2 mb-3">
+                <Scissors className="w-4 h-4 text-pink-500" />
+                <span className="text-sm font-medium text-gray-700">眉毛スキル</span>
+              </div>
+              <div className="space-y-3">
+                {/* スキルレベル */}
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1.5">技術レベル</label>
+                  <div className="flex gap-1.5">
+                    {([1, 2, 3, 4, 5] as const).map(lv => (
+                      <button
+                        key={lv}
+                        type="button"
+                        onClick={() => setFormData({ ...formData, eyebrow: { ...formData.eyebrow, skillLevel: formData.eyebrow.skillLevel === lv ? undefined : lv } })}
+                        className={`w-9 h-9 rounded-lg text-sm font-bold transition-all ${
+                          formData.eyebrow.skillLevel === lv
+                            ? 'bg-pink-500 text-white shadow-sm'
+                            : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                        }`}
+                        title={['', '初級', '初中級', '中級', '上級', 'エキスパート'][lv]}
+                      >
+                        {lv}
+                      </button>
+                    ))}
+                    <span className="ml-2 text-xs text-gray-400 self-center">
+                      {formData.eyebrow.skillLevel ? ['', '初級', '初中級', '中級', '上級', 'エキスパート'][formData.eyebrow.skillLevel] : '未設定'}
+                    </span>
+                  </div>
+                </div>
+                {/* 得意技術タグ */}
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1.5">得意技術タグ</label>
+                  <div className="flex gap-1.5 flex-wrap mb-2">
+                    {(formData.eyebrow.specialties ?? []).map(tag => (
+                      <span key={tag} className="inline-flex items-center gap-1 px-2 py-1 bg-pink-100 text-pink-700 rounded-full text-xs">
+                        {tag}
+                        <button
+                          type="button"
+                          onClick={() => setFormData({ ...formData, eyebrow: { ...formData.eyebrow, specialties: formData.eyebrow.specialties?.filter(t => t !== tag) } })}
+                          className="text-pink-500 hover:text-pink-700"
+                        >
+                          ×
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      placeholder="例: ナチュラル, 韓国風, メンズ"
+                      value={formData.specialtyInput}
+                      onChange={e => setFormData({ ...formData, specialtyInput: e.target.value })}
+                      onKeyDown={e => {
+                        if ((e.key === 'Enter' || e.key === ',') && formData.specialtyInput.trim()) {
+                          e.preventDefault();
+                          const tag = formData.specialtyInput.trim().replace(/,$/, '');
+                          if (tag && !(formData.eyebrow.specialties ?? []).includes(tag)) {
+                            setFormData({ ...formData, specialtyInput: '', eyebrow: { ...formData.eyebrow, specialties: [...(formData.eyebrow.specialties ?? []), tag] } });
+                          }
+                        }
+                      }}
+                      className="flex-1 px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-pink-400"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const tag = formData.specialtyInput.trim();
+                        if (tag && !(formData.eyebrow.specialties ?? []).includes(tag)) {
+                          setFormData({ ...formData, specialtyInput: '', eyebrow: { ...formData.eyebrow, specialties: [...(formData.eyebrow.specialties ?? []), tag] } });
+                        }
+                      }}
+                      className="px-3 py-1.5 text-sm bg-pink-100 text-pink-700 rounded-lg hover:bg-pink-200 transition-all"
+                    >
+                      追加
+                    </button>
+                  </div>
+                  <p className="mt-1 text-xs text-gray-400">Enter またはカンマで追加</p>
+                </div>
+              </div>
             </div>
 
             <div className="flex gap-2 pt-4">

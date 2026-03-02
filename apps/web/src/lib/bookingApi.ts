@@ -62,12 +62,18 @@ export interface CancelReservationResponse {
 }
 
 // Admin API types
+export interface StaffEyebrow {
+  skillLevel?: 1 | 2 | 3 | 4 | 5;     // 眉毛技術レベル（1:初級〜5:エキスパート）
+  specialties?: string[];              // 得意技術タグ（例: "ナチュラル", "韓国風", etc）
+}
+
 export interface Staff {
   id: string;
   name: string;
   role?: string;
   active: boolean;
   sortOrder: number;
+  eyebrow?: StaffEyebrow;  // 眉毛特化スキル（optional）
 }
 
 export interface MenuItemEyebrow {
