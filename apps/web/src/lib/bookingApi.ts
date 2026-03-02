@@ -39,8 +39,15 @@ export interface ReservationResponse {
 }
 
 export interface ReservationMeta {
-  // 眉毛カルテ
+  // P5: 業種バーティカルデータ（新形式・主データ）
+  verticalData?: {
+    styleType?: string;       // スタイルタイプ（例: 'natural', 'bold'）
+    [key: string]: unknown;   // 他業種拡張用
+  };
+  // 眉毛カルテ（旧形式・後方互換）
+  /** @deprecated use verticalData instead */
   eyebrowDesign?: {
+    styleType?: string;       // スタイルタイプ（後方互換）
     template?: string;        // スタイルテンプレ
     thickness?: string;       // 太さ
     angle?: string;           // 角度

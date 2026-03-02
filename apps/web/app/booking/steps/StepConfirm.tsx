@@ -79,10 +79,11 @@ export default function StepConfirm({ booking, onBack, onDone, consentText }: Pr
     setError(null);
     setIsDuplicate(false);
     try {
-      // meta: menuStyleType があれば eyebrowDesign.styleType として付与
+      // meta: menuStyleType があれば verticalData + eyebrowDesign 両方に付与（P5 並列書き込み）
       const metaPayload: Record<string, any> = {};
       if (booking.menuStyleType) {
-        metaPayload.eyebrowDesign = { styleType: booking.menuStyleType };
+        metaPayload.verticalData  = { styleType: booking.menuStyleType }; // P5: 新形式
+        metaPayload.eyebrowDesign = { styleType: booking.menuStyleType }; // 旧形式（後方互換）
       }
       await createReservation({
         date: booking.date,
