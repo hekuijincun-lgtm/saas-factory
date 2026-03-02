@@ -53,6 +53,7 @@ function SuccessScreen({ booking, onDone }: { booking: BookingState; onDone: () 
 export default function StepConfirm({ booking, onBack, onDone, consentText }: Props) {
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
+  const [email, setEmail] = useState('');
   const [agreed, setAgreed] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -83,6 +84,7 @@ export default function StepConfirm({ booking, onBack, onDone, consentText }: Pr
         time: booking.time,
         name: name.trim(),
         phone: phone.trim() || undefined,
+        email: email.trim() || undefined,
         staffId:
           booking.staffId === 'any' ? undefined : (booking.staffId ?? undefined),
         lineUserId: booking.lineUserId ?? undefined,
@@ -151,15 +153,38 @@ export default function StepConfirm({ booking, onBack, onDone, consentText }: Pr
           />
         </div>
 
+        {/* 推奨入力バナー */}
+        {!phone && !email && (
+          <div className="flex items-start gap-2 px-3 py-2 bg-blue-50 border border-blue-100 rounded-xl text-xs text-blue-700">
+            <span className="shrink-0 mt-0.5">ℹ</span>
+            <span>予約確認・変更の連絡のため、電話番号またはメールアドレスの入力を推奨します（任意）</span>
+          </div>
+        )}
+
         <div>
           <label className="block text-sm font-medium text-brand-text mb-1.5">
-            電話番号（任意）
+            電話番号
+            <span className="ml-1.5 text-xs font-normal text-blue-600">（推奨・任意）</span>
           </label>
           <input
             type="tel"
             value={phone}
             onChange={e => setPhone(e.target.value)}
-            placeholder="090-1234-5678"
+            placeholder="09012345678"
+            className="w-full px-4 py-3 border border-brand-border rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary transition-colors"
+          />
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-brand-text mb-1.5">
+            メールアドレス
+            <span className="ml-1.5 text-xs font-normal text-blue-600">（推奨・任意）</span>
+          </label>
+          <input
+            type="email"
+            value={email}
+            onChange={e => setEmail(e.target.value)}
+            placeholder="example@email.com"
             className="w-full px-4 py-3 border border-brand-border rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary transition-colors"
           />
         </div>

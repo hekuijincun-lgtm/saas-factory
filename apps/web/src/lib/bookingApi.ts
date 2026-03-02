@@ -24,6 +24,7 @@ export interface CreateReservationPayload {
   time: string;
   name: string;
   phone?: string;
+  email?: string;
   staffId?: string;
   lineUserId?: string;
 }
@@ -215,6 +216,7 @@ export async function createReservation(
       endAt,
       customerName: payload.name,
       phone: payload.phone ?? null,
+      ...(payload.email ? { email: payload.email.toLowerCase().trim() } : {}),
       ...(payload.lineUserId ? { lineUserId: payload.lineUserId } : {}),
     };
 

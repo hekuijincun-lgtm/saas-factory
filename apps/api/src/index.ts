@@ -1577,13 +1577,17 @@ function normalizePhone(phone: string): string {
 }
 
 // Build canonical customerKey for repeat-customer detection.
-// Priority: line:<lineUserId> > phone:<normalizedPhone>
+// Priority: line:<lineUserId> > phone:<normalizedPhone> > email:<lowercase>
 // Returns null if no stable identifier is available.
-function buildCustomerKey(opts: { lineUserId?: string | null; phone?: string | null }): string | null {
+function buildCustomerKey(opts: { lineUserId?: string | null; phone?: string | null; email?: string | null }): string | null {
   if (opts.lineUserId && opts.lineUserId.trim()) return `line:${opts.lineUserId.trim()}`;
   if (opts.phone && opts.phone.trim()) {
     const digits = normalizePhone(opts.phone.trim());
     if (digits.length >= 7) return `phone:${digits}`;
+  }
+  if (opts.email && opts.email.trim()) {
+    const e = opts.email.trim().toLowerCase();
+    if (e.includes('@')) return `email:${e}`;
   }
   return null;
 }
@@ -1745,7 +1749,8 @@ async function upsertCustomer(
   }
 
   // customerKey for repeat-customer KPI — best-effort
-  const customerKey = buildCustomerKey({ lineUserId, phone });
+  const email = body.email ? String(body.email).trim().toLowerCase() : null;
+  const customerKey = buildCustomerKey({ lineUserId, phone, email });
   if (customerKey) {
     await env.DB.prepare("UPDATE reservations SET meta = ? WHERE id = ?")
       .bind(JSON.stringify({ customerKey }), rid)
