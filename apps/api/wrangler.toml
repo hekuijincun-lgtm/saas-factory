@@ -119,10 +119,10 @@ bindings = [
   { name = "SLOT_LOCK", class_name = "SlotLock" }
 ]
 
-[[env.production.r2_buckets]]
-binding = "MENU_IMAGES"
-bucket_name = "saas-factory-menu-images"
-preview_bucket_name = "saas-factory-menu-images"
+# [[env.production.r2_buckets]]  ← R2未有効時はコメントアウト。有効化後に復元してredeploy。
+# binding = "MENU_IMAGES"
+# bucket_name = "saas-factory-menu-images"
+# preview_bucket_name = "saas-factory-menu-images"
 
 [[migrations]]
 tag = "v1-sqlite-do"
