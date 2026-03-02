@@ -1378,9 +1378,11 @@ app.get("/admin/repeat-targets", async (c) => {
     // Cutoff: MAX(slot_start) < cutoff means no visit within last `days` days (and no future reservation)
     const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
 
-    // Load settings for recommendedMessage template
+    // Load settings for recommendedMessage template + I2 tokens
     let repeatTemplate = '前回のご来店からそろそろ{interval}週が経ちます。眉毛のリタッチはいかがでしょうか？';
     let intervalDays = 42;
+    let storeName = '';
+    let bookingUrl = '';
     if (kv) {
       try {
         const settingsRaw = await kv.get(`settings:${tenantId}`);
@@ -1388,10 +1390,39 @@ app.get("/admin/repeat-targets", async (c) => {
           const s = JSON.parse(settingsRaw);
           if (s?.eyebrow?.repeat?.template) repeatTemplate = s.eyebrow.repeat.template;
           if (s?.eyebrow?.repeat?.intervalDays) intervalDays = Number(s.eyebrow.repeat.intervalDays) || 42;
+          storeName = String(s?.storeName ?? '').trim();
+          bookingUrl = String(s?.integrations?.line?.bookingUrl ?? '').trim();
         }
       } catch { /* ignore */ }
     }
+    // Fallback bookingUrl from WEB_BASE env
+    if (!bookingUrl) {
+      const webBase = String((c.env as any).WEB_BASE ?? (c.env as any).ADMIN_WEB_BASE ?? '').trim();
+      if (webBase) bookingUrl = webBase + '/booking';
+    }
     const intervalWeeks = Math.round(intervalDays / 7);
+
+    // I2: Style label map
+    const STYLE_LABELS: Record<string, string> = {
+      natural: 'ナチュラル',
+      sharp: 'シャープ',
+      korean: '韓国風',
+      custom: 'カスタム',
+    };
+
+    // I2: Load staff map from KV (staffId → staffName)
+    const staffMap: Record<string, string> = {};
+    if (kv) {
+      try {
+        const staffRaw = await kv.get(`admin:staff:list:${tenantId}`);
+        if (staffRaw) {
+          const staffList: Array<{ id: string; name: string }> = JSON.parse(staffRaw);
+          for (const st of staffList) {
+            if (st?.id && st?.name) staffMap[st.id] = st.name;
+          }
+        }
+      } catch { /* ignore */ }
+    }
 
     // Query: get latest reservation per customerKey where MAX(slot_start) < cutoff
     // Note: menu_id/menu_name columns do not exist in D1 reservations table
@@ -1429,8 +1460,15 @@ app.get("/admin/repeat-targets", async (c) => {
       // styleType: meta.eyebrowDesign.styleType only (no menu_id column in D1)
       const styleType: string | null = r.metaStyleType || null;
 
-      // recommendedMessage: replace {interval} with weeks
-      const recommendedMessage = repeatTemplate.replace('{interval}', String(intervalWeeks));
+      // I2: Per-row token replacement (lenient: missing tokens → empty string)
+      const staffName = (r.staff_id && staffMap[r.staff_id]) ? staffMap[r.staff_id] : '';
+      const styleLabel = styleType ? (STYLE_LABELS[styleType] ?? styleType) : '';
+      const recommendedMessage = repeatTemplate
+        .replace(/\{interval\}/g, String(intervalWeeks))
+        .replace(/\{storeName\}/g, storeName)
+        .replace(/\{style\}/g, styleLabel)
+        .replace(/\{staff\}/g, staffName)
+        .replace(/\{bookingUrl\}/g, bookingUrl);
 
       return {
         customerKey: r.customerKey,
@@ -1451,9 +1489,11 @@ app.get("/admin/repeat-targets", async (c) => {
 
 /** =========================
  * POST /admin/repeat-send?tenantId=
- * Body: { customerKeys: string[], template?: string, dryRun?: boolean }
+ * Body: { customerKeys: string[], template?: string, dryRun?: boolean, cooldownDays?: number }
  * Sends LINE push to customerKeys that have a lineUserId.
  * dryRun=true (default) → returns counts/sample without sending.
+ * I3: cooldown guard — skips customers sent to within cooldownDays (default 7).
+ * I3: logs sends to D1 message_logs on dryRun=false.
  * ========================= */
 app.post("/admin/repeat-send", async (c) => {
   try {
@@ -1470,6 +1510,8 @@ app.post("/admin/repeat-send", async (c) => {
     const customerKeys: string[] = (body.customerKeys as any[]).filter((k: any) => typeof k === 'string').slice(0, 500);
     const dryRun: boolean = body.dryRun !== false; // default: dryRun=true
     const customTemplate: string | null = typeof body.template === 'string' ? body.template : null;
+    // I3: cooldown guard — default 7 days, 0 = disabled
+    const cooldownDays: number = Math.max(0, Number(body.cooldownDays ?? 7));
 
     // Load channelAccessToken + default template from settings
     let channelAccessToken = '';
@@ -1513,15 +1555,33 @@ app.post("/admin/repeat-send", async (c) => {
       } catch { /* ignore */ }
     }
 
+    // I3: Build cooldown exclusion set (customers sent within cooldownDays)
+    const cooldownSet = new Set<string>();
+    if (cooldownDays > 0 && !dryRun) {
+      try {
+        const cooldownSince = new Date(Date.now() - cooldownDays * 24 * 60 * 60 * 1000).toISOString();
+        const cooldownRows: any[] = (await db.prepare(
+          `SELECT DISTINCT customer_key FROM message_logs
+           WHERE tenant_id = ? AND type = 'repeat' AND channel = 'line'
+             AND sent_at >= ?`
+        ).bind(tenantId, cooldownSince).all()).results || [];
+        for (const row of cooldownRows) {
+          if (row.customer_key) cooldownSet.add(row.customer_key);
+        }
+      } catch { /* ignore: if message_logs missing, skip cooldown */ }
+    }
+
     let sentCount = 0;
     let skippedCount = 0;
     const samples: Array<{ customerKey: string; lineUserId: string; status?: string }> = [];
     const errors: string[] = [];
+    const skippedReasons: Array<{ customerKey: string; reason: string }> = [];
 
     for (const ck of customerKeys) {
       const lineUserId = lineUserMap[ck];
       if (!lineUserId) {
         skippedCount++;
+        skippedReasons.push({ customerKey: ck, reason: 'no_line_user_id' });
         continue;
       }
 
@@ -1531,8 +1591,16 @@ app.post("/admin/repeat-send", async (c) => {
         continue;
       }
 
+      // I3: Cooldown check
+      if (cooldownSet.has(ck)) {
+        skippedCount++;
+        skippedReasons.push({ customerKey: ck, reason: `cooldown_${cooldownDays}d` });
+        continue;
+      }
+
       if (!channelAccessToken) {
         skippedCount++;
+        skippedReasons.push({ customerKey: ck, reason: 'no_token' });
         errors.push(`no_token:${ck}`);
         continue;
       }
@@ -1550,13 +1618,23 @@ app.post("/admin/repeat-send", async (c) => {
         if (res.ok) {
           sentCount++;
           if (samples.length < 3) samples.push({ customerKey: ck, lineUserId, status: "sent" });
+          // I3: Log the send to message_logs
+          try {
+            const logId = `ml_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+            await db.prepare(
+              `INSERT INTO message_logs (id, tenant_id, customer_key, channel, type, sent_at, payload_json)
+               VALUES (?, ?, ?, 'line', 'repeat', ?, ?)`
+            ).bind(logId, tenantId, ck, new Date().toISOString(), JSON.stringify({ lineUserId, messageLen: message.length })).run();
+          } catch { /* ignore log failure */ }
         } else {
           const errText = await res.text().catch(() => '');
           skippedCount++;
+          skippedReasons.push({ customerKey: ck, reason: `send_failed_${res.status}` });
           errors.push(`send_failed:${ck}:${res.status}:${errText.slice(0, 100)}`);
         }
       } catch (e: any) {
         skippedCount++;
+        skippedReasons.push({ customerKey: ck, reason: 'send_error' });
         errors.push(`send_error:${ck}:${String(e?.message ?? e)}`);
       }
     }
@@ -1565,11 +1643,13 @@ app.post("/admin/repeat-send", async (c) => {
       ok: true,
       tenantId,
       dryRun,
+      cooldownDays: dryRun ? undefined : cooldownDays,
       message: dryRun ? message : undefined,
       sentCount,
       skippedCount,
       total: customerKeys.length,
       samples: samples.length > 0 ? samples : undefined,
+      skippedReasons: skippedReasons.length > 0 ? skippedReasons : undefined,
       errors: errors.length > 0 ? errors : undefined,
     });
   } catch (error) {
