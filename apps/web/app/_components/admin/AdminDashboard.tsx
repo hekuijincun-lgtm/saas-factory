@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Card from '../ui/Card';
+import { Scissors } from 'lucide-react';
 
 interface ScheduleItem {
   time: string;
@@ -28,6 +29,15 @@ interface DashboardData {
   customers: CustomerItem[];
 }
 
+interface EyebrowKpi {
+  totalReservations: number;
+  totalCustomers: number;
+  repeatCustomers: number;
+  repeatConversionRate: number | null;
+  avgRepeatIntervalDays: number | null;
+  staffCounts: Record<string, number>;
+}
+
 export default function AdminDashboard() {
   const searchParams = useSearchParams();
   const tenantId = searchParams?.get('tenantId') || 'default';
@@ -35,6 +45,8 @@ export default function AdminDashboard() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [eyebrowKpi, setEyebrowKpi] = useState<EyebrowKpi | null>(null);
+  const [kpiLoading, setKpiLoading] = useState(false);
 
   useEffect(() => {
     const d = new Date();
@@ -54,6 +66,14 @@ export default function AdminDashboard() {
       })
       .catch(() => setError('ダッシュボードの取得に失敗しました'))
       .finally(() => setLoading(false));
+
+    // Eyebrow KPI fetch
+    setKpiLoading(true);
+    fetch(`/api/proxy/admin/kpi?tenantId=${encodeURIComponent(tenantId)}&days=90`, { cache: 'no-store' })
+      .then(r => r.ok ? r.json() : null)
+      .then((json: any) => { if (json?.ok) setEyebrowKpi(json.kpi); })
+      .catch(() => {})
+      .finally(() => setKpiLoading(false));
   }, [tenantId]);
 
   if (loading) {
@@ -109,6 +129,60 @@ export default function AdminDashboard() {
             </div>
           </div>
         </Card>
+      </div>
+
+      {/* 眉毛 KPI カード */}
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+        <div className="px-5 py-4 border-b border-gray-100 flex items-center gap-2">
+          <Scissors className="w-4 h-4 text-pink-500" />
+          <h2 className="text-sm font-semibold text-gray-700">眉毛サロン KPI <span className="font-normal text-gray-400">（直近90日）</span></h2>
+        </div>
+        {kpiLoading ? (
+          <div className="py-6 text-center text-sm text-gray-400">集計中...</div>
+        ) : !eyebrowKpi ? (
+          <div className="py-6 text-center text-sm text-gray-400">KPIデータなし（予約データが蓄積されると表示されます）</div>
+        ) : (
+          <div className="p-5">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="text-center p-3 bg-pink-50 rounded-xl">
+                <div className="text-2xl font-bold text-pink-600">
+                  {eyebrowKpi.repeatConversionRate !== null ? `${eyebrowKpi.repeatConversionRate}%` : '—'}
+                </div>
+                <div className="text-xs text-gray-500 mt-1">初回→2回目<br/>転換率</div>
+              </div>
+              <div className="text-center p-3 bg-purple-50 rounded-xl">
+                <div className="text-2xl font-bold text-purple-600">
+                  {eyebrowKpi.avgRepeatIntervalDays !== null ? `${eyebrowKpi.avgRepeatIntervalDays}日` : '—'}
+                </div>
+                <div className="text-xs text-gray-500 mt-1">平均リピート<br/>間隔</div>
+              </div>
+              <div className="text-center p-3 bg-blue-50 rounded-xl">
+                <div className="text-2xl font-bold text-blue-600">
+                  {eyebrowKpi.repeatCustomers}
+                  <span className="text-sm font-normal text-gray-400"> / {eyebrowKpi.totalCustomers}</span>
+                </div>
+                <div className="text-xs text-gray-500 mt-1">リピート顧客<br/>/ 総顧客数</div>
+              </div>
+              <div className="text-center p-3 bg-green-50 rounded-xl">
+                <div className="text-2xl font-bold text-green-600">{eyebrowKpi.totalReservations}</div>
+                <div className="text-xs text-gray-500 mt-1">総予約数<br/>（90日）</div>
+              </div>
+            </div>
+            {/* スタッフ別件数 */}
+            {Object.keys(eyebrowKpi.staffCounts).length > 0 && (
+              <div className="mt-4 pt-4 border-t border-gray-100">
+                <div className="text-xs font-medium text-gray-500 mb-2">スタッフ別件数</div>
+                <div className="flex flex-wrap gap-2">
+                  {Object.entries(eyebrowKpi.staffCounts).map(([staffId, cnt]) => (
+                    <span key={staffId} className="inline-flex items-center gap-1 px-2 py-1 bg-gray-100 text-gray-700 rounded-full text-xs">
+                      {staffId === 'any' ? '指名なし' : staffId}: <strong>{cnt}件</strong>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* 本日の施術予定 */}

@@ -2,9 +2,9 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { getReservations, cancelReservationById, assignStaffToReservation, getStaff, createReservation, getMenu, type Reservation, type Staff, type MenuItem } from '@/src/lib/bookingApi';
+import { getReservations, cancelReservationById, assignStaffToReservation, getStaff, createReservation, getMenu, type Reservation, type ReservationMeta, type Staff, type MenuItem } from '@/src/lib/bookingApi';
 import { ApiClientError } from '@/src/lib/apiClient';
-import { ChevronLeft, ChevronRight, Plus } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Plus, Scissors } from 'lucide-react';
 import Badge from '../ui/Badge';
 import { STAFF } from '../constants/staff';
 import type { StaffShift } from '@/src/types/shift';
@@ -91,6 +91,13 @@ export default function ReservationsLedger() {
   const [editForm, setEditForm] = useState<{ name: string; phone: string; note: string; staffId: string }>({ name: '', phone: '', note: '', staffId: 'any' });
   const [editing, setEditing] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
+
+  // 眉毛カルテタブ
+  type DetailTab = 'basic' | 'karte' | 'consent' | 'image';
+  const [detailTab, setDetailTab] = useState<DetailTab>('basic');
+  const [metaForm, setMetaForm] = useState<ReservationMeta>({});
+  const [metaSaving, setMetaSaving] = useState(false);
+  const [metaError, setMetaError] = useState<string | null>(null);
 
   // settings が取得されたら open/close/interval に追随（取得前は デフォルト値で表示継続）
   const timeSlots = useMemo(
@@ -456,6 +463,29 @@ export default function ReservationsLedger() {
     }
   };
 
+  // 眉毛カルテ/同意/画像を保存（meta を PATCH）
+  const handleMetaSave = async () => {
+    if (!selectedReservation) return;
+    setMetaSaving(true);
+    setMetaError(null);
+    try {
+      const res = await fetch(`/api/proxy/admin/reservations/${selectedReservation.reservationId}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ meta: metaForm }),
+      });
+      const json = await res.json() as any;
+      if (!json.ok) throw new Error(json.error || '保存に失敗しました');
+      // ローカルの selectedReservation の meta を更新
+      setSelectedReservation(prev => prev ? { ...prev, meta: json.data?.meta ?? metaForm } : null);
+      await fetchReservations();
+    } catch (err) {
+      setMetaError(err instanceof Error ? err.message : '保存に失敗しました');
+    } finally {
+      setMetaSaving(false);
+    }
+  };
+
   // 予約作成モーダルを開く（日付・時刻を現在選択日に合わせて初期化）
   const openCreateModal = () => {
     setCreateForm(f => ({ ...f, date, staffId: 'any', time: timeSlots[0] || '' }));
@@ -602,7 +632,7 @@ export default function ReservationsLedger() {
                         >
                           {reservation ? (
                             <div
-                              onClick={() => isWorking && setSelectedReservation(reservation)}
+                              onClick={() => { if (isWorking) { setSelectedReservation(reservation); setDetailTab('basic'); setMetaForm(reservation.meta ?? {}); setMetaError(null); } }}
                               className={`border rounded-xl p-3 transition-all ${
                                 isWorking
                                   ? 'bg-blue-50 border-blue-200 cursor-pointer hover:shadow-md'
@@ -707,9 +737,9 @@ export default function ReservationsLedger() {
       {selectedReservation && (
         <div
           className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
-          onClick={() => { setSelectedReservation(null); setEditMode(false); }}
+          onClick={() => { setSelectedReservation(null); setEditMode(false); setDetailTab('basic'); }}
         >
-          <div className="bg-white rounded-2xl shadow-soft max-w-2xl w-full p-6 space-y-6" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-white rounded-2xl shadow-soft max-w-2xl w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-start justify-between">
               <div>
                 <h2 className="text-2xl font-semibold text-brand-text">
@@ -718,7 +748,7 @@ export default function ReservationsLedger() {
                 <p className="text-sm text-brand-muted mt-1">予約ID: {selectedReservation.reservationId}</p>
               </div>
               <button
-                onClick={() => { setSelectedReservation(null); setEditMode(false); }}
+                onClick={() => { setSelectedReservation(null); setEditMode(false); setDetailTab('basic'); }}
                 className="p-2 text-brand-muted hover:text-brand-text hover:bg-brand-bg rounded-lg transition-all"
               >
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -727,8 +757,33 @@ export default function ReservationsLedger() {
               </button>
             </div>
 
+            {/* タブ（詳細表示時のみ） */}
+            {!editMode && (
+              <div className="flex gap-1 border-b border-gray-100 pb-0">
+                {([
+                  { id: 'basic', label: '基本情報' },
+                  { id: 'karte', label: '眉毛カルテ', icon: true },
+                  { id: 'consent', label: '同意ログ', icon: true },
+                  { id: 'image', label: '画像', icon: true },
+                ] as { id: DetailTab; label: string; icon?: boolean }[]).map(tab => (
+                  <button
+                    key={tab.id}
+                    onClick={() => setDetailTab(tab.id)}
+                    className={`px-3 py-2 text-xs font-medium rounded-t-lg transition-all flex items-center gap-1 ${
+                      detailTab === tab.id
+                        ? 'bg-pink-50 text-pink-700 border-b-2 border-pink-500'
+                        : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+                    }`}
+                  >
+                    {tab.icon && <Scissors className="w-3 h-3" />}
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+            )}
+
             {editMode ? (
-              /* ─── 編集フォーム ─── */
+              /* ─── 編集フォーム（editMode時は常に表示） ─── */
               <div className="space-y-4">
                 {editError && (
                   <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700">{editError}</div>
@@ -800,8 +855,8 @@ export default function ReservationsLedger() {
                   </button>
                 </div>
               </div>
-            ) : (
-              /* ─── 詳細表示 ─── */
+            ) : detailTab === 'basic' ? (
+              /* ─── 基本情報 タブ ─── */
               <div className="space-y-4">
                 <div className="grid grid-cols-2 gap-4">
                   <div>
@@ -860,9 +915,137 @@ export default function ReservationsLedger() {
                   </p>
                 </div>
               </div>
+            ) : null}
+
+            {/* 眉毛カルテ タブ */}
+            {!editMode && detailTab === 'karte' && (
+              <div className="space-y-3">
+                {metaError && <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{metaError}</div>}
+                <div className="grid grid-cols-2 gap-3">
+                  {[
+                    { key: 'template', label: 'スタイルテンプレ', placeholder: '例: ナチュラル' },
+                    { key: 'thickness', label: '太さ', placeholder: '例: やや太め' },
+                    { key: 'angle', label: '角度', placeholder: '例: 平行' },
+                    { key: 'arch', label: 'アーチ形状', placeholder: '例: ゆるやか' },
+                    { key: 'skinnessReaction', label: '赤み反応', placeholder: '例: なし' },
+                  ].map(f => (
+                    <div key={f.key}>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">{f.label}</label>
+                      <input
+                        type="text"
+                        value={(metaForm.eyebrowDesign as any)?.[f.key] ?? ''}
+                        onChange={e => setMetaForm(m => ({ ...m, eyebrowDesign: { ...m.eyebrowDesign, [f.key]: e.target.value } }))}
+                        placeholder={f.placeholder}
+                        className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-pink-400"
+                      />
+                    </div>
+                  ))}
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">カルテメモ</label>
+                  <textarea
+                    rows={3}
+                    value={metaForm.eyebrowDesign?.memo ?? ''}
+                    onChange={e => setMetaForm(m => ({ ...m, eyebrowDesign: { ...m.eyebrowDesign, memo: e.target.value } }))}
+                    className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-pink-400 resize-none"
+                  />
+                </div>
+                <button onClick={handleMetaSave} disabled={metaSaving} className="px-4 py-2 bg-pink-500 text-white text-sm rounded-lg hover:bg-pink-600 disabled:opacity-50 transition-all">
+                  {metaSaving ? '保存中...' : 'カルテを保存'}
+                </button>
+              </div>
             )}
 
-            {!editMode && (
+            {/* 同意ログ タブ */}
+            {!editMode && detailTab === 'consent' && (
+              <div className="space-y-3">
+                {metaError && <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{metaError}</div>}
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">同意日時（ISO）</label>
+                  <input
+                    type="text"
+                    value={metaForm.consentLog?.acceptedAt ?? ''}
+                    onChange={e => setMetaForm(m => ({ ...m, consentLog: { ...m.consentLog, acceptedAt: e.target.value } }))}
+                    placeholder="例: 2026-03-02T12:00:00+09:00"
+                    className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-pink-400"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setMetaForm(m => ({ ...m, consentLog: { ...m.consentLog, acceptedAt: new Date().toISOString() } }))}
+                    className="mt-1 text-xs text-pink-600 hover:underline"
+                  >
+                    現在時刻を入力
+                  </button>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">同意文バージョンハッシュ</label>
+                  <input
+                    type="text"
+                    value={metaForm.consentLog?.consentVersionHash ?? ''}
+                    onChange={e => setMetaForm(m => ({ ...m, consentLog: { ...m.consentLog, consentVersionHash: e.target.value } }))}
+                    placeholder="例: v1_20260302"
+                    className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-pink-400"
+                  />
+                </div>
+                {/* 既存の同意ログ表示 */}
+                {selectedReservation.meta?.consentLog?.acceptedAt && (
+                  <div className="p-3 bg-green-50 border border-green-200 rounded-lg text-xs text-green-700">
+                    <div className="font-medium">保存済み同意ログ</div>
+                    <div>同意日時: {selectedReservation.meta.consentLog.acceptedAt}</div>
+                    {selectedReservation.meta.consentLog.consentVersionHash && (
+                      <div>バージョン: {selectedReservation.meta.consentLog.consentVersionHash}</div>
+                    )}
+                  </div>
+                )}
+                <button onClick={handleMetaSave} disabled={metaSaving} className="px-4 py-2 bg-pink-500 text-white text-sm rounded-lg hover:bg-pink-600 disabled:opacity-50 transition-all">
+                  {metaSaving ? '保存中...' : '同意ログを保存'}
+                </button>
+              </div>
+            )}
+
+            {/* 画像 タブ */}
+            {!editMode && detailTab === 'image' && (
+              <div className="space-y-3">
+                {metaError && <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{metaError}</div>}
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Before画像URL</label>
+                  <input
+                    type="url"
+                    value={metaForm.beforeUrl ?? ''}
+                    onChange={e => setMetaForm(m => ({ ...m, beforeUrl: e.target.value }))}
+                    placeholder="https://..."
+                    className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-pink-400"
+                  />
+                  {metaForm.beforeUrl && <img src={metaForm.beforeUrl} alt="before" className="mt-2 max-h-32 rounded-lg object-cover" onError={e => (e.currentTarget.style.display='none')} />}
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">After画像URL</label>
+                  <input
+                    type="url"
+                    value={metaForm.afterUrl ?? ''}
+                    onChange={e => setMetaForm(m => ({ ...m, afterUrl: e.target.value }))}
+                    placeholder="https://..."
+                    className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-pink-400"
+                  />
+                  {metaForm.afterUrl && <img src={metaForm.afterUrl} alt="after" className="mt-2 max-h-32 rounded-lg object-cover" onError={e => (e.currentTarget.style.display='none')} />}
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id="snsPublishOk"
+                    checked={metaForm.snsPublishOk ?? false}
+                    onChange={e => setMetaForm(m => ({ ...m, snsPublishOk: e.target.checked }))}
+                    className="w-4 h-4 text-pink-500 border-gray-300 rounded"
+                  />
+                  <label htmlFor="snsPublishOk" className="text-sm text-gray-700">SNS掲載同意あり</label>
+                </div>
+                <button onClick={handleMetaSave} disabled={metaSaving} className="px-4 py-2 bg-pink-500 text-white text-sm rounded-lg hover:bg-pink-600 disabled:opacity-50 transition-all">
+                  {metaSaving ? '保存中...' : '画像情報を保存'}
+                </button>
+              </div>
+            )}
+
+            {!editMode && detailTab === 'basic' && (
               <div className="flex items-center gap-2 pt-4 border-t border-brand-border">
                 <button
                   onClick={() => startEdit(selectedReservation)}

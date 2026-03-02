@@ -36,6 +36,27 @@ export interface ReservationResponse {
   name: string;
 }
 
+export interface ReservationMeta {
+  // 眉毛カルテ
+  eyebrowDesign?: {
+    template?: string;        // スタイルテンプレ
+    thickness?: string;       // 太さ
+    angle?: string;           // 角度
+    arch?: string;            // アーチ形状
+    memo?: string;            // カルテメモ
+    skinnessReaction?: string; // 赤み反応
+  };
+  // 同意ログ
+  consentLog?: {
+    acceptedAt?: string;           // 同意日時（ISO）
+    consentVersionHash?: string;   // 同意文バージョンハッシュ
+  };
+  // 画像
+  beforeUrl?: string;       // Before画像URL
+  afterUrl?: string;        // After画像URL
+  snsPublishOk?: boolean;   // SNS公開同意
+}
+
 export interface Reservation {
   reservationId: string;
   date: string;
@@ -47,6 +68,7 @@ export interface Reservation {
   durationMin?: number;
   status?: string;
   createdAt: string;
+  meta?: ReservationMeta;  // 眉毛特化拡張データ（optional）
 }
 
 export interface ReservationsResponse {

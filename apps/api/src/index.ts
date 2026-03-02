@@ -972,7 +972,7 @@ app.get("/admin/reservations", async (c) => {
     const like = `${date}T%`;
     const q = await db
       .prepare(`SELECT id, tenant_id, slot_start, start_at, end_at, duration_minutes,
-                       customer_name, customer_phone, staff_id, note, created_at, status
+                       customer_name, customer_phone, staff_id, note, created_at, status, meta
                 FROM reservations
                 WHERE tenant_id = ? AND slot_start LIKE ? AND status != 'cancelled'
                 ORDER BY slot_start ASC`)
@@ -987,6 +987,10 @@ app.get("/admin/reservations", async (c) => {
       const rDate = dtMatch ? dtMatch[1] : date;
       const rTime = dtMatch ? dtMatch[2] : "";
 
+      let meta: any = undefined;
+      if (r.meta) {
+        try { meta = JSON.parse(r.meta); } catch { meta = undefined; }
+      }
       return {
         reservationId: r.id,
         date: rDate,
@@ -998,6 +1002,7 @@ app.get("/admin/reservations", async (c) => {
         durationMin: r.duration_minutes ?? 60,
         status: r.status ?? "active",
         createdAt: r.created_at ?? "",
+        meta,
       };
     });
 
@@ -1014,7 +1019,7 @@ app.on(["PUT", "PATCH"], "/admin/reservations/:id", async (c) => {
     const db = (c.env as any).DB;
     if (!db) return c.json({ ok: false, error: "DB_not_bound" }, 500);
 
-    const body = await c.req.json<{ staffId?: string | null; name?: string; phone?: string | null; note?: string | null }>()
+    const body = await c.req.json<{ staffId?: string | null; name?: string; phone?: string | null; note?: string | null; meta?: any }>()
       .catch(() => ({} as any));
 
     // Build SET clause dynamically (only provided fields)
@@ -1024,6 +1029,21 @@ app.on(["PUT", "PATCH"], "/admin/reservations/:id", async (c) => {
     if ("name" in body && body.name !== undefined) { sets.push("customer_name = ?"); vals.push(body.name); }
     if ("phone" in body) { sets.push("customer_phone = ?"); vals.push(body.phone ?? null); }
     if ("note" in body) { sets.push("note = ?"); vals.push(body.note ?? null); }
+    if ("meta" in body) {
+      // meta は JSON マージ: 既存 meta に深くマージして保存
+      const existingRow: any = await db.prepare("SELECT meta FROM reservations WHERE id = ? AND tenant_id = ?").bind(id, tenantId).first().catch(() => null);
+      let existingMeta: any = {};
+      if (existingRow?.meta) { try { existingMeta = JSON.parse(existingRow.meta); } catch {} }
+      const mergedMeta = { ...existingMeta, ...(body.meta ?? {}) };
+      // eyebrowDesign/consentLog を sub-merge
+      if (body.meta?.eyebrowDesign && existingMeta.eyebrowDesign) {
+        mergedMeta.eyebrowDesign = { ...existingMeta.eyebrowDesign, ...body.meta.eyebrowDesign };
+      }
+      if (body.meta?.consentLog && existingMeta.consentLog) {
+        mergedMeta.consentLog = { ...existingMeta.consentLog, ...body.meta.consentLog };
+      }
+      sets.push("meta = ?"); vals.push(JSON.stringify(mergedMeta));
+    }
 
     if (sets.length === 0) return c.json({ ok: false, error: "no_fields_to_update" }, 400);
 
@@ -1039,6 +1059,8 @@ app.on(["PUT", "PATCH"], "/admin/reservations/:id", async (c) => {
 
     const slotStr = String(row.slot_start || row.start_at || "");
     const dtMatch = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/.exec(slotStr);
+    let rowMeta: any = undefined;
+    if (row.meta) { try { rowMeta = JSON.parse(row.meta); } catch {} }
     return c.json({
       ok: true, tenantId,
       data: {
@@ -1051,6 +1073,7 @@ app.on(["PUT", "PATCH"], "/admin/reservations/:id", async (c) => {
         note: row.note ?? undefined,
         status: row.status ?? "active",
         createdAt: row.created_at ?? "",
+        meta: rowMeta,
       },
     });
   } catch (error) {
@@ -1077,6 +1100,87 @@ app.delete("/admin/reservations/:id", async (c) => {
     return c.json({ ok: true, tenantId, id, status: "cancelled" });
   } catch (error) {
     return c.json({ ok: false, error: "Failed to cancel reservation", message: String(error) }, 500);
+  }
+});
+
+/** =========================
+ * Eyebrow KPI
+ * GET /admin/kpi?tenantId=&days=90
+ * Returns: repeatConversionRate, avgRepeatIntervalDays, staffCounts, totalRevenue
+ * ========================= */
+app.get("/admin/kpi", async (c) => {
+  try {
+    const tenantId = getTenantId(c);
+    const days = Math.min(Math.max(Number(c.req.query("days") || "90"), 7), 365);
+    const db = (c.env as any).DB;
+    if (!db) return c.json({ ok: false, error: "DB_not_bound" }, 500);
+
+    // 対象期間
+    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+
+    // 1) 総予約数 / スタッフ別件数
+    const staffRes = await db.prepare(
+      `SELECT staff_id, COUNT(*) as cnt
+       FROM reservations
+       WHERE tenant_id = ? AND slot_start >= ? AND status != 'cancelled'
+       GROUP BY staff_id`
+    ).bind(tenantId, since + 'T').all();
+    const staffCounts: Record<string, number> = {};
+    let totalReservations = 0;
+    for (const r of (staffRes.results || [])) {
+      staffCounts[r.staff_id || 'any'] = r.cnt;
+      totalReservations += r.cnt;
+    }
+
+    // 2) リピート転換率: customer_id でグループし2回以上来店の割合
+    const custRes = await db.prepare(
+      `SELECT customer_id, COUNT(*) as visits
+       FROM reservations
+       WHERE tenant_id = ? AND slot_start >= ? AND status != 'cancelled' AND customer_id IS NOT NULL
+       GROUP BY customer_id`
+    ).bind(tenantId, since + 'T').all();
+    const custRows: any[] = custRes.results || [];
+    const totalCustomers = custRows.length;
+    const repeatCustomers = custRows.filter((r: any) => r.visits >= 2).length;
+    const repeatConversionRate = totalCustomers > 0 ? Math.round((repeatCustomers / totalCustomers) * 100) : null;
+
+    // 3) 平均リピート間隔（日）: 同一 customer_id の min/max slot_start の差の平均
+    const intervalRes = await db.prepare(
+      `SELECT customer_id,
+              MIN(slot_start) as first_visit,
+              MAX(slot_start) as last_visit,
+              COUNT(*) as visits
+       FROM reservations
+       WHERE tenant_id = ? AND slot_start >= ? AND status != 'cancelled' AND customer_id IS NOT NULL
+       GROUP BY customer_id
+       HAVING visits >= 2`
+    ).bind(tenantId, since + 'T').all();
+    const intervalRows: any[] = intervalRes.results || [];
+    let avgRepeatIntervalDays: number | null = null;
+    if (intervalRows.length > 0) {
+      let totalDays = 0;
+      for (const r of intervalRows) {
+        const first = new Date(r.first_visit).getTime();
+        const last = new Date(r.last_visit).getTime();
+        const diffDays = (last - first) / (1000 * 60 * 60 * 24) / (r.visits - 1);
+        totalDays += diffDays;
+      }
+      avgRepeatIntervalDays = Math.round(totalDays / intervalRows.length);
+    }
+
+    return c.json({
+      ok: true, tenantId, days, since,
+      kpi: {
+        totalReservations,
+        totalCustomers,
+        repeatCustomers,
+        repeatConversionRate,
+        avgRepeatIntervalDays,
+        staffCounts,
+      },
+    });
+  } catch (error) {
+    return c.json({ ok: false, error: "Failed to compute KPI", message: String(error) }, 500);
   }
 });
 
