@@ -1180,37 +1180,23 @@ app.get("/admin/kpi", async (c) => {
     }
 
     // 4) スタイル別内訳（styleBreakdown）
-    // Query: per (metaStyleType, menu_id, customerKey) group — aggregate in JS for flexibility
+    // Query: per (metaStyleType, customerKey) group — aggregate in JS for flexibility
+    // Note: menu_id/menu_name columns do not exist in D1 reservations table
     const styleRawRes = await db.prepare(
       `SELECT
          json_extract(meta, '$.eyebrowDesign.styleType') as metaStyleType,
-         menu_id,
          json_extract(meta, '$.customerKey') as ckey,
          COUNT(*) as visits
        FROM reservations
        WHERE tenant_id = ? AND slot_start >= ? AND status != 'cancelled'
          AND json_extract(meta, '$.customerKey') IS NOT NULL
-       GROUP BY metaStyleType, menu_id, ckey`
+       GROUP BY metaStyleType, ckey`
     ).bind(tenantId, since + 'T').all();
 
-    // Load menu styleType map (best-effort)
-    const menuStyleMap: Record<string, string> = {};
-    if (kv) {
-      try {
-        const menuRaw = await kv.get(`admin:menu:list:${tenantId}`);
-        if (menuRaw) {
-          const menuItems: any[] = JSON.parse(menuRaw);
-          for (const m of menuItems) {
-            if (m.id && m.eyebrow?.styleType) menuStyleMap[m.id] = m.eyebrow.styleType;
-          }
-        }
-      } catch { /* ignore */ }
-    }
-
-    // Aggregate by resolved styleType
+    // Aggregate by resolved styleType (metaStyleType or 'unknown')
     const styleAgg: Record<string, { reservationsCount: number; customersCount: number; repeatCustomersCount: number }> = {};
     for (const r of ((styleRawRes.results || []) as any[])) {
-      const st: string = r.metaStyleType || menuStyleMap[r.menu_id] || 'unknown';
+      const st: string = r.metaStyleType || 'unknown';
       if (!styleAgg[st]) styleAgg[st] = { reservationsCount: 0, customersCount: 0, repeatCustomersCount: 0 };
       styleAgg[st].reservationsCount += r.visits;
       styleAgg[st].customersCount += 1;
@@ -1332,20 +1318,6 @@ app.get("/admin/repeat-targets", async (c) => {
     // Cutoff: MAX(slot_start) < cutoff means no visit within last `days` days (and no future reservation)
     const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
 
-    // Load menu map for styleType lookup (best-effort)
-    const menuStyleMap: Record<string, string> = {}; // menuId → styleType
-    if (kv) {
-      try {
-        const menuRaw = await kv.get(`admin:menu:list:${tenantId}`);
-        if (menuRaw) {
-          const menuItems: any[] = JSON.parse(menuRaw);
-          for (const m of menuItems) {
-            if (m.id && m.eyebrow?.styleType) menuStyleMap[m.id] = m.eyebrow.styleType;
-          }
-        }
-      } catch { /* ignore */ }
-    }
-
     // Load settings for recommendedMessage template
     let repeatTemplate = '前回のご来店からそろそろ{interval}週が経ちます。眉毛のリタッチはいかがでしょうか？';
     let intervalDays = 42;
@@ -1362,6 +1334,7 @@ app.get("/admin/repeat-targets", async (c) => {
     const intervalWeeks = Math.round(intervalDays / 7);
 
     // Query: get latest reservation per customerKey where MAX(slot_start) < cutoff
+    // Note: menu_id/menu_name columns do not exist in D1 reservations table
     const rows: any[] = (await db.prepare(
       `SELECT
          r.id,
@@ -1369,8 +1342,6 @@ app.get("/admin/repeat-targets", async (c) => {
          r.line_user_id,
          r.slot_start as lastReservationAt,
          r.staff_id,
-         r.menu_name,
-         r.menu_id,
          json_extract(r.meta, '$.eyebrowDesign.styleType') as metaStyleType
        FROM reservations r
        INNER JOIN (
@@ -1395,8 +1366,8 @@ app.get("/admin/repeat-targets", async (c) => {
         lineUserId = r.line_user_id;
       }
 
-      // styleType: meta.eyebrowDesign.styleType → menu.eyebrow.styleType → null
-      const styleType: string | null = r.metaStyleType || menuStyleMap[r.menu_id] || null;
+      // styleType: meta.eyebrowDesign.styleType only (no menu_id column in D1)
+      const styleType: string | null = r.metaStyleType || null;
 
       // recommendedMessage: replace {interval} with weeks
       const recommendedMessage = repeatTemplate.replace('{interval}', String(intervalWeeks));
@@ -1405,7 +1376,7 @@ app.get("/admin/repeat-targets", async (c) => {
         customerKey: r.customerKey,
         lineUserId,
         lastReservationAt: r.lastReservationAt,
-        lastMenuSummary: r.menu_name || null,
+        lastMenuSummary: null, // menu_name column not in D1 schema
         staffId: r.staff_id || null,
         styleType,
         recommendedMessage,
