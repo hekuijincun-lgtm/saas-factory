@@ -3,7 +3,7 @@
 
 import { useState, useEffect } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { CalendarDays, Building2, Clock, Link as LinkIcon, AlertCircle, RefreshCw, Save } from 'lucide-react';
+import { CalendarDays, Building2, Clock, Link as LinkIcon, AlertCircle, RefreshCw, Save, Scissors } from 'lucide-react';
 import DebugHydration from './DebugHydration';
 import {
   fetchAdminSettings,
@@ -77,6 +77,17 @@ export default function AdminSettingsClient() {
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [settingsLoading, setSettingsLoading] = useState(false);
 
+  // --- 眉毛施術設定 ---
+  const DEFAULT_EYEBROW_CONSENT = '施術前に肌状態を確認し、アレルギー等のリスクをご理解の上ご予約ください';
+  const [eyebrowConsentText, setEyebrowConsentText] = useState(DEFAULT_EYEBROW_CONSENT);
+  const [savedEyebrowConsentText, setSavedEyebrowConsentText] = useState(DEFAULT_EYEBROW_CONSENT);
+  const [eyebrowRepeatEnabled, setEyebrowRepeatEnabled] = useState(false);
+  const [savedEyebrowRepeatEnabled, setSavedEyebrowRepeatEnabled] = useState(false);
+  const [eyebrowIntervalDays, setEyebrowIntervalDays] = useState(42);
+  const [savedEyebrowIntervalDays, setSavedEyebrowIntervalDays] = useState(42);
+  const [eyebrowTemplate, setEyebrowTemplate] = useState('前回のご来店からそろそろ{interval}週が経ちます。眉毛のリタッチはいかがでしょうか？');
+  const [savedEyebrowTemplate, setSavedEyebrowTemplate] = useState('前回のご来店からそろそろ{interval}週が経ちます。眉毛のリタッチはいかがでしょうか？');
+
   // --- Messaging API ---
   const [messagingStatus, setMessagingStatus] = useState<MessagingStatusResponse | null>(null);
   const [messagingLoading, setMessagingLoading] = useState(false);
@@ -117,6 +128,16 @@ export default function AdminSettingsClient() {
       setStoreAddress(sa); setSavedStoreAddress(sa);
       const cv = raw.consentText || DEFAULT_CONSENT;
       setConsentText(cv); setSavedConsentText(cv);
+      // 眉毛施術設定
+      const eyebrow = raw.eyebrow || {};
+      const ec = eyebrow.consentText || DEFAULT_EYEBROW_CONSENT;
+      setEyebrowConsentText(ec); setSavedEyebrowConsentText(ec);
+      const re = eyebrow.repeat?.enabled ?? false;
+      setEyebrowRepeatEnabled(re); setSavedEyebrowRepeatEnabled(re);
+      const ri = eyebrow.repeat?.intervalDays ?? 42;
+      setEyebrowIntervalDays(ri); setSavedEyebrowIntervalDays(ri);
+      const rt = eyebrow.repeat?.template || '前回のご来店からそろそろ{interval}週が経ちます。眉毛のリタッチはいかがでしょうか？';
+      setEyebrowTemplate(rt); setSavedEyebrowTemplate(rt);
     } catch (error) {
       const msg = error instanceof ApiClientError
         ? error.message
@@ -238,14 +259,33 @@ export default function AdminSettingsClient() {
   const handleSave = async () => {
     setIsSaving(true);
     try {
-      // API に storeName + 営業時間設定 + 住所 + 同意文を保存
-      await saveAdminSettings({ storeName: storeNameInput, openTime, closeTime, slotIntervalMin, storeAddress, consentText } as any, tenantId);
+      // API に storeName + 営業時間設定 + 住所 + 同意文 + 眉毛設定を保存
+      await saveAdminSettings({
+        storeName: storeNameInput,
+        openTime,
+        closeTime,
+        slotIntervalMin,
+        storeAddress,
+        consentText,
+        eyebrow: {
+          consentText: eyebrowConsentText,
+          repeat: {
+            enabled: eyebrowRepeatEnabled,
+            intervalDays: eyebrowIntervalDays,
+            template: eyebrowTemplate,
+          },
+        },
+      } as any, tenantId);
       setStoreName(storeNameInput);
       setSavedOpenTime(openTime);
       setSavedCloseTime(closeTime);
       setSavedSlotIntervalMin(slotIntervalMin);
       setSavedStoreAddress(storeAddress);
       setSavedConsentText(consentText);
+      setSavedEyebrowConsentText(eyebrowConsentText);
+      setSavedEyebrowRepeatEnabled(eyebrowRepeatEnabled);
+      setSavedEyebrowIntervalDays(eyebrowIntervalDays);
+      setSavedEyebrowTemplate(eyebrowTemplate);
 
       // localStorage にローカル設定を保存（営業日等）
       try {
@@ -271,6 +311,10 @@ export default function AdminSettingsClient() {
     setSlotIntervalMin(savedSlotIntervalMin);
     setStoreAddress(savedStoreAddress);
     setConsentText(savedConsentText);
+    setEyebrowConsentText(savedEyebrowConsentText);
+    setEyebrowRepeatEnabled(savedEyebrowRepeatEnabled);
+    setEyebrowIntervalDays(savedEyebrowIntervalDays);
+    setEyebrowTemplate(savedEyebrowTemplate);
   };
 
   const toggleDay = (dayIndex: number) => {
@@ -667,6 +711,92 @@ export default function AdminSettingsClient() {
                   </div>
                 )}
               </div>
+            </div>
+          </div>
+        </div>
+
+        {/* ============================================================
+            眉毛施術設定（眉毛サロン特化）
+        ============================================================ */}
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <div className="flex items-center gap-3 mb-5">
+            <div className="p-2 bg-pink-100 rounded-lg shrink-0">
+              <Scissors className="w-5 h-5 text-pink-600" />
+            </div>
+            <div>
+              <h2 className="text-base font-semibold text-gray-900">眉毛施術設定</h2>
+              <p className="text-xs text-gray-500">眉毛サロン特化の同意文・リピート施策を設定します</p>
+            </div>
+          </div>
+
+          <div className="space-y-5">
+            {/* 施術同意文 */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                施術同意文
+                <span className="ml-1 text-xs text-pink-600 font-normal">（予約確認時に表示するリスク説明文）</span>
+              </label>
+              <textarea
+                rows={3}
+                className="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-pink-400 focus:border-pink-400 outline-none transition-all resize-none"
+                value={eyebrowConsentText}
+                onChange={e => setEyebrowConsentText(e.target.value)}
+                placeholder="施術前に肌状態を確認し、アレルギー等のリスクをご理解の上ご予約ください"
+              />
+              <p className="mt-1 text-xs text-gray-400">予約カルテの同意ログに保存されます</p>
+            </div>
+
+            {/* リピート自動化 */}
+            <div className="border-t border-gray-100 pt-4">
+              <div className="flex items-center justify-between mb-3">
+                <div>
+                  <div className="text-sm font-medium text-gray-700">リピート施策（自動化）</div>
+                  <div className="text-xs text-gray-400 mt-0.5">設定した間隔でリピート促進メッセージを送信します</div>
+                </div>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <div className="relative">
+                    <input
+                      type="checkbox"
+                      className="sr-only"
+                      checked={eyebrowRepeatEnabled}
+                      onChange={e => setEyebrowRepeatEnabled(e.target.checked)}
+                    />
+                    <div className={`w-10 h-6 rounded-full transition-colors ${eyebrowRepeatEnabled ? 'bg-pink-500' : 'bg-gray-300'}`} />
+                    <div className={`absolute top-1 left-1 w-4 h-4 bg-white rounded-full shadow transition-transform ${eyebrowRepeatEnabled ? 'translate-x-4' : ''}`} />
+                  </div>
+                  <span className="text-xs text-gray-600">{eyebrowRepeatEnabled ? 'ON' : 'OFF'}</span>
+                </label>
+              </div>
+
+              {eyebrowRepeatEnabled && (
+                <div className="space-y-3 pl-0">
+                  <div className="flex items-center gap-2">
+                    <label className="text-sm text-gray-600 whitespace-nowrap">推奨リピート間隔</label>
+                    <input
+                      type="number"
+                      min="7"
+                      max="180"
+                      step="7"
+                      className="w-20 px-2 py-1.5 border border-gray-300 rounded-lg text-sm text-center focus:ring-2 focus:ring-pink-400 focus:border-pink-400 outline-none"
+                      value={eyebrowIntervalDays}
+                      onChange={e => setEyebrowIntervalDays(Number(e.target.value))}
+                    />
+                    <span className="text-sm text-gray-600">日ごと</span>
+                    <span className="text-xs text-gray-400">（目安：42日 ≒ 6週）</span>
+                  </div>
+                  <div>
+                    <label className="block text-sm text-gray-600 mb-1">メッセージテンプレ</label>
+                    <textarea
+                      rows={2}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-pink-400 focus:border-pink-400 outline-none resize-none"
+                      value={eyebrowTemplate}
+                      onChange={e => setEyebrowTemplate(e.target.value)}
+                      placeholder="前回のご来店からそろそろ{interval}週が経ちます。眉毛のリタッチはいかがでしょうか？"
+                    />
+                    <p className="mt-1 text-xs text-gray-400">{`{interval}` + ' はリピート間隔（週数）に自動置換されます'}</p>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>

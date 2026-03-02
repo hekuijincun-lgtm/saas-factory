@@ -66,6 +66,15 @@ export interface OnboardingSettings {
   lineConnected?: boolean;
 }
 
+export interface EyebrowSettings {
+  consentText?: string;        // 眉毛施術同意文
+  repeat?: {
+    enabled?: boolean;
+    intervalDays?: number;
+    template?: string;
+  };
+}
+
 export interface AdminSettings {
   storeName?: string; // 店舗名（表示用）
   storeAddress?: string; // 店舗住所（LINE通知等に使用）
@@ -81,6 +90,7 @@ export interface AdminSettings {
   assignment: AssignmentSettings;
   integrations: IntegrationSettings;
   onboarding?: OnboardingSettings;
+  eyebrow?: EyebrowSettings;
 }
 
 /**
@@ -339,6 +349,18 @@ export function mergeSettings(defaults: AdminSettings, partial: Partial<AdminSet
     onboarding: (partial.onboarding || defaults.onboarding)
       ? {
           lineConnected: partial.onboarding?.lineConnected ?? defaults.onboarding?.lineConnected,
+        }
+      : undefined,
+    eyebrow: (partial.eyebrow || defaults.eyebrow)
+      ? {
+          consentText: partial.eyebrow?.consentText ?? defaults.eyebrow?.consentText,
+          repeat: (partial.eyebrow?.repeat || defaults.eyebrow?.repeat)
+            ? {
+                enabled: partial.eyebrow?.repeat?.enabled ?? defaults.eyebrow?.repeat?.enabled,
+                intervalDays: partial.eyebrow?.repeat?.intervalDays ?? defaults.eyebrow?.repeat?.intervalDays,
+                template: partial.eyebrow?.repeat?.template ?? defaults.eyebrow?.repeat?.template,
+              }
+            : undefined,
         }
       : undefined,
   };

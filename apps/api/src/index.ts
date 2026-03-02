@@ -296,6 +296,14 @@ app.get("/__build", (c) => c.json({ ok: true, stamp: "API_BUILD_V1" }));
     if(body.onboarding != null && typeof body.onboarding === 'object') {
       patch.onboarding = { ...(existing.onboarding || {}), ...body.onboarding }
     }
+    // eyebrow: deep merge (repeat sub-object も保持)
+    if(body.eyebrow != null && typeof body.eyebrow === 'object') {
+      const existingEyebrow = existing.eyebrow || {}
+      patch.eyebrow = { ...existingEyebrow, ...body.eyebrow }
+      if(body.eyebrow.repeat != null && typeof body.eyebrow.repeat === 'object') {
+        patch.eyebrow.repeat = { ...(existingEyebrow.repeat || {}), ...body.eyebrow.repeat }
+      }
+    }
 
     const merged = { ...existing, ...patch }
     await kv.put(key, JSON.stringify(merged))

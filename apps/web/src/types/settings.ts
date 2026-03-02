@@ -66,6 +66,15 @@ export interface OnboardingSettings {
   lineConnected?: boolean;
 }
 
+export interface EyebrowSettings {
+  consentText?: string;        // 眉毛施術同意文（スキンケアリスク等）
+  repeat?: {
+    enabled?: boolean;         // リピート自動化ON/OFF
+    intervalDays?: number;     // 推奨リピート間隔（日）
+    template?: string;         // リピート促進メッセージテンプレ
+  };
+}
+
 export interface AdminSettings {
   storeName?: string; // 店舗名（表示用）
   storeAddress?: string; // 店舗住所（LINE通知等に使用）
@@ -81,6 +90,7 @@ export interface AdminSettings {
   assignment: AssignmentSettings;
   integrations: IntegrationSettings;
   onboarding?: OnboardingSettings;
+  eyebrow?: EyebrowSettings;
 }
 
 /**
