@@ -110,6 +110,30 @@ export default function AdminSettingsClient() {
   const [bfConfirmed, setBfConfirmed] = useState(false);
   const [urlCopied, setUrlCopied] = useState(false);
 
+  // Repeat promotion UI state
+  interface RepeatTarget {
+    customerKey: string;
+    lineUserId: string | null;
+    lastReservationAt: string;
+    lastMenuSummary: string | null;
+    staffId: string | null;
+    styleType: string | null;
+    recommendedMessage: string;
+  }
+  interface RepeatSendResult {
+    dryRun: boolean; sentCount: number; skippedCount: number; total: number;
+    message?: string; samples?: Array<{ customerKey: string; lineUserId: string; status?: string }>;
+  }
+  const [rpDays, setRpDays] = useState<28 | 42 | 60 | 90>(42);
+  const [rpRunning, setRpRunning] = useState(false);
+  const [rpTargets, setRpTargets] = useState<RepeatTarget[] | null>(null);
+  const [rpError, setRpError] = useState<string | null>(null);
+  const [rpSelected, setRpSelected] = useState<Set<string>>(new Set());
+  const [rpConfirmed, setRpConfirmed] = useState(false);
+  const [rpSending, setRpSending] = useState(false);
+  const [rpSendResult, setRpSendResult] = useState<RepeatSendResult | null>(null);
+  const [rpSendError, setRpSendError] = useState<string | null>(null);
+
   // tenantId は URL クエリから取得
   const tenantId = searchParams?.get('tenantId') || 'default';
 
@@ -132,6 +156,59 @@ export default function AdminSettingsClient() {
       setBfError(e instanceof Error ? e.message : 'エラーが発生しました');
     } finally {
       setBfRunning(false);
+    }
+  };
+
+  // ============================================================
+  // Repeat promotion: 対象抽出 / 送信
+  // ============================================================
+  const runRepeatTargets = async () => {
+    setRpRunning(true);
+    setRpError(null);
+    setRpTargets(null);
+    setRpSelected(new Set());
+    setRpConfirmed(false);
+    setRpSendResult(null);
+    setRpSendError(null);
+    try {
+      const res = await fetch(
+        `/api/proxy/admin/repeat-targets?tenantId=${encodeURIComponent(tenantId)}&days=${rpDays}&limit=200`
+      );
+      const json = await res.json() as any;
+      if (!json.ok) throw new Error(json.error || '対象抽出失敗');
+      setRpTargets(json.targets || []);
+      // デフォルト: LINE可能な対象を全選択
+      const lineAble = new Set<string>((json.targets as RepeatTarget[]).filter(t => t.lineUserId).map(t => t.customerKey));
+      setRpSelected(lineAble);
+    } catch (e) {
+      setRpError(e instanceof Error ? e.message : 'エラーが発生しました');
+    } finally {
+      setRpRunning(false);
+    }
+  };
+
+  const runRepeatSend = async (dryRun: boolean) => {
+    setRpSending(true);
+    setRpSendError(null);
+    setRpSendResult(null);
+    try {
+      const customerKeys = Array.from(rpSelected);
+      const res = await fetch(
+        `/api/proxy/admin/repeat-send?tenantId=${encodeURIComponent(tenantId)}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ customerKeys, dryRun }),
+        }
+      );
+      const json = await res.json() as any;
+      if (!json.ok) throw new Error(json.error || '送信失敗');
+      setRpSendResult({ dryRun: json.dryRun, sentCount: json.sentCount, skippedCount: json.skippedCount, total: json.total, message: json.message, samples: json.samples });
+      if (!dryRun) setRpConfirmed(false);
+    } catch (e) {
+      setRpSendError(e instanceof Error ? e.message : 'エラーが発生しました');
+    } finally {
+      setRpSending(false);
     }
   };
 
@@ -978,6 +1055,220 @@ export default function AdminSettingsClient() {
                     {bfRunning ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : null}
                     続き実行
                   </button>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* ============================================================
+            運用ツール: リピート促進（LINE）
+        ============================================================ */}
+        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+          <div className="px-5 py-4 border-b border-gray-100 flex items-center gap-2">
+            <Scissors className="w-4 h-4 text-pink-500" />
+            <h2 className="text-sm font-semibold text-gray-700">運用ツール：リピート促進（LINE）</h2>
+          </div>
+          <div className="p-5 space-y-4">
+            {/* 現在の設定サマリ */}
+            <div className="flex flex-wrap gap-3 text-xs text-gray-500">
+              <span>自動化: <strong className={eyebrowRepeatEnabled ? 'text-green-600' : 'text-gray-400'}>{eyebrowRepeatEnabled ? 'ON' : 'OFF'}</strong></span>
+              <span>推奨間隔: <strong className="text-gray-700">{eyebrowIntervalDays}日</strong></span>
+              <span className="truncate max-w-xs">テンプレ: <em className="text-gray-600">{eyebrowTemplate.slice(0, 40)}{eyebrowTemplate.length > 40 ? '…' : ''}</em></span>
+            </div>
+            <p className="text-xs text-gray-500">
+              最終来店から指定日数以上経過しており、将来予約のない顧客を抽出し、LINEでリピート促進メッセージを送信します。
+            </p>
+
+            {/* 抽出条件 */}
+            <div className="flex items-center gap-3">
+              <label className="text-sm text-gray-600 whitespace-nowrap">最終来店から</label>
+              <select
+                value={rpDays}
+                onChange={e => { setRpDays(Number(e.target.value) as 28 | 42 | 60 | 90); setRpTargets(null); setRpSendResult(null); }}
+                className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-pink-400"
+              >
+                <option value={28}>28日以上</option>
+                <option value={42}>42日以上（6週）</option>
+                <option value={60}>60日以上</option>
+                <option value={90}>90日以上</option>
+              </select>
+              <span className="text-sm text-gray-600">経過した顧客</span>
+            </div>
+
+            {/* 対象抽出ボタン */}
+            <button
+              onClick={runRepeatTargets}
+              disabled={rpRunning}
+              className="inline-flex items-center gap-1.5 px-4 py-2 border border-pink-300 text-pink-700 bg-pink-50 rounded-lg text-sm font-medium hover:bg-pink-100 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+            >
+              {rpRunning ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+              対象抽出
+            </button>
+
+            {/* エラー */}
+            {rpError && (
+              <div className="flex items-center gap-2 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                {rpError}
+              </div>
+            )}
+
+            {/* 対象リスト */}
+            {rpTargets !== null && (
+              <div className="space-y-3">
+                {rpTargets.length === 0 ? (
+                  <p className="text-sm text-gray-400">対象顧客はいません</p>
+                ) : (
+                  <>
+                    <div className="flex items-center justify-between">
+                      <p className="text-xs text-gray-500">
+                        {rpTargets.length}件 / LINE可: {rpTargets.filter(t => t.lineUserId).length}件
+                      </p>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => setRpSelected(new Set(rpTargets.filter(t => t.lineUserId).map(t => t.customerKey)))}
+                          className="text-xs text-pink-600 hover:text-pink-800 underline"
+                        >全選択</button>
+                        <button
+                          onClick={() => setRpSelected(new Set())}
+                          className="text-xs text-gray-500 hover:text-gray-700 underline"
+                        >全解除</button>
+                      </div>
+                    </div>
+                    <div className="border border-gray-200 rounded-xl overflow-hidden">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="bg-gray-50 border-b border-gray-200">
+                            <th className="px-3 py-2 text-left font-medium text-gray-500 w-8"></th>
+                            <th className="px-3 py-2 text-left font-medium text-gray-500">顧客キー</th>
+                            <th className="px-3 py-2 text-left font-medium text-gray-500">最終来店</th>
+                            <th className="px-3 py-2 text-left font-medium text-gray-500">スタイル</th>
+                            <th className="px-3 py-2 text-left font-medium text-gray-500">LINE</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100">
+                          {rpTargets.map(t => (
+                            <tr key={t.customerKey} className={rpSelected.has(t.customerKey) ? 'bg-pink-50' : 'hover:bg-gray-50'}>
+                              <td className="px-3 py-2">
+                                <input
+                                  type="checkbox"
+                                  checked={rpSelected.has(t.customerKey)}
+                                  disabled={!t.lineUserId}
+                                  onChange={e => {
+                                    const next = new Set(rpSelected);
+                                    if (e.target.checked) next.add(t.customerKey);
+                                    else next.delete(t.customerKey);
+                                    setRpSelected(next);
+                                    setRpConfirmed(false);
+                                    setRpSendResult(null);
+                                  }}
+                                  className="w-3.5 h-3.5 text-pink-600 border-gray-300 rounded focus:ring-pink-500 disabled:opacity-30"
+                                />
+                              </td>
+                              <td className="px-3 py-2 font-mono text-gray-700 max-w-[140px] truncate">{t.customerKey}</td>
+                              <td className="px-3 py-2 text-gray-600 tabular-nums">{t.lastReservationAt ? t.lastReservationAt.slice(0, 10) : '—'}</td>
+                              <td className="px-3 py-2 text-gray-500">{t.styleType || '—'}</td>
+                              <td className="px-3 py-2">
+                                {t.lineUserId
+                                  ? <span className="px-1.5 py-0.5 bg-green-100 text-green-700 rounded text-xs">可</span>
+                                  : <span className="px-1.5 py-0.5 bg-gray-100 text-gray-400 rounded text-xs">不可</span>}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* DryRun */}
+                    {rpSelected.size > 0 && (
+                      <div className="space-y-3">
+                        <button
+                          onClick={() => { setRpSendResult(null); setRpSendError(null); runRepeatSend(true); }}
+                          disabled={rpSending || rpSelected.size === 0}
+                          className="inline-flex items-center gap-1.5 px-4 py-2 border border-pink-300 text-pink-700 bg-pink-50 rounded-lg text-sm font-medium hover:bg-pink-100 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                        >
+                          {rpSending ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : null}
+                          ドライラン（{rpSelected.size}件 確認のみ）
+                        </button>
+
+                        {/* 送信エラー */}
+                        {rpSendError && (
+                          <div className="flex items-center gap-2 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+                            <AlertCircle className="w-4 h-4 shrink-0" />
+                            {rpSendError}
+                          </div>
+                        )}
+
+                        {/* DryRun結果 */}
+                        {rpSendResult && rpSendResult.dryRun && (
+                          <div className="bg-pink-50 border border-pink-200 rounded-xl p-4 space-y-3">
+                            <p className="text-xs font-semibold text-gray-600">🔍 ドライラン結果（未送信）</p>
+                            <div className="grid grid-cols-3 gap-3 text-center">
+                              <div className="bg-white rounded-lg p-2 border border-gray-100">
+                                <div className="text-lg font-bold text-pink-600">{rpSendResult.sentCount}</div>
+                                <div className="text-xs text-gray-500">送信可能</div>
+                              </div>
+                              <div className="bg-white rounded-lg p-2 border border-gray-100">
+                                <div className="text-lg font-bold text-gray-400">{rpSendResult.skippedCount}</div>
+                                <div className="text-xs text-gray-500">スキップ</div>
+                              </div>
+                              <div className="bg-white rounded-lg p-2 border border-gray-100">
+                                <div className="text-lg font-bold text-gray-700">{rpSendResult.total}</div>
+                                <div className="text-xs text-gray-500">合計</div>
+                              </div>
+                            </div>
+                            {rpSendResult.message && (
+                              <div className="text-xs text-gray-600 bg-white rounded-lg p-2 border border-gray-100">
+                                <span className="font-medium">送信テキスト: </span>{rpSendResult.message}
+                              </div>
+                            )}
+                            {/* 二段階確認 → 実送信 */}
+                            {rpSendResult.sentCount > 0 && (
+                              <div className="border-t border-pink-200 pt-3 space-y-3">
+                                <label className="flex items-center gap-2 cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={rpConfirmed}
+                                    onChange={e => setRpConfirmed(e.target.checked)}
+                                    className="w-4 h-4 text-pink-600 border-gray-300 rounded focus:ring-pink-500"
+                                  />
+                                  <span className="text-xs text-gray-700">
+                                    上記 <strong>{rpSendResult.sentCount}件</strong> にLINEメッセージを実際に送信することを確認しました
+                                  </span>
+                                </label>
+                                <button
+                                  onClick={() => runRepeatSend(false)}
+                                  disabled={!rpConfirmed || rpSending}
+                                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-pink-600 text-white rounded-lg text-sm font-medium hover:bg-pink-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm"
+                                >
+                                  {rpSending ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : null}
+                                  送信する（{rpSendResult.sentCount}件）
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {/* 実送信結果 */}
+                        {rpSendResult && !rpSendResult.dryRun && (
+                          <div className="bg-green-50 border border-green-200 rounded-xl p-4 space-y-2">
+                            <p className="text-xs font-semibold text-gray-600">✅ 送信完了</p>
+                            <div className="grid grid-cols-2 gap-3 text-center">
+                              <div className="bg-white rounded-lg p-2 border border-gray-100">
+                                <div className="text-lg font-bold text-green-600">{rpSendResult.sentCount}</div>
+                                <div className="text-xs text-gray-500">送信成功</div>
+                              </div>
+                              <div className="bg-white rounded-lg p-2 border border-gray-100">
+                                <div className="text-lg font-bold text-gray-400">{rpSendResult.skippedCount}</div>
+                                <div className="text-xs text-gray-500">スキップ</div>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             )}
