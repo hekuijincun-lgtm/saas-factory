@@ -127,6 +127,13 @@ export default function AdminSettingsClient() {
     skippedReasons?: Array<{ customerKey: string; reason: string }>;
   }
   const [rpDays, setRpDays] = useState<28 | 42 | 60 | 90>(42);
+  // J2 controls
+  const [rpMaxPerDay, setRpMaxPerDay] = useState<10 | 20 | 50 | 100>(50);
+  const [rpOrder, setRpOrder] = useState<'oldest' | 'newest'>('oldest');
+  const [rpExcludeDays, setRpExcludeDays] = useState<0 | 3 | 7 | 14 | 30>(7);
+  const [rpTodaySentCount, setRpTodaySentCount] = useState<number | null>(null);
+  const [rpRemainingCapacity, setRpRemainingCapacity] = useState<number | null>(null);
+  const [rpExcludedCount, setRpExcludedCount] = useState<number | null>(null);
   const [rpRunning, setRpRunning] = useState(false);
   const [rpTargets, setRpTargets] = useState<RepeatTarget[] | null>(null);
   const [rpError, setRpError] = useState<string | null>(null);
@@ -173,12 +180,23 @@ export default function AdminSettingsClient() {
     setRpSendResult(null);
     setRpSendError(null);
     try {
-      const res = await fetch(
-        `/api/proxy/admin/repeat-targets?tenantId=${encodeURIComponent(tenantId)}&days=${rpDays}&limit=200`
-      );
+      // J2: pass maxPerDay, order, excludeSentWithinDays params
+      const params = new URLSearchParams({
+        tenantId,
+        days: String(rpDays),
+        limit: '200',
+        maxPerDay: String(rpMaxPerDay),
+        order: rpOrder,
+        excludeSentWithinDays: String(rpExcludeDays),
+      });
+      const res = await fetch(`/api/proxy/admin/repeat-targets?${params.toString()}`);
       const json = await res.json() as any;
       if (!json.ok) throw new Error(json.error || '対象抽出失敗');
       setRpTargets(json.targets || []);
+      // J2: capture meta
+      setRpTodaySentCount(json.todaySentCount ?? null);
+      setRpRemainingCapacity(json.remainingCapacity ?? null);
+      setRpExcludedCount(json.excludedCount ?? null);
       // デフォルト: LINE可能な対象を全選択
       const lineAble = new Set<string>((json.targets as RepeatTarget[]).filter(t => t.lineUserId).map(t => t.customerKey));
       setRpSelected(lineAble);
@@ -1083,20 +1101,73 @@ export default function AdminSettingsClient() {
             </p>
 
             {/* 抽出条件 */}
-            <div className="flex items-center gap-3">
-              <label className="text-sm text-gray-600 whitespace-nowrap">最終来店から</label>
-              <select
-                value={rpDays}
-                onChange={e => { setRpDays(Number(e.target.value) as 28 | 42 | 60 | 90); setRpTargets(null); setRpSendResult(null); }}
-                className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-pink-400"
-              >
-                <option value={28}>28日以上</option>
-                <option value={42}>42日以上（6週）</option>
-                <option value={60}>60日以上</option>
-                <option value={90}>90日以上</option>
-              </select>
-              <span className="text-sm text-gray-600">経過した顧客</span>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="flex items-center gap-2">
+                <label className="text-sm text-gray-600 whitespace-nowrap">最終来店から</label>
+                <select
+                  value={rpDays}
+                  onChange={e => { setRpDays(Number(e.target.value) as 28 | 42 | 60 | 90); setRpTargets(null); setRpSendResult(null); }}
+                  className="flex-1 px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-pink-400"
+                >
+                  <option value={28}>28日以上</option>
+                  <option value={42}>42日以上（6週）</option>
+                  <option value={60}>60日以上</option>
+                  <option value={90}>90日以上</option>
+                </select>
+                <span className="text-sm text-gray-600 whitespace-nowrap">経過</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="text-sm text-gray-600 whitespace-nowrap">並び順</label>
+                <select
+                  value={rpOrder}
+                  onChange={e => { setRpOrder(e.target.value as 'oldest' | 'newest'); setRpTargets(null); }}
+                  className="flex-1 px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-pink-400"
+                >
+                  <option value="oldest">古い順（優先度高）</option>
+                  <option value="newest">新しい順</option>
+                </select>
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="text-sm text-gray-600 whitespace-nowrap">1日上限</label>
+                <select
+                  value={rpMaxPerDay}
+                  onChange={e => { setRpMaxPerDay(Number(e.target.value) as 10 | 20 | 50 | 100); setRpTargets(null); }}
+                  className="flex-1 px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-pink-400"
+                >
+                  <option value={10}>10件/日</option>
+                  <option value={20}>20件/日</option>
+                  <option value={50}>50件/日</option>
+                  <option value={100}>100件/日</option>
+                </select>
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="text-sm text-gray-600 whitespace-nowrap">除外（送信済み）</label>
+                <select
+                  value={rpExcludeDays}
+                  onChange={e => { setRpExcludeDays(Number(e.target.value) as 0 | 3 | 7 | 14 | 30); setRpTargets(null); }}
+                  className="flex-1 px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-pink-400"
+                >
+                  <option value={0}>除外なし</option>
+                  <option value={3}>3日以内</option>
+                  <option value={7}>7日以内（推奨）</option>
+                  <option value={14}>14日以内</option>
+                  <option value={30}>30日以内</option>
+                </select>
+              </div>
             </div>
+
+            {/* J2: 本日送信済み / 残余容量 */}
+            {rpTodaySentCount !== null && (
+              <div className="flex flex-wrap gap-3 text-xs text-gray-500 px-1">
+                <span>本日送信済み: <strong className="text-gray-700">{rpTodaySentCount}件</strong></span>
+                {rpRemainingCapacity !== null && (
+                  <span>本日残り: <strong className={rpRemainingCapacity > 0 ? 'text-green-600' : 'text-red-500'}>{rpRemainingCapacity}件</strong></span>
+                )}
+                {rpExcludedCount !== null && rpExcludedCount > 0 && (
+                  <span>除外済み（連投防止）: <strong className="text-orange-600">{rpExcludedCount}件</strong></span>
+                )}
+              </div>
+            )}
 
             {/* 対象抽出ボタン */}
             <button
