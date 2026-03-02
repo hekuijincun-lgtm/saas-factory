@@ -6,8 +6,10 @@ import StepMenu from './steps/StepMenu';
 import StepStaff from './steps/StepStaff';
 import StepDatetime from './steps/StepDatetime';
 import StepConfirm from './steps/StepConfirm';
+import StepSurvey from './steps/StepSurvey';
 import type { MenuItem } from '@/src/lib/bookingApi';
 import { fetchAdminSettings } from '../lib/adminApi';
+import type { EyebrowSurveyQuestion } from '@/src/types/settings';
 
 export interface BookingState {
   menuId: string | null;
@@ -20,6 +22,7 @@ export interface BookingState {
   date: string | null;
   time: string | null;
   lineUserId?: string | null;
+  surveyAnswers?: Record<string, string | boolean>;
 }
 
 export interface StaffOption {
@@ -31,7 +34,7 @@ export interface StaffOption {
 const INITIAL: BookingState = {
   menuId: null, menuName: null, menuPrice: null, menuDurationMin: null, menuStyleType: null,
   staffId: null, staffName: null, date: null, time: null,
-  lineUserId: null,
+  lineUserId: null, surveyAnswers: undefined,
 };
 
 const DEFAULT_CONSENT = '予約内容を確認し、同意の上で予約を確定します';
@@ -113,6 +116,12 @@ function StepIndicator({ labels, current }: { labels: string[]; current: number 
 
 // ============================================================
 // BookingFlow
+// Internal step numbers:
+//   1 = Menu
+//   2 = Staff (conditional: staffSelectionEnabled)
+//   3 = Datetime
+//   4 = Survey (conditional: surveyEnabled)
+//   5 = Confirm
 // ============================================================
 export default function BookingFlow() {
   const searchParams = useSearchParams();
@@ -123,18 +132,17 @@ export default function BookingFlow() {
   // lineUserId は URL param を初期値とし、マウント後に localStorage を参照して補完
   const [state, setState] = useState<BookingState>({ ...INITIAL, lineUserId: luFromUrl });
 
-  // 管理者設定（consentText, staffSelectionEnabled）
+  // 管理者設定（consentText, staffSelectionEnabled, eyebrow survey）
   const [consentText, setConsentText] = useState(DEFAULT_CONSENT);
   const [staffSelectionEnabled, setStaffSelectionEnabled] = useState(true);
+  const [surveyEnabled, setSurveyEnabled] = useState(false);
+  const [surveyQuestions, setSurveyQuestions] = useState<EyebrowSurveyQuestion[]>([]);
 
   // lineUserId: URL param を優先し、無ければ localStorage から復元（クライアントのみ）
   useEffect(() => {
     if (luFromUrl) {
-      // URL に lu があれば localStorage に保存（30日 TTL）
       saveLu(luFromUrl);
-      // state はすでに luFromUrl で初期化済みのため更新不要
     } else {
-      // URL に lu が無い場合は localStorage から復元
       const saved = loadLu();
       if (saved) {
         setState(prev => ({ ...prev, lineUserId: saved }));
@@ -148,22 +156,53 @@ export default function BookingFlow() {
       const raw = settings as any;
       if (raw.consentText) setConsentText(raw.consentText);
       if (raw.staffSelectionEnabled === false) setStaffSelectionEnabled(false);
+      if (raw.eyebrow?.surveyEnabled === true) setSurveyEnabled(true);
+      if (Array.isArray(raw.eyebrow?.surveyQuestions)) setSurveyQuestions(raw.eyebrow.surveyQuestions);
     }).catch(() => { /* fallback: default values のまま */ });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId]);
 
-  const STEP_LABELS_FULL = ['メニュー', 'スタッフ', '日時', '確認'];
-  const STEP_LABELS_NO_STAFF = ['メニュー', '日時', '確認'];
-  const stepLabels = staffSelectionEnabled ? STEP_LABELS_FULL : STEP_LABELS_NO_STAFF;
+  // ---- Step labels (visual) ----
+  // With staff + with survey:    ['メニュー', 'スタッフ', '日時', 'アンケート', '確認']
+  // With staff + no survey:      ['メニュー', 'スタッフ', '日時', '確認']
+  // No staff + with survey:      ['メニュー', '日時', 'アンケート', '確認']
+  // No staff + no survey:        ['メニュー', '日時', '確認']
+  const stepLabels = staffSelectionEnabled
+    ? surveyEnabled
+      ? ['メニュー', 'スタッフ', '日時', 'アンケート', '確認']
+      : ['メニュー', 'スタッフ', '日時', '確認']
+    : surveyEnabled
+      ? ['メニュー', '日時', 'アンケート', '確認']
+      : ['メニュー', '日時', '確認'];
 
-  const displayStep = staffSelectionEnabled
-    ? step
-    : step === 1 ? 1 : step === 3 ? 2 : step === 4 ? 3 : step;
+  // Map internal step (1-5) to visual step index for StepIndicator
+  const displayStep = (() => {
+    if (staffSelectionEnabled && surveyEnabled) {
+      // internal 1,2,3,4,5 → visual 1,2,3,4,5
+      return step;
+    } else if (staffSelectionEnabled && !surveyEnabled) {
+      // internal 1,2,3,5 → visual 1,2,3,4
+      return step === 5 ? 4 : step;
+    } else if (!staffSelectionEnabled && surveyEnabled) {
+      // internal 1,3,4,5 → visual 1,2,3,4
+      if (step === 1) return 1;
+      if (step === 3) return 2;
+      if (step === 4) return 3;
+      if (step === 5) return 4;
+      return step;
+    } else {
+      // !staff, !survey: internal 1,3,5 → visual 1,2,3
+      if (step === 1) return 1;
+      if (step === 3) return 2;
+      if (step === 5) return 3;
+      return step;
+    }
+  })();
 
   const update = (patch: Partial<BookingState>) =>
     setState(prev => ({ ...prev, ...patch }));
 
-  // reset は現在の lineUserId を引き継ぐ（ページ再読込なしにリピート予約できるように）
+  // reset は現在の lineUserId を引き継ぐ
   const reset = () => {
     setState(prev => ({ ...INITIAL, lineUserId: prev.lineUserId }));
     setStep(1);
@@ -192,15 +231,20 @@ export default function BookingFlow() {
 
   const handleDatetimeSelect = (date: string, time: string) => {
     update({ date, time });
-    setStep(4);
+    setStep(surveyEnabled ? 4 : 5);
   };
 
   const handleBackFromDatetime = () => {
     setStep(staffSelectionEnabled ? 2 : 1);
   };
-  const handleBackFromConfirm = () => {
+  const handleBackFromSurvey = () => {
     setStep(3);
   };
+  const handleBackFromConfirm = () => {
+    setStep(surveyEnabled ? 4 : 3);
+  };
+
+  const enabledSurveyQuestions = surveyQuestions.filter(q => q.enabled);
 
   return (
     <div>
@@ -219,12 +263,23 @@ export default function BookingFlow() {
           onBack={handleBackFromDatetime}
         />
       )}
-      {step === 4 && (
+      {step === 4 && surveyEnabled && (
+        <StepSurvey
+          questions={enabledSurveyQuestions}
+          answers={state.surveyAnswers ?? {}}
+          onAnswer={(id, value) => update({ surveyAnswers: { ...state.surveyAnswers, [id]: value } })}
+          onNext={() => setStep(5)}
+          onBack={handleBackFromSurvey}
+        />
+      )}
+      {step === 5 && (
         <StepConfirm
           booking={state}
           onBack={handleBackFromConfirm}
           onDone={reset}
           consentText={consentText}
+          surveyQuestions={enabledSurveyQuestions}
+          tenantId={tenantId}
         />
       )}
     </div>

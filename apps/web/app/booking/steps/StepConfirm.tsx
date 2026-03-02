@@ -3,15 +3,28 @@
 import { useRef, useState } from 'react';
 import { createReservation } from '@/src/lib/bookingApi';
 import type { BookingState } from '../BookingFlow';
+import type { EyebrowSurveyQuestion } from '@/src/types/settings';
 
 interface Props {
   booking: BookingState;
   onBack: () => void;
   onDone: () => void;
   consentText?: string;
+  surveyQuestions?: EyebrowSurveyQuestion[];
+  tenantId?: string;
 }
 
 const DEFAULT_CONSENT = '予約内容を確認し、同意の上で予約を確定します';
+const CUSTOMER_KEY_TTL_MS = 90 * 24 * 60 * 60 * 1000; // 90 days
+
+function saveCustomerKey(tenantId: string, key: string): void {
+  try {
+    localStorage.setItem(
+      `booking_ck_${tenantId}`,
+      JSON.stringify({ v: key, exp: Date.now() + CUSTOMER_KEY_TTL_MS })
+    );
+  } catch { /* ignore */ }
+}
 
 /** 409 duplicate_slot など raw エラーコードをユーザー向け日本語に変換 */
 function mapError(msg: string): string {
@@ -30,7 +43,19 @@ function Row({ label, value }: { label: string; value: string }) {
   );
 }
 
-function SuccessScreen({ booking, onDone }: { booking: BookingState; onDone: () => void }) {
+function SuccessScreen({
+  booking,
+  onDone,
+  tenantId,
+}: {
+  booking: BookingState;
+  onDone: () => void;
+  tenantId: string;
+}) {
+  const handleViewList = () => {
+    window.location.href = `/booking/reservations?tenantId=${encodeURIComponent(tenantId)}`;
+  };
+
   return (
     <div className="text-center space-y-4 py-8">
       <div className="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center mx-auto">
@@ -40,17 +65,25 @@ function SuccessScreen({ booking, onDone }: { booking: BookingState; onDone: () 
       <p className="text-sm text-brand-muted">
         {booking.date} {booking.time} に予約を承りました。
       </p>
-      <button
-        onClick={onDone}
-        className="mt-4 px-6 py-3 bg-brand-primary text-white rounded-xl font-medium hover:shadow-md transition-all"
-      >
-        最初に戻る
-      </button>
+      <div className="flex flex-col gap-3 mt-4">
+        <button
+          onClick={handleViewList}
+          className="px-6 py-3 bg-brand-primary text-white rounded-xl font-medium hover:shadow-md transition-all"
+        >
+          予約一覧を見る
+        </button>
+        <button
+          onClick={onDone}
+          className="px-6 py-3 border border-brand-border text-brand-muted rounded-xl font-medium hover:text-brand-text transition-colors"
+        >
+          最初に戻る
+        </button>
+      </div>
     </div>
   );
 }
 
-export default function StepConfirm({ booking, onBack, onDone, consentText }: Props) {
+export default function StepConfirm({ booking, onBack, onDone, consentText, surveyQuestions, tenantId }: Props) {
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
@@ -62,14 +95,15 @@ export default function StepConfirm({ booking, onBack, onDone, consentText }: Pr
   // 二重送信防止用フラグ（React の state 非同期更新を補完する ref ガード）
   const submittingRef = useRef(false);
 
+  const resolvedTenantId = tenantId || 'default';
+
   if (done) {
-    return <SuccessScreen booking={booking} onDone={onDone} />;
+    return <SuccessScreen booking={booking} onDone={onDone} tenantId={resolvedTenantId} />;
   }
 
   const canSubmit = name.trim().length > 0 && agreed && !loading;
 
   const handleSubmit = async () => {
-    // ref ガード: 連打・二重発火を完全に防止
     if (submittingRef.current) return;
     if (!booking.date || !booking.time || !name.trim()) return;
     if (!canSubmit) return;
@@ -79,13 +113,18 @@ export default function StepConfirm({ booking, onBack, onDone, consentText }: Pr
     setError(null);
     setIsDuplicate(false);
     try {
-      // meta: menuStyleType があれば verticalData + eyebrowDesign 両方に付与（P5 並列書き込み）
       const metaPayload: Record<string, any> = {};
       if (booking.menuStyleType) {
-        metaPayload.verticalData  = { styleType: booking.menuStyleType }; // P5: 新形式
-        metaPayload.eyebrowDesign = { styleType: booking.menuStyleType }; // 旧形式（後方互換）
+        metaPayload.verticalData  = { styleType: booking.menuStyleType };
+        metaPayload.eyebrowDesign = { styleType: booking.menuStyleType };
       }
-      await createReservation({
+      if (booking.menuName) {
+        metaPayload.menuName = booking.menuName;
+      }
+      if (booking.surveyAnswers && Object.keys(booking.surveyAnswers).length > 0) {
+        metaPayload.surveyAnswers = booking.surveyAnswers;
+      }
+      const res = await createReservation({
         date: booking.date,
         time: booking.time,
         name: name.trim(),
@@ -96,6 +135,10 @@ export default function StepConfirm({ booking, onBack, onDone, consentText }: Pr
         lineUserId: booking.lineUserId ?? undefined,
         ...(Object.keys(metaPayload).length > 0 ? { meta: metaPayload } : {}),
       });
+      // save customerKey to localStorage for reservation list lookup
+      if (res.customerKey) {
+        saveCustomerKey(resolvedTenantId, res.customerKey);
+      }
       setDone(true);
     } catch (e: unknown) {
       const raw = e instanceof Error ? e.message : '予約に失敗しました';
@@ -109,6 +152,8 @@ export default function StepConfirm({ booking, onBack, onDone, consentText }: Pr
   };
 
   const displayConsent = consentText || DEFAULT_CONSENT;
+  const enabledQuestions = (surveyQuestions ?? []).filter(q => q.enabled);
+  const answers = booking.surveyAnswers ?? {};
 
   return (
     <div className="space-y-5">
@@ -144,6 +189,28 @@ export default function StepConfirm({ booking, onBack, onDone, consentText }: Pr
           }
         />
       </div>
+
+      {/* Survey answers summary */}
+      {enabledQuestions.length > 0 && (
+        <div className="bg-brand-bg rounded-2xl p-4">
+          <p className="text-xs font-medium text-brand-muted mb-2">事前アンケート回答</p>
+          <div className="space-y-1.5">
+            {enabledQuestions.map(q => {
+              const val = answers[q.id];
+              const display =
+                q.type === 'checkbox'
+                  ? (val ? 'はい' : 'いいえ')
+                  : (typeof val === 'string' && val.trim() ? val : '（未回答）');
+              return (
+                <div key={q.id} className="text-sm">
+                  <span className="text-brand-muted">{q.label}：</span>
+                  <span className="text-brand-text">{display}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Customer info */}
       <div className="space-y-4">

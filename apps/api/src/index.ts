@@ -2485,7 +2485,7 @@ async function upsertCustomer(
       .catch((e: any) => console.error("[RESERVE_META] error:", String(e?.message ?? e)));
   }
 
-  return c.json({ ok:true, id: rid, tenantId, staffId, startAt, endAt })
+  return c.json({ ok:true, id: rid, tenantId, staffId, startAt, endAt, ...(customerKey ? { customerKey } : {}) })
   } finally {
     // best-effort unlock
     await stub.fetch("https://slotlock/unlock", {
@@ -2532,6 +2532,52 @@ async function queue(batch: MessageBatch<unknown>): Promise<void> {
     msg.ack();
   }
 }
+
+// ============================================================
+// GET /my/reservations — 顧客向け予約一覧（customerKey で照合）
+// ============================================================
+app.get("/my/reservations", async (c) => {
+  const tenantId = getTenantId(c);
+  const customerKey = c.req.query("customerKey");
+  if (!customerKey || customerKey.trim().length < 4) {
+    return c.json({ ok: false, error: "missing_customerKey" }, 400);
+  }
+  const db = (c.env as any).DB;
+  if (!db) return c.json({ ok: false, error: "DB_not_bound" }, 500);
+  try {
+    const q = await db.prepare(
+      `SELECT id, slot_start, start_at, end_at, duration_minutes, customer_name, staff_id, status, meta
+       FROM reservations
+       WHERE tenant_id = ?
+         AND json_extract(meta, '$.customerKey') = ?
+         AND status != 'cancelled'
+       ORDER BY start_at DESC
+       LIMIT 20`
+    ).bind(tenantId, customerKey.trim()).all();
+    const rows: any[] = q.results || [];
+    const reservations = rows.map((r: any) => {
+      const slotStr = String(r.slot_start || r.start_at || "");
+      const dtMatch = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/.exec(slotStr);
+      let meta: any = undefined;
+      if (r.meta) { try { meta = JSON.parse(r.meta); } catch { /* ignore */ } }
+      return {
+        reservationId: r.id,
+        date: dtMatch ? dtMatch[1] : "",
+        time: dtMatch ? dtMatch[2] : "",
+        name: r.customer_name ?? "",
+        staffId: r.staff_id ?? "any",
+        durationMin: r.duration_minutes ?? 60,
+        status: r.status ?? "active",
+        menuName: meta?.menuName ?? undefined,
+        surveyAnswers: meta?.surveyAnswers ?? undefined,
+      };
+    });
+    return c.json({ ok: true, tenantId, reservations });
+  } catch (e: any) {
+    console.error("[MY_RESERVATIONS]", String(e?.message ?? e));
+    return c.json({ ok: false, error: "db_error" }, 500);
+  }
+});
 
 export default { fetch: app.fetch, queue, scheduled };
 

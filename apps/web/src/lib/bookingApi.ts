@@ -36,6 +36,19 @@ export interface ReservationResponse {
   date: string;
   time: string;
   name: string;
+  customerKey?: string; // API generated key for reservation list lookup
+}
+
+export interface MyReservation {
+  reservationId: string;
+  date: string;
+  time: string;
+  name: string;
+  staffId: string;
+  durationMin: number;
+  status: string;
+  menuName?: string;
+  surveyAnswers?: Record<string, string | boolean>;
 }
 
 export interface ReservationMeta {
@@ -261,6 +274,29 @@ export async function getReservations(date: string): Promise<ReservationsRespons
       throw error;
     }
     throw new ApiClientError('Failed to fetch reservations');
+  }
+}
+
+/**
+ * GET /my/reservations — 顧客向け予約一覧
+ */
+export async function getMyReservations(
+  tenantId: string,
+  customerKey: string
+): Promise<MyReservation[]> {
+  try {
+    const params = new URLSearchParams({ tenantId, customerKey });
+    const res = await fetch(`/api/proxy/my/reservations?${params.toString()}`, {
+      method: 'GET',
+      headers: { accept: 'application/json' },
+      cache: 'no-store',
+    });
+    const data = await res.json() as any;
+    if (!data.ok) throw new ApiClientError(data.error || 'Failed to fetch my reservations', res.status);
+    return (data.reservations || []) as MyReservation[];
+  } catch (error) {
+    if (error instanceof ApiClientError) throw error;
+    throw new ApiClientError('Failed to fetch my reservations');
   }
 }
 
