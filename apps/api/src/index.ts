@@ -731,6 +731,34 @@ app.get('/slots__legacy', async (c) => {
 });app.get("/ping", (c) => c.text("pong"));
 
 /** =========================
+ * GET /media/menu/* — R2 から画像を公開配信（認証不要）
+ * path 例: /media/menu/menu-images/default/menu_xxx/1234567890-abc123.jpg
+ * Cache-Control: public, max-age=31536000, immutable（key が変わる運用なのでOK）
+ * ========================= */
+app.get("/media/menu/*", async (c) => {
+  try {
+    const r2 = (c.env as any).MENU_IMAGES;
+    if (!r2) return new Response("R2 not configured", { status: 503 });
+
+    const url = new URL(c.req.url);
+    const imageKey = decodeURIComponent(url.pathname.replace(/^\/media\/menu\//, ""));
+    if (!imageKey) return new Response("Not Found", { status: 404 });
+
+    const obj = await r2.get(imageKey);
+    if (!obj) return new Response("Not Found", { status: 404 });
+
+    const headers = new Headers();
+    headers.set("Content-Type", obj.httpMetadata?.contentType ?? "image/jpeg");
+    headers.set("Cache-Control", "public, max-age=31536000, immutable");
+    if (obj.etag) headers.set("ETag", `"${obj.etag}"`);
+    headers.set("Access-Control-Allow-Origin", "*");
+    return new Response(obj.body, { status: 200, headers });
+  } catch (err: any) {
+    return new Response("Server Error", { status: 500 });
+  }
+});
+
+/** =========================
  * DO debug
  * ========================= */
 // ✅ DO 生存確認: /__debug/do?name=abc
@@ -778,6 +806,52 @@ app.get("/admin/menu", async (c) => {
     return c.json({ ok: true, tenantId, data: defaultMenu() });
   } catch (error) {
     return c.json({ ok: false, error: "Failed to fetch menu", message: String(error) }, 500);
+  }
+});
+
+/** =========================
+ * POST /admin/menu/image?tenantId=&menuId=
+ * multipart/form-data  field: file (image/*)
+ * 3MB 制限。R2 にアップロードして { imageKey, imageUrl } を返す。
+ * imageKey: menu-images/{tenantId}/{menuId}/{ts}-{rand}.{ext}
+ * imageUrl: Workers 自身の origin + /media/menu/{imageKey}
+ * ========================= */
+app.post("/admin/menu/image", async (c) => {
+  try {
+    const tenantId = getTenantId(c);
+    const menuId = (c.req.query("menuId") || "new").replace(/[^a-zA-Z0-9_\-]/g, "_");
+    const r2 = (c.env as any).MENU_IMAGES;
+    if (!r2) return c.json({ ok: false, error: "R2_not_bound" }, 500);
+
+    const formData = await c.req.formData().catch(() => null);
+    if (!formData) return c.json({ ok: false, error: "invalid_form_data" }, 400);
+
+    const file = formData.get("file") as File | null;
+    if (!file) return c.json({ ok: false, error: "missing_file_field" }, 400);
+
+    if (file.size > 3 * 1024 * 1024) {
+      return c.json({ ok: false, error: "file_too_large", maxBytes: 3145728 }, 413);
+    }
+
+    const contentType = file.type || "application/octet-stream";
+    if (!contentType.startsWith("image/")) {
+      return c.json({ ok: false, error: "invalid_file_type", got: contentType }, 400);
+    }
+
+    const ext = (file.name.split(".").pop() ?? "jpg").toLowerCase().replace(/[^a-z0-9]/g, "") || "jpg";
+    const rand = Math.random().toString(36).slice(2, 9);
+    const imageKey = `menu-images/${tenantId}/${menuId}/${Date.now()}-${rand}.${ext}`;
+
+    const buf = await file.arrayBuffer();
+    await r2.put(imageKey, buf, { httpMetadata: { contentType } });
+
+    const reqUrl = new URL(c.req.url);
+    const apiBase = `${reqUrl.protocol}//${reqUrl.host}`;
+    const imageUrl = `${apiBase}/media/menu/${imageKey}`;
+
+    return c.json({ ok: true, tenantId, menuId, imageKey, imageUrl });
+  } catch (err: any) {
+    return c.json({ ok: false, error: "upload_failed", message: String(err?.message ?? err) }, 500);
   }
 });
 
@@ -831,6 +905,15 @@ app.post("/admin/menu", async (c) => {
       };
       if (eyebrow !== undefined) updated.eyebrow = eyebrow;
       else if ('eyebrow' in body && body.eyebrow === null) delete updated.eyebrow;
+      // imageKey/imageUrl: optional 画像フィールド
+      if (body.imageKey != null) {
+        if (body.imageKey) updated.imageKey = String(body.imageKey);
+        else delete updated.imageKey;
+      }
+      if (body.imageUrl != null) {
+        if (body.imageUrl) updated.imageUrl = String(body.imageUrl);
+        else delete updated.imageUrl;
+      }
       menu[existingIdx] = updated;
       await kv.put(key, JSON.stringify(menu));
       return c.json({ ok: true, tenantId, data: updated });
@@ -846,6 +929,8 @@ app.post("/admin/menu", async (c) => {
       sortOrder: sortOrder !== undefined ? sortOrder : menu.length,
     };
     if (eyebrow !== undefined) newItem.eyebrow = eyebrow;
+    if (body.imageKey) newItem.imageKey = String(body.imageKey);
+    if (body.imageUrl) newItem.imageUrl = String(body.imageUrl);
     menu.push(newItem);
     await kv.put(key, JSON.stringify(menu));
 
@@ -879,6 +964,15 @@ app.patch("/admin/menu/:id", async (c) => {
     if (body.eyebrow !== undefined) {
       if (body.eyebrow === null) delete updated.eyebrow;
       else updated.eyebrow = body.eyebrow;
+    }
+    // imageKey/imageUrl: optional 画像フィールド
+    if (body.imageKey !== undefined) {
+      if (!body.imageKey) delete updated.imageKey;
+      else updated.imageKey = String(body.imageKey);
+    }
+    if (body.imageUrl !== undefined) {
+      if (!body.imageUrl) delete updated.imageUrl;
+      else updated.imageUrl = String(body.imageUrl);
     }
     menu[idx] = updated;
     await kv.put(key, JSON.stringify(menu));

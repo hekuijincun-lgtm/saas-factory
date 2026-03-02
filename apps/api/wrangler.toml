@@ -8,6 +8,12 @@ binding = "SAAS_FACTORY"
 id = "b3bde2eb54cc4e91a69998c89f948b18"
 preview_id = "32db8ae0d1fb42fb93b03725997da00a"
 
+# ===== R2 (メニュー画像) =====
+[[r2_buckets]]
+binding = "MENU_IMAGES"
+bucket_name = "saas-factory-menu-images"
+preview_bucket_name = "saas-factory-menu-images"
+
 # ===== Durable Object =====
 [durable_objects]
 bindings = [
@@ -65,6 +71,11 @@ binding = "SAAS_FACTORY"
 id = "b3bde2eb54cc4e91a69998c89f948b18"
 preview_id = "32db8ae0d1fb42fb93b03725997da00a"
 
+[[env.staging.r2_buckets]]
+binding = "MENU_IMAGES"
+bucket_name = "saas-factory-menu-images"
+preview_bucket_name = "saas-factory-menu-images"
+
 [env.staging.durable_objects]
 bindings = [
   { name = "SLOT_LOCK", class_name = "SlotLock" }
@@ -107,6 +118,11 @@ preview_id = "32db8ae0d1fb42fb93b03725997da00a"
 bindings = [
   { name = "SLOT_LOCK", class_name = "SlotLock" }
 ]
+
+[[env.production.r2_buckets]]
+binding = "MENU_IMAGES"
+bucket_name = "saas-factory-menu-images"
+preview_bucket_name = "saas-factory-menu-images"
 
 [[migrations]]
 tag = "v1-sqlite-do"
