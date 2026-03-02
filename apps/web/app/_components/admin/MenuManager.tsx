@@ -1,41 +1,49 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { getMenu, createMenuItem, updateMenuItem, deleteMenuItem, type MenuItem, type MenuItemEyebrow } from '@/src/lib/bookingApi';
 import { ApiClientError } from '@/src/lib/apiClient';
 import Card from '../ui/Card';
 import DataTable from '../ui/DataTable';
 import Badge from '../ui/Badge';
-import { Plus, Edit2, Trash2, Scissors } from 'lucide-react';
+import { Plus, Edit2, Trash2, Scissors, ImageIcon, X } from 'lucide-react';
 
 export default function MenuManager({ tenantId: tenantIdProp }: { tenantId?: string }) {
   // tenantId (safe): read from query string, fallback to "default"
   const tenantId = tenantIdProp ?? (typeof window !== "undefined"
       ? (new URLSearchParams(window.location.search).get("tenantId") || undefined)
       : undefined) ?? "default";
-const [menuList, setMenuList] = useState<MenuItem[]>([]);
-const [loading, setLoading] = useState<boolean>(false);
-const [error, setError] = useState<string | null>(null);
-const [showModal, setShowModal] = useState<boolean>(false);
-const [editingItem, setEditingItem] = useState<MenuItem | null>(null);
-const [formData, setFormData] = useState<{
-  name: string; price: string; durationMin: string; active: boolean; sortOrder: number;
-  eyebrow: MenuItemEyebrow;
-}>({
-  name: '',
-  price: '0',
-  durationMin: '60',
-  active: true,
-  sortOrder: 0,
-  eyebrow: { firstTimeOnly: false, genderTarget: 'both', styleType: undefined },
-});
+
+  const [menuList, setMenuList] = useState<MenuItem[]>([]);
+  const [loading, setLoading] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
+  const [showModal, setShowModal] = useState<boolean>(false);
+  const [editingItem, setEditingItem] = useState<MenuItem | null>(null);
+  const [formData, setFormData] = useState<{
+    name: string; price: string; durationMin: string; active: boolean; sortOrder: number;
+    eyebrow: MenuItemEyebrow;
+    imageKey?: string;
+    imageUrl?: string;
+  }>({
+    name: '',
+    price: '0',
+    durationMin: '60',
+    active: true,
+    sortOrder: 0,
+    eyebrow: { firstTimeOnly: false, genderTarget: 'both', styleType: undefined },
+  });
+
+  // 画像アップロード用
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const fetchMenu = async () => {
     setLoading(true);
     setError(null);
     try {
-            const tenantId = tenantIdProp ?? new URLSearchParams(window.location.search).get('tenantId') ?? 'default';
-      const menu = await getMenu(tenantId);      // 配列 or { data: [...] } の両対応
+      const tenantId = tenantIdProp ?? new URLSearchParams(window.location.search).get('tenantId') ?? 'default';
+      const menu = await getMenu(tenantId);
       const items = Array.isArray(menu)
         ? menu
         : Array.isArray((menu as any)?.data)
@@ -46,7 +54,8 @@ const [formData, setFormData] = useState<{
         setMenuList([]);
       } else {
         setMenuList(items);
-      }} catch (err) {
+      }
+    } catch (err) {
       const errorMessage =
         err instanceof ApiClientError
           ? err.message
@@ -54,7 +63,7 @@ const [formData, setFormData] = useState<{
             ? err.message
             : 'Failed to fetch menu';
       setError(errorMessage);
-      setMenuList([]); // エラー時は空配列にフォールバック
+      setMenuList([]);
     } finally {
       setLoading(false);
     }
@@ -64,14 +73,30 @@ const [formData, setFormData] = useState<{
     fetchMenu();
   }, []);
 
+  const resetImageState = () => {
+    if (imagePreviewUrl && imagePreviewUrl.startsWith('blob:')) {
+      URL.revokeObjectURL(imagePreviewUrl);
+    }
+    setImageFile(null);
+    setImagePreviewUrl(null);
+  };
+
   const handleCreate = () => {
     setEditingItem(null);
-    setFormData({ name: '', price: '0', durationMin: '60', active: true, sortOrder: menuList.length, eyebrow: { firstTimeOnly: false, genderTarget: 'both', styleType: undefined } });
+    resetImageState();
+    setFormData({
+      name: '', price: '0', durationMin: '60', active: true,
+      sortOrder: menuList.length,
+      eyebrow: { firstTimeOnly: false, genderTarget: 'both', styleType: undefined },
+    });
     setShowModal(true);
   };
 
   const handleEdit = (item: MenuItem) => {
     setEditingItem(item);
+    resetImageState();
+    // 既存画像があればプレビューに表示（blob URL ではなく imageUrl をそのまま使う）
+    setImagePreviewUrl(item.imageUrl ?? null);
     setFormData({
       name: item.name,
       price: String(item.price),
@@ -83,81 +108,114 @@ const [formData, setFormData] = useState<{
         genderTarget: item.eyebrow?.genderTarget ?? 'both',
         styleType: item.eyebrow?.styleType,
       },
+      imageKey: item.imageKey,
+      imageUrl: item.imageUrl,
     });
     setShowModal(true);
   };
 
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0] ?? null;
+    if (imagePreviewUrl && imagePreviewUrl.startsWith('blob:')) {
+      URL.revokeObjectURL(imagePreviewUrl);
+    }
+    setImageFile(file);
+    setImagePreviewUrl(file ? URL.createObjectURL(file) : (formData.imageUrl ?? null));
+  };
+
+  const handleClearImage = () => {
+    if (fileInputRef.current) fileInputRef.current.value = '';
+    resetImageState();
+    setFormData(prev => ({ ...prev, imageKey: undefined, imageUrl: undefined }));
+  };
+
   const handleSubmit = async () => {
-  if (!formData.name.trim()) {
-    setError('メニュー名は必須です');
-    return;
-  }
-  if (Number(formData.price) < 0) {
-    setError('価格は0以上である必要があります');
-    return;
-  }
-  if (Number(formData.durationMin) <= 0) {
-    setError('所要時間は1分以上である必要があります');
-    return;
-  }
-
-  setLoading(true);
-  setError(null);
-
-  try {
-    let saved: any;
-
-    if (editingItem) {
-      const id = editingItem.id;
-      saved = await updateMenuItem(id, {
-        name: formData.name.trim(),
-        price: Number(formData.price),
-        durationMin: Number(formData.durationMin),
-        active: formData.active,
-        sortOrder: formData.sortOrder,
-        eyebrow: formData.eyebrow,
-      });
-    } else {
-      saved = await createMenuItem({
-        name: formData.name.trim(),
-        price: Number(formData.price),
-        durationMin: Number(formData.durationMin),
-        active: formData.active,
-        sortOrder: formData.sortOrder,
-        eyebrow: formData.eyebrow,
-      });
+    if (!formData.name.trim()) {
+      setError('メニュー名は必須です');
+      return;
+    }
+    if (Number(formData.price) < 0) {
+      setError('価格は0以上である必要があります');
+      return;
+    }
+    if (Number(formData.durationMin) <= 0) {
+      setError('所要時間は1分以上である必要があります');
+      return;
     }
 
-    // API が MenuItem を返す場合 / { ok, data } を返す場合の両対応
-    const item = (saved && (saved as any).data) ? (saved as any).data : saved;
-    if (item && item.id) {
-      setMenuList(prev => {
-        const idx = prev.findIndex(x => x.id === item.id);
-        if (idx >= 0) {
-          const next = prev.slice();
-          next[idx] = { ...prev[idx], ...item };
-          return next;
+    setLoading(true);
+    setError(null);
+
+    try {
+      let imageKey = formData.imageKey;
+      let imageUrl = formData.imageUrl;
+
+      // 新しい画像ファイルが選択されていればアップロード先行
+      if (imageFile) {
+        const menuId = editingItem?.id ?? `new-${Date.now()}`;
+        const fd = new FormData();
+        fd.append('file', imageFile);
+        const uploadRes = await fetch(
+          `/api/proxy/admin/menu/image?tenantId=${encodeURIComponent(tenantId)}&menuId=${encodeURIComponent(menuId)}`,
+          { method: 'POST', body: fd }
+        );
+        if (!uploadRes.ok) {
+          const errData = await uploadRes.json().catch(() => ({}));
+          throw new Error((errData as any).error ?? `画像アップロードに失敗しました (${uploadRes.status})`);
         }
-        return [...prev, item];
-      });
-    } else {
-      // 念のため: 形が予想外なら再取得にフォールバック（でも基本ここには来ない）
-      await fetchMenu();
-    }
+        const uploadData = await uploadRes.json() as { ok: boolean; imageKey: string; imageUrl: string };
+        imageKey = uploadData.imageKey;
+        imageUrl = uploadData.imageUrl;
+      }
 
-    setShowModal(false);
-  } catch (err) {
-    const errorMessage =
-      err instanceof ApiClientError
-        ? err.message
-        : err instanceof Error
+      const itemPayload = {
+        name: formData.name.trim(),
+        price: Number(formData.price),
+        durationMin: Number(formData.durationMin),
+        active: formData.active,
+        sortOrder: formData.sortOrder,
+        eyebrow: formData.eyebrow,
+        ...(imageKey ? { imageKey, imageUrl } : {}),
+      };
+
+      let saved: any;
+      if (editingItem) {
+        saved = await updateMenuItem(editingItem.id, itemPayload);
+      } else {
+        saved = await createMenuItem(itemPayload);
+      }
+
+      // API が MenuItem を返す場合 / { ok, data } を返す場合の両対応
+      const item = (saved && (saved as any).data) ? (saved as any).data : saved;
+      if (item && item.id) {
+        setMenuList(prev => {
+          const idx = prev.findIndex(x => x.id === item.id);
+          if (idx >= 0) {
+            const next = prev.slice();
+            next[idx] = { ...prev[idx], ...item };
+            return next;
+          }
+          return [...prev, item];
+        });
+      } else {
+        await fetchMenu();
+      }
+
+      resetImageState();
+      setShowModal(false);
+    } catch (err) {
+      const errorMessage =
+        err instanceof ApiClientError
           ? err.message
-          : 'Failed to save menu item';
-    setError(errorMessage);
-  } finally {
-    setLoading(false);
-  }
-};
+          : err instanceof Error
+            ? err.message
+            : 'Failed to save menu item';
+      setError(errorMessage);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleToggleActive = async (item: MenuItem) => {
     setLoading(true);
     setError(null);
@@ -177,20 +235,11 @@ const [formData, setFormData] = useState<{
     }
   };
 
-  const handleDelete = async (id: string, name?: string) => {
-    // ✅ 最小: state 触らずに削除だけ。失敗したら alert でOK（まず動かす）
+  const handleDelete = async (id: string) => {
     try {
       await deleteMenuItem(tenantId, id);
-
-
-      
-
       await fetchMenu();
-// UI: remove immediately
       setMenuList(prev => prev.filter(x => x?.id !== id));
-      // 再取得関数がこのファイルに無い/名前が違うので、
-      // まずはローカルから消して即反映させる（確実）
-      setMenuList((prev) => prev.filter((x) => x.id !== id));
     } catch (err) {
       const msg =
         err instanceof ApiClientError ? err.message :
@@ -200,7 +249,7 @@ const [formData, setFormData] = useState<{
     }
   };
 
-return(
+  return (
     <div className="space-y-6">
       <div className="flex justify-end mb-6">
         <button
@@ -226,8 +275,21 @@ return(
           </div>
         ) : (
           <DataTable
-            headers={['メニュー名', '価格', '所要時間', '状態', '操作']}
+            headers={['', 'メニュー名', '価格', '所要時間', '状態', '操作']}
             rows={menuList.map((item) => [
+              /* サムネイル */
+              item.imageUrl ? (
+                <img
+                  key="thumb"
+                  src={item.imageUrl}
+                  alt={item.name}
+                  className="w-10 h-10 rounded-lg object-cover"
+                />
+              ) : (
+                <div key="thumb-placeholder" className="w-10 h-10 rounded-lg bg-gray-100 flex items-center justify-center">
+                  <ImageIcon className="w-4 h-4 text-gray-400" />
+                </div>
+              ),
               item.name,
               `¥${item.price.toLocaleString()}`,
               `${item.durationMin}分`,
@@ -242,14 +304,13 @@ return(
                 >
                   <Edit2 className="w-4 h-4" />
                 </button>
-                
-          <button
-            onClick={() => handleDelete(item.id, item.name)}
-            className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-all"
-            title="削除"
-          >
-            <Trash2 className="w-4 h-4" />
-          </button>
+                <button
+                  onClick={() => handleDelete(item.id)}
+                  className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-all"
+                  title="削除"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
               </div>,
             ])}
           />
@@ -259,11 +320,15 @@ return(
       {/* モーダル */}
       {showModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setShowModal(false)}>
-          <div className="bg-white rounded-2xl shadow-soft max-w-md w-full p-6 space-y-4" onClick={(e) => e.stopPropagation()}>
+          <div
+            className="bg-white rounded-2xl shadow-soft max-w-md w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
             <h2 className="text-xl font-semibold text-brand-text">
               {editingItem ? 'メニューを編集' : 'メニューを追加'}
             </h2>
 
+            {/* メニュー名 */}
             <div>
               <label className="block text-sm font-medium text-brand-text mb-2">メニュー名 *</label>
               <input
@@ -275,6 +340,7 @@ return(
               />
             </div>
 
+            {/* 価格 */}
             <div>
               <label className="block text-sm font-medium text-brand-text mb-2">価格 *</label>
               <input
@@ -287,6 +353,7 @@ return(
               />
             </div>
 
+            {/* 所要時間 */}
             <div>
               <label className="block text-sm font-medium text-brand-text mb-2">所要時間（分） *</label>
               <input
@@ -299,6 +366,7 @@ return(
               />
             </div>
 
+            {/* 有効チェック */}
             <div className="flex items-center gap-2">
               <input
                 type="checkbox"
@@ -308,6 +376,54 @@ return(
                 className="w-4 h-4 text-brand-primary border-brand-border rounded focus:ring-brand-primary"
               />
               <label htmlFor="active" className="text-sm text-brand-text">有効</label>
+            </div>
+
+            {/* 画像アップロード */}
+            <div className="border-t border-gray-100 pt-4">
+              <div className="flex items-center gap-2 mb-3">
+                <ImageIcon className="w-4 h-4 text-blue-500" />
+                <span className="text-sm font-medium text-gray-700">メニュー画像</span>
+                <span className="text-xs text-gray-400">（3MB以内、任意）</span>
+              </div>
+
+              {/* プレビュー */}
+              {imagePreviewUrl ? (
+                <div className="relative w-24 h-24 mb-3">
+                  <img
+                    src={imagePreviewUrl}
+                    alt="preview"
+                    className="w-24 h-24 rounded-xl object-cover border border-gray-200"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleClearImage}
+                    className="absolute -top-2 -right-2 w-6 h-6 bg-red-500 text-white rounded-full flex items-center justify-center hover:bg-red-600 transition-colors"
+                    title="画像を削除"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
+              ) : (
+                <div className="w-24 h-24 rounded-xl bg-gray-50 border-2 border-dashed border-gray-200 flex items-center justify-center mb-3">
+                  <ImageIcon className="w-8 h-8 text-gray-300" />
+                </div>
+              )}
+
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                onChange={handleFileChange}
+                className="hidden"
+                id="menu-image-input"
+              />
+              <label
+                htmlFor="menu-image-input"
+                className="inline-flex items-center gap-2 px-3 py-2 text-sm bg-gray-50 border border-gray-200 rounded-lg cursor-pointer hover:bg-gray-100 transition-colors"
+              >
+                <ImageIcon className="w-4 h-4 text-gray-500" />
+                {imagePreviewUrl ? '画像を変更' : '画像を選択'}
+              </label>
             </div>
 
             {/* 眉毛設定セクション */}
@@ -389,19 +505,3 @@ return(
     </div>
   );
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

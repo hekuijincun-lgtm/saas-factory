@@ -121,6 +121,8 @@ export interface MenuItem {
   active: boolean;
   sortOrder: number;
   eyebrow?: MenuItemEyebrow;  // 眉毛特化属性（optional）
+  imageKey?: string;          // R2 object key (P1)
+  imageUrl?: string;          // 公開URL
 }
 
 export interface AdminSettings {
