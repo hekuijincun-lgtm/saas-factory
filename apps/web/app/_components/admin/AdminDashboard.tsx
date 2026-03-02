@@ -35,6 +35,7 @@ interface EyebrowKpi {
   repeatCustomers: number;
   repeatConversionRate: number | null;
   avgRepeatIntervalDays: number | null;
+  missingCustomerKeyCount?: number;
   staffCounts: Record<string, number>;
 }
 
@@ -168,6 +169,12 @@ export default function AdminDashboard() {
                 <div className="text-xs text-gray-500 mt-1">総予約数<br/>（90日）</div>
               </div>
             </div>
+            {/* 顧客キー未設定件数（精度注記） */}
+            {(eyebrowKpi.missingCustomerKeyCount ?? 0) > 0 && (
+              <div className="mt-3 px-3 py-2 bg-yellow-50 border border-yellow-200 rounded-lg text-xs text-yellow-700">
+                ⚠ 顧客キー未設定の予約が <strong>{eyebrowKpi.missingCustomerKeyCount}件</strong> あります。バックフィルを実行するとKPI精度が向上します。
+              </div>
+            )}
             {/* スタッフ別件数 */}
             {Object.keys(eyebrowKpi.staffCounts).length > 0 && (
               <div className="mt-4 pt-4 border-t border-gray-100">

@@ -1132,27 +1132,37 @@ app.get("/admin/kpi", async (c) => {
       totalReservations += r.cnt;
     }
 
-    // 2) リピート転換率: customer_id でグループし2回以上来店の割合
+    // 2) リピート転換率: meta.customerKey でグループ（customerKeyがある予約のみ）
     const custRes = await db.prepare(
-      `SELECT customer_id, COUNT(*) as visits
+      `SELECT json_extract(meta, '$.customerKey') as ckey, COUNT(*) as visits
        FROM reservations
-       WHERE tenant_id = ? AND slot_start >= ? AND status != 'cancelled' AND customer_id IS NOT NULL
-       GROUP BY customer_id`
+       WHERE tenant_id = ? AND slot_start >= ? AND status != 'cancelled'
+         AND json_extract(meta, '$.customerKey') IS NOT NULL
+       GROUP BY ckey`
     ).bind(tenantId, since + 'T').all();
     const custRows: any[] = custRes.results || [];
     const totalCustomers = custRows.length;
     const repeatCustomers = custRows.filter((r: any) => r.visits >= 2).length;
     const repeatConversionRate = totalCustomers > 0 ? Math.round((repeatCustomers / totalCustomers) * 100) : null;
 
-    // 3) 平均リピート間隔（日）: 同一 customer_id の min/max slot_start の差の平均
+    // missingCustomerKeyCount: customerKeyが無い予約数（精度低下の目安）
+    const missingRes: any = await db.prepare(
+      `SELECT COUNT(*) as cnt FROM reservations
+       WHERE tenant_id = ? AND slot_start >= ? AND status != 'cancelled'
+         AND (meta IS NULL OR json_extract(meta, '$.customerKey') IS NULL)`
+    ).bind(tenantId, since + 'T').first();
+    const missingCustomerKeyCount: number = missingRes?.cnt ?? 0;
+
+    // 3) 平均リピート間隔（日）: 同一 customerKey の min/max slot_start の差の平均
     const intervalRes = await db.prepare(
-      `SELECT customer_id,
+      `SELECT json_extract(meta, '$.customerKey') as ckey,
               MIN(slot_start) as first_visit,
               MAX(slot_start) as last_visit,
               COUNT(*) as visits
        FROM reservations
-       WHERE tenant_id = ? AND slot_start >= ? AND status != 'cancelled' AND customer_id IS NOT NULL
-       GROUP BY customer_id
+       WHERE tenant_id = ? AND slot_start >= ? AND status != 'cancelled'
+         AND json_extract(meta, '$.customerKey') IS NOT NULL
+       GROUP BY ckey
        HAVING visits >= 2`
     ).bind(tenantId, since + 'T').all();
     const intervalRows: any[] = intervalRes.results || [];
@@ -1176,6 +1186,7 @@ app.get("/admin/kpi", async (c) => {
         repeatCustomers,
         repeatConversionRate,
         avgRepeatIntervalDays,
+        missingCustomerKeyCount,
         staffCounts,
       },
     });
@@ -1486,6 +1497,24 @@ async function notifyLineReservation(opts: {
   }
 }
 
+// ---- CUSTOMER KEY UTILS ----
+// Normalize phone: keep digits only (strips +, -, spaces, parens etc.)
+function normalizePhone(phone: string): string {
+  return phone.replace(/\D/g, '');
+}
+
+// Build canonical customerKey for repeat-customer detection.
+// Priority: line:<lineUserId> > phone:<normalizedPhone>
+// Returns null if no stable identifier is available.
+function buildCustomerKey(opts: { lineUserId?: string | null; phone?: string | null }): string | null {
+  if (opts.lineUserId && opts.lineUserId.trim()) return `line:${opts.lineUserId.trim()}`;
+  if (opts.phone && opts.phone.trim()) {
+    const digits = normalizePhone(opts.phone.trim());
+    if (digits.length >= 7) return `phone:${digits}`;
+  }
+  return null;
+}
+
 // ---- CUSTOMER UPSERT (CRM) ----
 // upsert by (tenant_id, phone) when phone exists, else insert new.
 // Best-effort: never throws; returns customerId or null on failure.
@@ -1640,6 +1669,15 @@ async function upsertCustomer(
       .bind(customerId, rid)
       .run()
       .catch((e: any) => console.error("[RESERVE_CUSTOMER_LINK] error:", String(e?.message ?? e)));
+  }
+
+  // customerKey for repeat-customer KPI — best-effort
+  const customerKey = buildCustomerKey({ lineUserId, phone });
+  if (customerKey) {
+    await env.DB.prepare("UPDATE reservations SET meta = ? WHERE id = ?")
+      .bind(JSON.stringify({ customerKey }), rid)
+      .run()
+      .catch((e: any) => console.error("[RESERVE_CUSTOMER_KEY] error:", String(e?.message ?? e)));
   }
 
   return c.json({ ok:true, id: rid, tenantId, staffId, startAt, endAt })
