@@ -1117,12 +1117,19 @@ app.on(["PUT", "PATCH"], "/admin/reservations/:id", async (c) => {
       let existingMeta: any = {};
       if (existingRow?.meta) { try { existingMeta = JSON.parse(existingRow.meta); } catch {} }
       const mergedMeta = { ...existingMeta, ...(body.meta ?? {}) };
-      // eyebrowDesign/consentLog を sub-merge
+      // eyebrowDesign/consentLog/verticalData を sub-merge
       if (body.meta?.eyebrowDesign && existingMeta.eyebrowDesign) {
         mergedMeta.eyebrowDesign = { ...existingMeta.eyebrowDesign, ...body.meta.eyebrowDesign };
       }
       if (body.meta?.consentLog && existingMeta.consentLog) {
         mergedMeta.consentLog = { ...existingMeta.consentLog, ...body.meta.consentLog };
+      }
+      // P3: verticalData sub-merge (新形式) + eyebrowDesign から自動派生
+      if (body.meta?.verticalData && existingMeta.verticalData) {
+        mergedMeta.verticalData = { ...existingMeta.verticalData, ...body.meta.verticalData };
+      }
+      if (mergedMeta.eyebrowDesign?.styleType && !mergedMeta.verticalData) {
+        mergedMeta.verticalData = { styleType: mergedMeta.eyebrowDesign.styleType };
       }
       sets.push("meta = ?"); vals.push(JSON.stringify(mergedMeta));
     }
@@ -1266,7 +1273,7 @@ app.get("/admin/kpi", async (c) => {
     // Note: menu_id/menu_name columns do not exist in D1 reservations table
     const styleRawRes = await db.prepare(
       `SELECT
-         json_extract(meta, '$.eyebrowDesign.styleType') as metaStyleType,
+         COALESCE(json_extract(meta, '$.verticalData.styleType'), json_extract(meta, '$.eyebrowDesign.styleType')) as metaStyleType,
          json_extract(meta, '$.customerKey') as ckey,
          COUNT(*) as visits
        FROM reservations
@@ -1578,7 +1585,7 @@ app.get("/admin/repeat-targets", async (c) => {
          r.line_user_id,
          r.slot_start as lastReservationAt,
          r.staff_id,
-         json_extract(r.meta, '$.eyebrowDesign.styleType') as metaStyleType
+         COALESCE(json_extract(r.meta, '$.verticalData.styleType'), json_extract(r.meta, '$.eyebrowDesign.styleType')) as metaStyleType
        FROM reservations r
        INNER JOIN (
          SELECT json_extract(meta, '$.customerKey') as ck, MAX(slot_start) as maxSlot
@@ -2371,6 +2378,10 @@ async function upsertCustomer(
   const email = body.email ? String(body.email).trim().toLowerCase() : null;
   const customerKey = buildCustomerKey({ lineUserId, phone, email });
   const bodyMeta: Record<string, any> = (body.meta && typeof body.meta === 'object' && !Array.isArray(body.meta)) ? body.meta : {};
+  // P3: dual-write verticalData (primary) alongside eyebrowDesign (legacy)
+  if (bodyMeta.eyebrowDesign?.styleType && !bodyMeta.verticalData) {
+    bodyMeta.verticalData = { styleType: bodyMeta.eyebrowDesign.styleType };
+  }
   const finalMeta = { ...bodyMeta, ...(customerKey ? { customerKey } : {}) };
   if (Object.keys(finalMeta).length > 0) {
     await env.DB.prepare("UPDATE reservations SET meta = ? WHERE id = ?")
