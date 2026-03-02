@@ -122,7 +122,9 @@ export default function AdminSettingsClient() {
   }
   interface RepeatSendResult {
     dryRun: boolean; sentCount: number; skippedCount: number; total: number;
+    cooldownDays?: number;
     message?: string; samples?: Array<{ customerKey: string; lineUserId: string; status?: string }>;
+    skippedReasons?: Array<{ customerKey: string; reason: string }>;
   }
   const [rpDays, setRpDays] = useState<28 | 42 | 60 | 90>(42);
   const [rpRunning, setRpRunning] = useState(false);
@@ -203,7 +205,7 @@ export default function AdminSettingsClient() {
       );
       const json = await res.json() as any;
       if (!json.ok) throw new Error(json.error || '送信失敗');
-      setRpSendResult({ dryRun: json.dryRun, sentCount: json.sentCount, skippedCount: json.skippedCount, total: json.total, message: json.message, samples: json.samples });
+      setRpSendResult({ dryRun: json.dryRun, sentCount: json.sentCount, skippedCount: json.skippedCount, total: json.total, cooldownDays: json.cooldownDays, message: json.message, samples: json.samples, skippedReasons: json.skippedReasons });
       if (!dryRun) setRpConfirmed(false);
     } catch (e) {
       setRpSendError(e instanceof Error ? e.message : 'エラーが発生しました');
@@ -1264,6 +1266,19 @@ export default function AdminSettingsClient() {
                                 <div className="text-xs text-gray-500">スキップ</div>
                               </div>
                             </div>
+                            {rpSendResult.cooldownDays != null && rpSendResult.cooldownDays > 0 && (
+                              <p className="text-xs text-gray-500">連投防止: {rpSendResult.cooldownDays}日以内に送信済みの顧客はスキップ</p>
+                            )}
+                            {rpSendResult.skippedReasons && rpSendResult.skippedReasons.length > 0 && (
+                              <details className="text-xs text-gray-500">
+                                <summary className="cursor-pointer hover:text-gray-700">スキップ詳細 ({rpSendResult.skippedReasons.length}件)</summary>
+                                <ul className="mt-1 space-y-0.5 pl-2">
+                                  {rpSendResult.skippedReasons.map((r, i) => (
+                                    <li key={i}>{r.customerKey}: {r.reason}</li>
+                                  ))}
+                                </ul>
+                              </details>
+                            )}
                           </div>
                         )}
                       </div>
