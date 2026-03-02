@@ -35,7 +35,38 @@ const INITIAL: BookingState = {
 
 const DEFAULT_CONSENT = '予約内容を確認し、同意の上で予約を確定します';
 
-// ステップインジケーター（表示用ラベル・現在ステップを受け取る）
+// ============================================================
+// lineUserId localStorage 永続化（30日 TTL）
+// LINE から ?lu=Uxxxx で来たとき保存し、次回アクセス時に復元する
+// ============================================================
+const BOOKING_LU_KEY = 'booking_lu';
+const BOOKING_LU_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+
+function saveLu(lu: string): void {
+  try {
+    localStorage.setItem(
+      BOOKING_LU_KEY,
+      JSON.stringify({ v: lu, exp: Date.now() + BOOKING_LU_TTL_MS })
+    );
+  } catch { /* localStorage 利用不可の場合は無視 */ }
+}
+
+function loadLu(): string | null {
+  try {
+    const raw = localStorage.getItem(BOOKING_LU_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { v: string; exp: number };
+    if (Date.now() > parsed.exp) {
+      localStorage.removeItem(BOOKING_LU_KEY);
+      return null;
+    }
+    return parsed.v || null;
+  } catch { return null; }
+}
+
+// ============================================================
+// StepIndicator
+// ============================================================
 function StepIndicator({ labels, current }: { labels: string[]; current: number }) {
   return (
     <div className="flex items-center mb-8">
@@ -79,42 +110,63 @@ function StepIndicator({ labels, current }: { labels: string[]; current: number 
   );
 }
 
+// ============================================================
+// BookingFlow
+// ============================================================
 export default function BookingFlow() {
   const searchParams = useSearchParams();
   const tenantId = searchParams?.get('tenantId') || 'default';
-  const lineUserId = searchParams?.get('lu') || null;
+  const luFromUrl = searchParams?.get('lu') || null;
 
   const [step, setStep] = useState(1);
-  const [state, setState] = useState<BookingState>({ ...INITIAL, lineUserId });
+  // lineUserId は URL param を初期値とし、マウント後に localStorage を参照して補完
+  const [state, setState] = useState<BookingState>({ ...INITIAL, lineUserId: luFromUrl });
 
   // 管理者設定（consentText, staffSelectionEnabled）
   const [consentText, setConsentText] = useState(DEFAULT_CONSENT);
   const [staffSelectionEnabled, setStaffSelectionEnabled] = useState(true);
 
+  // lineUserId: URL param を優先し、無ければ localStorage から復元（クライアントのみ）
+  useEffect(() => {
+    if (luFromUrl) {
+      // URL に lu があれば localStorage に保存（30日 TTL）
+      saveLu(luFromUrl);
+      // state はすでに luFromUrl で初期化済みのため更新不要
+    } else {
+      // URL に lu が無い場合は localStorage から復元
+      const saved = loadLu();
+      if (saved) {
+        setState(prev => ({ ...prev, lineUserId: saved }));
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     fetchAdminSettings(tenantId).then(settings => {
       const raw = settings as any;
       if (raw.consentText) setConsentText(raw.consentText);
-      // staffSelectionEnabled が明示的に false の場合のみ無効化
       if (raw.staffSelectionEnabled === false) setStaffSelectionEnabled(false);
     }).catch(() => { /* fallback: default values のまま */ });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId]);
 
-  // staffSelectionEnabled が false のとき内部 step 1→3→4 で進む（step 2 スキップ）
-  // 表示ラベルは staffSelectionEnabled で切替
   const STEP_LABELS_FULL = ['メニュー', 'スタッフ', '日時', '確認'];
   const STEP_LABELS_NO_STAFF = ['メニュー', '日時', '確認'];
   const stepLabels = staffSelectionEnabled ? STEP_LABELS_FULL : STEP_LABELS_NO_STAFF;
 
-  // 内部 step → 表示 step 番号（staffSelectionEnabled=false のとき step 2 が存在しないため）
   const displayStep = staffSelectionEnabled
     ? step
     : step === 1 ? 1 : step === 3 ? 2 : step === 4 ? 3 : step;
 
   const update = (patch: Partial<BookingState>) =>
     setState(prev => ({ ...prev, ...patch }));
-  const reset = () => { setState({ ...INITIAL, lineUserId }); setStep(1); };
+
+  // reset は現在の lineUserId を引き継ぐ（ページ再読込なしにリピート予約できるように）
+  const reset = () => {
+    setState(prev => ({ ...INITIAL, lineUserId: prev.lineUserId }));
+    setStep(1);
+  };
 
   const handleMenuSelect = (menu: MenuItem) => {
     update({
@@ -124,7 +176,6 @@ export default function BookingFlow() {
       menuDurationMin: menu.durationMin,
     });
     if (!staffSelectionEnabled) {
-      // スタッフ選択をスキップ → any を自動セットして日時ステップへ
       update({ staffId: 'any', staffName: '指名なし' });
       setStep(3);
     } else {
@@ -142,7 +193,6 @@ export default function BookingFlow() {
     setStep(4);
   };
 
-  // back ナビゲーション（スタッフスキップ時は step 3→1 に戻る）
   const handleBackFromDatetime = () => {
     setStep(staffSelectionEnabled ? 2 : 1);
   };
