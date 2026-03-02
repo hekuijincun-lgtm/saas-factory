@@ -178,11 +178,24 @@ export default function MenuManager({ tenantId: tenantIdProp }: { tenantId?: str
         ...(imageKey ? { imageKey, imageUrl } : {}),
       };
 
+      // tenantId を URL に含めて fetch（updateMenuItem/createMenuItem は tenantId 非対応）
       let saved: any;
       if (editingItem) {
-        saved = await updateMenuItem(editingItem.id, itemPayload);
+        const res = await fetch(
+          `/api/proxy/admin/menu/${encodeURIComponent(editingItem.id)}?tenantId=${encodeURIComponent(tenantId)}`,
+          { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(itemPayload) }
+        );
+        const resData = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error((resData as any).error || `保存に失敗しました (${res.status})`);
+        saved = (resData as any).data ?? resData;
       } else {
-        saved = await createMenuItem(itemPayload);
+        const res = await fetch(
+          `/api/proxy/admin/menu?tenantId=${encodeURIComponent(tenantId)}`,
+          { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(itemPayload) }
+        );
+        const resData = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error((resData as any).error || `保存に失敗しました (${res.status})`);
+        saved = (resData as any).data ?? resData;
       }
 
       // API が MenuItem を返す場合 / { ok, data } を返す場合の両対応
