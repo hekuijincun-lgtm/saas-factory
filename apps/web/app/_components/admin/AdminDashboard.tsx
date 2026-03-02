@@ -29,6 +29,13 @@ interface DashboardData {
   customers: CustomerItem[];
 }
 
+interface StyleBreakdownEntry {
+  reservationsCount: number;
+  customersCount: number;
+  repeatCustomersCount: number;
+  repeatConversionRate: number | null;
+}
+
 interface EyebrowKpi {
   totalReservations: number;
   totalCustomers: number;
@@ -37,6 +44,7 @@ interface EyebrowKpi {
   avgRepeatIntervalDays: number | null;
   missingCustomerKeyCount?: number;
   staffCounts: Record<string, number>;
+  styleBreakdown?: Record<string, StyleBreakdownEntry>;
 }
 
 export default function AdminDashboard() {
@@ -185,6 +193,42 @@ export default function AdminDashboard() {
                       {staffId === 'any' ? '指名なし' : staffId}: <strong>{cnt}件</strong>
                     </span>
                   ))}
+                </div>
+              </div>
+            )}
+            {/* スタイル別内訳 */}
+            {eyebrowKpi.styleBreakdown && Object.keys(eyebrowKpi.styleBreakdown).length > 0 && (
+              <div className="mt-4 pt-4 border-t border-gray-100">
+                <div className="text-xs font-medium text-gray-500 mb-2">スタイル別内訳</div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="border-b border-gray-100 text-gray-400">
+                        <th className="text-left py-1.5 pr-4 font-medium">スタイル</th>
+                        <th className="text-right py-1.5 px-2 font-medium">予約数</th>
+                        <th className="text-right py-1.5 px-2 font-medium">顧客数</th>
+                        <th className="text-right py-1.5 px-2 font-medium">リピート顧客</th>
+                        <th className="text-right py-1.5 pl-2 font-medium">転換率</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-50">
+                      {Object.entries(eyebrowKpi.styleBreakdown)
+                        .sort(([, a], [, b]) => b.reservationsCount - a.reservationsCount)
+                        .map(([style, d]) => (
+                          <tr key={style} className="hover:bg-gray-50">
+                            <td className="py-1.5 pr-4 text-gray-700 font-medium">{style}</td>
+                            <td className="py-1.5 px-2 text-right text-gray-600 tabular-nums">{d.reservationsCount}</td>
+                            <td className="py-1.5 px-2 text-right text-gray-600 tabular-nums">{d.customersCount}</td>
+                            <td className="py-1.5 px-2 text-right text-gray-600 tabular-nums">{d.repeatCustomersCount}</td>
+                            <td className="py-1.5 pl-2 text-right font-medium tabular-nums">
+                              {d.repeatConversionRate !== null
+                                ? <span className={d.repeatConversionRate >= 30 ? 'text-green-600' : 'text-gray-500'}>{d.repeatConversionRate}%</span>
+                                : <span className="text-gray-300">—</span>}
+                            </td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
                 </div>
               </div>
             )}
