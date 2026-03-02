@@ -1113,6 +1113,7 @@ app.get("/admin/kpi", async (c) => {
     const tenantId = getTenantId(c);
     const days = Math.min(Math.max(Number(c.req.query("days") || "90"), 7), 365);
     const db = (c.env as any).DB;
+    const kv = (c.env as any).SAAS_FACTORY;
     if (!db) return c.json({ ok: false, error: "DB_not_bound" }, 500);
 
     // 対象期間
@@ -1178,6 +1179,51 @@ app.get("/admin/kpi", async (c) => {
       avgRepeatIntervalDays = Math.round(totalDays / intervalRows.length);
     }
 
+    // 4) スタイル別内訳（styleBreakdown）
+    // Query: per (metaStyleType, menu_id, customerKey) group — aggregate in JS for flexibility
+    const styleRawRes = await db.prepare(
+      `SELECT
+         json_extract(meta, '$.eyebrowDesign.styleType') as metaStyleType,
+         menu_id,
+         json_extract(meta, '$.customerKey') as ckey,
+         COUNT(*) as visits
+       FROM reservations
+       WHERE tenant_id = ? AND slot_start >= ? AND status != 'cancelled'
+         AND json_extract(meta, '$.customerKey') IS NOT NULL
+       GROUP BY metaStyleType, menu_id, ckey`
+    ).bind(tenantId, since + 'T').all();
+
+    // Load menu styleType map (best-effort)
+    const menuStyleMap: Record<string, string> = {};
+    if (kv) {
+      try {
+        const menuRaw = await kv.get(`admin:menu:list:${tenantId}`);
+        if (menuRaw) {
+          const menuItems: any[] = JSON.parse(menuRaw);
+          for (const m of menuItems) {
+            if (m.id && m.eyebrow?.styleType) menuStyleMap[m.id] = m.eyebrow.styleType;
+          }
+        }
+      } catch { /* ignore */ }
+    }
+
+    // Aggregate by resolved styleType
+    const styleAgg: Record<string, { reservationsCount: number; customersCount: number; repeatCustomersCount: number }> = {};
+    for (const r of ((styleRawRes.results || []) as any[])) {
+      const st: string = r.metaStyleType || menuStyleMap[r.menu_id] || 'unknown';
+      if (!styleAgg[st]) styleAgg[st] = { reservationsCount: 0, customersCount: 0, repeatCustomersCount: 0 };
+      styleAgg[st].reservationsCount += r.visits;
+      styleAgg[st].customersCount += 1;
+      if (r.visits >= 2) styleAgg[st].repeatCustomersCount += 1;
+    }
+    const styleBreakdown: Record<string, { reservationsCount: number; customersCount: number; repeatCustomersCount: number; repeatConversionRate: number | null }> = {};
+    for (const [st, agg] of Object.entries(styleAgg)) {
+      styleBreakdown[st] = {
+        ...agg,
+        repeatConversionRate: agg.customersCount > 0 ? Math.round((agg.repeatCustomersCount / agg.customersCount) * 100) : null,
+      };
+    }
+
     return c.json({
       ok: true, tenantId, days, since,
       kpi: {
@@ -1188,6 +1234,7 @@ app.get("/admin/kpi", async (c) => {
         avgRepeatIntervalDays,
         missingCustomerKeyCount,
         staffCounts,
+        styleBreakdown,
       },
     });
   } catch (error) {
@@ -1265,6 +1312,237 @@ app.post("/admin/kpi/backfill-customer-key", async (c) => {
     });
   } catch (error) {
     return c.json({ ok: false, error: "Backfill failed", message: String(error) }, 500);
+  }
+});
+
+/** =========================
+ * GET /admin/repeat-targets?tenantId=&days=28&limit=200
+ * Returns customers whose last visit was >= days ago and have no future reservation.
+ * Fields: customerKey, lineUserId, lastReservationAt, lastMenuSummary, staffId, styleType, recommendedMessage
+ * ========================= */
+app.get("/admin/repeat-targets", async (c) => {
+  try {
+    const tenantId = getTenantId(c);
+    const days = Math.min(Math.max(Number(c.req.query("days") || "28"), 7), 365);
+    const limit = Math.min(Math.max(Number(c.req.query("limit") || "200"), 1), 500);
+    const db = (c.env as any).DB;
+    const kv = (c.env as any).SAAS_FACTORY;
+    if (!db) return c.json({ ok: false, error: "DB_not_bound" }, 500);
+
+    // Cutoff: MAX(slot_start) < cutoff means no visit within last `days` days (and no future reservation)
+    const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+
+    // Load menu map for styleType lookup (best-effort)
+    const menuStyleMap: Record<string, string> = {}; // menuId → styleType
+    if (kv) {
+      try {
+        const menuRaw = await kv.get(`admin:menu:list:${tenantId}`);
+        if (menuRaw) {
+          const menuItems: any[] = JSON.parse(menuRaw);
+          for (const m of menuItems) {
+            if (m.id && m.eyebrow?.styleType) menuStyleMap[m.id] = m.eyebrow.styleType;
+          }
+        }
+      } catch { /* ignore */ }
+    }
+
+    // Load settings for recommendedMessage template
+    let repeatTemplate = '前回のご来店からそろそろ{interval}週が経ちます。眉毛のリタッチはいかがでしょうか？';
+    let intervalDays = 42;
+    if (kv) {
+      try {
+        const settingsRaw = await kv.get(`settings:${tenantId}`);
+        if (settingsRaw) {
+          const s = JSON.parse(settingsRaw);
+          if (s?.eyebrow?.repeat?.template) repeatTemplate = s.eyebrow.repeat.template;
+          if (s?.eyebrow?.repeat?.intervalDays) intervalDays = Number(s.eyebrow.repeat.intervalDays) || 42;
+        }
+      } catch { /* ignore */ }
+    }
+    const intervalWeeks = Math.round(intervalDays / 7);
+
+    // Query: get latest reservation per customerKey where MAX(slot_start) < cutoff
+    const rows: any[] = (await db.prepare(
+      `SELECT
+         r.id,
+         json_extract(r.meta, '$.customerKey') as customerKey,
+         r.line_user_id,
+         r.slot_start as lastReservationAt,
+         r.staff_id,
+         r.menu_name,
+         r.menu_id,
+         json_extract(r.meta, '$.eyebrowDesign.styleType') as metaStyleType
+       FROM reservations r
+       INNER JOIN (
+         SELECT json_extract(meta, '$.customerKey') as ck, MAX(slot_start) as maxSlot
+         FROM reservations
+         WHERE tenant_id = ? AND status != 'cancelled'
+           AND json_extract(meta, '$.customerKey') IS NOT NULL
+         GROUP BY ck
+         HAVING maxSlot < ?
+       ) latest ON json_extract(r.meta, '$.customerKey') = latest.ck
+                AND r.slot_start = latest.maxSlot
+       WHERE r.tenant_id = ? AND r.status != 'cancelled'
+       LIMIT ?`
+    ).bind(tenantId, cutoff, tenantId, limit).all()).results || [];
+
+    const targets = rows.map((r: any) => {
+      // lineUserId: extract from customerKey (line: prefix) or from column
+      let lineUserId: string | null = null;
+      if (typeof r.customerKey === 'string' && r.customerKey.startsWith('line:')) {
+        lineUserId = r.customerKey.slice(5) || null;
+      } else if (r.line_user_id) {
+        lineUserId = r.line_user_id;
+      }
+
+      // styleType: meta.eyebrowDesign.styleType → menu.eyebrow.styleType → null
+      const styleType: string | null = r.metaStyleType || menuStyleMap[r.menu_id] || null;
+
+      // recommendedMessage: replace {interval} with weeks
+      const recommendedMessage = repeatTemplate.replace('{interval}', String(intervalWeeks));
+
+      return {
+        customerKey: r.customerKey,
+        lineUserId,
+        lastReservationAt: r.lastReservationAt,
+        lastMenuSummary: r.menu_name || null,
+        staffId: r.staff_id || null,
+        styleType,
+        recommendedMessage,
+      };
+    });
+
+    return c.json({ ok: true, tenantId, days, cutoff, count: targets.length, targets });
+  } catch (error) {
+    return c.json({ ok: false, error: "Failed to get repeat targets", message: String(error) }, 500);
+  }
+});
+
+/** =========================
+ * POST /admin/repeat-send?tenantId=
+ * Body: { customerKeys: string[], template?: string, dryRun?: boolean }
+ * Sends LINE push to customerKeys that have a lineUserId.
+ * dryRun=true (default) → returns counts/sample without sending.
+ * ========================= */
+app.post("/admin/repeat-send", async (c) => {
+  try {
+    const tenantId = getTenantId(c);
+    const db = (c.env as any).DB;
+    const kv = (c.env as any).SAAS_FACTORY;
+    if (!db) return c.json({ ok: false, error: "DB_not_bound" }, 500);
+    if (!kv) return c.json({ ok: false, error: "KV_not_bound" }, 500);
+
+    const body = await c.req.json().catch(() => null) as any;
+    if (!body || !Array.isArray(body.customerKeys)) {
+      return c.json({ ok: false, error: "missing customerKeys array" }, 400);
+    }
+    const customerKeys: string[] = (body.customerKeys as any[]).filter((k: any) => typeof k === 'string').slice(0, 500);
+    const dryRun: boolean = body.dryRun !== false; // default: dryRun=true
+    const customTemplate: string | null = typeof body.template === 'string' ? body.template : null;
+
+    // Load channelAccessToken + default template from settings
+    let channelAccessToken = '';
+    let defaultTemplate = '前回のご来店からそろそろ{interval}週が経ちます。眉毛のリタッチはいかがでしょうか？';
+    let intervalDays = 42;
+    try {
+      const raw = await kv.get(`settings:${tenantId}`);
+      if (raw) {
+        const s = JSON.parse(raw);
+        channelAccessToken = String(s?.integrations?.line?.channelAccessToken ?? '').trim();
+        if (s?.eyebrow?.repeat?.template) defaultTemplate = s.eyebrow.repeat.template;
+        if (s?.eyebrow?.repeat?.intervalDays) intervalDays = Number(s.eyebrow.repeat.intervalDays) || 42;
+      }
+    } catch { /* ignore */ }
+
+    const template = customTemplate || defaultTemplate;
+    const intervalWeeks = Math.round(intervalDays / 7);
+    const message = template.replace('{interval}', String(intervalWeeks));
+
+    // Resolve lineUserId for each customerKey
+    const lineUserMap: Record<string, string> = {}; // customerKey → lineUserId
+    const nonLineKeys: string[] = [];
+    for (const ck of customerKeys) {
+      if (ck.startsWith('line:')) {
+        const lu = ck.slice(5);
+        if (lu) lineUserMap[ck] = lu;
+      } else {
+        nonLineKeys.push(ck);
+      }
+    }
+
+    // For non-line: keys, query D1 for their line_user_id
+    for (const ck of nonLineKeys) {
+      try {
+        const row: any = await db.prepare(
+          `SELECT line_user_id FROM reservations
+           WHERE tenant_id = ? AND json_extract(meta, '$.customerKey') = ? AND line_user_id IS NOT NULL
+           ORDER BY slot_start DESC LIMIT 1`
+        ).bind(tenantId, ck).first();
+        if (row?.line_user_id) lineUserMap[ck] = row.line_user_id;
+      } catch { /* ignore */ }
+    }
+
+    let sentCount = 0;
+    let skippedCount = 0;
+    const samples: Array<{ customerKey: string; lineUserId: string; status?: string }> = [];
+    const errors: string[] = [];
+
+    for (const ck of customerKeys) {
+      const lineUserId = lineUserMap[ck];
+      if (!lineUserId) {
+        skippedCount++;
+        continue;
+      }
+
+      if (dryRun) {
+        sentCount++;
+        if (samples.length < 3) samples.push({ customerKey: ck, lineUserId });
+        continue;
+      }
+
+      if (!channelAccessToken) {
+        skippedCount++;
+        errors.push(`no_token:${ck}`);
+        continue;
+      }
+
+      try {
+        const ac = new AbortController();
+        const tid = setTimeout(() => ac.abort(), 8000);
+        const res = await fetch("https://api.line.me/v2/bot/message/push", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${channelAccessToken}` },
+          body: JSON.stringify({ to: lineUserId, messages: [{ type: "text", text: message }] }),
+          signal: ac.signal,
+        });
+        clearTimeout(tid);
+        if (res.ok) {
+          sentCount++;
+          if (samples.length < 3) samples.push({ customerKey: ck, lineUserId, status: "sent" });
+        } else {
+          const errText = await res.text().catch(() => '');
+          skippedCount++;
+          errors.push(`send_failed:${ck}:${res.status}:${errText.slice(0, 100)}`);
+        }
+      } catch (e: any) {
+        skippedCount++;
+        errors.push(`send_error:${ck}:${String(e?.message ?? e)}`);
+      }
+    }
+
+    return c.json({
+      ok: true,
+      tenantId,
+      dryRun,
+      message: dryRun ? message : undefined,
+      sentCount,
+      skippedCount,
+      total: customerKeys.length,
+      samples: samples.length > 0 ? samples : undefined,
+      errors: errors.length > 0 ? errors : undefined,
+    });
+  } catch (error) {
+    return c.json({ ok: false, error: "Failed to send repeat messages", message: String(error) }, 500);
   }
 });
 
