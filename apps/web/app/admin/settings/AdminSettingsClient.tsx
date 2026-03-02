@@ -99,8 +99,40 @@ export default function AdminSettingsClient() {
     webhookUrl: '',
   });
 
+  // Backfill UI state
+  interface BackfillResult {
+    scanned: number; updatedCount: number; skippedCount: number; hasMore: boolean; dryRun: boolean;
+  }
+  const [bfDays, setBfDays] = useState<30 | 90 | 365>(90);
+  const [bfRunning, setBfRunning] = useState(false);
+  const [bfResult, setBfResult] = useState<BackfillResult | null>(null);
+  const [bfError, setBfError] = useState<string | null>(null);
+  const [bfConfirmed, setBfConfirmed] = useState(false);
+
   // tenantId は URL クエリから取得
   const tenantId = searchParams?.get('tenantId') || 'default';
+
+  // ============================================================
+  // Backfill: customerKey 補完
+  // ============================================================
+  const runBackfill = async (dryRun: boolean) => {
+    setBfRunning(true);
+    setBfError(null);
+    try {
+      const res = await fetch(
+        `/api/proxy/admin/kpi/backfill-customer-key?tenantId=${encodeURIComponent(tenantId)}&days=${bfDays}&dryRun=${dryRun ? '1' : '0'}`,
+        { method: 'POST', headers: { 'Content-Length': '0' } }
+      );
+      const json = await res.json() as any;
+      if (!json.ok) throw new Error(json.error || 'バックフィル失敗');
+      setBfResult({ scanned: json.scanned, updatedCount: json.updatedCount, skippedCount: json.skippedCount, hasMore: json.hasMore, dryRun: json.dryRun });
+      if (!dryRun) setBfConfirmed(false); // apply後は確認チェックをリセット
+    } catch (e) {
+      setBfError(e instanceof Error ? e.message : 'エラーが発生しました');
+    } finally {
+      setBfRunning(false);
+    }
+  };
 
   // ============================================================
   // API: 設定取得
@@ -798,6 +830,123 @@ export default function AdminSettingsClient() {
                 </div>
               )}
             </div>
+          </div>
+        </div>
+
+        {/* ============================================================
+            運用ツール: 顧客キー補完（Backfill）
+        ============================================================ */}
+        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+          <div className="px-5 py-4 border-b border-gray-100 flex items-center gap-2">
+            <RefreshCw className="w-4 h-4 text-indigo-500" />
+            <h2 className="text-sm font-semibold text-gray-700">運用ツール：顧客キー補完</h2>
+          </div>
+          <div className="p-5 space-y-4">
+            <p className="text-xs text-gray-500">
+              過去の予約データに <code className="bg-gray-100 px-1 rounded">customerKey</code> を付与し、KPI転換率の精度を向上させます。
+              LINE IDまたは電話番号がある予約のみ対象です。
+            </p>
+
+            {/* 対象期間 */}
+            <div className="flex items-center gap-3">
+              <label className="text-sm text-gray-600 whitespace-nowrap">対象期間</label>
+              <select
+                value={bfDays}
+                onChange={e => { setBfDays(Number(e.target.value) as 30 | 90 | 365); setBfResult(null); setBfError(null); }}
+                className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+              >
+                <option value={30}>直近30日</option>
+                <option value={90}>直近90日</option>
+                <option value={365}>直近365日</option>
+              </select>
+            </div>
+
+            {/* Dry Run ボタン */}
+            <div className="flex gap-3 flex-wrap">
+              <button
+                onClick={() => { setBfResult(null); setBfError(null); runBackfill(true); }}
+                disabled={bfRunning}
+                className="inline-flex items-center gap-1.5 px-4 py-2 border border-indigo-300 text-indigo-700 bg-indigo-50 rounded-lg text-sm font-medium hover:bg-indigo-100 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+              >
+                {bfRunning ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                ドライラン（確認のみ）
+              </button>
+            </div>
+
+            {/* エラー表示 */}
+            {bfError && (
+              <div className="flex items-center gap-2 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                {bfError}
+              </div>
+            )}
+
+            {/* 結果表示 */}
+            {bfResult && (
+              <div className={`rounded-xl border p-4 space-y-3 ${bfResult.dryRun ? 'bg-indigo-50 border-indigo-200' : 'bg-green-50 border-green-200'}`}>
+                <p className="text-xs font-semibold text-gray-600">
+                  {bfResult.dryRun ? '🔍 ドライラン結果（実際の更新はされていません）' : '✅ 適用完了'}
+                </p>
+                <div className="grid grid-cols-3 gap-3 text-center">
+                  <div className="bg-white rounded-lg p-2 border border-gray-100">
+                    <div className="text-lg font-bold text-gray-800">{bfResult.scanned}</div>
+                    <div className="text-xs text-gray-500">スキャン件数</div>
+                  </div>
+                  <div className="bg-white rounded-lg p-2 border border-gray-100">
+                    <div className="text-lg font-bold text-indigo-600">{bfResult.updatedCount}</div>
+                    <div className="text-xs text-gray-500">{bfResult.dryRun ? '付与可能件数' : '更新件数'}</div>
+                  </div>
+                  <div className="bg-white rounded-lg p-2 border border-gray-100">
+                    <div className="text-lg font-bold text-gray-400">{bfResult.skippedCount}</div>
+                    <div className="text-xs text-gray-500">スキップ件数</div>
+                  </div>
+                </div>
+
+                {/* hasMore */}
+                {bfResult.hasMore && (
+                  <div className="flex items-center gap-2 px-3 py-2 bg-yellow-50 border border-yellow-200 rounded-lg text-xs text-yellow-700">
+                    ⚠ 200件以上の対象データがあります。「続き実行」で残りを処理できます。
+                  </div>
+                )}
+
+                {/* Apply セクション（dryRun 結果後に表示） */}
+                {bfResult.dryRun && bfResult.updatedCount > 0 && (
+                  <div className="border-t border-indigo-200 pt-3 space-y-3">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={bfConfirmed}
+                        onChange={e => setBfConfirmed(e.target.checked)}
+                        className="w-4 h-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
+                      />
+                      <span className="text-xs text-gray-700">
+                        上記 <strong>{bfResult.updatedCount}件</strong> のcustomerKeyを実際に付与することを確認しました
+                      </span>
+                    </label>
+                    <button
+                      onClick={() => runBackfill(false)}
+                      disabled={!bfConfirmed || bfRunning}
+                      className="inline-flex items-center gap-1.5 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm"
+                    >
+                      {bfRunning ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : null}
+                      適用する（{bfDays}日分）
+                    </button>
+                  </div>
+                )}
+
+                {/* hasMore 続き実行（apply後） */}
+                {!bfResult.dryRun && bfResult.hasMore && (
+                  <button
+                    onClick={() => runBackfill(false)}
+                    disabled={bfRunning}
+                    className="inline-flex items-center gap-1.5 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm"
+                  >
+                    {bfRunning ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : null}
+                    続き実行
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         </div>
 
