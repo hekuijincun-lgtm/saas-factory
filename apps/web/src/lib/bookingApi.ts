@@ -70,6 +70,12 @@ export interface Staff {
   sortOrder: number;
 }
 
+export interface MenuItemEyebrow {
+  firstTimeOnly?: boolean;                             // 初回限定メニュー
+  genderTarget?: 'male' | 'female' | 'both';          // 性別ターゲット
+  styleType?: 'natural' | 'sharp' | 'korean' | 'custom'; // スタイル種別
+}
+
 export interface MenuItem {
   id: string;
   name: string;
@@ -77,6 +83,7 @@ export interface MenuItem {
   durationMin: number;
   active: boolean;
   sortOrder: number;
+  eyebrow?: MenuItemEyebrow;  // 眉毛特化属性（optional）
 }
 
 export interface AdminSettings {

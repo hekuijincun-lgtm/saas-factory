@@ -1,12 +1,12 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { getMenu, createMenuItem, updateMenuItem, deleteMenuItem, type MenuItem } from '@/src/lib/bookingApi';
+import { getMenu, createMenuItem, updateMenuItem, deleteMenuItem, type MenuItem, type MenuItemEyebrow } from '@/src/lib/bookingApi';
 import { ApiClientError } from '@/src/lib/apiClient';
 import Card from '../ui/Card';
 import DataTable from '../ui/DataTable';
 import Badge from '../ui/Badge';
-import { Plus, Edit2, X, Trash2 } from 'lucide-react';
+import { Plus, Edit2, Trash2, Scissors } from 'lucide-react';
 
 export default function MenuManager({ tenantId: tenantIdProp }: { tenantId?: string }) {
   // tenantId (safe): read from query string, fallback to "default"
@@ -18,13 +18,17 @@ const [loading, setLoading] = useState<boolean>(false);
 const [error, setError] = useState<string | null>(null);
 const [showModal, setShowModal] = useState<boolean>(false);
 const [editingItem, setEditingItem] = useState<MenuItem | null>(null);
-const [formData, setFormData] = useState<{ name: string; price: string; durationMin: string; active: boolean; sortOrder: number }>({
-name: '',
-    price: '0',
-    durationMin: '60',
-    active: true,
-    sortOrder: 0,
-  });
+const [formData, setFormData] = useState<{
+  name: string; price: string; durationMin: string; active: boolean; sortOrder: number;
+  eyebrow: MenuItemEyebrow;
+}>({
+  name: '',
+  price: '0',
+  durationMin: '60',
+  active: true,
+  sortOrder: 0,
+  eyebrow: { firstTimeOnly: false, genderTarget: 'both', styleType: undefined },
+});
 
   const fetchMenu = async () => {
     setLoading(true);
@@ -62,7 +66,7 @@ name: '',
 
   const handleCreate = () => {
     setEditingItem(null);
-    setFormData({ name: '', price: '0', durationMin: '60', active: true, sortOrder: menuList.length });
+    setFormData({ name: '', price: '0', durationMin: '60', active: true, sortOrder: menuList.length, eyebrow: { firstTimeOnly: false, genderTarget: 'both', styleType: undefined } });
     setShowModal(true);
   };
 
@@ -74,6 +78,11 @@ name: '',
       durationMin: String(item.durationMin),
       active: item.active,
       sortOrder: item.sortOrder,
+      eyebrow: {
+        firstTimeOnly: item.eyebrow?.firstTimeOnly ?? false,
+        genderTarget: item.eyebrow?.genderTarget ?? 'both',
+        styleType: item.eyebrow?.styleType,
+      },
     });
     setShowModal(true);
   };
@@ -106,6 +115,7 @@ name: '',
         durationMin: Number(formData.durationMin),
         active: formData.active,
         sortOrder: formData.sortOrder,
+        eyebrow: formData.eyebrow,
       });
     } else {
       saved = await createMenuItem({
@@ -114,6 +124,7 @@ name: '',
         durationMin: Number(formData.durationMin),
         active: formData.active,
         sortOrder: formData.sortOrder,
+        eyebrow: formData.eyebrow,
       });
     }
 
@@ -297,6 +308,64 @@ return(
                 className="w-4 h-4 text-brand-primary border-brand-border rounded focus:ring-brand-primary"
               />
               <label htmlFor="active" className="text-sm text-brand-text">有効</label>
+            </div>
+
+            {/* 眉毛設定セクション */}
+            <div className="border-t border-gray-100 pt-4">
+              <div className="flex items-center gap-2 mb-3">
+                <Scissors className="w-4 h-4 text-pink-500" />
+                <span className="text-sm font-medium text-gray-700">眉毛設定</span>
+              </div>
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id="firstTimeOnly"
+                    checked={formData.eyebrow.firstTimeOnly ?? false}
+                    onChange={(e) => setFormData({ ...formData, eyebrow: { ...formData.eyebrow, firstTimeOnly: e.target.checked } })}
+                    className="w-4 h-4 text-pink-500 border-gray-300 rounded"
+                  />
+                  <label htmlFor="firstTimeOnly" className="text-sm text-gray-700">初回限定メニュー</label>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1.5">性別ターゲット</label>
+                  <div className="flex gap-2">
+                    {(['both', 'female', 'male'] as const).map(v => (
+                      <button
+                        key={v}
+                        type="button"
+                        onClick={() => setFormData({ ...formData, eyebrow: { ...formData.eyebrow, genderTarget: v } })}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                          formData.eyebrow.genderTarget === v
+                            ? 'bg-pink-500 text-white'
+                            : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                        }`}
+                      >
+                        {v === 'both' ? '全性別' : v === 'female' ? 'レディース' : 'メンズ'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1.5">スタイル種別</label>
+                  <div className="flex flex-wrap gap-2">
+                    {([undefined, 'natural', 'sharp', 'korean', 'custom'] as const).map(v => (
+                      <button
+                        key={v ?? 'none'}
+                        type="button"
+                        onClick={() => setFormData({ ...formData, eyebrow: { ...formData.eyebrow, styleType: v } })}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                          formData.eyebrow.styleType === v
+                            ? 'bg-pink-500 text-white'
+                            : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                        }`}
+                      >
+                        {v === undefined ? '指定なし' : v === 'natural' ? 'ナチュラル' : v === 'sharp' ? 'シャープ' : v === 'korean' ? '韓国風' : 'カスタム'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
             </div>
 
             <div className="flex gap-2 pt-4">
