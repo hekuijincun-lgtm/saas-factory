@@ -108,6 +108,7 @@ export default function AdminSettingsClient() {
   const [bfResult, setBfResult] = useState<BackfillResult | null>(null);
   const [bfError, setBfError] = useState<string | null>(null);
   const [bfConfirmed, setBfConfirmed] = useState(false);
+  const [urlCopied, setUrlCopied] = useState(false);
 
   // tenantId は URL クエリから取得
   const tenantId = searchParams?.get('tenantId') || 'default';
@@ -743,6 +744,39 @@ export default function AdminSettingsClient() {
                   </div>
                 )}
               </div>
+            </div>
+            {/* ---- LINE 予約リンク ---- */}
+            <div className="p-4 bg-green-50 rounded-lg border border-green-200">
+              <div className="flex items-center gap-2 mb-2">
+                <div className="w-2.5 h-2.5 rounded-full bg-green-500 shrink-0" />
+                <div className="font-semibold text-sm text-gray-900">LINE 予約リンク</div>
+              </div>
+              <p className="text-xs text-gray-500 mb-3">
+                このURLをLINE公式アカウントのリッチメニューや友だち追加メッセージに設定してください。<br />
+                LINEのWebhookから開かれた場合は <code className="bg-white border border-gray-200 px-1 rounded">?lu=&lt;lineUserId&gt;</code> が自動付与され、顧客キーが保存されます。
+              </p>
+              {isMounted && (
+                <div className="flex items-center gap-2">
+                  <code className="flex-1 text-xs bg-white border border-green-300 rounded-lg px-3 py-2 text-gray-700 break-all select-all">
+                    {`${window.location.origin}/booking?tenantId=${encodeURIComponent(tenantId)}`}
+                  </code>
+                  <button
+                    onClick={() => {
+                      const url = `${window.location.origin}/booking?tenantId=${encodeURIComponent(tenantId)}`;
+                      navigator.clipboard.writeText(url).then(() => {
+                        setUrlCopied(true);
+                        setTimeout(() => setUrlCopied(false), 2000);
+                      }).catch(() => {});
+                    }}
+                    className="shrink-0 px-3 py-2 text-xs font-medium rounded-lg border border-green-400 text-green-700 bg-white hover:bg-green-50 transition-colors"
+                  >
+                    {urlCopied ? '✓ コピー済み' : 'コピー'}
+                  </button>
+                </div>
+              )}
+              <p className="text-xs text-gray-400 mt-2">
+                ※ QRコード生成はブラウザの「共有」機能または外部サービスをご利用ください。
+              </p>
             </div>
           </div>
         </div>
