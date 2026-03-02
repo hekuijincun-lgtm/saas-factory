@@ -788,21 +788,81 @@ app.post("/admin/menu", async (c) => {
     const seed = defaultMenu();
     const menu: any[] = value ? JSON.parse(value) : seed;
 
+    // eyebrow: 眉毛特化属性（styleType/firstTimeOnly/genderTarget）— optional
+    const eyebrow = body?.eyebrow && typeof body.eyebrow === 'object' ? body.eyebrow : undefined;
+
+    // If body contains an existing item id, treat as update (upsert)
+    const bodyId: string | undefined = typeof body?.id === 'string' && body.id.trim() ? body.id.trim() : undefined;
+    const existingIdx = bodyId ? menu.findIndex((m: any) => m.id === bodyId) : -1;
+
+    if (existingIdx >= 0) {
+      // Update existing item (preserve unspecified fields)
+      const existing = menu[existingIdx];
+      const updated: any = {
+        ...existing,
+        name: name.trim(),
+        price,
+        durationMin,
+        active: active !== undefined ? active : existing.active,
+        sortOrder: sortOrder !== undefined ? sortOrder : existing.sortOrder,
+      };
+      if (eyebrow !== undefined) updated.eyebrow = eyebrow;
+      else if ('eyebrow' in body && body.eyebrow === null) delete updated.eyebrow;
+      menu[existingIdx] = updated;
+      await kv.put(key, JSON.stringify(menu));
+      return c.json({ ok: true, tenantId, data: updated });
+    }
+
     const id = `menu_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
-    const newItem: MenuItem = {
+    const newItem: any = {
       id,
       name: name.trim(),
       price,
       durationMin,
       active: active !== undefined ? active : true,
       sortOrder: sortOrder !== undefined ? sortOrder : menu.length,
-      };
+    };
+    if (eyebrow !== undefined) newItem.eyebrow = eyebrow;
     menu.push(newItem);
     await kv.put(key, JSON.stringify(menu));
 
     return c.json({ ok: true, tenantId, data: newItem }, 201);
   } catch (error) {
     return c.json({ ok: false, error: "Failed to create menu", message: String(error) }, 500);
+  }
+})
+
+/** PATCH /admin/menu/:id — update existing menu item (including eyebrow) */
+app.patch("/admin/menu/:id", async (c) => {
+  try {
+    const tenantId = getTenantId(c);
+    const itemId = c.req.param("id");
+    const kv = (c.env as any).SAAS_FACTORY;
+    const body = await c.req.json().catch(() => ({} as any));
+
+    const key = `admin:menu:list:${tenantId}`;
+    const raw = await kv.get(key);
+    const menu: any[] = raw ? JSON.parse(raw) : [];
+    const idx = menu.findIndex((m: any) => m.id === itemId);
+    if (idx < 0) return c.json({ ok: false, error: "menu_item_not_found" }, 404);
+
+    const existing = menu[idx];
+    const updated: any = { ...existing };
+    if (body.name !== undefined) updated.name = String(body.name).trim();
+    if (body.price !== undefined) updated.price = Number(body.price);
+    if (body.durationMin !== undefined) updated.durationMin = Number(body.durationMin);
+    if (body.active !== undefined) updated.active = Boolean(body.active);
+    if (body.sortOrder !== undefined) updated.sortOrder = Number(body.sortOrder);
+    if (body.eyebrow !== undefined) {
+      if (body.eyebrow === null) delete updated.eyebrow;
+      else updated.eyebrow = body.eyebrow;
+    }
+    menu[idx] = updated;
+    await kv.put(key, JSON.stringify(menu));
+
+    return c.json({ ok: true, tenantId, data: updated });
+  } catch (error) {
+    return c.json({ ok: false, error: "Failed to update menu", message: String(error) }, 500);
   }
 })
 /**
