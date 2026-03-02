@@ -8,6 +8,15 @@ import DataTable from '../ui/DataTable';
 import Badge from '../ui/Badge';
 import { Plus, Edit2, Trash2, Scissors, ImageIcon, X } from 'lucide-react';
 
+function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result as string);
+    r.onerror = reject;
+    r.readAsDataURL(file);
+  });
+}
+
 export default function MenuManager({ tenantId: tenantIdProp }: { tenantId?: string }) {
   // tenantId (safe): read from query string, fallback to "default"
   const tenantId = tenantIdProp ?? (typeof window !== "undefined"
@@ -147,25 +156,11 @@ export default function MenuManager({ tenantId: tenantIdProp }: { tenantId?: str
     setError(null);
 
     try {
-      let imageKey = formData.imageKey;
       let imageUrl = formData.imageUrl;
 
-      // 新しい画像ファイルが選択されていればアップロード先行
+      // 新しいファイルが選択されていれば DataURL に変換してペイロードに同梱
       if (imageFile) {
-        const menuId = editingItem?.id ?? `new-${Date.now()}`;
-        const fd = new FormData();
-        fd.append('file', imageFile);
-        const uploadRes = await fetch(
-          `/api/proxy/admin/menu/image?tenantId=${encodeURIComponent(tenantId)}&menuId=${encodeURIComponent(menuId)}`,
-          { method: 'POST', body: fd }
-        );
-        if (!uploadRes.ok) {
-          const errData = await uploadRes.json().catch(() => ({}));
-          throw new Error((errData as any).error ?? `画像アップロードに失敗しました (${uploadRes.status})`);
-        }
-        const uploadData = await uploadRes.json() as { ok: boolean; imageKey: string; imageUrl: string };
-        imageKey = uploadData.imageKey;
-        imageUrl = uploadData.imageUrl;
+        imageUrl = await fileToDataUrl(imageFile);
       }
 
       const itemPayload = {
@@ -175,7 +170,7 @@ export default function MenuManager({ tenantId: tenantIdProp }: { tenantId?: str
         active: formData.active,
         sortOrder: formData.sortOrder,
         eyebrow: formData.eyebrow,
-        ...(imageKey ? { imageKey, imageUrl } : {}),
+        ...(imageUrl ? { imageUrl } : {}),
       };
 
       // tenantId を URL に含めて fetch（updateMenuItem/createMenuItem は tenantId 非対応）
