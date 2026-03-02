@@ -47,6 +47,30 @@ interface EyebrowKpi {
   styleBreakdown?: Record<string, StyleBreakdownEntry>;
 }
 
+// J1: Onboarding status
+interface OnboardingItem {
+  key: string;
+  label: string;
+  done: boolean;
+  action: string;
+  detail?: string;
+}
+interface OnboardingStatus {
+  completedCount: number;
+  totalCount: number;
+  completionRate: number;
+  items: OnboardingItem[];
+}
+
+// J3: Repeat metrics
+interface RepeatMetrics {
+  sentCount: number;
+  uniqueCustomersSent: number;
+  reservationsAfterSend: number;
+  convertedCustomers: number;
+  conversionAfterSendRate: number | null;
+}
+
 export default function AdminDashboard() {
   const searchParams = useSearchParams();
   const tenantId = searchParams?.get('tenantId') || 'default';
@@ -56,6 +80,11 @@ export default function AdminDashboard() {
   const [error, setError] = useState<string | null>(null);
   const [eyebrowKpi, setEyebrowKpi] = useState<EyebrowKpi | null>(null);
   const [kpiLoading, setKpiLoading] = useState(false);
+  // J1
+  const [onboarding, setOnboarding] = useState<OnboardingStatus | null>(null);
+  // J3
+  const [repeatMetrics, setRepeatMetrics] = useState<RepeatMetrics | null>(null);
+  const [metricsLoading, setMetricsLoading] = useState(false);
 
   useEffect(() => {
     const d = new Date();
@@ -83,6 +112,20 @@ export default function AdminDashboard() {
       .then((json: any) => { if (json?.ok) setEyebrowKpi(json.kpi); })
       .catch(() => {})
       .finally(() => setKpiLoading(false));
+
+    // J1: Onboarding status fetch
+    fetch(`/api/proxy/admin/onboarding-status?tenantId=${encodeURIComponent(tenantId)}`, { cache: 'no-store' })
+      .then(r => r.ok ? r.json() : null)
+      .then((json: any) => { if (json?.ok) setOnboarding(json as OnboardingStatus); })
+      .catch(() => {});
+
+    // J3: Repeat metrics fetch
+    setMetricsLoading(true);
+    fetch(`/api/proxy/admin/repeat-metrics?tenantId=${encodeURIComponent(tenantId)}&days=90&windowDays=14`, { cache: 'no-store' })
+      .then(r => r.ok ? r.json() : null)
+      .then((json: any) => { if (json?.ok) setRepeatMetrics(json.metrics); })
+      .catch(() => {})
+      .finally(() => setMetricsLoading(false));
   }, [tenantId]);
 
   if (loading) {
@@ -107,6 +150,49 @@ export default function AdminDashboard() {
 
   return (
     <div className="px-6 pb-8 space-y-6">
+      {/* J1: オンボーディング進捗カード（未完了がある場合のみ表示） */}
+      {onboarding && onboarding.completionRate < 100 && (
+        <div className="bg-white rounded-2xl border border-indigo-200 shadow-sm overflow-hidden">
+          <div className="px-5 py-4 border-b border-indigo-100 flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <span className="text-base">🚀</span>
+              <h2 className="text-sm font-semibold text-gray-700">導入チェックリスト</h2>
+            </div>
+            <span className="text-xs font-semibold text-indigo-600">{onboarding.completionRate}% 完了</span>
+          </div>
+          <div className="px-5 pt-3 pb-2">
+            {/* 進捗バー */}
+            <div className="w-full bg-gray-100 rounded-full h-2 mb-4">
+              <div
+                className="bg-indigo-500 h-2 rounded-full transition-all"
+                style={{ width: `${onboarding.completionRate}%` }}
+              />
+            </div>
+            <ul className="space-y-2">
+              {onboarding.items.map(item => (
+                <li key={item.key} className="flex items-center gap-3 text-sm">
+                  <span className={`flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold ${item.done ? 'bg-green-100 text-green-600' : 'bg-gray-100 text-gray-400'}`}>
+                    {item.done ? '✓' : '○'}
+                  </span>
+                  <span className={item.done ? 'text-gray-400 line-through' : 'text-gray-700'}>
+                    {item.label}
+                    {item.detail && <span className="ml-1 text-xs text-gray-400">({item.detail})</span>}
+                  </span>
+                  {!item.done && (
+                    <a href={item.action} className="ml-auto text-xs text-indigo-600 hover:text-indigo-800 underline whitespace-nowrap">
+                      設定する →
+                    </a>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+          <div className="px-5 py-3 bg-indigo-50 text-xs text-indigo-600">
+            {onboarding.completedCount}/{onboarding.totalCount} 項目完了
+          </div>
+        </div>
+      )}
+
       {/* KPI カード */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {/* 本日の予約数 */}
@@ -230,6 +316,49 @@ export default function AdminDashboard() {
                     </tbody>
                   </table>
                 </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* J3: リピート施策効果カード */}
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+        <div className="px-5 py-4 border-b border-gray-100 flex items-center gap-2">
+          <span className="text-base">📣</span>
+          <h2 className="text-sm font-semibold text-gray-700">リピート施策効果 <span className="font-normal text-gray-400">（直近90日 / 送信後14日以内）</span></h2>
+        </div>
+        {metricsLoading ? (
+          <div className="py-6 text-center text-sm text-gray-400">集計中...</div>
+        ) : !repeatMetrics || repeatMetrics.sentCount === 0 ? (
+          <div className="py-6 text-center text-sm text-gray-400">
+            送信データなし（リピート促進メッセージを送信すると効果が表示されます）
+          </div>
+        ) : (
+          <div className="p-5">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="text-center p-3 bg-pink-50 rounded-xl">
+                <div className="text-2xl font-bold text-pink-600">
+                  {repeatMetrics.conversionAfterSendRate !== null ? `${repeatMetrics.conversionAfterSendRate}%` : '—'}
+                </div>
+                <div className="text-xs text-gray-500 mt-1">予約転換率<br/><span className="text-gray-400">（送信後14日）</span></div>
+              </div>
+              <div className="text-center p-3 bg-green-50 rounded-xl">
+                <div className="text-2xl font-bold text-green-600">{repeatMetrics.convertedCustomers}</div>
+                <div className="text-xs text-gray-500 mt-1">予約に繋がった<br/>顧客数</div>
+              </div>
+              <div className="text-center p-3 bg-blue-50 rounded-xl">
+                <div className="text-2xl font-bold text-blue-600">{repeatMetrics.uniqueCustomersSent}</div>
+                <div className="text-xs text-gray-500 mt-1">ユニーク<br/>送信顧客数</div>
+              </div>
+              <div className="text-center p-3 bg-purple-50 rounded-xl">
+                <div className="text-2xl font-bold text-purple-600">{repeatMetrics.sentCount}</div>
+                <div className="text-xs text-gray-500 mt-1">総送信数<br/>（90日）</div>
+              </div>
+            </div>
+            {repeatMetrics.reservationsAfterSend > 0 && (
+              <div className="mt-3 px-3 py-2 bg-green-50 border border-green-200 rounded-lg text-xs text-green-700">
+                送信後14日以内に <strong>{repeatMetrics.reservationsAfterSend}件</strong> の予約が入りました
               </div>
             )}
           </div>

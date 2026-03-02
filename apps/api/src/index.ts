@@ -1362,8 +1362,102 @@ app.post("/admin/kpi/backfill-customer-key", async (c) => {
 });
 
 /** =========================
- * GET /admin/repeat-targets?tenantId=&days=28&limit=200
+ * GET /admin/onboarding-status?tenantId=
+ * Returns checklist of setup tasks and completion rate.
+ * J1: Onboarding progress card data source.
+ * ========================= */
+app.get("/admin/onboarding-status", async (c) => {
+  try {
+    const tenantId = getTenantId(c);
+    const kv = (c.env as any).SAAS_FACTORY;
+    const db = (c.env as any).DB;
+
+    const items: Array<{ key: string; label: string; done: boolean; action: string; detail?: string }> = [];
+
+    // Load settings
+    let storeName = '';
+    let bookingUrl = '';
+    let eyebrowRepeatEnabled = false;
+    let eyebrowTemplateSet = false;
+    if (kv) {
+      try {
+        const raw = await kv.get(`settings:${tenantId}`);
+        if (raw) {
+          const s = JSON.parse(raw);
+          storeName = String(s?.storeName ?? '').trim();
+          bookingUrl = String(s?.integrations?.line?.bookingUrl ?? '').trim();
+          eyebrowRepeatEnabled = Boolean(s?.eyebrow?.repeat?.enabled);
+          eyebrowTemplateSet = (String(s?.eyebrow?.repeat?.template ?? '').trim().length > 0);
+        }
+      } catch { /* ignore */ }
+    }
+    if (!bookingUrl) {
+      const webBase = String((c.env as any).WEB_BASE ?? '').trim();
+      if (webBase) bookingUrl = webBase + '/booking';
+    }
+
+    items.push({ key: 'storeName', label: '店舗名設定', done: storeName.length > 0, action: '/admin/settings', detail: storeName || undefined });
+    items.push({ key: 'bookingUrl', label: '予約URL設定（LINE連携）', done: bookingUrl.length > 0, action: '/admin/settings' });
+
+    // Menu check
+    let menuCount = 0;
+    let menuEyebrowCount = 0;
+    if (kv) {
+      try {
+        const menuRaw = await kv.get(`admin:menu:list:${tenantId}`);
+        if (menuRaw) {
+          const menu: any[] = JSON.parse(menuRaw);
+          const active = Array.isArray(menu) ? menu.filter((m: any) => m.active !== false) : [];
+          menuCount = active.length;
+          menuEyebrowCount = active.filter((m: any) => m.eyebrow?.styleType).length;
+        }
+      } catch { /* ignore */ }
+    }
+    items.push({ key: 'menu', label: 'メニュー登録（1件以上）', done: menuCount > 0, action: '/admin/menu', detail: menuCount > 0 ? `${menuCount}件` : undefined });
+    items.push({ key: 'menuEyebrow', label: '眉毛スタイル設定済みメニュー（1件以上）', done: menuEyebrowCount > 0, action: '/admin/menu', detail: menuEyebrowCount > 0 ? `${menuEyebrowCount}件` : undefined });
+
+    // Staff check
+    let staffCount = 0;
+    if (kv) {
+      try {
+        const staffRaw = await kv.get(`admin:staff:list:${tenantId}`);
+        if (staffRaw) {
+          const staff: any[] = JSON.parse(staffRaw);
+          staffCount = Array.isArray(staff) ? staff.filter((s: any) => s.active !== false).length : 0;
+        }
+      } catch { /* ignore */ }
+    }
+    items.push({ key: 'staff', label: 'スタッフ登録（1名以上）', done: staffCount > 0, action: '/admin/staff', detail: staffCount > 0 ? `${staffCount}名` : undefined });
+
+    // Test reservation (last 30 days)
+    let hasTestReservation = false;
+    if (db) {
+      try {
+        const since30 = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+        const row: any = await db.prepare(
+          `SELECT COUNT(*) as cnt FROM reservations WHERE tenant_id = ? AND slot_start >= ? AND status != 'cancelled'`
+        ).bind(tenantId, since30).first();
+        hasTestReservation = (row?.cnt ?? 0) > 0;
+      } catch { /* ignore */ }
+    }
+    items.push({ key: 'testReservation', label: 'テスト予約（直近30日に1件以上）', done: hasTestReservation, action: '/booking' });
+
+    // Repeat config
+    items.push({ key: 'repeatConfig', label: 'リピート設定（有効化 + テンプレ設定）', done: eyebrowRepeatEnabled && eyebrowTemplateSet, action: '/admin/settings' });
+
+    const completedCount = items.filter(i => i.done).length;
+    const completionRate = Math.round((completedCount / items.length) * 100);
+
+    return c.json({ ok: true, tenantId, completedCount, totalCount: items.length, completionRate, items });
+  } catch (error) {
+    return c.json({ ok: false, error: "Failed to get onboarding status", message: String(error) }, 500);
+  }
+});
+
+/** =========================
+ * GET /admin/repeat-targets?tenantId=&days=28&limit=200&maxPerDay=50&order=oldest&excludeSentWithinDays=7
  * Returns customers whose last visit was >= days ago and have no future reservation.
+ * J2: maxPerDay=daily send cap, order=oldest|newest, excludeSentWithinDays=exclude recently sent.
  * Fields: customerKey, lineUserId, lastReservationAt, lastMenuSummary, staffId, styleType, recommendedMessage
  * ========================= */
 app.get("/admin/repeat-targets", async (c) => {
@@ -1371,6 +1465,10 @@ app.get("/admin/repeat-targets", async (c) => {
     const tenantId = getTenantId(c);
     const days = Math.min(Math.max(Number(c.req.query("days") || "28"), 7), 365);
     const limit = Math.min(Math.max(Number(c.req.query("limit") || "200"), 1), 500);
+    // J2 params
+    const maxPerDay = Math.min(Math.max(Number(c.req.query("maxPerDay") || "50"), 1), 500);
+    const order: 'oldest' | 'newest' = c.req.query("order") === 'newest' ? 'newest' : 'oldest';
+    const excludeSentWithinDays = Math.max(0, Number(c.req.query("excludeSentWithinDays") ?? "7"));
     const db = (c.env as any).DB;
     const kv = (c.env as any).SAAS_FACTORY;
     if (!db) return c.json({ ok: false, error: "DB_not_bound" }, 500);
@@ -1424,8 +1522,33 @@ app.get("/admin/repeat-targets", async (c) => {
       } catch { /* ignore */ }
     }
 
+    // J2: Load exclusion set (customers sent within excludeSentWithinDays) + today's sent count
+    const excludeSet = new Set<string>();
+    let todaySentCount = 0;
+    if (db) {
+      if (excludeSentWithinDays > 0) {
+        try {
+          const excludeSince = new Date(Date.now() - excludeSentWithinDays * 24 * 60 * 60 * 1000).toISOString();
+          const exRows: any[] = (await db.prepare(
+            `SELECT DISTINCT customer_key FROM message_logs WHERE tenant_id = ? AND type = 'repeat' AND sent_at >= ?`
+          ).bind(tenantId, excludeSince).all()).results || [];
+          for (const row of exRows) { if (row.customer_key) excludeSet.add(row.customer_key); }
+        } catch { /* message_logs might not exist on older DBs */ }
+      }
+      try {
+        const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+        const todayRow: any = await db.prepare(
+          `SELECT COUNT(*) as cnt FROM message_logs WHERE tenant_id = ? AND type = 'repeat' AND sent_at >= ?`
+        ).bind(tenantId, todayStart.toISOString()).first();
+        todaySentCount = todayRow?.cnt ?? 0;
+      } catch { /* ignore */ }
+    }
+    const remainingCapacity = Math.max(0, maxPerDay - todaySentCount);
+
     // Query: get latest reservation per customerKey where MAX(slot_start) < cutoff
     // Note: menu_id/menu_name columns do not exist in D1 reservations table
+    // J2: ORDER BY slot_start ASC (oldest) or DESC (newest)
+    const orderBy = order === 'newest' ? 'r.slot_start DESC' : 'r.slot_start ASC';
     const rows: any[] = (await db.prepare(
       `SELECT
          r.id,
@@ -1445,6 +1568,7 @@ app.get("/admin/repeat-targets", async (c) => {
        ) latest ON json_extract(r.meta, '$.customerKey') = latest.ck
                 AND r.slot_start = latest.maxSlot
        WHERE r.tenant_id = ? AND r.status != 'cancelled'
+       ORDER BY ${orderBy}
        LIMIT ?`
     ).bind(tenantId, cutoff, tenantId, limit).all()).results || [];
 
@@ -1481,7 +1605,23 @@ app.get("/admin/repeat-targets", async (c) => {
       };
     });
 
-    return c.json({ ok: true, tenantId, days, cutoff, count: targets.length, targets });
+    // J2: Post-filter excluded customers + apply remainingCapacity cap
+    const excludedCount = targets.filter(t => excludeSet.has(t.customerKey)).length;
+    const filteredTargets = targets.filter(t => !excludeSet.has(t.customerKey));
+    const cappedTargets = filteredTargets.slice(0, remainingCapacity > 0 ? remainingCapacity : filteredTargets.length);
+
+    return c.json({
+      ok: true, tenantId, days, cutoff,
+      count: cappedTargets.length,
+      targets: cappedTargets,
+      // J2 meta
+      todaySentCount,
+      maxPerDay,
+      remainingCapacity,
+      excludedCount,
+      order,
+      excludeSentWithinDays,
+    });
   } catch (error) {
     return c.json({ ok: false, error: "Failed to get repeat targets", message: String(error) }, 500);
   }
@@ -1654,6 +1794,74 @@ app.post("/admin/repeat-send", async (c) => {
     });
   } catch (error) {
     return c.json({ ok: false, error: "Failed to send repeat messages", message: String(error) }, 500);
+  }
+});
+
+/** =========================
+ * GET /admin/repeat-metrics?tenantId=&days=90&windowDays=14
+ * J3: Effect measurement — sent count, converted customers, conversion rate.
+ * Uses message_logs (type=repeat) joined with reservations via customerKey.
+ * ========================= */
+app.get("/admin/repeat-metrics", async (c) => {
+  try {
+    const tenantId = getTenantId(c);
+    const db = (c.env as any).DB;
+    if (!db) return c.json({ ok: false, error: "DB_not_bound" }, 500);
+
+    const days = Math.min(Math.max(Number(c.req.query("days") || "90"), 7), 365);
+    const windowDays = Math.min(Math.max(Number(c.req.query("windowDays") || "14"), 1), 90);
+    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+
+    // Step 1: Total sent stats from message_logs
+    let sentCount = 0;
+    let uniqueCustomersSent = 0;
+    try {
+      const sentRow: any = await db.prepare(
+        `SELECT COUNT(*) as sentCount, COUNT(DISTINCT customer_key) as uniqueCustomersSent
+         FROM message_logs WHERE tenant_id = ? AND type = 'repeat' AND channel = 'line' AND sent_at >= ?`
+      ).bind(tenantId, since).first();
+      sentCount = sentRow?.sentCount ?? 0;
+      uniqueCustomersSent = sentRow?.uniqueCustomersSent ?? 0;
+    } catch { /* message_logs may be empty */ }
+
+    // Step 2: Get first send per customer (for window calculation)
+    let sentCustomers: any[] = [];
+    try {
+      sentCustomers = (await db.prepare(
+        `SELECT customer_key, MIN(sent_at) as first_sent_at
+         FROM message_logs WHERE tenant_id = ? AND type = 'repeat' AND channel = 'line' AND sent_at >= ?
+         GROUP BY customer_key`
+      ).bind(tenantId, since).all()).results || [];
+    } catch { /* ignore */ }
+
+    // Step 3: Check conversions — reservation after first send within windowDays
+    let convertedCustomers = 0;
+    let reservationsAfterSend = 0;
+    for (const sc of sentCustomers) {
+      try {
+        const windowEnd = new Date(new Date(sc.first_sent_at).getTime() + windowDays * 24 * 60 * 60 * 1000).toISOString();
+        const row: any = await db.prepare(
+          `SELECT COUNT(*) as cnt FROM reservations
+           WHERE tenant_id = ? AND json_extract(meta, '$.customerKey') = ?
+             AND slot_start >= ? AND slot_start <= ? AND status != 'cancelled'`
+        ).bind(tenantId, sc.customer_key, sc.first_sent_at, windowEnd).first();
+        if ((row?.cnt ?? 0) > 0) {
+          convertedCustomers++;
+          reservationsAfterSend += row.cnt;
+        }
+      } catch { /* ignore */ }
+    }
+
+    const conversionAfterSendRate = uniqueCustomersSent > 0
+      ? Math.round((convertedCustomers / uniqueCustomersSent) * 100)
+      : null;
+
+    return c.json({
+      ok: true, tenantId, days, windowDays, since,
+      metrics: { sentCount, uniqueCustomersSent, reservationsAfterSend, convertedCustomers, conversionAfterSendRate },
+    });
+  } catch (error) {
+    return c.json({ ok: false, error: "Failed to get repeat metrics", message: String(error) }, 500);
   }
 });
 
