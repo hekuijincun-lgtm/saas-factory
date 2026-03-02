@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { resolveVertical } from "./settings";
+import { getRepeatConfig, getStyleLabel, buildRepeatMessage, eyebrowOnboardingChecks } from "./verticals/eyebrow";
 
 // test helper (lock reproduction)
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
@@ -1403,7 +1404,7 @@ app.get("/admin/onboarding-status", async (c) => {
 
     const items: Array<{ key: string; label: string; done: boolean; action: string; detail?: string }> = [];
 
-    // Load settings
+    // Load settings — P4: use eyebrow plugin for repeat config
     let storeName = '';
     let bookingUrl = '';
     let eyebrowRepeatEnabled = false;
@@ -1415,8 +1416,9 @@ app.get("/admin/onboarding-status", async (c) => {
           const s = JSON.parse(raw);
           storeName = String(s?.storeName ?? '').trim();
           bookingUrl = String(s?.integrations?.line?.bookingUrl ?? '').trim();
-          eyebrowRepeatEnabled = Boolean(s?.eyebrow?.repeat?.enabled);
-          eyebrowTemplateSet = (String(s?.eyebrow?.repeat?.template ?? '').trim().length > 0);
+          const rc = getRepeatConfig(s);
+          eyebrowRepeatEnabled = rc.enabled;
+          eyebrowTemplateSet = rc.template.trim().length > 0 && rc.template !== '前回のご来店からそろそろ{interval}週が経ちます。眉毛のリタッチはいかがでしょうか？';
         }
       } catch { /* ignore */ }
     }
@@ -1443,7 +1445,10 @@ app.get("/admin/onboarding-status", async (c) => {
       } catch { /* ignore */ }
     }
     items.push({ key: 'menu', label: 'メニュー登録（1件以上）', done: menuCount > 0, action: '/admin/menu', detail: menuCount > 0 ? `${menuCount}件` : undefined });
-    items.push({ key: 'menuEyebrow', label: '眉毛スタイル設定済みメニュー（1件以上）', done: menuEyebrowCount > 0, action: '/admin/menu', detail: menuEyebrowCount > 0 ? `${menuEyebrowCount}件` : undefined });
+    // P4: eyebrow 固有チェックは eyebrowOnboardingChecks から注入
+    const eyebrowItems = eyebrowOnboardingChecks({ menuEyebrowCount, repeatEnabled: eyebrowRepeatEnabled, templateSet: eyebrowTemplateSet });
+    const menuEyebrowItem = eyebrowItems.find(i => i.key === 'menuEyebrow')!;
+    items.push(menuEyebrowItem);
 
     // Staff check
     let staffCount = 0;
@@ -1471,8 +1476,9 @@ app.get("/admin/onboarding-status", async (c) => {
     }
     items.push({ key: 'testReservation', label: 'テスト予約（直近30日に1件以上）', done: hasTestReservation, action: '/booking' });
 
-    // Repeat config
-    items.push({ key: 'repeatConfig', label: 'リピート設定（有効化 + テンプレ設定）', done: eyebrowRepeatEnabled && eyebrowTemplateSet, action: '/admin/settings' });
+    // P4: repeatConfig via eyebrow plugin
+    const repeatConfigItem = eyebrowItems.find(i => i.key === 'repeatConfig')!;
+    items.push(repeatConfigItem);
 
     const completedCount = items.filter(i => i.done).length;
     const completionRate = Math.round((completedCount / items.length) * 100);
@@ -1505,8 +1511,8 @@ app.get("/admin/repeat-targets", async (c) => {
     // Cutoff: MAX(slot_start) < cutoff means no visit within last `days` days (and no future reservation)
     const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
 
-    // Load settings for recommendedMessage template + I2 tokens
-    let repeatTemplate = '前回のご来店からそろそろ{interval}週が経ちます。眉毛のリタッチはいかがでしょうか？';
+    // P4: Load settings via eyebrow plugin (verticalConfig 優先・eyebrow フォールバック)
+    let repeatTemplate = '';
     let intervalDays = 42;
     let storeName = '';
     let bookingUrl = '';
@@ -1515,27 +1521,21 @@ app.get("/admin/repeat-targets", async (c) => {
         const settingsRaw = await kv.get(`settings:${tenantId}`);
         if (settingsRaw) {
           const s = JSON.parse(settingsRaw);
-          if (s?.eyebrow?.repeat?.template) repeatTemplate = s.eyebrow.repeat.template;
-          if (s?.eyebrow?.repeat?.intervalDays) intervalDays = Number(s.eyebrow.repeat.intervalDays) || 42;
+          const rc = getRepeatConfig(s);
+          repeatTemplate = rc.template;
+          intervalDays = rc.intervalDays;
           storeName = String(s?.storeName ?? '').trim();
           bookingUrl = String(s?.integrations?.line?.bookingUrl ?? '').trim();
         }
       } catch { /* ignore */ }
     }
+    if (!repeatTemplate) repeatTemplate = '前回のご来店からそろそろ{interval}週が経ちます。眉毛のリタッチはいかがでしょうか？';
     // Fallback bookingUrl from WEB_BASE env
     if (!bookingUrl) {
       const webBase = String((c.env as any).WEB_BASE ?? (c.env as any).ADMIN_WEB_BASE ?? '').trim();
       if (webBase) bookingUrl = webBase + '/booking';
     }
     const intervalWeeks = Math.round(intervalDays / 7);
-
-    // I2: Style label map
-    const STYLE_LABELS: Record<string, string> = {
-      natural: 'ナチュラル',
-      sharp: 'シャープ',
-      korean: '韓国風',
-      custom: 'カスタム',
-    };
 
     // I2: Load staff map from KV (staffId → staffName)
     const staffMap: Record<string, string> = {};
@@ -1610,18 +1610,19 @@ app.get("/admin/repeat-targets", async (c) => {
         lineUserId = r.line_user_id;
       }
 
-      // styleType: meta.eyebrowDesign.styleType only (no menu_id column in D1)
+      // styleType: verticalData.styleType または eyebrowDesign.styleType (SQL COALESCE 済み)
       const styleType: string | null = r.metaStyleType || null;
 
-      // I2: Per-row token replacement (lenient: missing tokens → empty string)
+      // P4: buildRepeatMessage via eyebrow plugin
       const staffName = (r.staff_id && staffMap[r.staff_id]) ? staffMap[r.staff_id] : '';
-      const styleLabel = styleType ? (STYLE_LABELS[styleType] ?? styleType) : '';
-      const recommendedMessage = repeatTemplate
-        .replace(/\{interval\}/g, String(intervalWeeks))
-        .replace(/\{storeName\}/g, storeName)
-        .replace(/\{style\}/g, styleLabel)
-        .replace(/\{staff\}/g, staffName)
-        .replace(/\{bookingUrl\}/g, bookingUrl);
+      const styleLabel = getStyleLabel(styleType);
+      const recommendedMessage = buildRepeatMessage(repeatTemplate, {
+        interval: String(intervalWeeks),
+        storeName,
+        style: styleLabel,
+        staff: staffName,
+        bookingUrl,
+      });
 
       return {
         customerKey: r.customerKey,
