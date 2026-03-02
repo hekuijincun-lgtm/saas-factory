@@ -66,6 +66,24 @@ export interface OnboardingSettings {
   lineConnected?: boolean;
 }
 
+/** 業種バーティカル識別子 */
+export type VerticalType = 'eyebrow' | 'nail' | 'dental' | 'generic';
+
+/** バーティカル共通設定（業種に依存しない汎用フォーム） */
+export interface VerticalConfig {
+  /** 施術同意文（施術前に顧客に表示するリスク告知テキスト） */
+  consentText?: string;
+  /** スタイルタイプ一覧（eyebrow なら ["natural","bold","feathering"] 等） */
+  styleTypes?: string[];
+  /** リピート促進設定 */
+  repeat?: {
+    enabled?: boolean;
+    intervalDays?: number;
+    template?: string;
+  };
+}
+
+/** @deprecated use EyebrowSettings via verticalConfig instead */
 export interface EyebrowSettings {
   consentText?: string;        // 眉毛施術同意文（スキンケアリスク等）
   repeat?: {
@@ -90,7 +108,12 @@ export interface AdminSettings {
   assignment: AssignmentSettings;
   integrations: IntegrationSettings;
   onboarding?: OnboardingSettings;
+  /** @deprecated use vertical + verticalConfig instead */
   eyebrow?: EyebrowSettings;
+  /** 業種バーティカル（'eyebrow' | 'nail' | 'dental' | 'generic'） */
+  vertical?: VerticalType;
+  /** バーティカル詳細設定（vertical に対応する設定値） */
+  verticalConfig?: VerticalConfig;
 }
 
 /**

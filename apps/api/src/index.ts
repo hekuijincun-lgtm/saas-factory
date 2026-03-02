@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import { resolveVertical } from "./settings";
 
 // test helper (lock reproduction)
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
@@ -218,6 +219,10 @@ app.get("/__build", (c) => c.json({ ok: true, stamp: "API_BUILD_V1" }));
     let data = DEFAULT_SETTINGS
     if(sDefault) data = deepMerge(data, sDefault)
     if(sTenant)  data = deepMerge(data, sTenant)
+
+    // P1: inject resolved vertical fields (backward-compat: legacy eyebrow also kept)
+    const { vertical, verticalConfig } = resolveVertical(data)
+    data = { ...data, vertical, verticalConfig }
 
     return c.json({
       ok:true,

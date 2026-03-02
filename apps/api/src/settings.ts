@@ -66,6 +66,24 @@ export interface OnboardingSettings {
   lineConnected?: boolean;
 }
 
+/** 業種バーティカル識別子 */
+export type VerticalType = 'eyebrow' | 'nail' | 'dental' | 'generic';
+
+/** バーティカル共通設定（業種に依存しない汎用フォーム） */
+export interface VerticalConfig {
+  /** 施術同意文（施術前に顧客に表示するリスク告知テキスト） */
+  consentText?: string;
+  /** スタイルタイプ一覧（eyebrow なら ["natural","bold","feathering"] 等） */
+  styleTypes?: string[];
+  /** リピート促進設定 */
+  repeat?: {
+    enabled?: boolean;
+    intervalDays?: number;
+    template?: string;
+  };
+}
+
+/** @deprecated use EyebrowSettings via verticalConfig instead */
 export interface EyebrowSettings {
   consentText?: string;        // 眉毛施術同意文
   repeat?: {
@@ -90,7 +108,12 @@ export interface AdminSettings {
   assignment: AssignmentSettings;
   integrations: IntegrationSettings;
   onboarding?: OnboardingSettings;
+  /** @deprecated use vertical + verticalConfig instead */
   eyebrow?: EyebrowSettings;
+  /** 業種バーティカル（'eyebrow' | 'nail' | 'dental' | 'generic'） */
+  vertical?: VerticalType;
+  /** バーティカル詳細設定（vertical に対応する設定値） */
+  verticalConfig?: VerticalConfig;
 }
 
 /**
@@ -363,6 +386,43 @@ export function mergeSettings(defaults: AdminSettings, partial: Partial<AdminSet
             : undefined,
         }
       : undefined,
+    vertical: partial.vertical ?? defaults.vertical,
+    verticalConfig: (partial.verticalConfig || defaults.verticalConfig)
+      ? {
+          consentText: partial.verticalConfig?.consentText ?? defaults.verticalConfig?.consentText,
+          styleTypes: partial.verticalConfig?.styleTypes ?? defaults.verticalConfig?.styleTypes,
+          repeat: (partial.verticalConfig?.repeat || defaults.verticalConfig?.repeat)
+            ? {
+                enabled: partial.verticalConfig?.repeat?.enabled ?? defaults.verticalConfig?.repeat?.enabled,
+                intervalDays: partial.verticalConfig?.repeat?.intervalDays ?? defaults.verticalConfig?.repeat?.intervalDays,
+                template: partial.verticalConfig?.repeat?.template ?? defaults.verticalConfig?.repeat?.template,
+              }
+            : undefined,
+        }
+      : undefined,
   };
 }
 
+/**
+ * 設定から現在の業種バーティカルと設定を解決する。
+ * 新形式（vertical + verticalConfig）を優先し、旧形式（eyebrow）にフォールバック。
+ * GET /admin/settings レスポンスへの注入・P4 プラグイン選択に使用する。
+ */
+export function resolveVertical(s: Partial<AdminSettings>): { vertical: VerticalType; verticalConfig: VerticalConfig } {
+  // 1. 新形式: vertical + verticalConfig が両方存在すればそのまま返す
+  if (s.vertical && s.verticalConfig) {
+    return { vertical: s.vertical, verticalConfig: s.verticalConfig };
+  }
+  // 2. 旧形式: eyebrow から派生
+  if (s.eyebrow) {
+    return {
+      vertical: 'eyebrow',
+      verticalConfig: {
+        consentText: s.eyebrow.consentText,
+        repeat: s.eyebrow.repeat,
+      },
+    };
+  }
+  // 3. デフォルト: generic
+  return { vertical: 'generic', verticalConfig: {} };
+}
