@@ -3,7 +3,8 @@
 
 import { useState, useEffect } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { CalendarDays, Building2, Clock, Link as LinkIcon, AlertCircle, RefreshCw, Save, Scissors } from 'lucide-react';
+import { CalendarDays, Building2, Clock, Link as LinkIcon, AlertCircle, RefreshCw, Save, Scissors, Plus, Trash2 } from 'lucide-react';
+import type { EyebrowSurveyQuestion } from '@/src/types/settings';
 import DebugHydration from './DebugHydration';
 import {
   fetchAdminSettings,
@@ -87,6 +88,14 @@ export default function AdminSettingsClient() {
   const [savedEyebrowIntervalDays, setSavedEyebrowIntervalDays] = useState(42);
   const [eyebrowTemplate, setEyebrowTemplate] = useState('前回のご来店からそろそろ{interval}週が経ちます。眉毛のリタッチはいかがでしょうか？');
   const [savedEyebrowTemplate, setSavedEyebrowTemplate] = useState('前回のご来店からそろそろ{interval}週が経ちます。眉毛のリタッチはいかがでしょうか？');
+  // NEW: ベッド数
+  const [eyebrowBedCount, setEyebrowBedCount] = useState(1);
+  const [savedEyebrowBedCount, setSavedEyebrowBedCount] = useState(1);
+  // NEW: 事前アンケート
+  const [eyebrowSurveyEnabled, setEyebrowSurveyEnabled] = useState(false);
+  const [savedEyebrowSurveyEnabled, setSavedEyebrowSurveyEnabled] = useState(false);
+  const [eyebrowSurveyQuestions, setEyebrowSurveyQuestions] = useState<EyebrowSurveyQuestion[]>([]);
+  const [savedEyebrowSurveyQuestions, setSavedEyebrowSurveyQuestions] = useState<EyebrowSurveyQuestion[]>([]);
 
   // --- Messaging API ---
   const [messagingStatus, setMessagingStatus] = useState<MessagingStatusResponse | null>(null);
@@ -236,6 +245,25 @@ export default function AdminSettingsClient() {
   // API: 設定取得
   // ============================================================
 
+  // --- 事前アンケートヘルパー ---
+  const addSurveyQuestion = () => {
+    const newQ: EyebrowSurveyQuestion = {
+      id: `q_${Date.now()}`,
+      label: '',
+      type: 'text',
+      enabled: true,
+    };
+    setEyebrowSurveyQuestions(prev => [...prev, newQ]);
+  };
+
+  const updateSurveyQuestion = (id: string, patch: Partial<EyebrowSurveyQuestion>) => {
+    setEyebrowSurveyQuestions(prev => prev.map(q => q.id === id ? { ...q, ...patch } : q));
+  };
+
+  const removeSurveyQuestion = (id: string) => {
+    setEyebrowSurveyQuestions(prev => prev.filter(q => q.id !== id));
+  };
+
   const fetchSettings = async () => {
     setSettingsLoading(true);
     setSettingsError(null);
@@ -268,6 +296,12 @@ export default function AdminSettingsClient() {
       setEyebrowIntervalDays(ri); setSavedEyebrowIntervalDays(ri);
       const rt = eyebrow.repeat?.template || '前回のご来店からそろそろ{interval}週が経ちます。眉毛のリタッチはいかがでしょうか？';
       setEyebrowTemplate(rt); setSavedEyebrowTemplate(rt);
+      const bc = eyebrow.bedCount ?? 1;
+      setEyebrowBedCount(bc); setSavedEyebrowBedCount(bc);
+      const se = eyebrow.surveyEnabled ?? false;
+      setEyebrowSurveyEnabled(se); setSavedEyebrowSurveyEnabled(se);
+      const sq: EyebrowSurveyQuestion[] = Array.isArray(eyebrow.surveyQuestions) ? eyebrow.surveyQuestions : [];
+      setEyebrowSurveyQuestions(sq); setSavedEyebrowSurveyQuestions(sq);
     } catch (error) {
       const msg = error instanceof ApiClientError
         ? error.message
@@ -404,6 +438,9 @@ export default function AdminSettingsClient() {
             intervalDays: eyebrowIntervalDays,
             template: eyebrowTemplate,
           },
+          bedCount: eyebrowBedCount,
+          surveyEnabled: eyebrowSurveyEnabled,
+          surveyQuestions: eyebrowSurveyQuestions,
         },
       } as any, tenantId);
       setStoreName(storeNameInput);
@@ -416,6 +453,9 @@ export default function AdminSettingsClient() {
       setSavedEyebrowRepeatEnabled(eyebrowRepeatEnabled);
       setSavedEyebrowIntervalDays(eyebrowIntervalDays);
       setSavedEyebrowTemplate(eyebrowTemplate);
+      setSavedEyebrowBedCount(eyebrowBedCount);
+      setSavedEyebrowSurveyEnabled(eyebrowSurveyEnabled);
+      setSavedEyebrowSurveyQuestions(eyebrowSurveyQuestions);
 
       // localStorage にローカル設定を保存（営業日等）
       try {
@@ -445,6 +485,9 @@ export default function AdminSettingsClient() {
     setEyebrowRepeatEnabled(savedEyebrowRepeatEnabled);
     setEyebrowIntervalDays(savedEyebrowIntervalDays);
     setEyebrowTemplate(savedEyebrowTemplate);
+    setEyebrowBedCount(savedEyebrowBedCount);
+    setEyebrowSurveyEnabled(savedEyebrowSurveyEnabled);
+    setEyebrowSurveyQuestions(savedEyebrowSurveyQuestions);
   };
 
   const toggleDay = (dayIndex: number) => {
@@ -958,6 +1001,101 @@ export default function AdminSettingsClient() {
                     />
                     <p className="mt-1 text-xs text-gray-400">{`{interval}` + ' はリピート間隔（週数）に自動置換されます'}</p>
                   </div>
+                </div>
+              )}
+            </div>
+
+            {/* ベッド数 */}
+            <div className="border-t border-gray-100 pt-4">
+              <div className="flex items-center gap-3">
+                <label className="text-sm font-medium text-gray-700 whitespace-nowrap">ベッド数（同時施術キャパ）</label>
+                <input
+                  type="number"
+                  min="1"
+                  max="20"
+                  className="w-20 px-2 py-1.5 border border-gray-300 rounded-lg text-sm text-center focus:ring-2 focus:ring-pink-400 focus:border-pink-400 outline-none"
+                  value={eyebrowBedCount}
+                  onChange={e => setEyebrowBedCount(Math.max(1, Number(e.target.value)))}
+                />
+                <span className="text-sm text-gray-600">台</span>
+              </div>
+              <p className="mt-1 text-xs text-gray-400">同一時間帯に受け付ける最大同時予約数に影響します</p>
+            </div>
+
+            {/* 事前アンケート */}
+            <div className="border-t border-gray-100 pt-4">
+              <div className="flex items-center justify-between mb-3">
+                <div>
+                  <div className="text-sm font-medium text-gray-700">事前アンケート</div>
+                  <div className="text-xs text-gray-400 mt-0.5">予約時に顧客へ質問を表示します</div>
+                </div>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <div className="relative">
+                    <input
+                      type="checkbox"
+                      className="sr-only"
+                      checked={eyebrowSurveyEnabled}
+                      onChange={e => setEyebrowSurveyEnabled(e.target.checked)}
+                    />
+                    <div className={`w-10 h-6 rounded-full transition-colors ${eyebrowSurveyEnabled ? 'bg-pink-500' : 'bg-gray-300'}`} />
+                    <div className={`absolute top-1 left-1 w-4 h-4 bg-white rounded-full shadow transition-transform ${eyebrowSurveyEnabled ? 'translate-x-4' : ''}`} />
+                  </div>
+                  <span className="text-xs text-gray-600">{eyebrowSurveyEnabled ? 'ON' : 'OFF'}</span>
+                </label>
+              </div>
+
+              {eyebrowSurveyEnabled && (
+                <div className="space-y-2">
+                  {eyebrowSurveyQuestions.map((q, idx) => (
+                    <div key={q.id} className="flex items-start gap-2 p-3 bg-gray-50 rounded-lg">
+                      <span className="text-xs text-gray-400 mt-2 w-4 shrink-0">{idx + 1}</span>
+                      <div className="flex-1 space-y-1.5">
+                        <input
+                          type="text"
+                          className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:ring-2 focus:ring-pink-400 focus:border-pink-400 outline-none"
+                          placeholder="質問文"
+                          value={q.label}
+                          onChange={e => updateSurveyQuestion(q.id, { label: e.target.value })}
+                        />
+                        <div className="flex items-center gap-2">
+                          <select
+                            className="px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-pink-400"
+                            value={q.type}
+                            onChange={e => updateSurveyQuestion(q.id, { type: e.target.value as EyebrowSurveyQuestion['type'] })}
+                          >
+                            <option value="text">テキスト（1行）</option>
+                            <option value="textarea">テキスト（複数行）</option>
+                            <option value="checkbox">チェックボックス</option>
+                          </select>
+                          <label className="flex items-center gap-1 text-xs text-gray-600 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={q.enabled}
+                              onChange={e => updateSurveyQuestion(q.id, { enabled: e.target.checked })}
+                              className="w-3.5 h-3.5"
+                            />
+                            有効
+                          </label>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => removeSurveyQuestion(q.id)}
+                        className="mt-1.5 p-1 text-gray-400 hover:text-red-500 transition-colors"
+                        aria-label="削除"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={addSurveyQuestion}
+                    className="flex items-center gap-1.5 text-sm text-pink-600 hover:text-pink-700 font-medium mt-1"
+                  >
+                    <Plus className="w-4 h-4" />
+                    質問を追加
+                  </button>
                 </div>
               )}
             </div>

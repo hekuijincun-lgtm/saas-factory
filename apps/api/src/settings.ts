@@ -83,6 +83,13 @@ export interface VerticalConfig {
   };
 }
 
+export interface EyebrowSurveyQuestion {
+  id: string;
+  label: string;
+  type: 'text' | 'textarea' | 'checkbox';
+  enabled: boolean;
+}
+
 /** @deprecated use EyebrowSettings via verticalConfig instead */
 export interface EyebrowSettings {
   consentText?: string;        // 眉毛施術同意文
@@ -91,6 +98,9 @@ export interface EyebrowSettings {
     intervalDays?: number;
     template?: string;
   };
+  bedCount?: number;           // ベッド数（同時施術キャパ）デフォルト1
+  surveyEnabled?: boolean;     // 事前アンケート ON/OFF
+  surveyQuestions?: EyebrowSurveyQuestion[]; // 事前アンケート質問リスト
 }
 
 export interface AdminSettings {
