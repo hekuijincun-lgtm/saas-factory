@@ -855,6 +855,93 @@ app.post("/admin/menu/image", async (c) => {
   }
 });
 
+/** =========================
+ * GET /media/reservations/* — R2 から予約画像を公開配信（認証不要）
+ * path 例: /media/reservations/tenants/default/reservations/123/before-1234567890-abc.jpg
+ * ========================= */
+app.get("/media/reservations/*", async (c) => {
+  try {
+    const r2 = (c.env as any).MENU_IMAGES;
+    if (!r2) return new Response("R2 not configured", { status: 503 });
+
+    const url = new URL(c.req.url);
+    const imageKey = decodeURIComponent(url.pathname.replace(/^\/media\/reservations\//, ""));
+    if (!imageKey) return new Response("Not Found", { status: 404 });
+
+    const obj = await r2.get(imageKey);
+    if (!obj) return new Response("Not Found", { status: 404 });
+
+    const headers = new Headers();
+    headers.set("Content-Type", obj.httpMetadata?.contentType ?? "image/jpeg");
+    headers.set("Cache-Control", "public, max-age=31536000, immutable");
+    if (obj.etag) headers.set("ETag", `"${obj.etag}"`);
+    headers.set("Access-Control-Allow-Origin", "*");
+    return new Response(obj.body, { status: 200, headers });
+  } catch (err: any) {
+    return new Response("Server Error", { status: 500 });
+  }
+});
+
+/** =========================
+ * POST /admin/reservations/:id/image?tenantId=&kind=before|after
+ * multipart/form-data  field: file (image/*)
+ * 3MB 制限。R2 にアップロードして D1 meta の beforeUrl/afterUrl を更新する。
+ * imageKey: tenants/{tenantId}/reservations/{id}/{kind}-{ts}-{rand}.{ext}
+ * ========================= */
+app.post("/admin/reservations/:id/image", async (c) => {
+  try {
+    const tenantId = getTenantId(c);
+    const id = c.req.param("id");
+    const kind = (c.req.query("kind") || "before").replace(/[^a-zA-Z0-9_\-]/g, "_");
+    const r2 = (c.env as any).MENU_IMAGES;
+    if (!r2) return c.json({ ok: false, error: "R2_not_bound" }, 500);
+    const db = (c.env as any).DB;
+    if (!db) return c.json({ ok: false, error: "DB_not_bound" }, 500);
+
+    const formData = await c.req.formData().catch(() => null);
+    if (!formData) return c.json({ ok: false, error: "invalid_form_data" }, 400);
+
+    const file = formData.get("file") as File | null;
+    if (!file) return c.json({ ok: false, error: "missing_file_field" }, 400);
+
+    if (file.size > 3 * 1024 * 1024) {
+      return c.json({ ok: false, error: "file_too_large", maxBytes: 3145728 }, 413);
+    }
+
+    const contentType = file.type || "application/octet-stream";
+    if (!contentType.startsWith("image/")) {
+      return c.json({ ok: false, error: "invalid_file_type", got: contentType }, 400);
+    }
+
+    const ext = (file.name.split(".").pop() ?? "jpg").toLowerCase().replace(/[^a-z0-9]/g, "") || "jpg";
+    const rand = Math.random().toString(36).slice(2, 9);
+    const imageKey = `tenants/${tenantId}/reservations/${id}/${kind}-${Date.now()}-${rand}.${ext}`;
+
+    const buf = await file.arrayBuffer();
+    await r2.put(imageKey, buf, { httpMetadata: { contentType } });
+
+    const reqUrl = new URL(c.req.url);
+    const apiBase = `${reqUrl.protocol}//${reqUrl.host}`;
+    const imageUrl = `${apiBase}/media/reservations/${imageKey}`;
+
+    // D1 meta を更新（既存 meta に beforeUrl/afterUrl をマージ）
+    const existingRow: any = await db
+      .prepare("SELECT meta FROM reservations WHERE id = ? AND tenant_id = ?")
+      .bind(id, tenantId).first().catch(() => null);
+    let existingMeta: any = {};
+    if (existingRow?.meta) { try { existingMeta = JSON.parse(existingRow.meta); } catch {} }
+    const metaKey = kind === "after" ? "afterUrl" : "beforeUrl";
+    const mergedMeta = { ...existingMeta, [metaKey]: imageUrl };
+    await db
+      .prepare("UPDATE reservations SET meta = ? WHERE id = ? AND tenant_id = ?")
+      .bind(JSON.stringify(mergedMeta), id, tenantId).run();
+
+    return c.json({ ok: true, tenantId, reservationId: id, kind, imageKey, imageUrl });
+  } catch (err: any) {
+    return c.json({ ok: false, error: "upload_failed", message: String(err?.message ?? err) }, 500);
+  }
+});
+
 app.post("/admin/menu", async (c) => {
   try {
     const tenantId = getTenantId(c);

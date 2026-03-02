@@ -98,6 +98,8 @@ export default function ReservationsLedger() {
   const [metaForm, setMetaForm] = useState<ReservationMeta>({});
   const [metaSaving, setMetaSaving] = useState(false);
   const [metaError, setMetaError] = useState<string | null>(null);
+  const [beforeUploading, setBeforeUploading] = useState(false);
+  const [afterUploading, setAfterUploading] = useState(false);
 
   // settings が取得されたら open/close/interval に追随（取得前は デフォルト値で表示継続）
   const timeSlots = useMemo(
@@ -483,6 +485,31 @@ export default function ReservationsLedger() {
       setMetaError(err instanceof Error ? err.message : '保存に失敗しました');
     } finally {
       setMetaSaving(false);
+    }
+  };
+
+  // 予約画像を R2 にアップロードして meta を自動保存
+  const handleImageUpload = async (kind: 'before' | 'after', file: File) => {
+    if (!selectedReservation) return;
+    kind === 'before' ? setBeforeUploading(true) : setAfterUploading(true);
+    setMetaError(null);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const res = await fetch(
+        `/api/proxy/admin/reservations/${selectedReservation.reservationId}/image?tenantId=${encodeURIComponent(tenantId)}&kind=${kind}`,
+        { method: 'POST', body: fd }
+      );
+      const json = await res.json() as any;
+      if (!json.ok) throw new Error(json.error || 'アップロードに失敗しました');
+      const urlKey = kind === 'before' ? 'beforeUrl' : 'afterUrl';
+      setMetaForm(m => ({ ...m, [urlKey]: json.imageUrl }));
+      setSelectedReservation(prev => prev ? { ...prev, meta: { ...(prev.meta ?? {}), [urlKey]: json.imageUrl } } : null);
+      await fetchReservations();
+    } catch (err) {
+      setMetaError(err instanceof Error ? err.message : 'アップロードに失敗しました');
+    } finally {
+      kind === 'before' ? setBeforeUploading(false) : setAfterUploading(false);
     }
   };
 
@@ -1007,29 +1034,45 @@ export default function ReservationsLedger() {
             {!editMode && detailTab === 'image' && (
               <div className="space-y-3">
                 {metaError && <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{metaError}</div>}
+
+                {/* Before 画像 */}
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">Before画像URL</label>
-                  <input
-                    type="url"
-                    value={metaForm.beforeUrl ?? ''}
-                    onChange={e => setMetaForm(m => ({ ...m, beforeUrl: e.target.value }))}
-                    placeholder="https://..."
-                    className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-pink-400"
-                  />
-                  {metaForm.beforeUrl && <img src={metaForm.beforeUrl} alt="before" className="mt-2 max-h-32 rounded-lg object-cover" onError={e => (e.currentTarget.style.display='none')} />}
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Before画像</label>
+                  {metaForm.beforeUrl && (
+                    <img src={metaForm.beforeUrl} alt="before" className="mb-2 max-h-32 rounded-lg object-cover" onError={e => (e.currentTarget.style.display='none')} />
+                  )}
+                  <label className={`flex items-center justify-center gap-2 px-3 py-2 text-sm border-2 border-dashed rounded-lg cursor-pointer transition-colors ${beforeUploading ? 'border-gray-200 bg-gray-50 text-gray-400 cursor-not-allowed' : 'border-pink-300 bg-pink-50 text-pink-600 hover:border-pink-400'}`}>
+                    {beforeUploading ? 'アップロード中...' : metaForm.beforeUrl ? '画像を変更' : '画像をアップロード'}
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      disabled={beforeUploading}
+                      onChange={e => { const f = e.target.files?.[0]; if (f) handleImageUpload('before', f); e.target.value = ''; }}
+                    />
+                  </label>
                 </div>
+
+                {/* After 画像 */}
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">After画像URL</label>
-                  <input
-                    type="url"
-                    value={metaForm.afterUrl ?? ''}
-                    onChange={e => setMetaForm(m => ({ ...m, afterUrl: e.target.value }))}
-                    placeholder="https://..."
-                    className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-pink-400"
-                  />
-                  {metaForm.afterUrl && <img src={metaForm.afterUrl} alt="after" className="mt-2 max-h-32 rounded-lg object-cover" onError={e => (e.currentTarget.style.display='none')} />}
+                  <label className="block text-xs font-medium text-gray-600 mb-1">After画像</label>
+                  {metaForm.afterUrl && (
+                    <img src={metaForm.afterUrl} alt="after" className="mb-2 max-h-32 rounded-lg object-cover" onError={e => (e.currentTarget.style.display='none')} />
+                  )}
+                  <label className={`flex items-center justify-center gap-2 px-3 py-2 text-sm border-2 border-dashed rounded-lg cursor-pointer transition-colors ${afterUploading ? 'border-gray-200 bg-gray-50 text-gray-400 cursor-not-allowed' : 'border-pink-300 bg-pink-50 text-pink-600 hover:border-pink-400'}`}>
+                    {afterUploading ? 'アップロード中...' : metaForm.afterUrl ? '画像を変更' : '画像をアップロード'}
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      disabled={afterUploading}
+                      onChange={e => { const f = e.target.files?.[0]; if (f) handleImageUpload('after', f); e.target.value = ''; }}
+                    />
+                  </label>
                 </div>
-                <div className="flex items-center gap-2">
+
+                {/* SNS 同意 */}
+                <div className="flex items-center gap-2 pt-1">
                   <input
                     type="checkbox"
                     id="snsPublishOk"
@@ -1040,7 +1083,7 @@ export default function ReservationsLedger() {
                   <label htmlFor="snsPublishOk" className="text-sm text-gray-700">SNS掲載同意あり</label>
                 </div>
                 <button onClick={handleMetaSave} disabled={metaSaving} className="px-4 py-2 bg-pink-500 text-white text-sm rounded-lg hover:bg-pink-600 disabled:opacity-50 transition-all">
-                  {metaSaving ? '保存中...' : '画像情報を保存'}
+                  {metaSaving ? '保存中...' : 'SNS情報を保存'}
                 </button>
               </div>
             )}

@@ -119,7 +119,7 @@ bindings = [
   { name = "SLOT_LOCK", class_name = "SlotLock" }
 ]
 
-# [[env.production.r2_buckets]]  ← R2未有効時はコメントアウト。有効化後に復元してredeploy。
+# [[env.production.r2_buckets]]  ← APIトークンにR2権限が必要。有効化後にredeploy。
 # binding = "MENU_IMAGES"
 # bucket_name = "saas-factory-menu-images"
 # preview_bucket_name = "saas-factory-menu-images"

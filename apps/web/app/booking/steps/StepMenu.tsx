@@ -187,6 +187,14 @@ export default function StepMenu({ tenantId, onSelect }: Props) {
               onClick={() => onSelect(item)}
               className="w-full text-left p-4 bg-white border border-brand-border rounded-2xl hover:border-brand-primary hover:shadow-md transition-all group"
             >
+              {item.imageUrl && (
+                <img
+                  src={item.imageUrl}
+                  alt={item.name}
+                  className="w-full h-32 object-cover rounded-xl mb-3"
+                  onError={e => (e.currentTarget.style.display = 'none')}
+                />
+              )}
               <div className="flex justify-between items-start">
                 <div>
                   <p className="font-medium text-brand-text group-hover:text-brand-primary transition-colors">

@@ -158,9 +158,17 @@ export default function MenuManager({ tenantId: tenantIdProp }: { tenantId?: str
     try {
       let imageUrl = formData.imageUrl;
 
-      // 新しいファイルが選択されていれば DataURL に変換してペイロードに同梱
+      // 新しいファイルが選択されていれば R2 にアップロードして imageUrl を取得
       if (imageFile) {
-        imageUrl = await fileToDataUrl(imageFile);
+        const fd = new FormData();
+        fd.append('file', imageFile);
+        const upRes = await fetch(
+          `/api/proxy/admin/menu/image?tenantId=${encodeURIComponent(tenantId)}&menuId=${encodeURIComponent(editingItem?.id ?? 'new')}`,
+          { method: 'POST', body: fd }
+        );
+        const upData = await upRes.json().catch(() => ({})) as any;
+        if (!upRes.ok || !upData.imageUrl) throw new Error(upData.error || '画像アップロードに失敗しました');
+        imageUrl = upData.imageUrl;
       }
 
       const itemPayload = {
