@@ -1196,6 +1196,79 @@ app.get("/admin/kpi", async (c) => {
 });
 
 /** =========================
+ * Backfill customerKey
+ * POST /admin/kpi/backfill-customer-key?tenantId=&days=365&dryRun=1
+ * Assigns meta.customerKey to existing reservations that lack it.
+ * dryRun=1 → scan only, no writes. dryRun=0 → actually update.
+ * Processes up to 200 rows per call (safe for Workers CPU limits).
+ * ========================= */
+app.post("/admin/kpi/backfill-customer-key", async (c) => {
+  try {
+    const tenantId = getTenantId(c);
+    const days = Math.min(Math.max(Number(c.req.query("days") || "365"), 1), 730);
+    const dryRun = c.req.query("dryRun") !== "0"; // default: dryRun=true
+    const db = (c.env as any).DB;
+    if (!db) return c.json({ ok: false, error: "DB_not_bound" }, 500);
+
+    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+
+    // Fetch reservations missing customerKey (limit 200 per call for safety)
+    const rows: any[] = (await db.prepare(
+      `SELECT id, line_user_id, customer_phone, meta
+       FROM reservations
+       WHERE tenant_id = ? AND slot_start >= ?
+         AND status != 'cancelled'
+         AND (meta IS NULL OR json_extract(meta, '$.customerKey') IS NULL)
+       LIMIT 200`
+    ).bind(tenantId, since + 'T').all()).results || [];
+
+    let updatedCount = 0;
+    let skippedCount = 0;
+    const reasons: string[] = [];
+
+    for (const row of rows) {
+      const key = buildCustomerKey({ lineUserId: row.line_user_id, phone: row.customer_phone });
+      if (!key) {
+        skippedCount++;
+        continue;
+      }
+
+      // Merge customerKey into existing meta (preserve other fields like eyebrowDesign)
+      let existingMeta: Record<string, any> = {};
+      if (row.meta) {
+        try { existingMeta = JSON.parse(row.meta); } catch { /* ignore */ }
+      }
+      const newMeta = { ...existingMeta, customerKey: key };
+
+      if (!dryRun) {
+        await db.prepare("UPDATE reservations SET meta = ? WHERE id = ?")
+          .bind(JSON.stringify(newMeta), row.id)
+          .run()
+          .catch((e: any) => {
+            reasons.push(`id=${row.id} err=${String(e?.message ?? e)}`);
+          });
+      }
+      updatedCount++;
+    }
+
+    return c.json({
+      ok: true,
+      tenantId,
+      days,
+      since,
+      dryRun,
+      scanned: rows.length,
+      updatedCount,
+      skippedCount,
+      hasMore: rows.length === 200,
+      reasons: reasons.length > 0 ? reasons : undefined,
+    });
+  } catch (error) {
+    return c.json({ ok: false, error: "Backfill failed", message: String(error) }, 500);
+  }
+});
+
+/** =========================
  * Availability (admin-managed slot status)
  * GET  /admin/availability?tenantId=&date=
  * PUT  /admin/availability  { staffId, date, time, status }
