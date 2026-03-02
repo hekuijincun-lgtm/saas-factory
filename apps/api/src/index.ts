@@ -301,12 +301,29 @@ app.get("/__build", (c) => c.json({ ok: true, stamp: "API_BUILD_V1" }));
     if(body.onboarding != null && typeof body.onboarding === 'object') {
       patch.onboarding = { ...(existing.onboarding || {}), ...body.onboarding }
     }
-    // eyebrow: deep merge (repeat sub-object も保持)
+    // eyebrow: deep merge (repeat sub-object も保持) + P2: verticalConfig に正規化
     if(body.eyebrow != null && typeof body.eyebrow === 'object') {
       const existingEyebrow = existing.eyebrow || {}
       patch.eyebrow = { ...existingEyebrow, ...body.eyebrow }
       if(body.eyebrow.repeat != null && typeof body.eyebrow.repeat === 'object') {
         patch.eyebrow.repeat = { ...(existingEyebrow.repeat || {}), ...body.eyebrow.repeat }
+      }
+      // P2: eyebrow → verticalConfig に変換（明示的な vertical/verticalConfig 指定がない場合のみ）
+      if(body.vertical == null && body.verticalConfig == null) {
+        patch.vertical = 'eyebrow'
+        patch.verticalConfig = {
+          consentText: patch.eyebrow.consentText,
+          repeat: patch.eyebrow.repeat,
+        }
+      }
+    }
+    // P2: vertical / verticalConfig 直接指定
+    if(body.vertical != null) patch.vertical = String(body.vertical)
+    if(body.verticalConfig != null && typeof body.verticalConfig === 'object') {
+      const existingVC = existing.verticalConfig || {}
+      patch.verticalConfig = { ...existingVC, ...body.verticalConfig }
+      if(body.verticalConfig.repeat != null && typeof body.verticalConfig.repeat === 'object') {
+        patch.verticalConfig.repeat = { ...(existingVC.repeat || {}), ...body.verticalConfig.repeat }
       }
     }
 
