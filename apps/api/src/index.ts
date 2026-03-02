@@ -2647,6 +2647,94 @@ app.get("/auth/line/callback", async (c) => {
 });
 /* === /LINE_OAUTH_MIN_ROUTES_V1 === */
 
+/* === LINE_AUTH_EXCHANGE_V1 ===
+   POST /auth/line/exchange
+   Exchanges a LINE OAuth code for userId + displayName,
+   checks allowedAdminLineUserIds in KV, and self-seeds on first login.
+   Body: { code: string; tenantId?: string; redirectUri: string }
+   Response: { ok, userId, displayName, allowed, seeded? }
+*/
+app.post("/auth/line/exchange", async (c) => {
+  const env = c.env as any;
+  let body: any = {};
+  try { body = await c.req.json(); } catch {}
+  const { code, tenantId = 'default', redirectUri } = body as {
+    code?: string; tenantId?: string; redirectUri?: string;
+  };
+
+  if (!code || !redirectUri) {
+    return c.json({ ok: false, error: 'missing_params' }, 400);
+  }
+
+  const clientId: string = env.LINE_CHANNEL_ID ?? env.LINE_LOGIN_CHANNEL_ID ?? env.LINE_CLIENT_ID ?? '';
+  const clientSecret: string = env.LINE_LOGIN_CHANNEL_SECRET ?? '';
+
+  if (!clientId || !clientSecret) {
+    return c.json({ ok: false, error: 'missing_line_login_config' }, 500);
+  }
+
+  // Exchange authorization code for access token
+  const tokenRes = await fetch('https://api.line.me/oauth2/v2.1/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'authorization_code',
+      code,
+      redirect_uri: redirectUri,
+      client_id: clientId,
+      client_secret: clientSecret,
+    }),
+  });
+
+  if (!tokenRes.ok) {
+    const errText = await tokenRes.text().catch(() => '');
+    return c.json({ ok: false, error: 'token_exchange_failed', detail: errText }, 400);
+  }
+
+  const tokenData = await tokenRes.json() as any;
+  const accessToken: string = tokenData.access_token ?? '';
+  if (!accessToken) {
+    return c.json({ ok: false, error: 'no_access_token' }, 400);
+  }
+
+  // Get user profile from LINE
+  const profileRes = await fetch('https://api.line.me/v2/profile', {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+
+  if (!profileRes.ok) {
+    return c.json({ ok: false, error: 'profile_fetch_failed' }, 400);
+  }
+
+  const profile = await profileRes.json() as any;
+  const userId: string = profile.userId ?? '';
+  const displayName: string = profile.displayName ?? '';
+
+  if (!userId) {
+    return c.json({ ok: false, error: 'no_user_id' }, 400);
+  }
+
+  // Check allowed list from KV settings
+  const kv: KVNamespace = env.SAAS_FACTORY;
+  const settingsRaw = (await kv.get(`settings:${tenantId}`, 'json') as any) ?? {};
+  const allowedList: string[] = Array.isArray(settingsRaw.allowedAdminLineUserIds)
+    ? settingsRaw.allowedAdminLineUserIds
+    : [];
+
+  // Self-seed: if list is empty, first user becomes admin
+  if (allowedList.length === 0) {
+    await kv.put(`settings:${tenantId}`, JSON.stringify({
+      ...settingsRaw,
+      allowedAdminLineUserIds: [userId],
+    }));
+    return c.json({ ok: true, userId, displayName, allowed: true, seeded: true });
+  }
+
+  const allowed = allowedList.includes(userId);
+  return c.json({ ok: true, userId, displayName, allowed });
+});
+/* === /LINE_AUTH_EXCHANGE_V1 === */
+
 /* === LINE_STATUS_ROUTE_V1 ===
    GET /admin/integrations/line/status
    Returns LINE env/connection status for the admin UI.

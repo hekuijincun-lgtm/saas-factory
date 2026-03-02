@@ -124,6 +124,8 @@ export interface AdminSettings {
   vertical?: VerticalType;
   /** バーティカル詳細設定（vertical に対応する設定値） */
   verticalConfig?: VerticalConfig;
+  /** 管理者ログイン許可 LINE userId リスト（空 = セルフシード待ち） */
+  allowedAdminLineUserIds?: string[];
 }
 
 /**

@@ -97,6 +97,11 @@ export default function AdminSettingsClient() {
   const [eyebrowSurveyQuestions, setEyebrowSurveyQuestions] = useState<EyebrowSurveyQuestion[]>([]);
   const [savedEyebrowSurveyQuestions, setSavedEyebrowSurveyQuestions] = useState<EyebrowSurveyQuestion[]>([]);
 
+  // --- 管理者ログイン許可 LINE userId ---
+  const [allowedAdminLineUserIds, setAllowedAdminLineUserIds] = useState<string[]>([]);
+  const [savedAllowedAdminLineUserIds, setSavedAllowedAdminLineUserIds] = useState<string[]>([]);
+  const [currentAdminUserId, setCurrentAdminUserId] = useState<string | null>(null);
+
   // --- Messaging API ---
   const [messagingStatus, setMessagingStatus] = useState<MessagingStatusResponse | null>(null);
   const [messagingLoading, setMessagingLoading] = useState(false);
@@ -302,6 +307,8 @@ export default function AdminSettingsClient() {
       setEyebrowSurveyEnabled(se); setSavedEyebrowSurveyEnabled(se);
       const sq: EyebrowSurveyQuestion[] = Array.isArray(eyebrow.surveyQuestions) ? eyebrow.surveyQuestions : [];
       setEyebrowSurveyQuestions(sq); setSavedEyebrowSurveyQuestions(sq);
+      const al: string[] = Array.isArray(raw.allowedAdminLineUserIds) ? raw.allowedAdminLineUserIds : [];
+      setAllowedAdminLineUserIds(al); setSavedAllowedAdminLineUserIds(al);
     } catch (error) {
       const msg = error instanceof ApiClientError
         ? error.message
@@ -413,6 +420,11 @@ export default function AdminSettingsClient() {
 
     fetchSettings();
     fetchMessagingStatusState();
+    // Fetch current admin's LINE userId from session
+    fetch('/api/auth/me', { cache: 'no-store' })
+      .then(r => r.json())
+      .then((data: any) => { if (data?.ok && data.userId) setCurrentAdminUserId(data.userId); })
+      .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -442,6 +454,7 @@ export default function AdminSettingsClient() {
           surveyEnabled: eyebrowSurveyEnabled,
           surveyQuestions: eyebrowSurveyQuestions,
         },
+        allowedAdminLineUserIds,
       } as any, tenantId);
       setStoreName(storeNameInput);
       setSavedOpenTime(openTime);
@@ -456,6 +469,7 @@ export default function AdminSettingsClient() {
       setSavedEyebrowBedCount(eyebrowBedCount);
       setSavedEyebrowSurveyEnabled(eyebrowSurveyEnabled);
       setSavedEyebrowSurveyQuestions(eyebrowSurveyQuestions);
+      setSavedAllowedAdminLineUserIds(allowedAdminLineUserIds);
 
       // localStorage にローカル設定を保存（営業日等）
       try {
@@ -488,6 +502,7 @@ export default function AdminSettingsClient() {
     setEyebrowBedCount(savedEyebrowBedCount);
     setEyebrowSurveyEnabled(savedEyebrowSurveyEnabled);
     setEyebrowSurveyQuestions(savedEyebrowSurveyQuestions);
+    setAllowedAdminLineUserIds(savedAllowedAdminLineUserIds);
   };
 
   const toggleDay = (dayIndex: number) => {
@@ -1496,6 +1511,46 @@ export default function AdminSettingsClient() {
                 )}
               </div>
             )}
+          </div>
+        </div>
+
+        {/* ============================================================
+            管理者ログイン許可（LINE userId）
+        ============================================================ */}
+        <div className="bg-white rounded-2xl border border-gray-200 p-6 space-y-4">
+          <div className="flex items-center gap-2">
+            <span className="text-lg">🔐</span>
+            <h2 className="text-base font-semibold text-gray-800">管理者ログイン許可（LINE userId）</h2>
+          </div>
+          <p className="text-xs text-gray-500 leading-relaxed">
+            管理画面へのログインを許可するLINEアカウントのuserIdを1行1件で入力してください。
+            リストが空の場合、初回ログイン時のアカウントが自動的に追加（セルフシード）されます。
+          </p>
+
+          {currentAdminUserId && (
+            <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-3 space-y-1">
+              <p className="text-xs font-medium text-indigo-700">現在ログイン中のuserId</p>
+              <code className="text-xs font-mono text-indigo-800 break-all">{currentAdminUserId}</code>
+            </div>
+          )}
+
+          <div className="space-y-2">
+            <label className="block text-sm font-medium text-gray-700">許可リスト（1行1 userId）</label>
+            <textarea
+              rows={5}
+              value={allowedAdminLineUserIds.join('\n')}
+              onChange={e => {
+                const lines = e.target.value.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+                setAllowedAdminLineUserIds(lines);
+              }}
+              placeholder={'U1234567890abcdef\nUabcdef1234567890'}
+              className="w-full px-3 py-2 text-sm font-mono border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-none"
+            />
+            <p className="text-xs text-gray-400">
+              {allowedAdminLineUserIds.length === 0
+                ? '現在のリストは空です。初回ログイン時のアカウントが自動で追加されます。'
+                : `${allowedAdminLineUserIds.length}件のuserIdが許可されています`}
+            </p>
           </div>
         </div>
 
