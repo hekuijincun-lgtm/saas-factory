@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import Image from 'next/image';
 import Link from 'next/link';
 import {
   CheckCircle2,
@@ -147,6 +148,7 @@ export default function EyebrowLandingPage() {
         <HeroSection />
         <ProblemSection />
         <SolutionSection />
+        <DashboardSection />
         <EyebrowSection />
         <FlowSection />
         <SetupSection />
@@ -514,6 +516,133 @@ function SolutionSection() {
               </Reveal>
             );
           })}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Dashboard showcase
+// ──────────────────────────────────────────────────────────────────────────────
+
+/** Tiny blur-up placeholder generated from the 40×23 webp preview */
+const DASHBOARD_BLUR =
+  'data:image/webp;base64,UklGRvgAAABXRUJQVlA4IOwAAABQBQCdASooABcAPxFwsFAsJiSisBqqqYAiCWwAvWn1QtmM2Fv6x4XjZKEfYaQRYkcbcAAA/kaN5+sPbxDt4/PovzgTjzLbAixb8iiL7GiUbMMOMjWtlalotfvDeBs/PNT8nXLnwbqrjdcxStdvISd0QfbdungmsAzL9d964f50xcBX+ZLwhAicWgx3ljXsI/Yqi6lYGELXf1RdIClkx5HQyKHXmrl8x6w1fz9UnRh62QYbn/iwZ4pQ7nI3ugdn+cCOb5glVVW3gUi3MgRWYK/M7hgNes+WL9ZW3AtR2SZza/iFvwW2gkpHVqjAAA==';
+
+function DashboardSection() {
+  const highlights = [
+    '予約の新規・変更・キャンセルをひとつの画面で管理',
+    'スタッフ別・日付別の空き状況をひと目で確認',
+    '売上・予約数・リピート率のKPIをリアルタイム表示',
+    '顧客情報・来店履歴・メモをカルテとして保存',
+    '操作は直感的。ITが苦手な方でも当日から使えます',
+  ];
+
+  return (
+    <section
+      className="bg-slate-50 py-24 px-5"
+      aria-labelledby="dashboard-heading"
+    >
+      <div className="mx-auto max-w-6xl">
+        {/* Heading */}
+        <Reveal>
+          <div className="text-center mb-14">
+            <p className="text-sm font-semibold text-rose-600 uppercase tracking-widest mb-3">
+              管理画面
+            </p>
+            <h2
+              id="dashboard-heading"
+              className="text-3xl sm:text-4xl font-black text-gray-900 leading-tight"
+            >
+              直感的に使える
+              <br className="sm:hidden" />
+              管理画面
+            </h2>
+            <p className="mt-4 text-gray-500 max-w-xl mx-auto">
+              複雑な設定は不要。予約・顧客・売上のすべてを、シンプルな一画面で把握できます。
+            </p>
+          </div>
+        </Reveal>
+
+        {/* 2-column: copy left, screenshot right */}
+        <div className="flex flex-col lg:flex-row gap-12 lg:gap-16 items-center">
+          {/* Left — feature list */}
+          <Reveal className="lg:w-2/5 w-full shrink-0">
+            <ul className="space-y-4" aria-label="管理画面の主な機能">
+              {highlights.map((item, i) => (
+                <li key={i} className="flex items-start gap-3">
+                  <span
+                    className="mt-0.5 shrink-0 w-5 h-5 rounded-full bg-gradient-to-br from-rose-500 to-amber-500 flex items-center justify-center shadow-sm"
+                    aria-hidden="true"
+                  >
+                    <svg
+                      viewBox="0 0 10 8"
+                      fill="none"
+                      className="w-2.5 h-2.5"
+                      aria-hidden="true"
+                    >
+                      <path
+                        d="M1 4l2.5 2.5L9 1"
+                        stroke="white"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  </span>
+                  <span className="text-gray-700 leading-relaxed">{item}</span>
+                </li>
+              ))}
+            </ul>
+
+            <div className="mt-10">
+              <Link
+                href={DEMO_HREF}
+                className="group inline-flex items-center gap-2 px-7 py-3.5 bg-rose-500 text-white font-bold rounded-full text-sm hover:bg-rose-600 transition-all duration-200 shadow-lg shadow-rose-500/25 focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 focus-visible:ring-offset-2"
+              >
+                実際に触ってみる
+                <ArrowRight
+                  className="w-4 h-4 transition-transform duration-200 group-hover:translate-x-1"
+                  aria-hidden="true"
+                />
+              </Link>
+            </div>
+          </Reveal>
+
+          {/* Right — Mac-style screenshot frame */}
+          <Reveal className="lg:w-3/5 w-full" delay={120}>
+            <div
+              className="rounded-xl overflow-hidden shadow-2xl ring-1 ring-gray-200 hover:scale-[1.02] transition-transform duration-300 ease-out"
+              aria-label="EyebrowBook 管理画面のスクリーンショット"
+            >
+              {/* Mac window chrome */}
+              <div
+                className="h-9 bg-gray-100 border-b border-gray-200 flex items-center px-4 gap-2"
+                aria-hidden="true"
+              >
+                <span className="w-3 h-3 rounded-full bg-red-400" />
+                <span className="w-3 h-3 rounded-full bg-yellow-400" />
+                <span className="w-3 h-3 rounded-full bg-green-400" />
+                <span className="ml-4 flex-1 bg-white rounded-md h-5 text-xs text-gray-400 flex items-center px-2 max-w-xs mx-auto">
+                  app.eyebrowbook.jp/admin
+                </span>
+              </div>
+
+              {/* Screenshot */}
+              <Image
+                src="/lp/eyebrow/admin-dashboard.webp"
+                alt="EyebrowBook 管理画面 — 予約台帳・売上KPI・スタッフ管理が一画面で確認できるダッシュボード"
+                width={1600}
+                height={900}
+                loading="lazy"
+                placeholder="blur"
+                blurDataURL={DASHBOARD_BLUR}
+                className="w-full h-auto block"
+                sizes="(max-width: 1024px) 100vw, 60vw"
+              />
+            </div>
+          </Reveal>
         </div>
       </div>
     </section>
