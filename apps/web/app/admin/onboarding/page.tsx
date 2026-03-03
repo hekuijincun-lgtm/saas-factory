@@ -2,8 +2,10 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import AdminTopBar from '../../_components/ui/AdminTopBar';
+import { saveAdminSettings } from '../../lib/adminApi';
 
 interface CheckItem {
   id: string;
@@ -60,7 +62,9 @@ async function checkSlotsAvailable(tenantId: string): Promise<boolean> {
 }
 
 export default function OnboardingPage() {
-  const tenantId = 'default';
+  const router = useRouter();
+  const [tenantId, setTenantId] = useState('default');
+  const [completing, setCompleting] = useState(false);
   const [items, setItems] = useState<CheckItem[]>([
     { id: 'line', label: 'LINE Messaging API を設定', description: 'チャンネルIDとアクセストークンを登録してください', href: '/admin/line-setup', done: false, loading: true },
     { id: 'menu', label: 'メニュー（施術）を追加', description: '少なくとも1件のメニューを登録してください', href: '/admin/menu', done: false, loading: true },
@@ -69,11 +73,30 @@ export default function OnboardingPage() {
   ]);
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const tid = params.get('tenantId') || 'default';
+    const isSignup = params.get('signup') === '1';
+    setTenantId(tid);
+
+    // signup 経由の初回訪問: onboardingCompleted=false をセット（AdminShell redirect 用）
+    if (isSignup) {
+      fetch(`/api/proxy/admin/settings?tenantId=${encodeURIComponent(tid)}`, { cache: 'no-store' })
+        .then(r => r.json())
+        .then((json: any) => {
+          const s = json?.data ?? json;
+          if ((s?.onboarding as any)?.onboardingCompleted === undefined) {
+            saveAdminSettings({ onboarding: { onboardingCompleted: false } as any }, tid)
+              .catch(() => {});
+          }
+        })
+        .catch(() => {});
+    }
+
     Promise.all([
-      checkLineConnected(tenantId),
-      checkMenuExists(tenantId),
-      checkStaffExists(tenantId),
-      checkSlotsAvailable(tenantId),
+      checkLineConnected(tid),
+      checkMenuExists(tid),
+      checkStaffExists(tid),
+      checkSlotsAvailable(tid),
     ]).then(([line, menu, staff, slots]) => {
       setItems(prev => prev.map(item => {
         if (item.id === 'line') return { ...item, done: line, loading: false };
@@ -84,6 +107,16 @@ export default function OnboardingPage() {
       }));
     });
   }, []);
+
+  async function handleComplete() {
+    setCompleting(true);
+    try {
+      await saveAdminSettings({ onboarding: { onboardingCompleted: true } as any }, tenantId);
+      router.push('/admin?tenantId=' + encodeURIComponent(tenantId));
+    } catch {
+      setCompleting(false);
+    }
+  }
 
   const doneCount = items.filter(i => i.done).length;
   const allDone = doneCount === items.length;
@@ -152,14 +185,15 @@ export default function OnboardingPage() {
           ))}
         </div>
 
-        {/* Go to dashboard */}
+        {/* Complete onboarding */}
         <div className="text-center">
-          <Link
-            href="/admin/dashboard"
-            className="inline-block rounded-2xl bg-slate-900 px-6 py-3 text-sm font-semibold text-white hover:bg-slate-800 transition-colors"
+          <button
+            onClick={handleComplete}
+            disabled={completing}
+            className="inline-block rounded-2xl bg-slate-900 px-6 py-3 text-sm font-semibold text-white hover:bg-slate-800 transition-colors disabled:opacity-60"
           >
-            ダッシュボードへ
-          </Link>
+            {completing ? '保存中...' : '完了してダッシュボードへ'}
+          </button>
         </div>
       </div>
     </>

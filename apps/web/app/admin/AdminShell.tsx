@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import {
   Settings,
   ClipboardList,
@@ -149,6 +149,8 @@ export default function AdminShell({
   const [mounted, setMounted] = useState(false);
   const [storeName, setStoreName] = useState(FALLBACK_STORE_NAME);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const router = useRouter();
+  const pathname = usePathname();
 
   useEffect(() => {
     setMounted(true);
@@ -157,7 +159,7 @@ export default function AdminShell({
     const params = new URLSearchParams(window.location.search);
     const tenantId = params.get("tenantId") || "default";
 
-    // API から storeName を取得
+    // API から storeName + onboarding フラグを取得
     fetch(`/api/proxy/admin/settings?tenantId=${encodeURIComponent(tenantId)}`)
       .then((r) => r.json())
       .then((data: any) => {
@@ -165,6 +167,21 @@ export default function AdminShell({
         const sn = data?.data?.storeName || data?.storeName;
         if (sn) {
           setStoreName(sn);
+        }
+
+        // onboardingCompleted===false (signup ユーザーのみ) → /admin/onboarding へ redirect
+        // undefined の既存テナントは影響なし (strict === false のみ)
+        const oc =
+          data?.data?.onboarding?.onboardingCompleted ??
+          data?.onboarding?.onboardingCompleted;
+        if (oc === false && !pathname?.startsWith("/admin/onboarding")) {
+          // tenantId: URL → line_tenant cookie の順で取得
+          let tid = params.get("tenantId") || "";
+          if (!tid) {
+            const m = document.cookie.match(/(?:^|;\s*)line_tenant=([^;]+)/);
+            tid = m ? m[1] : "default";
+          }
+          router.push(`/admin/onboarding?tenantId=${encodeURIComponent(tid)}`);
         }
       })
       .catch(() => {

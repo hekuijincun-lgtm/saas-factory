@@ -28,6 +28,7 @@ import { Reveal } from '../_components/Reveal';
 // Configuration constants — update these without touching layout logic
 // ──────────────────────────────────────────────────────────────────────────────
 const DEMO_HREF = '/booking';
+const SIGNUP_HREF = '/signup';
 const PRICING_ANCHOR = '#pricing';
 
 const PLANS: {
@@ -40,6 +41,7 @@ const PLANS: {
   highlighted: boolean;
   badge: string | null;
   cta: string;
+  href: string;
 }[] = [
   {
     id: 'starter',
@@ -57,7 +59,8 @@ const PLANS: {
     ],
     highlighted: false,
     badge: null,
-    cta: '無料で試す',
+    cta: '新規登録（30秒）',
+    href: SIGNUP_HREF,
   },
   {
     id: 'pro',
@@ -75,7 +78,8 @@ const PLANS: {
     ],
     highlighted: true,
     badge: 'いちばん人気',
-    cta: '無料で試す',
+    cta: '新規登録（30秒）',
+    href: SIGNUP_HREF,
   },
   {
     id: 'enterprise',
@@ -94,6 +98,7 @@ const PLANS: {
     highlighted: false,
     badge: null,
     cta: 'お問い合わせ',
+    href: DEMO_HREF,
   },
 ];
 
@@ -1091,7 +1096,7 @@ function PricingSection() {
 
                 {/* CTA */}
                 <Link
-                  href={DEMO_HREF}
+                  href={plan.href}
                   className={`group w-full inline-flex items-center justify-center gap-2 px-6 py-3 rounded-full font-semibold text-sm transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 ${
                     plan.highlighted
                       ? 'bg-rose-500 text-white hover:bg-rose-400 focus-visible:ring-rose-400 focus-visible:ring-offset-slate-900'

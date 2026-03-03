@@ -133,6 +133,18 @@ export async function GET(req: Request) {
       );
     }
 
+    // signup flow: derive per-user tenantId from LINE userId and inject into returnTo
+    // tenantId = 'u_' + first 8 chars of userId (after leading 'U'), deterministic & unique per user
+    let signupTenantId: string | null = null;
+    try {
+      const parsedReturnTo = new URL(returnTo, url.origin);
+      if (parsedReturnTo.searchParams.get('signup') === '1') {
+        signupTenantId = 'u_' + userId.slice(1, 9).toLowerCase();
+        parsedReturnTo.searchParams.set('tenantId', signupTenantId);
+        returnTo = parsedReturnTo.pathname + parsedReturnTo.search;
+      }
+    } catch { /* returnTo parse failed — leave as-is */ }
+
     // Sign session with userId
     const secret = (() => {
       try {
@@ -161,6 +173,13 @@ export async function GET(req: Request) {
       "Set-Cookie",
       `line_uid=${userId}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=604800`
     );
+    // line_tenant: non-HttpOnly so AdminShell can read via document.cookie
+    if (signupTenantId) {
+      res.headers.append(
+        "Set-Cookie",
+        `line_tenant=${signupTenantId}; Path=/; Secure; SameSite=Lax; Max-Age=604800`
+      );
+    }
     return res;
   } catch (e: any) {
     return NextResponse.redirect(
