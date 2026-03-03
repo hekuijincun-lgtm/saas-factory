@@ -77,6 +77,12 @@ export interface ReservationMeta {
   beforeUrl?: string;       // Before画像URL
   afterUrl?: string;        // After画像URL
   snsPublishOk?: boolean;   // SNS公開同意
+  // アンケート回答（meta.surveyAnswers として保存）
+  surveyAnswers?: Record<string, string | boolean>;
+  // 予約メタ（/reserve 時に保存）
+  menuName?: string;
+  customerKey?: string;
+  lineUserId?: string;
 }
 
 export interface Reservation {

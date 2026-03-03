@@ -1318,6 +1318,55 @@ app.get("/admin/reservations", async (c) => {
   }
 });
 
+/** =========================
+ * GET /admin/reservations/:id?tenantId=
+ * Single reservation by ID (used by customer detail view)
+ * ========================= */
+app.get("/admin/reservations/:id", async (c) => {
+  try {
+    const tenantId = getTenantId(c);
+    const id = c.req.param("id");
+    const db = (c.env as any).DB;
+    if (!db) return c.json({ ok: false, error: "DB_not_bound" }, 500);
+
+    const row: any = await db
+      .prepare(
+        `SELECT id, tenant_id, slot_start, start_at, end_at, duration_minutes,
+                customer_name, customer_phone, staff_id, note, created_at, status, meta
+         FROM reservations WHERE id = ? AND tenant_id = ?`
+      )
+      .bind(id, tenantId)
+      .first();
+
+    if (!row) return c.json({ ok: false, error: "not_found" }, 404);
+
+    const slotStr = String(row.slot_start || row.start_at || "");
+    const dtMatch = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/.exec(slotStr);
+    let meta: any = undefined;
+    if (row.meta) { try { meta = JSON.parse(row.meta); } catch {} }
+
+    return c.json({
+      ok: true,
+      tenantId,
+      reservation: {
+        reservationId: row.id,
+        date: dtMatch ? dtMatch[1] : "",
+        time: dtMatch ? dtMatch[2] : "",
+        name: row.customer_name ?? "",
+        phone: row.customer_phone ?? undefined,
+        staffId: row.staff_id ?? "any",
+        note: row.note ?? undefined,
+        durationMin: row.duration_minutes ?? 60,
+        status: row.status ?? "active",
+        createdAt: row.created_at ?? "",
+        meta,
+      },
+    });
+  } catch (e: any) {
+    return c.json({ ok: false, error: "db_error", message: String(e?.message ?? e) }, 500);
+  }
+});
+
 app.on(["PUT", "PATCH"], "/admin/reservations/:id", async (c) => {
   try {
     const tenantId = getTenantId(c);
@@ -2230,17 +2279,83 @@ app.get("/admin/customers", async (c) => {
       .bind(tenantId)
       .all();
 
-    const customers = (result.results || []).map((r: any) => ({
-      id: r.id,
-      name: r.name ?? "",
-      phone: r.phone ?? null,
-      visitCount: r.visit_count ?? 0,
-      lastVisitAt: r.last_visit_at ?? null,
-    }));
+    const customers = (result.results || []).map((r: any) => {
+      const phone = r.phone ?? null;
+      const customerKey = phone ? buildCustomerKey({ phone }) : null;
+      return {
+        id: r.id,
+        name: r.name ?? "",
+        phone,
+        visitCount: r.visit_count ?? 0,
+        lastVisitAt: r.last_visit_at ?? null,
+        customerKey,
+      };
+    });
 
     return c.json({ ok: true, stamp: STAMP, tenantId, customers });
   } catch (e: any) {
     return c.json({ ok: false, stamp: STAMP, error: "Failed to fetch customers", message: String(e?.message ?? e) }, 500);
+  }
+});
+
+/** =========================
+ * GET /admin/customers/:id/reservations?tenantId=
+ * Reservation history for a customer (by customer UUID or phone fallback)
+ * ========================= */
+app.get("/admin/customers/:id/reservations", async (c) => {
+  const STAMP = "CUSTOMER_RESERVATIONS_V1";
+  const tenantId = getTenantId(c, null);
+  const customerId = c.req.param("id");
+  const db = (c.env as any).DB;
+  if (!db) return c.json({ ok: false, stamp: STAMP, error: "DB_not_bound" }, 500);
+
+  try {
+    // Get customer phone for secondary lookup
+    const cust: any = await db
+      .prepare("SELECT phone FROM customers WHERE id = ? AND tenant_id = ? LIMIT 1")
+      .bind(customerId, tenantId)
+      .first();
+
+    const phone: string | null = cust?.phone ?? null;
+
+    // Query reservations by customer_id OR customer_phone (phone fallback for older rows)
+    const result = await db
+      .prepare(
+        `SELECT id, slot_start, start_at, duration_minutes,
+                customer_name, customer_phone, staff_id, note, created_at, status, meta
+         FROM reservations
+         WHERE tenant_id = ?
+           AND status != 'cancelled'
+           AND (customer_id = ? OR (? IS NOT NULL AND customer_phone = ?))
+         ORDER BY slot_start DESC
+         LIMIT 50`
+      )
+      .bind(tenantId, customerId, phone, phone)
+      .all();
+
+    const reservations = (result.results || []).map((r: any) => {
+      const slotStr = String(r.slot_start || r.start_at || "");
+      const dtMatch = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/.exec(slotStr);
+      let meta: any = undefined;
+      if (r.meta) { try { meta = JSON.parse(r.meta); } catch {} }
+      return {
+        reservationId: r.id,
+        date: dtMatch ? dtMatch[1] : "",
+        time: dtMatch ? dtMatch[2] : "",
+        name: r.customer_name ?? "",
+        phone: r.customer_phone ?? undefined,
+        staffId: r.staff_id ?? "any",
+        note: r.note ?? undefined,
+        durationMin: r.duration_minutes ?? 60,
+        status: r.status ?? "active",
+        createdAt: r.created_at ?? "",
+        meta,
+      };
+    });
+
+    return c.json({ ok: true, stamp: STAMP, tenantId, customerId, reservations });
+  } catch (e: any) {
+    return c.json({ ok: false, stamp: STAMP, error: "db_error", message: String(e?.message ?? e) }, 500);
   }
 });
 

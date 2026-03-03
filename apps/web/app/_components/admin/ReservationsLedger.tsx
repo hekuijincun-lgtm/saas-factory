@@ -2,9 +2,10 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { getReservations, cancelReservationById, assignStaffToReservation, getStaff, createReservation, getMenu, type Reservation, type ReservationMeta, type Staff, type MenuItem } from '@/src/lib/bookingApi';
+import { getReservations, cancelReservationById, assignStaffToReservation, getStaff, createReservation, getMenu, type Reservation, type Staff, type MenuItem } from '@/src/lib/bookingApi';
 import { ApiClientError } from '@/src/lib/apiClient';
-import { ChevronLeft, ChevronRight, Plus, Scissors } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Plus } from 'lucide-react';
+import ReservationDetailPanel from './ReservationDetailPanel';
 import Badge from '../ui/Badge';
 import { STAFF } from '../constants/staff';
 import type { StaffShift } from '@/src/types/shift';
@@ -85,21 +86,6 @@ export default function ReservationsLedger() {
   // slotsPerStaff: /slots から取得したスタッフ別スロット状態（表示用・bookingと同一ソース）
   const [slotsPerStaff, setSlotsPerStaff] = useState<Map<string, Record<string, string>>>(new Map());
   const [availSaving, setAvailSaving] = useState(false);
-
-  // 予約編集モーダル
-  const [editMode, setEditMode] = useState(false);
-  const [editForm, setEditForm] = useState<{ name: string; phone: string; note: string; staffId: string }>({ name: '', phone: '', note: '', staffId: 'any' });
-  const [editing, setEditing] = useState(false);
-  const [editError, setEditError] = useState<string | null>(null);
-
-  // 眉毛カルテタブ
-  type DetailTab = 'basic' | 'karte' | 'consent' | 'image';
-  const [detailTab, setDetailTab] = useState<DetailTab>('basic');
-  const [metaForm, setMetaForm] = useState<ReservationMeta>({});
-  const [metaSaving, setMetaSaving] = useState(false);
-  const [metaError, setMetaError] = useState<string | null>(null);
-  const [beforeUploading, setBeforeUploading] = useState(false);
-  const [afterUploading, setAfterUploading] = useState(false);
 
   // settings が取得されたら open/close/interval に追随（取得前は デフォルト値で表示継続）
   const timeSlots = useMemo(
@@ -426,93 +412,6 @@ export default function ReservationsLedger() {
     }
   };
 
-  // 編集モードを開始
-  const startEdit = (reservation: Reservation) => {
-    setEditForm({
-      name: reservation.name,
-      phone: reservation.phone || '',
-      note: reservation.note || '',
-      staffId: reservation.staffId || 'any',
-    });
-    setEditError(null);
-    setEditMode(true);
-  };
-
-  // 予約を編集（PATCH /admin/reservations/:id）
-  const handleEdit = async () => {
-    if (!selectedReservation) return;
-    if (!editForm.name.trim()) { setEditError('お名前は必須です'); return; }
-    setEditing(true);
-    setEditError(null);
-    try {
-      await fetch(`/api/proxy/admin/reservations/${selectedReservation.reservationId}`, {
-        method: 'PATCH',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          name: editForm.name.trim(),
-          phone: editForm.phone.trim() || null,
-          note: editForm.note.trim() || null,
-          staffId: editForm.staffId === 'any' ? null : editForm.staffId,
-        }),
-      });
-      setEditMode(false);
-      setSelectedReservation(null);
-      await fetchReservations();
-    } catch (err) {
-      setEditError(err instanceof Error ? err.message : '更新に失敗しました');
-    } finally {
-      setEditing(false);
-    }
-  };
-
-  // 眉毛カルテ/同意/画像を保存（meta を PATCH）
-  const handleMetaSave = async () => {
-    if (!selectedReservation) return;
-    setMetaSaving(true);
-    setMetaError(null);
-    try {
-      const res = await fetch(`/api/proxy/admin/reservations/${selectedReservation.reservationId}`, {
-        method: 'PATCH',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ meta: metaForm }),
-      });
-      const json = await res.json() as any;
-      if (!json.ok) throw new Error(json.error || '保存に失敗しました');
-      // ローカルの selectedReservation の meta を更新
-      setSelectedReservation(prev => prev ? { ...prev, meta: json.data?.meta ?? metaForm } : null);
-      await fetchReservations();
-    } catch (err) {
-      setMetaError(err instanceof Error ? err.message : '保存に失敗しました');
-    } finally {
-      setMetaSaving(false);
-    }
-  };
-
-  // 予約画像を R2 にアップロードして meta を自動保存
-  const handleImageUpload = async (kind: 'before' | 'after', file: File) => {
-    if (!selectedReservation) return;
-    kind === 'before' ? setBeforeUploading(true) : setAfterUploading(true);
-    setMetaError(null);
-    try {
-      const fd = new FormData();
-      fd.append('file', file);
-      const res = await fetch(
-        `/api/proxy/admin/reservations/${selectedReservation.reservationId}/image?tenantId=${encodeURIComponent(tenantId)}&kind=${kind}`,
-        { method: 'POST', body: fd }
-      );
-      const json = await res.json() as any;
-      if (!json.ok) throw new Error(json.error || 'アップロードに失敗しました');
-      const urlKey = kind === 'before' ? 'beforeUrl' : 'afterUrl';
-      setMetaForm(m => ({ ...m, [urlKey]: json.imageUrl }));
-      setSelectedReservation(prev => prev ? { ...prev, meta: { ...(prev.meta ?? {}), [urlKey]: json.imageUrl } } : null);
-      await fetchReservations();
-    } catch (err) {
-      setMetaError(err instanceof Error ? err.message : 'アップロードに失敗しました');
-    } finally {
-      kind === 'before' ? setBeforeUploading(false) : setAfterUploading(false);
-    }
-  };
-
   // 予約作成モーダルを開く（日付・時刻を現在選択日に合わせて初期化）
   const openCreateModal = () => {
     setCreateForm(f => ({ ...f, date, staffId: 'any', time: timeSlots[0] || '' }));
@@ -659,7 +558,7 @@ export default function ReservationsLedger() {
                         >
                           {reservation ? (
                             <div
-                              onClick={() => { if (isWorking) { setSelectedReservation(reservation); setDetailTab('basic'); setMetaForm(reservation.meta ?? {}); setMetaError(null); } }}
+                              onClick={() => { if (isWorking) { setSelectedReservation(reservation); } }}
                               className={`border rounded-xl p-3 transition-all ${
                                 isWorking
                                   ? 'bg-blue-50 border-blue-200 cursor-pointer hover:shadow-md'
@@ -760,356 +659,17 @@ export default function ReservationsLedger() {
         )}
       </div>
 
-      {/* 詳細モーダル（既存を流用） */}
       {selectedReservation && (
-        <div
-          className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
-          onClick={() => { setSelectedReservation(null); setEditMode(false); setDetailTab('basic'); }}
-        >
-          <div className="bg-white rounded-2xl shadow-soft max-w-2xl w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-start justify-between">
-              <div>
-                <h2 className="text-2xl font-semibold text-brand-text">
-                  {editMode ? '予約を編集' : '予約詳細'}
-                </h2>
-                <p className="text-sm text-brand-muted mt-1">予約ID: {selectedReservation.reservationId}</p>
-              </div>
-              <button
-                onClick={() => { setSelectedReservation(null); setEditMode(false); setDetailTab('basic'); }}
-                className="p-2 text-brand-muted hover:text-brand-text hover:bg-brand-bg rounded-lg transition-all"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-
-            {/* タブ（詳細表示時のみ） */}
-            {!editMode && (
-              <div className="flex gap-1 border-b border-gray-100 pb-0">
-                {([
-                  { id: 'basic', label: '基本情報' },
-                  { id: 'karte', label: '眉毛カルテ', icon: true },
-                  { id: 'consent', label: '同意ログ', icon: true },
-                  { id: 'image', label: '画像', icon: true },
-                ] as { id: DetailTab; label: string; icon?: boolean }[]).map(tab => (
-                  <button
-                    key={tab.id}
-                    onClick={() => setDetailTab(tab.id)}
-                    className={`px-3 py-2 text-xs font-medium rounded-t-lg transition-all flex items-center gap-1 ${
-                      detailTab === tab.id
-                        ? 'bg-pink-50 text-pink-700 border-b-2 border-pink-500'
-                        : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
-                    }`}
-                  >
-                    {tab.icon && <Scissors className="w-3 h-3" />}
-                    {tab.label}
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {editMode ? (
-              /* ─── 編集フォーム（editMode時は常に表示） ─── */
-              <div className="space-y-4">
-                {editError && (
-                  <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700">{editError}</div>
-                )}
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <p className="text-sm font-medium text-brand-muted mb-1">日付（変更不可）</p>
-                    <p className="text-base text-brand-text">{selectedReservation.date}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm font-medium text-brand-muted mb-1">時間（変更不可）</p>
-                    <p className="text-base text-brand-text">{selectedReservation.time}</p>
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-brand-text mb-1">お名前 <span className="text-red-500">*</span></label>
-                  <input
-                    type="text"
-                    value={editForm.name}
-                    onChange={(e) => setEditForm(f => ({ ...f, name: e.target.value }))}
-                    className="w-full px-3 py-2 border border-brand-border rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-brand-text mb-1">電話番号</label>
-                  <input
-                    type="tel"
-                    value={editForm.phone}
-                    onChange={(e) => setEditForm(f => ({ ...f, phone: e.target.value }))}
-                    placeholder="090-0000-0000"
-                    className="w-full px-3 py-2 border border-brand-border rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-brand-text mb-1">担当スタッフ</label>
-                  <select
-                    value={editForm.staffId}
-                    onChange={(e) => setEditForm(f => ({ ...f, staffId: e.target.value }))}
-                    className="w-full px-3 py-2 border border-brand-border rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary bg-white text-sm"
-                  >
-                    <option value="any">指名なし</option>
-                    {staffList.map((s) => (
-                      <option key={s.id} value={s.id}>{s.name}{s.role ? ` (${s.role})` : ''}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-brand-text mb-1">備考</label>
-                  <textarea
-                    value={editForm.note}
-                    onChange={(e) => setEditForm(f => ({ ...f, note: e.target.value }))}
-                    rows={2}
-                    className="w-full px-3 py-2 border border-brand-border rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary text-sm resize-none"
-                  />
-                </div>
-                <div className="flex gap-3 pt-2">
-                  <button
-                    onClick={handleEdit}
-                    disabled={editing}
-                    className="flex-1 px-4 py-3 bg-brand-primary text-white rounded-xl font-medium hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed transition-all text-sm"
-                  >
-                    {editing ? '保存中...' : '保存する'}
-                  </button>
-                  <button
-                    onClick={() => { setEditMode(false); setEditError(null); }}
-                    className="px-4 py-3 text-sm font-medium text-brand-text bg-white border border-brand-border rounded-xl hover:shadow-md transition-all"
-                  >
-                    戻る
-                  </button>
-                </div>
-              </div>
-            ) : detailTab === 'basic' ? (
-              /* ─── 基本情報 タブ ─── */
-              <div className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <p className="text-sm font-medium text-brand-muted mb-1">日付</p>
-                    <p className="text-base text-brand-text">{selectedReservation.date}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm font-medium text-brand-muted mb-1">時間</p>
-                    <p className="text-base text-brand-text">{selectedReservation.time}</p>
-                  </div>
-                </div>
-
-                <div>
-                  <p className="text-sm font-medium text-brand-muted mb-1">お名前</p>
-                  <p className="text-base text-brand-text">{selectedReservation.name}</p>
-                </div>
-
-                {selectedReservation.phone && (
-                  <div>
-                    <p className="text-sm font-medium text-brand-muted mb-1">電話番号</p>
-                    <p className="text-base text-brand-text">{selectedReservation.phone}</p>
-                  </div>
-                )}
-
-                {selectedReservation.note && (
-                  <div>
-                    <p className="text-sm font-medium text-brand-muted mb-1">備考</p>
-                    <p className="text-base text-brand-text">{selectedReservation.note}</p>
-                  </div>
-                )}
-
-                <div>
-                  <p className="text-sm font-medium text-brand-muted mb-1">作成日時</p>
-                  <p className="text-base text-brand-text">
-                    {mounted ? (() => {
-                      try { return new Date(selectedReservation.createdAt).toLocaleString('ja-JP'); }
-                      catch { return selectedReservation.createdAt; }
-                    })() : selectedReservation.createdAt}
-                  </p>
-                </div>
-
-                <div>
-                  <p className="text-sm font-medium text-brand-muted mb-1">ステータス</p>
-                  <div><Badge variant="reserved">予約済み</Badge></div>
-                </div>
-
-                <div>
-                  <p className="text-sm font-medium text-brand-muted mb-1">担当者</p>
-                  <p className="text-base text-brand-text">
-                    {(() => {
-                      const sid = getReservationStaffId(selectedReservation);
-                      if (sid === 'any') return '指名なし';
-                      const s = staffList.find((x) => x.id === sid);
-                      return s ? s.name : sid;
-                    })()}
-                  </p>
-                </div>
-              </div>
-            ) : null}
-
-            {/* 眉毛カルテ タブ */}
-            {!editMode && detailTab === 'karte' && (
-              <div className="space-y-3">
-                {metaError && <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{metaError}</div>}
-                <div className="grid grid-cols-2 gap-3">
-                  {[
-                    { key: 'template', label: 'スタイルテンプレ', placeholder: '例: ナチュラル' },
-                    { key: 'thickness', label: '太さ', placeholder: '例: やや太め' },
-                    { key: 'angle', label: '角度', placeholder: '例: 平行' },
-                    { key: 'arch', label: 'アーチ形状', placeholder: '例: ゆるやか' },
-                    { key: 'skinnessReaction', label: '赤み反応', placeholder: '例: なし' },
-                  ].map(f => (
-                    <div key={f.key}>
-                      <label className="block text-xs font-medium text-gray-600 mb-1">{f.label}</label>
-                      <input
-                        type="text"
-                        value={(metaForm.eyebrowDesign as any)?.[f.key] ?? ''}
-                        onChange={e => setMetaForm(m => ({ ...m, eyebrowDesign: { ...m.eyebrowDesign, [f.key]: e.target.value } }))}
-                        placeholder={f.placeholder}
-                        className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-pink-400"
-                      />
-                    </div>
-                  ))}
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">カルテメモ</label>
-                  <textarea
-                    rows={3}
-                    value={metaForm.eyebrowDesign?.memo ?? ''}
-                    onChange={e => setMetaForm(m => ({ ...m, eyebrowDesign: { ...m.eyebrowDesign, memo: e.target.value } }))}
-                    className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-pink-400 resize-none"
-                  />
-                </div>
-                <button onClick={handleMetaSave} disabled={metaSaving} className="px-4 py-2 bg-pink-500 text-white text-sm rounded-lg hover:bg-pink-600 disabled:opacity-50 transition-all">
-                  {metaSaving ? '保存中...' : 'カルテを保存'}
-                </button>
-              </div>
-            )}
-
-            {/* 同意ログ タブ */}
-            {!editMode && detailTab === 'consent' && (
-              <div className="space-y-3">
-                {metaError && <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{metaError}</div>}
-                <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">同意日時（ISO）</label>
-                  <input
-                    type="text"
-                    value={metaForm.consentLog?.acceptedAt ?? ''}
-                    onChange={e => setMetaForm(m => ({ ...m, consentLog: { ...m.consentLog, acceptedAt: e.target.value } }))}
-                    placeholder="例: 2026-03-02T12:00:00+09:00"
-                    className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-pink-400"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setMetaForm(m => ({ ...m, consentLog: { ...m.consentLog, acceptedAt: new Date().toISOString() } }))}
-                    className="mt-1 text-xs text-pink-600 hover:underline"
-                  >
-                    現在時刻を入力
-                  </button>
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">同意文バージョンハッシュ</label>
-                  <input
-                    type="text"
-                    value={metaForm.consentLog?.consentVersionHash ?? ''}
-                    onChange={e => setMetaForm(m => ({ ...m, consentLog: { ...m.consentLog, consentVersionHash: e.target.value } }))}
-                    placeholder="例: v1_20260302"
-                    className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-pink-400"
-                  />
-                </div>
-                {/* 既存の同意ログ表示 */}
-                {selectedReservation.meta?.consentLog?.acceptedAt && (
-                  <div className="p-3 bg-green-50 border border-green-200 rounded-lg text-xs text-green-700">
-                    <div className="font-medium">保存済み同意ログ</div>
-                    <div>同意日時: {selectedReservation.meta.consentLog.acceptedAt}</div>
-                    {selectedReservation.meta.consentLog.consentVersionHash && (
-                      <div>バージョン: {selectedReservation.meta.consentLog.consentVersionHash}</div>
-                    )}
-                  </div>
-                )}
-                <button onClick={handleMetaSave} disabled={metaSaving} className="px-4 py-2 bg-pink-500 text-white text-sm rounded-lg hover:bg-pink-600 disabled:opacity-50 transition-all">
-                  {metaSaving ? '保存中...' : '同意ログを保存'}
-                </button>
-              </div>
-            )}
-
-            {/* 画像 タブ */}
-            {!editMode && detailTab === 'image' && (
-              <div className="space-y-3">
-                {metaError && <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{metaError}</div>}
-
-                {/* Before 画像 */}
-                <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">Before画像</label>
-                  {metaForm.beforeUrl && (
-                    <img src={metaForm.beforeUrl} alt="before" className="mb-2 max-h-32 rounded-lg object-cover" onError={e => (e.currentTarget.style.display='none')} />
-                  )}
-                  <label className={`flex items-center justify-center gap-2 px-3 py-2 text-sm border-2 border-dashed rounded-lg cursor-pointer transition-colors ${beforeUploading ? 'border-gray-200 bg-gray-50 text-gray-400 cursor-not-allowed' : 'border-pink-300 bg-pink-50 text-pink-600 hover:border-pink-400'}`}>
-                    {beforeUploading ? 'アップロード中...' : metaForm.beforeUrl ? '画像を変更' : '画像をアップロード'}
-                    <input
-                      type="file"
-                      accept="image/*"
-                      className="hidden"
-                      disabled={beforeUploading}
-                      onChange={e => { const f = e.target.files?.[0]; if (f) handleImageUpload('before', f); e.target.value = ''; }}
-                    />
-                  </label>
-                </div>
-
-                {/* After 画像 */}
-                <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">After画像</label>
-                  {metaForm.afterUrl && (
-                    <img src={metaForm.afterUrl} alt="after" className="mb-2 max-h-32 rounded-lg object-cover" onError={e => (e.currentTarget.style.display='none')} />
-                  )}
-                  <label className={`flex items-center justify-center gap-2 px-3 py-2 text-sm border-2 border-dashed rounded-lg cursor-pointer transition-colors ${afterUploading ? 'border-gray-200 bg-gray-50 text-gray-400 cursor-not-allowed' : 'border-pink-300 bg-pink-50 text-pink-600 hover:border-pink-400'}`}>
-                    {afterUploading ? 'アップロード中...' : metaForm.afterUrl ? '画像を変更' : '画像をアップロード'}
-                    <input
-                      type="file"
-                      accept="image/*"
-                      className="hidden"
-                      disabled={afterUploading}
-                      onChange={e => { const f = e.target.files?.[0]; if (f) handleImageUpload('after', f); e.target.value = ''; }}
-                    />
-                  </label>
-                </div>
-
-                {/* SNS 同意 */}
-                <div className="flex items-center gap-2 pt-1">
-                  <input
-                    type="checkbox"
-                    id="snsPublishOk"
-                    checked={metaForm.snsPublishOk ?? false}
-                    onChange={e => setMetaForm(m => ({ ...m, snsPublishOk: e.target.checked }))}
-                    className="w-4 h-4 text-pink-500 border-gray-300 rounded"
-                  />
-                  <label htmlFor="snsPublishOk" className="text-sm text-gray-700">SNS掲載同意あり</label>
-                </div>
-                <button onClick={handleMetaSave} disabled={metaSaving} className="px-4 py-2 bg-pink-500 text-white text-sm rounded-lg hover:bg-pink-600 disabled:opacity-50 transition-all">
-                  {metaSaving ? '保存中...' : 'SNS情報を保存'}
-                </button>
-              </div>
-            )}
-
-            {!editMode && detailTab === 'basic' && (
-              <div className="flex items-center gap-2 pt-4 border-t border-brand-border">
-                <button
-                  onClick={() => startEdit(selectedReservation)}
-                  className="px-4 py-2 text-sm font-medium text-brand-text bg-white border border-brand-border rounded-xl hover:shadow-md transition-all"
-                >
-                  編集
-                </button>
-                <button
-                  onClick={() => {
-                    setSelectedReservation(null);
-                    handleCancel(selectedReservation);
-                  }}
-                  disabled={cancellingId === selectedReservation.reservationId}
-                  className="px-4 py-2 text-sm font-medium text-rose-600 bg-rose-50 border border-rose-200 rounded-xl hover:bg-rose-100 focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-                >
-                  {cancellingId === selectedReservation.reservationId ? 'キャンセル中...' : 'キャンセル'}
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
+        <ReservationDetailPanel
+          reservation={selectedReservation}
+          staffList={staffList}
+          tenantId={tenantId}
+          mounted={mounted}
+          onClose={() => setSelectedReservation(null)}
+          onRefresh={fetchReservations}
+          onCancelReservation={(r) => { setSelectedReservation(null); handleCancel(r); }}
+          isCancelling={cancellingId === selectedReservation.reservationId}
+        />
       )}
       {/* 予約作成モーダル */}
       {createModalOpen && (
