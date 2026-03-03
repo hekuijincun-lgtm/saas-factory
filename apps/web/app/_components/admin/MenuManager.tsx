@@ -178,7 +178,7 @@ export default function MenuManager({ tenantId: tenantIdProp }: { tenantId?: str
         active: formData.active,
         sortOrder: formData.sortOrder,
         eyebrow: formData.eyebrow,
-        ...(imageUrl ? { imageUrl } : {}),
+        imageUrl: imageUrl ?? null, // null = 削除指示（Workers PATCH が !imageUrl で delete）
       };
 
       // tenantId を URL に含めて fetch（updateMenuItem/createMenuItem は tenantId 非対応）
