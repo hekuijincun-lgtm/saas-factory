@@ -17,6 +17,8 @@ import {
   ShieldAlert,
   CalendarX,
   Layers,
+  ExternalLink,
+  HelpCircle,
   type LucideIcon,
 } from 'lucide-react';
 import { Reveal } from '../_components/Reveal';
@@ -147,6 +149,7 @@ export default function EyebrowLandingPage() {
         <SolutionSection />
         <EyebrowSection />
         <FlowSection />
+        <SetupSection />
         <PricingSection />
         <FaqSection />
         <FinalCtaSection />
@@ -181,6 +184,12 @@ function LpNavbar() {
             className="hover:text-gray-900 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 rounded"
           >
             機能
+          </a>
+          <a
+            href="#setup"
+            className="hover:text-gray-900 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 rounded"
+          >
+            導入方法
           </a>
           <a
             href={PRICING_ANCHOR}
@@ -685,6 +694,178 @@ function FlowSection() {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
+// Setup guide (onboarding)
+// ──────────────────────────────────────────────────────────────────────────────
+function SetupSection() {
+  const steps: {
+    num: string;
+    title: string;
+    desc: string;
+    link: { label: string; href: string } | null;
+  }[] = [
+    {
+      num: '01',
+      title: 'LINE公式アカウントを用意する',
+      desc: 'まだ持っていない場合は、LINE Official Account Managerから無料で開設できます。すでに公式アカウントをお持ちの場合はそのまま使用できます。',
+      link: {
+        label: 'LINE Official Account Manager を開く',
+        href: 'https://manager.line.biz/',
+      },
+    },
+    {
+      num: '02',
+      title: 'LINE Developersにログイン',
+      desc: '公式アカウントと同じLINEアカウントでログインします。初回はプロバイダーの作成が求められます。サロン名をそのまま入力すればOKです。',
+      link: {
+        label: 'LINE Developers を開く',
+        href: 'https://developers.line.biz/',
+      },
+    },
+    {
+      num: '03',
+      title: 'Messaging APIチャンネルを作成',
+      desc: 'プロバイダー内で「新規チャンネル作成」→「Messaging API」を選択します。チャンネル名はサロン名、業種は「美容」を選ぶとスムーズです。',
+      link: {
+        label: 'Messaging API 概要を読む',
+        href: 'https://developers.line.biz/ja/docs/messaging-api/overview/',
+      },
+    },
+    {
+      num: '04',
+      title: 'チャンネルアクセストークンを発行',
+      desc: 'チャンネル設定の「Messaging API」タブを開き、「チャンネルアクセストークン（長期）」の「発行」ボタンをクリックします。Channel IDとChannel Secretも同じページで確認できます。',
+      link: null,
+    },
+    {
+      num: '05',
+      title: '管理画面のLINE設定に貼り付けて保存',
+      desc: '取得した「Channel ID」「Channel Secret」「チャンネルアクセストークン」を管理画面のLINE連携設定に入力して保存します。Webhook URLの設定もこの画面から行えます。',
+      link: null,
+    },
+    {
+      num: '06',
+      title: '動作テストを行って完了',
+      desc: 'ご自身のLINEで公式アカウントを友だち追加し、予約URLを開いてテスト予約を入れてみましょう。予約確認メッセージと前日リマインドが届けば設定完了です。',
+      link: null,
+    },
+  ];
+
+  const troubleFaqs: { q: string; a: string }[] = [
+    {
+      q: 'Messaging APIとLINE Loginはどう違いますか？',
+      a: '予約通知・リマインドを送るにはMessaging APIだけで十分です。LINE Loginは「LINEでログイン」ボタンを実装する際に使います。まずはMessaging APIの設定から始めてください。',
+    },
+    {
+      q: 'チャンネルアクセストークンが発行できません',
+      a: 'チャンネルの「Messaging API」タブ最下部に「チャンネルアクセストークン（長期）」セクションがあります。「発行」ボタンが表示されていない場合は、チャンネルの種類が「Messaging API」になっているか確認してください。',
+    },
+    {
+      q: 'テスト予約の通知が届きません',
+      a: 'まずLINE公式アカウントを友だち追加済みか確認してください。次に管理画面でWebhook URLが正しく設定・有効化されているかを確認します。それでも届かない場合はサポートまでご連絡ください。',
+    },
+  ];
+
+  return (
+    <section
+      id="setup"
+      className="bg-white py-24 px-5"
+      aria-labelledby="setup-heading"
+    >
+      <div className="mx-auto max-w-4xl">
+        {/* Heading */}
+        <Reveal>
+          <div className="text-center mb-14">
+            <p className="text-sm font-semibold text-rose-600 uppercase tracking-widest mb-3">
+              導入方法
+            </p>
+            <h2
+              id="setup-heading"
+              className="text-3xl sm:text-4xl font-black text-gray-900 leading-tight"
+            >
+              最短30分で使い始める
+              <br className="sm:hidden" />
+              ステップガイド
+            </h2>
+            <p className="mt-4 text-gray-500 max-w-xl mx-auto">
+              LINEの初期設定から管理画面への接続まで、技術知識がなくても進められるよう手順をまとめました。
+            </p>
+          </div>
+        </Reveal>
+
+        {/* Steps */}
+        <div className="space-y-3 mb-14">
+          {steps.map((step, i) => (
+            <Reveal key={step.num} delay={i * 70}>
+              <div className="flex gap-4 sm:gap-5 bg-white rounded-2xl border border-gray-100 p-5 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all duration-200">
+                {/* Number badge */}
+                <div
+                  className="shrink-0 w-11 h-11 rounded-full bg-gradient-to-br from-rose-500 to-amber-500 text-white font-black text-sm flex items-center justify-center shadow-md"
+                  aria-hidden="true"
+                >
+                  {step.num}
+                </div>
+
+                {/* Content */}
+                <div className="flex-1 min-w-0">
+                  <h3 className="font-bold text-gray-900 mb-1 leading-snug">
+                    {step.title}
+                  </h3>
+                  <p className="text-sm text-gray-500 leading-relaxed">
+                    {step.desc}
+                  </p>
+                  {step.link && (
+                    <a
+                      href={step.link.href}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1 mt-2.5 text-xs font-semibold text-rose-600 hover:text-rose-700 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 rounded"
+                    >
+                      {step.link.label}
+                      <ExternalLink className="w-3 h-3 shrink-0" aria-hidden="true" />
+                    </a>
+                  )}
+                </div>
+              </div>
+            </Reveal>
+          ))}
+        </div>
+
+        {/* Trouble FAQ */}
+        <Reveal>
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-6 sm:p-8">
+            <div className="flex items-center gap-2.5 mb-6">
+              <div className="w-8 h-8 rounded-full bg-amber-100 border border-amber-200 flex items-center justify-center shrink-0">
+                <HelpCircle className="w-4 h-4 text-amber-600" aria-hidden="true" />
+              </div>
+              <h3 className="font-bold text-gray-900">つまずきポイント</h3>
+            </div>
+            <div className="space-y-5">
+              {troubleFaqs.map((faq, i) => (
+                <div
+                  key={i}
+                  className={
+                    i < troubleFaqs.length - 1
+                      ? 'pb-5 border-b border-amber-200/70'
+                      : ''
+                  }
+                >
+                  <p className="text-sm font-semibold text-gray-900 mb-1.5">
+                    Q. {faq.q}
+                  </p>
+                  <p className="text-sm text-gray-600 leading-relaxed">
+                    A. {faq.a}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </Reveal>
+      </div>
+    </section>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
 // Pricing
 // ──────────────────────────────────────────────────────────────────────────────
 function PricingSection() {
@@ -926,6 +1107,12 @@ function LpFooter() {
             className="hover:text-white transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 rounded"
           >
             機能
+          </a>
+          <a
+            href="#setup"
+            className="hover:text-white transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 rounded"
+          >
+            導入方法
           </a>
           <a
             href={PRICING_ANCHOR}
