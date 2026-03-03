@@ -13,8 +13,13 @@ import {
   ChevronDown,
   Zap,
   Star,
+  AlarmClock,
+  ShieldAlert,
+  CalendarX,
+  Layers,
   type LucideIcon,
 } from 'lucide-react';
+import { Reveal } from '../_components/Reveal';
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Configuration constants — update these without touching layout logic
@@ -194,10 +199,13 @@ function LpNavbar() {
         {/* CTA */}
         <Link
           href={DEMO_HREF}
-          className="inline-flex items-center gap-1.5 px-4 py-2 bg-rose-500 text-white text-sm font-semibold rounded-full hover:bg-rose-600 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 focus-visible:ring-offset-2 shadow-sm"
+          className="group inline-flex items-center gap-1.5 px-4 py-2 bg-rose-500 text-white text-sm font-semibold rounded-full hover:bg-rose-600 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 focus-visible:ring-offset-2 shadow-sm"
         >
           デモを見る
-          <ArrowRight className="w-3.5 h-3.5" aria-hidden="true" />
+          <ArrowRight
+            className="w-3.5 h-3.5 transition-transform duration-200 group-hover:translate-x-1"
+            aria-hidden="true"
+          />
         </Link>
       </div>
     </header>
@@ -260,7 +268,7 @@ function HeroSection() {
           >
             無料でデモを見る
             <ArrowRight
-              className="w-4 h-4 transition-transform duration-200 group-hover:translate-x-0.5"
+              className="w-4 h-4 transition-transform duration-200 group-hover:translate-x-1"
               aria-hidden="true"
             />
           </Link>
@@ -295,29 +303,29 @@ function HeroSection() {
 // Problem section
 // ──────────────────────────────────────────────────────────────────────────────
 function ProblemSection() {
-  const problems = [
+  const problems: { icon: LucideIcon; title: string; desc: string }[] = [
     {
-      emoji: '📱',
+      icon: MessageCircle,
       title: 'LINEの往復が面倒',
       desc: '空き日程を聞いて、返信して、また聞いて…。1件の予約に何往復もしている。',
     },
     {
-      emoji: '⏰',
+      icon: AlarmClock,
       title: '前日確認が手動',
       desc: '「明日のご予約ありがとうございます」を毎日手作業で送っている。',
     },
     {
-      emoji: '😤',
+      icon: ShieldAlert,
       title: '無断キャンセルが怖い',
       desc: 'リマインドを送り忘れた日に限って無断キャンセルが発生する。',
     },
     {
-      emoji: '📅',
+      icon: CalendarX,
       title: 'ダブルブッキングが不安',
       desc: '手帳・LINE・メモで管理が分散して、重複予約がいつ起きるか心配。',
     },
     {
-      emoji: '🗂️',
+      icon: Layers,
       title: '予約管理が煩雑',
       desc: '紙・スマホ・手帳と複数の場所に予約が散らばっていて把握しきれない。',
     },
@@ -329,49 +337,66 @@ function ProblemSection() {
       aria-labelledby="problem-heading"
     >
       <div className="mx-auto max-w-5xl">
-        <div className="text-center mb-14">
-          <p className="text-sm font-semibold text-rose-600 uppercase tracking-widest mb-3">
-            お悩みではないですか？
-          </p>
-          <h2
-            id="problem-heading"
-            className="text-3xl sm:text-4xl font-black text-gray-900 leading-tight"
-          >
-            予約管理で
-            <br className="sm:hidden" />
-            消耗していませんか
-          </h2>
-        </div>
+        <Reveal>
+          <div className="text-center mb-14">
+            <p className="text-sm font-semibold text-rose-600 uppercase tracking-widest mb-3">
+              お悩みではないですか？
+            </p>
+            <h2
+              id="problem-heading"
+              className="text-3xl sm:text-4xl font-black text-gray-900 leading-tight"
+            >
+              予約管理で
+              <br className="sm:hidden" />
+              消耗していませんか
+            </h2>
+          </div>
+        </Reveal>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {problems.map((p) => (
-            <div
-              key={p.title}
-              className="bg-white rounded-2xl border border-gray-100 p-6 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all duration-200"
-            >
-              <div className="text-3xl mb-3" aria-hidden="true">
-                {p.emoji}
-              </div>
-              <h3 className="font-bold text-gray-900 mb-2">{p.title}</h3>
-              <p className="text-sm text-gray-500 leading-relaxed">{p.desc}</p>
-            </div>
-          ))}
+          {problems.map((p, i) => {
+            const Icon = p.icon;
+            return (
+              <Reveal key={p.title} delay={i * 80} className="h-full">
+                <div className="bg-white rounded-2xl border border-gray-100 p-6 shadow-sm hover:shadow-lg hover:-translate-y-1 hover:border-gray-200 transition-all duration-200 h-full">
+                  {/* Unified icon — gradient circle + 1px border + subtle glow */}
+                  <div className="w-10 h-10 rounded-full bg-gradient-to-br from-slate-50 to-gray-100 border border-gray-200/70 flex items-center justify-center mb-3 shadow-[0_0_8px_rgba(0,0,0,0.06)]">
+                    <Icon
+                      className="w-5 h-5 text-gray-400"
+                      strokeWidth={1.5}
+                      aria-hidden="true"
+                    />
+                  </div>
+                  <h3 className="font-bold text-gray-900 mb-2">{p.title}</h3>
+                  <p className="text-sm text-gray-500 leading-relaxed">{p.desc}</p>
+                </div>
+              </Reveal>
+            );
+          })}
 
           {/* Solution callout — 6th card */}
-          <div className="bg-gradient-to-br from-rose-500 to-pink-600 rounded-2xl p-6 text-white shadow-lg sm:col-span-2 lg:col-span-1 flex flex-col justify-center">
-            <p className="font-bold text-lg mb-2">そのすべてを解決します</p>
-            <p className="text-rose-100 text-sm leading-relaxed mb-4">
-              予約・リマインド・台帳を自動化して、サロン業務に集中できる時間を
-              取り戻しましょう。
-            </p>
-            <Link
-              href={DEMO_HREF}
-              className="inline-flex items-center gap-1.5 text-sm font-semibold text-white hover:gap-2.5 transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-white rounded"
-            >
-              デモを見る
-              <ArrowRight className="w-4 h-4" aria-hidden="true" />
-            </Link>
-          </div>
+          <Reveal
+            delay={problems.length * 80}
+            className="sm:col-span-2 lg:col-span-1 h-full"
+          >
+            <div className="bg-gradient-to-br from-rose-500 to-pink-600 rounded-2xl p-6 text-white shadow-lg flex flex-col justify-center hover:shadow-xl hover:-translate-y-1 transition-all duration-200 h-full">
+              <p className="font-bold text-lg mb-2">そのすべてを解決します</p>
+              <p className="text-rose-100 text-sm leading-relaxed mb-4">
+                予約・リマインド・台帳を自動化して、サロン業務に集中できる時間を
+                取り戻しましょう。
+              </p>
+              <Link
+                href={DEMO_HREF}
+                className="group inline-flex items-center gap-1.5 text-sm font-semibold text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-white rounded"
+              >
+                デモを見る
+                <ArrowRight
+                  className="w-4 h-4 transition-transform duration-200 group-hover:translate-x-1"
+                  aria-hidden="true"
+                />
+              </Link>
+            </div>
+          </Reveal>
         </div>
       </div>
     </section>
@@ -440,40 +465,44 @@ function SolutionSection() {
       aria-labelledby="solution-heading"
     >
       <div className="mx-auto max-w-5xl">
-        <div className="text-center mb-14">
-          <p className="text-sm font-semibold text-rose-600 uppercase tracking-widest mb-3">
-            できること
-          </p>
-          <h2
-            id="solution-heading"
-            className="text-3xl sm:text-4xl font-black text-gray-900 leading-tight"
-          >
-            予約に関するすべてを
-            <br className="sm:hidden" />
-            自動化
-          </h2>
-          <p className="mt-4 text-gray-500 max-w-xl mx-auto">
-            オーナーがやること？　LINEのリッチメニューにURLを貼るだけ。
-            あとはツールが自動でこなします。
-          </p>
-        </div>
+        <Reveal>
+          <div className="text-center mb-14">
+            <p className="text-sm font-semibold text-rose-600 uppercase tracking-widest mb-3">
+              できること
+            </p>
+            <h2
+              id="solution-heading"
+              className="text-3xl sm:text-4xl font-black text-gray-900 leading-tight"
+            >
+              予約に関するすべてを
+              <br className="sm:hidden" />
+              自動化
+            </h2>
+            <p className="mt-4 text-gray-500 max-w-xl mx-auto">
+              オーナーがやること？　LINEのリッチメニューにURLを貼るだけ。
+              あとはツールが自動でこなします。
+            </p>
+          </div>
+        </Reveal>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-          {features.map((f) => {
+          {features.map((f, i) => {
             const Icon = f.icon;
             return (
-              <div
-                key={f.title}
-                className="rounded-2xl border border-gray-100 p-6 hover:border-gray-200 hover:shadow-md hover:-translate-y-0.5 transition-all duration-200"
-              >
-                <div
-                  className={`w-10 h-10 ${f.iconBg} rounded-xl flex items-center justify-center mb-4`}
-                >
-                  <Icon className={`w-5 h-5 ${f.iconColor}`} aria-hidden="true" />
+              <Reveal key={f.title} delay={i * 75} className="h-full">
+                <div className="rounded-2xl border border-gray-100 p-6 hover:border-gray-200 hover:shadow-lg hover:-translate-y-1 transition-all duration-200 h-full">
+                  <div
+                    className={`w-10 h-10 ${f.iconBg} rounded-xl flex items-center justify-center mb-4`}
+                  >
+                    <Icon
+                      className={`w-5 h-5 ${f.iconColor}`}
+                      aria-hidden="true"
+                    />
+                  </div>
+                  <h3 className="font-bold text-gray-900 mb-2">{f.title}</h3>
+                  <p className="text-sm text-gray-500 leading-relaxed">{f.desc}</p>
                 </div>
-                <h3 className="font-bold text-gray-900 mb-2">{f.title}</h3>
-                <p className="text-sm text-gray-500 leading-relaxed">{f.desc}</p>
-              </div>
+              </Reveal>
             );
           })}
         </div>
@@ -519,39 +548,40 @@ function EyebrowSection() {
       aria-labelledby="eyebrow-heading"
     >
       <div className="mx-auto max-w-5xl">
-        <div className="text-center mb-14">
-          <p className="text-sm font-semibold text-amber-600 uppercase tracking-widest mb-3">
-            眉毛サロン特化
-          </p>
-          <h2
-            id="eyebrow-heading"
-            className="text-3xl sm:text-4xl font-black text-gray-900 leading-tight"
-          >
-            眉毛サロンだから
-            <br className="sm:hidden" />
-            必要な機能を、
-            <br />
-            標準で搭載
-          </h2>
-          <p className="mt-4 text-gray-500 max-w-xl mx-auto">
-            汎用ツールにはない、眉毛サロンならではの機能をあらかじめ備えています。
-          </p>
-        </div>
+        <Reveal>
+          <div className="text-center mb-14">
+            <p className="text-sm font-semibold text-amber-600 uppercase tracking-widest mb-3">
+              眉毛サロン特化
+            </p>
+            <h2
+              id="eyebrow-heading"
+              className="text-3xl sm:text-4xl font-black text-gray-900 leading-tight"
+            >
+              眉毛サロンだから
+              <br className="sm:hidden" />
+              必要な機能を、
+              <br />
+              標準で搭載
+            </h2>
+            <p className="mt-4 text-gray-500 max-w-xl mx-auto">
+              汎用ツールにはない、眉毛サロンならではの機能をあらかじめ備えています。
+            </p>
+          </div>
+        </Reveal>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-          {specifics.map((s) => {
+          {specifics.map((s, i) => {
             const Icon = s.icon;
             return (
-              <div
-                key={s.title}
-                className="bg-white rounded-2xl border border-rose-100 p-6 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all duration-200"
-              >
-                <div className="w-10 h-10 bg-rose-100 rounded-xl flex items-center justify-center mb-4">
-                  <Icon className="w-5 h-5 text-rose-600" aria-hidden="true" />
+              <Reveal key={s.title} delay={i * 80} className="h-full">
+                <div className="bg-white rounded-2xl border border-rose-100 p-6 shadow-sm hover:shadow-lg hover:-translate-y-1 transition-all duration-200 h-full">
+                  <div className="w-10 h-10 bg-rose-100 rounded-xl flex items-center justify-center mb-4">
+                    <Icon className="w-5 h-5 text-rose-600" aria-hidden="true" />
+                  </div>
+                  <h3 className="font-bold text-gray-900 mb-2">{s.title}</h3>
+                  <p className="text-sm text-gray-500 leading-relaxed">{s.desc}</p>
                 </div>
-                <h3 className="font-bold text-gray-900 mb-2">{s.title}</h3>
-                <p className="text-sm text-gray-500 leading-relaxed">{s.desc}</p>
-              </div>
+              </Reveal>
             );
           })}
         </div>
@@ -585,17 +615,19 @@ function FlowSection() {
   return (
     <section className="bg-white py-24 px-5" aria-labelledby="flow-heading">
       <div className="mx-auto max-w-4xl">
-        <div className="text-center mb-14">
-          <p className="text-sm font-semibold text-rose-600 uppercase tracking-widest mb-3">
-            導入ステップ
-          </p>
-          <h2
-            id="flow-heading"
-            className="text-3xl sm:text-4xl font-black text-gray-900 leading-tight"
-          >
-            最短30分で予約受付スタート
-          </h2>
-        </div>
+        <Reveal>
+          <div className="text-center mb-14">
+            <p className="text-sm font-semibold text-rose-600 uppercase tracking-widest mb-3">
+              導入ステップ
+            </p>
+            <h2
+              id="flow-heading"
+              className="text-3xl sm:text-4xl font-black text-gray-900 leading-tight"
+            >
+              最短30分で予約受付スタート
+            </h2>
+          </div>
+        </Reveal>
 
         <div className="relative">
           {/* Connecting line — desktop only */}
@@ -606,7 +638,7 @@ function FlowSection() {
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
             {steps.map((step, i) => (
-              <div key={step.num} className="relative text-center">
+              <Reveal key={step.num} delay={i * 150} className="relative text-center">
                 {/* Step number circle */}
                 <div className="relative inline-flex items-center justify-center w-16 h-16 rounded-full bg-gradient-to-br from-rose-500 to-amber-500 text-white font-black text-xl mb-5 shadow-lg">
                   {step.num}
@@ -628,22 +660,24 @@ function FlowSection() {
                 <p className="text-sm text-gray-500 leading-relaxed">
                   {step.desc}
                 </p>
-              </div>
+              </Reveal>
             ))}
           </div>
         </div>
 
         <div className="text-center mt-12">
-          <Link
-            href={DEMO_HREF}
-            className="group inline-flex items-center gap-2 px-8 py-4 bg-rose-500 text-white font-bold rounded-full text-base hover:bg-rose-600 transition-all duration-200 shadow-lg shadow-rose-500/25 focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 focus-visible:ring-offset-2"
-          >
-            実際の画面を見てみる
-            <ArrowRight
-              className="w-4 h-4 transition-transform duration-200 group-hover:translate-x-0.5"
-              aria-hidden="true"
-            />
-          </Link>
+          <Reveal>
+            <Link
+              href={DEMO_HREF}
+              className="group inline-flex items-center gap-2 px-8 py-4 bg-rose-500 text-white font-bold rounded-full text-base hover:bg-rose-600 transition-all duration-200 shadow-lg shadow-rose-500/25 focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 focus-visible:ring-offset-2"
+            >
+              実際の画面を見てみる
+              <ArrowRight
+                className="w-4 h-4 transition-transform duration-200 group-hover:translate-x-1"
+                aria-hidden="true"
+              />
+            </Link>
+          </Reveal>
         </div>
       </div>
     </section>
@@ -661,101 +695,107 @@ function PricingSection() {
       aria-labelledby="pricing-heading"
     >
       <div className="mx-auto max-w-5xl">
-        <div className="text-center mb-14">
-          <p className="text-sm font-semibold text-rose-600 uppercase tracking-widest mb-3">
-            料金プラン
-          </p>
-          <h2
-            id="pricing-heading"
-            className="text-3xl sm:text-4xl font-black text-gray-900 leading-tight"
-          >
-            シンプルな料金体系
-          </h2>
-          <p className="mt-4 text-gray-500">
-            初期費用0円・最低契約期間なし。いつでもプラン変更・解約できます。
-          </p>
-        </div>
+        <Reveal>
+          <div className="text-center mb-14">
+            <p className="text-sm font-semibold text-rose-600 uppercase tracking-widest mb-3">
+              料金プラン
+            </p>
+            <h2
+              id="pricing-heading"
+              className="text-3xl sm:text-4xl font-black text-gray-900 leading-tight"
+            >
+              シンプルな料金体系
+            </h2>
+            <p className="mt-4 text-gray-500">
+              初期費用0円・最低契約期間なし。いつでもプラン変更・解約できます。
+            </p>
+          </div>
+        </Reveal>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-stretch">
-          {PLANS.map((plan) => (
-            <div
-              key={plan.id}
-              className={`relative rounded-2xl p-7 flex flex-col ${
-                plan.highlighted
-                  ? 'bg-slate-900 text-white shadow-2xl ring-2 ring-rose-500 md:scale-105'
-                  : 'bg-white border border-gray-200 text-gray-900'
-              }`}
-            >
-              {/* Badge */}
-              {plan.badge && (
-                <div className="absolute -top-3.5 left-1/2 -translate-x-1/2">
-                  <span className="inline-flex items-center px-4 py-1 bg-rose-500 text-white text-xs font-bold rounded-full shadow-md">
-                    {plan.badge}
-                  </span>
-                </div>
-              )}
-
-              {/* Plan header */}
-              <div className="mb-6">
-                <p
-                  className={`text-xs font-semibold uppercase tracking-widest mb-1 ${
-                    plan.highlighted ? 'text-rose-400' : 'text-rose-600'
-                  }`}
-                >
-                  {plan.description}
-                </p>
-                <h3 className="text-xl font-black mb-3">{plan.name}</h3>
-                <div className="flex items-baseline gap-1 flex-wrap">
-                  <span className="text-4xl font-black">{plan.price}</span>
-                  {plan.period && (
-                    <span
-                      className={`text-sm ${
-                        plan.highlighted ? 'text-slate-400' : 'text-gray-400'
-                      }`}
-                    >
-                      {plan.period}
-                    </span>
-                  )}
-                </div>
-              </div>
-
-              {/* Feature list */}
-              <ul
-                className="space-y-2.5 mb-8 flex-1"
-                aria-label={`${plan.name}プランの機能一覧`}
-              >
-                {plan.features.map((feature) => (
-                  <li key={feature} className="flex items-start gap-2 text-sm">
-                    <CheckCircle2
-                      className={`w-4 h-4 shrink-0 mt-0.5 ${
-                        plan.highlighted ? 'text-rose-400' : 'text-green-500'
-                      }`}
-                      aria-hidden="true"
-                    />
-                    <span
-                      className={
-                        plan.highlighted ? 'text-slate-300' : 'text-gray-600'
-                      }
-                    >
-                      {feature}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-
-              {/* CTA */}
-              <Link
-                href={DEMO_HREF}
-                className={`w-full inline-flex items-center justify-center gap-2 px-6 py-3 rounded-full font-semibold text-sm transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 ${
+          {PLANS.map((plan, i) => (
+            <Reveal key={plan.id} delay={i * 100} className="h-full">
+              <div
+                className={`relative rounded-2xl p-7 flex flex-col h-full ${
                   plan.highlighted
-                    ? 'bg-rose-500 text-white hover:bg-rose-400 focus-visible:ring-rose-400 focus-visible:ring-offset-slate-900'
-                    : 'bg-gray-900 text-white hover:bg-gray-700 focus-visible:ring-gray-900'
+                    ? 'bg-slate-900 text-white shadow-2xl ring-2 ring-rose-500 md:scale-105'
+                    : 'bg-white border border-gray-200 text-gray-900'
                 }`}
               >
-                {plan.cta}
-                <ArrowRight className="w-4 h-4" aria-hidden="true" />
-              </Link>
-            </div>
+                {/* Badge */}
+                {plan.badge && (
+                  <div className="absolute -top-3.5 left-1/2 -translate-x-1/2">
+                    <span className="inline-flex items-center px-4 py-1 bg-rose-500 text-white text-xs font-bold rounded-full shadow-md">
+                      {plan.badge}
+                    </span>
+                  </div>
+                )}
+
+                {/* Plan header */}
+                <div className="mb-6">
+                  <p
+                    className={`text-xs font-semibold uppercase tracking-widest mb-1 ${
+                      plan.highlighted ? 'text-rose-400' : 'text-rose-600'
+                    }`}
+                  >
+                    {plan.description}
+                  </p>
+                  <h3 className="text-xl font-black mb-3">{plan.name}</h3>
+                  <div className="flex items-baseline gap-1 flex-wrap">
+                    <span className="text-4xl font-black">{plan.price}</span>
+                    {plan.period && (
+                      <span
+                        className={`text-sm ${
+                          plan.highlighted ? 'text-slate-400' : 'text-gray-400'
+                        }`}
+                      >
+                        {plan.period}
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Feature list */}
+                <ul
+                  className="space-y-2.5 mb-8 flex-1"
+                  aria-label={`${plan.name}プランの機能一覧`}
+                >
+                  {plan.features.map((feature) => (
+                    <li key={feature} className="flex items-start gap-2 text-sm">
+                      <CheckCircle2
+                        className={`w-4 h-4 shrink-0 mt-0.5 ${
+                          plan.highlighted ? 'text-rose-400' : 'text-green-500'
+                        }`}
+                        aria-hidden="true"
+                      />
+                      <span
+                        className={
+                          plan.highlighted ? 'text-slate-300' : 'text-gray-600'
+                        }
+                      >
+                        {feature}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+
+                {/* CTA */}
+                <Link
+                  href={DEMO_HREF}
+                  className={`group w-full inline-flex items-center justify-center gap-2 px-6 py-3 rounded-full font-semibold text-sm transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 ${
+                    plan.highlighted
+                      ? 'bg-rose-500 text-white hover:bg-rose-400 focus-visible:ring-rose-400 focus-visible:ring-offset-slate-900'
+                      : 'bg-gray-900 text-white hover:bg-gray-700 focus-visible:ring-gray-900'
+                  }`}
+                >
+                  {plan.cta}
+                  <ArrowRight
+                    className="w-4 h-4 transition-transform duration-200 group-hover:translate-x-1"
+                    aria-hidden="true"
+                  />
+                </Link>
+              </div>
+            </Reveal>
           ))}
         </div>
 
@@ -779,17 +819,19 @@ function FaqSection() {
       aria-labelledby="faq-heading"
     >
       <div className="mx-auto max-w-3xl">
-        <div className="text-center mb-12">
-          <p className="text-sm font-semibold text-rose-600 uppercase tracking-widest mb-3">
-            よくある質問
-          </p>
-          <h2
-            id="faq-heading"
-            className="text-3xl sm:text-4xl font-black text-gray-900"
-          >
-            FAQ
-          </h2>
-        </div>
+        <Reveal>
+          <div className="text-center mb-12">
+            <p className="text-sm font-semibold text-rose-600 uppercase tracking-widest mb-3">
+              よくある質問
+            </p>
+            <h2
+              id="faq-heading"
+              className="text-3xl sm:text-4xl font-black text-gray-900"
+            >
+              FAQ
+            </h2>
+          </div>
+        </Reveal>
 
         <div className="space-y-3">
           {FAQS.map((faq, i) => (
@@ -834,7 +876,7 @@ function FinalCtaSection() {
         <div className="w-[600px] h-[300px] bg-rose-600/20 blur-[100px] rounded-full" />
       </div>
 
-      <div className="relative mx-auto max-w-2xl">
+      <Reveal className="relative mx-auto max-w-2xl">
         <h2 className="text-3xl sm:text-5xl font-black text-white mb-5 leading-tight">
           予約管理の手間から
           <br />
@@ -849,11 +891,11 @@ function FinalCtaSection() {
         >
           無料でデモを見る
           <ArrowRight
-            className="w-5 h-5 transition-transform duration-200 group-hover:translate-x-0.5"
+            className="w-5 h-5 transition-transform duration-200 group-hover:translate-x-1"
             aria-hidden="true"
           />
         </Link>
-      </div>
+      </Reveal>
     </section>
   );
 }
