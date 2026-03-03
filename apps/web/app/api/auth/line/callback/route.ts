@@ -41,56 +41,45 @@ function resolveApiBase(): string {
 
 export async function GET(req: Request) {
   const url = new URL(req.url);
+  const isDebug = url.searchParams.get("debug") === "1";
 
-  // Debug mode (kept from original)
-  if (url.searchParams.get("debug") === "1") {
-    let ctxSeen = false;
-    let envSeen = null as any;
-    try {
-      const env: any = (process as any).env ?? {};
-      const ctx: any = { env };
-      ctxSeen = true;
-      envSeen = (ctx as any)?.env ? Object.keys((ctx as any).env) : null;
-    } catch (e: any) {
-      return new Response(
-        JSON.stringify({ ok: false, where: "DEBUG_CALLBACK_CTX_FAIL", err: String(e?.message ?? e) }),
-        { status: 200, headers: { "content-type": "application/json" } }
-      );
-    }
-    const v = ((process as any).env ?? {}).LINE_SESSION_SECRET;
-    const pv = process.env.LINE_SESSION_SECRET ?? null;
+  // Shared debug context — updated at each step
+  let step = "init";
+  const ctx: Record<string, any> = {
+    hasCode: !!url.searchParams.get("code"),
+    hasState: !!url.searchParams.get("state"),
+    hasReturnTo: !!url.searchParams.get("returnTo"),
+  };
+
+  function jsonError(message: string, extra?: object): Response {
     return new Response(
-      JSON.stringify({
-        ok: true,
-        where: "DEBUG_CALLBACK_ENV_CHECK",
-        href: req.url,
-        ctxSeen,
-        envKeys: envSeen,
-        ctxSecretPresent: typeof v === "string" && v.trim().length > 0,
-        ctxSecretLen: typeof v === "string" ? v.trim().length : null,
-        processSecretPresent: typeof pv === "string" && pv.trim().length > 0,
-        processSecretLen: typeof pv === "string" ? pv.trim().length : null,
-      }),
+      JSON.stringify({ ok: false, step, message, ...ctx, ...extra }),
       { status: 200, headers: { "content-type": "application/json" } }
     );
   }
 
+  // ── STEP: parse_params ───────────────────────────────────────────────────
   try {
+    step = "parse_params";
     const code = url.searchParams.get("code");
     const stateRaw = url.searchParams.get("state") || "";
 
     if (!code || !stateRaw) {
+      if (isDebug) return jsonError("missing code or state");
       return NextResponse.redirect(new URL("/admin/line-setup?reason=missing_code", url.origin));
     }
 
-    // Decode state to extract tenantId and returnTo
+    // ── STEP: parse_state ──────────────────────────────────────────────────
+    step = "parse_state";
     let tenantId = "default";
     let returnTo = "/admin/settings";
     try {
       const s = JSON.parse(atob(stateRaw));
       if (s?.tenantId) tenantId = String(s.tenantId);
       if (s?.returnTo && typeof s.returnTo === "string") returnTo = s.returnTo;
-    } catch {}
+    } catch {
+      if (isDebug) return jsonError("state base64/JSON parse failed");
+    }
 
     // Override returnTo from query param or cookie
     const returnToQ = url.searchParams.get("returnTo");
@@ -101,7 +90,20 @@ export async function GET(req: Request) {
     else if (returnToC && returnToC.startsWith("/")) returnTo = returnToC;
     if (returnTo === "/admin") returnTo = "/admin/settings";
 
-    // Exchange code with Workers to get userId
+    // Detect signup flow BEFORE allowed check
+    let isSignup = false;
+    let parsedReturnTo: URL | null = null;
+    try {
+      parsedReturnTo = new URL(returnTo, url.origin);
+      isSignup = parsedReturnTo.searchParams.get("signup") === "1";
+    } catch { /* malformed returnTo — isSignup stays false */ }
+
+    ctx.tenantId = tenantId;
+    ctx.parsedReturnTo = returnTo;
+    ctx.isSignup = isSignup;
+
+    // ── STEP: exchange ─────────────────────────────────────────────────────
+    step = "exchange";
     const apiBase = resolveApiBase();
     const redirectUri = `${url.origin}/api/auth/line/callback`;
 
@@ -112,6 +114,8 @@ export async function GET(req: Request) {
     });
 
     if (!exchangeRes.ok) {
+      const detail = await exchangeRes.text().catch(() => "");
+      if (isDebug) return jsonError("exchange HTTP error", { exchangeStatus: exchangeRes.status, detail });
       return NextResponse.redirect(new URL("/admin/line-setup?reason=exchange_failed", url.origin));
     }
 
@@ -119,6 +123,7 @@ export async function GET(req: Request) {
 
     if (!exchangeData.ok) {
       const reason = encodeURIComponent(exchangeData.error ?? "exchange_error");
+      if (isDebug) return jsonError("exchange returned ok=false", { exchangeError: exchangeData.error ?? exchangeData });
       return NextResponse.redirect(new URL(`/admin/line-setup?reason=${reason}`, url.origin));
     }
 
@@ -126,26 +131,33 @@ export async function GET(req: Request) {
       userId: string; displayName: string; allowed: boolean;
     };
 
-    // Not in allowed list → send to unauthorized page
-    if (!allowed) {
+    ctx.displayName = displayName;
+    ctx.allowed = allowed;
+
+    // ── STEP: allowed_check ────────────────────────────────────────────────
+    // signup=1 flows always pass — new users don't exist in the allow list yet
+    step = "allowed_check";
+    if (!allowed && !isSignup) {
+      if (isDebug) return jsonError("userId not in allowedAdminLineUserIds and isSignup=false");
       return NextResponse.redirect(
         new URL(`/admin/unauthorized?userId=${encodeURIComponent(userId)}`, url.origin)
       );
     }
 
-    // signup flow: derive per-user tenantId from LINE userId and inject into returnTo
-    // tenantId = 'u_' + first 8 chars of userId (after leading 'U'), deterministic & unique per user
+    // ── STEP: signup_tenant ────────────────────────────────────────────────
+    // Derive a per-user tenantId from LINE userId and inject into returnTo
+    step = "signup_tenant";
     let signupTenantId: string | null = null;
-    try {
-      const parsedReturnTo = new URL(returnTo, url.origin);
-      if (parsedReturnTo.searchParams.get('signup') === '1') {
-        signupTenantId = 'u_' + userId.slice(1, 9).toLowerCase();
-        parsedReturnTo.searchParams.set('tenantId', signupTenantId);
-        returnTo = parsedReturnTo.pathname + parsedReturnTo.search;
-      }
-    } catch { /* returnTo parse failed — leave as-is */ }
+    if (isSignup && parsedReturnTo) {
+      signupTenantId = "u_" + userId.slice(1, 9).toLowerCase();
+      parsedReturnTo.searchParams.set("tenantId", signupTenantId);
+      returnTo = parsedReturnTo.pathname + parsedReturnTo.search;
+      ctx.signupTenantId = signupTenantId;
+      ctx.parsedReturnTo = returnTo;
+    }
 
-    // Sign session with userId
+    // ── STEP: sign_session ─────────────────────────────────────────────────
+    step = "sign_session";
     const secret = (() => {
       try {
         const v = ((process as any).env ?? {}).LINE_SESSION_SECRET;
@@ -155,10 +167,37 @@ export async function GET(req: Request) {
     })();
 
     if (!secret) {
+      if (isDebug) return jsonError("LINE_SESSION_SECRET not configured");
       return NextResponse.redirect(new URL("/admin/line-setup?reason=secret", url.origin));
     }
 
-    const token = await signSession({ userId, tenantId, displayName, ts: Date.now() }, secret);
+    const sessionTenantId = signupTenantId ?? tenantId;
+    const token = await signSession({ userId, tenantId: sessionTenantId, displayName, ts: Date.now() }, secret);
+
+    // ── STEP: set_cookie / redirect ────────────────────────────────────────
+    step = "set_cookie";
+
+    // In debug mode: return JSON summary instead of actually redirecting
+    if (isDebug) {
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          step: "done",
+          message: "would redirect to returnTo (debug: no cookies set)",
+          hasCode: true,
+          hasState: true,
+          hasReturnTo: !!url.searchParams.get("returnTo"),
+          parsedReturnTo: returnTo,
+          tenantId,
+          sessionTenantId,
+          isSignup,
+          signupTenantId,
+          allowed,
+          displayName,
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    }
 
     const res = NextResponse.redirect(new URL(returnTo, url.origin));
     res.headers.append(
@@ -173,7 +212,6 @@ export async function GET(req: Request) {
       "Set-Cookie",
       `line_uid=${userId}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=604800`
     );
-    // line_tenant: non-HttpOnly so AdminShell can read via document.cookie
     if (signupTenantId) {
       res.headers.append(
         "Set-Cookie",
@@ -181,7 +219,23 @@ export async function GET(req: Request) {
       );
     }
     return res;
+
   } catch (e: any) {
+    if (isDebug) {
+      return new Response(
+        JSON.stringify({
+          ok: false,
+          step,
+          message: String(e?.message ?? e),
+          hasCode: !!url.searchParams.get("code"),
+          hasState: !!url.searchParams.get("state"),
+          hasReturnTo: !!url.searchParams.get("returnTo"),
+          parsedReturnTo: ctx.parsedReturnTo ?? null,
+          isSignup: ctx.isSignup ?? null,
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    }
     return NextResponse.redirect(
       new URL("/admin/line-setup?reason=unknown", new URL(req.url).origin)
     );
