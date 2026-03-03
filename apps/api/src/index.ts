@@ -776,7 +776,31 @@ app.get("/__debug/admin-auth", (c) => {
   const allow = raw ? raw.split(",").map((s: string) => s.trim()).filter(Boolean) : [];
   const mask = (s: string) => s.length <= 6 ? (s.slice(0, 2) + "***") : (s.slice(0, 4) + "***");
   const preview = allow.slice(0, 3).map(mask);
-  const userId = c.req.query("userId") || "";
+
+  // userId from query — takes priority
+  let userId = c.req.query("userId") || "";
+  let sessionUserMasked: string | null = null;
+  let sessionVerified = false; // signature not checked (no LINE_SESSION_SECRET in Workers)
+
+  // If userId not in query, try to decode line_session cookie (Pages-signed JWT-like token)
+  // Format: base64url(JSON{userId,...}).hmacSig  — body part is readable without secret
+  if (!userId) {
+    try {
+      const cookieHeader = c.req.header("cookie") || "";
+      const m = cookieHeader.match(/(?:^|;\s*)line_session=([^;]+)/);
+      if (m) {
+        const b64u = m[1].split(".")[0]; // body part before the dot
+        const b64 = b64u.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - b64u.length % 4) % 4);
+        const payload = JSON.parse(atob(b64)) as any;
+        if (payload?.userId && typeof payload.userId === "string") {
+          userId = payload.userId;
+          sessionUserMasked = mask(userId);
+          sessionVerified = false; // decoded without sig check
+        }
+      }
+    } catch { /* cookie absent or malformed — ignore */ }
+  }
+
   const isAllowed = userId ? allow.includes(userId) : false;
   return c.json({
     ok: true,
@@ -785,6 +809,7 @@ app.get("/__debug/admin-auth", (c) => {
     userIdProvided: userId.length > 0,
     isAllowed,
     allowPreviewMasked: preview,
+    ...(sessionUserMasked !== null ? { sessionUserMasked, sessionVerified } : {}),
   });
 });
 
