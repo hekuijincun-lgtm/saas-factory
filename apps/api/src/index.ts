@@ -2801,6 +2801,19 @@ app.post("/auth/line/exchange", async (c) => {
     return c.json({ ok: false, error: 'no_user_id' }, 400);
   }
 
+  // ENV allowlist — takes priority over KV.
+  // Set ADMIN_ALLOWED_LINE_USER_IDS="Uaaa,Ubbb" in Cloudflare Workers env to allow multiple admins.
+  // If not set, falls through to KV-based allowlist (existing behaviour).
+  const rawEnvIds = ((env as any).ADMIN_ALLOWED_LINE_USER_IDS ?? '').trim();
+  const envAllowList = rawEnvIds
+    ? rawEnvIds.split(',').map((s: string) => s.trim()).filter(Boolean)
+    : null;
+  if (envAllowList) {
+    const allowed = envAllowList.includes(userId);
+    if (!allowed) return c.json({ ok: false, error: 'forbidden', reason: 'line_user_not_allowed' }, 403);
+    return c.json({ ok: true, userId, displayName, allowed: true });
+  }
+
   // Check allowed list from KV settings
   const kv: KVNamespace = env.SAAS_FACTORY;
   const settingsRaw = (await kv.get(`settings:${tenantId}`, 'json') as any) ?? {};
