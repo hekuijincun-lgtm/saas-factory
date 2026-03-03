@@ -157,6 +157,10 @@ export async function GET(req: Request) {
       "Set-Cookie",
       `line_return_to=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly; Secure; SameSite=Lax`
     );
+    res.headers.append(
+      "Set-Cookie",
+      `line_uid=${userId}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=604800`
+    );
     return res;
   } catch (e: any) {
     return NextResponse.redirect(
