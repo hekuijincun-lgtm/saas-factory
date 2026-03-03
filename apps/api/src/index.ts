@@ -3914,6 +3914,205 @@ async function scheduled(_event: any, env: Env, _ctx: any): Promise<void> {
   } catch (pushqErr: any) {
     console.error(`[${PUSHQ_STAMP}] list error:`, String(pushqErr?.message ?? pushqErr));
   }
+
+  // ── LINE 1日前リマインド ────────────────────────────────────────────────────
+  if (db) {
+    const REM_STAMP = "LINE_REMINDER_V1";
+    const DRY_RUN = String((env as any).REMINDER_DRY_RUN ?? "").trim() === "1";
+    try {
+      // 現在の JST 時刻
+      const nowJst = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Tokyo" }));
+      const nowHour = nowJst.getHours();
+
+      // 翌日の日付（JST）を YYYY-MM-DD 形式で取得
+      const tomorrow = new Date(nowJst);
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      const tomorrowStr = tomorrow.toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" }); // "YYYY-MM-DD"
+
+      // 翌日の予約を取得（LINE ユーザー ID が登録済みのもの）
+      const { results: remRows } = await db.prepare(
+        `SELECT r.id, r.tenant_id, r.line_user_id, r.customer_name, r.slot_start,
+                r.staff_id, r.meta
+         FROM reservations r
+         WHERE r.status != 'cancelled'
+           AND r.line_user_id IS NOT NULL
+           AND r.line_user_id != ''
+           AND substr(r.slot_start, 1, 10) = ?
+         LIMIT 100`
+      ).bind(tomorrowStr).all();
+
+      if (!remRows || remRows.length === 0) {
+        console.log(`[${REM_STAMP}] no rows for tomorrow=${tomorrowStr} hour=${nowHour}`);
+      } else {
+        // テナント別にグルーピング
+        const byTenant = new Map<string, typeof remRows>();
+        for (const row of remRows) {
+          const tid = String((row as any).tenant_id ?? "");
+          if (!tid) continue;
+          if (!byTenant.has(tid)) byTenant.set(tid, []);
+          byTenant.get(tid)!.push(row);
+        }
+
+        for (const [tId, rows] of byTenant) {
+          // テナント設定を KV から取得
+          let settings: any = {};
+          try {
+            const raw = await kv.get(`settings:${tId}`);
+            if (raw) settings = JSON.parse(raw);
+          } catch { /* ignore */ }
+
+          const reminderCfg = settings?.notifications?.lineReminder;
+          if (!reminderCfg?.enabled) {
+            console.log(`[${REM_STAMP}] tenant=${tId} reminder disabled → skip`);
+            continue;
+          }
+
+          const sendAtHour: number = typeof reminderCfg.sendAtHour === "number" ? reminderCfg.sendAtHour : 18;
+          if (nowHour !== sendAtHour) {
+            // 指定時刻と JST 時刻が一致しない → スキップ
+            continue;
+          }
+
+          const accessToken = String(settings?.integrations?.line?.channelAccessToken ?? "").trim();
+          if (!accessToken) {
+            console.log(`[${REM_STAMP}] tenant=${tId} no channelAccessToken → skip`);
+            continue;
+          }
+
+          const storeName = String(settings?.storeName ?? "").trim();
+          const storeAddress = String(settings?.storeAddress ?? "").trim();
+
+          // スタッフ一覧を KV から取得（staffName 解決用）
+          let staffMap: Record<string, string> = {};
+          try {
+            const staffRaw = await kv.get(`admin:staff:list:${tId}`);
+            if (staffRaw) {
+              const list: any[] = JSON.parse(staffRaw);
+              for (const s of list) {
+                if (s?.id && s?.name) staffMap[String(s.id)] = String(s.name);
+              }
+            }
+          } catch { /* ignore */ }
+
+          // メニュー一覧を KV から取得（menuName 解決用）
+          let menuMap: Record<string, string> = {};
+          try {
+            const menuRaw = await kv.get(`admin:menu:list:${tId}`);
+            if (menuRaw) {
+              const list: any[] = JSON.parse(menuRaw);
+              for (const m of list) {
+                if (m?.id && m?.name) menuMap[String(m.id)] = String(m.name);
+              }
+            }
+          } catch { /* ignore */ }
+
+          const templateStr = String(reminderCfg.template ?? "").trim() ||
+            "【{storeName}】明日 {date} {time} のご予約があります。";
+
+          const nowIso = new Date().toISOString();
+
+          for (const row of rows) {
+            const resId = String((row as any).id ?? "");
+            const lineUserId = String((row as any).line_user_id ?? "");
+            const slotStart = String((row as any).slot_start ?? "");
+            const staffId = String((row as any).staff_id ?? "");
+
+            // 予約日時を JST に変換
+            let dateStr = "";
+            let timeStr = "";
+            try {
+              const d = new Date(slotStart);
+              dateStr = d.toLocaleDateString("ja-JP", { timeZone: "Asia/Tokyo", year: "numeric", month: "2-digit", day: "2-digit" });
+              timeStr = d.toLocaleTimeString("ja-JP", { timeZone: "Asia/Tokyo", hour: "2-digit", minute: "2-digit" });
+            } catch { /* ignore */ }
+
+            // meta から menuId を取得
+            let menuName = "";
+            try {
+              const meta = (row as any).meta ? JSON.parse(String((row as any).meta)) : {};
+              const menuId = String(meta?.menuId ?? "");
+              menuName = menuId ? (menuMap[menuId] ?? "") : (String(meta?.menuName ?? ""));
+            } catch { /* ignore */ }
+
+            const staffName = staffId ? (staffMap[staffId] ?? "") : "";
+
+            // 管理 URL（Workers は origin を知らないので settings から bookingUrl ベースを作る）
+            const bookingUrl = String(settings?.integrations?.line?.bookingUrl ?? "").trim();
+            const manageUrl = bookingUrl
+              ? bookingUrl.replace(/\/booking(\?.*)?$/, `/booking/reservations?tenantId=${encodeURIComponent(tId)}`)
+              : "";
+
+            // テンプレート変数を置換
+            const msg = templateStr
+              .replace(/\{storeName\}/g, storeName)
+              .replace(/\{date\}/g, dateStr)
+              .replace(/\{time\}/g, timeStr)
+              .replace(/\{menuName\}/g, menuName)
+              .replace(/\{staffName\}/g, staffName)
+              .replace(/\{address\}/g, storeAddress)
+              .replace(/\{manageUrl\}/g, manageUrl);
+
+            if (DRY_RUN) {
+              // ドライラン：DB に dry_run として記録のみ（LINE 送信なし）
+              try {
+                await db.prepare(
+                  `INSERT OR IGNORE INTO reminder_logs (tenant_id, reservation_id, kind, sent_at, status)
+                   VALUES (?, ?, 'day_before', ?, 'dry_run')`
+                ).bind(tId, resId, nowIso).run();
+              } catch { /* ignore duplicate */ }
+              console.log(`[${REM_STAMP}] DRY_RUN tenant=${tId} res=${resId} to=${lineUserId.slice(0, 6)}***`);
+              continue;
+            }
+
+            // 重複防止: reminder_logs に INSERT（UNIQUE 制約違反 = 送信済み → スキップ）
+            let inserted = false;
+            try {
+              const ins = await db.prepare(
+                `INSERT OR IGNORE INTO reminder_logs (tenant_id, reservation_id, kind, sent_at, status)
+                 VALUES (?, ?, 'day_before', ?, 'pending')`
+              ).bind(tId, resId, nowIso).run();
+              inserted = (ins?.meta?.changes ?? 0) > 0;
+            } catch { /* ignore */ }
+
+            if (!inserted) {
+              console.log(`[${REM_STAMP}] skip(dup) tenant=${tId} res=${resId}`);
+              continue;
+            }
+
+            // LINE push 送信
+            try {
+              const lineRes = await fetch("https://api.line.me/v2/bot/message/push", {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  "Authorization": `Bearer ${accessToken}`,
+                },
+                body: JSON.stringify({ to: lineUserId, messages: [{ type: "text", text: msg }] }),
+              });
+              if (lineRes.ok) {
+                await db.prepare(
+                  `UPDATE reminder_logs SET status = 'sent' WHERE tenant_id = ? AND reservation_id = ? AND kind = 'day_before'`
+                ).bind(tId, resId).run().catch(() => null);
+                console.log(`[${REM_STAMP}] sent tenant=${tId} res=${resId} to=${lineUserId.slice(0, 6)}***`);
+              } else {
+                const errTxt = await lineRes.text().catch(() => `HTTP ${lineRes.status}`);
+                await db.prepare(
+                  `UPDATE reminder_logs SET status = 'failed', error = ? WHERE tenant_id = ? AND reservation_id = ? AND kind = 'day_before'`
+                ).bind(errTxt.slice(0, 200), tId, resId).run().catch(() => null);
+                console.log(`[${REM_STAMP}] failed tenant=${tId} res=${resId} err=${errTxt.slice(0, 80)}`);
+              }
+            } catch (sendErr: any) {
+              await db.prepare(
+                `UPDATE reminder_logs SET status = 'failed', error = ? WHERE tenant_id = ? AND reservation_id = ? AND kind = 'day_before'`
+              ).bind(String(sendErr?.message ?? sendErr).slice(0, 200), tId, resId).run().catch(() => null);
+            }
+          }
+        }
+      }
+    } catch (remErr: any) {
+      console.error(`[${REM_STAMP}] error:`, String(remErr?.message ?? remErr));
+    }
+  }
 }
 
 
