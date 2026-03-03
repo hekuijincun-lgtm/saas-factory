@@ -771,6 +771,23 @@ app.get("/__debug/do", async (c) => {
   return c.json({ ok: true, name, status: res.status, body: text });
 });
 
+app.get("/__debug/admin-auth", (c) => {
+  const raw = ((c.env as any).ADMIN_ALLOWED_LINE_USER_IDS || "").trim();
+  const allow = raw ? raw.split(",").map((s: string) => s.trim()).filter(Boolean) : [];
+  const mask = (s: string) => s.length <= 6 ? (s.slice(0, 2) + "***") : (s.slice(0, 4) + "***");
+  const preview = allow.slice(0, 3).map(mask);
+  const userId = c.req.query("userId") || "";
+  const isAllowed = userId ? allow.includes(userId) : false;
+  return c.json({
+    ok: true,
+    envPresent: raw.length > 0,
+    allowCount: allow.length,
+    userIdProvided: userId.length > 0,
+    isAllowed,
+    allowPreviewMasked: preview,
+  });
+});
+
 /** =========================
  * Menu
  * ========================= */
