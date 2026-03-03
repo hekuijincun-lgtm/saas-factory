@@ -124,6 +124,15 @@ export default function AdminSettingsClient() {
   const [bfConfirmed, setBfConfirmed] = useState(false);
   const [urlCopied, setUrlCopied] = useState(false);
 
+  // --- LINE リマインド設定 ---
+  const DEFAULT_REMINDER_TEMPLATE = '【{storeName}】明日 {date} {time} のご予約があります。\n\nメニュー: {menuName}\nスタッフ: {staffName}\n\n{address}\n\n当日お会いできるのを楽しみにしております！\n\n予約管理: {manageUrl}';
+  const [reminderEnabled, setReminderEnabled] = useState(false);
+  const [savedReminderEnabled, setSavedReminderEnabled] = useState(false);
+  const [reminderSendAtHour, setReminderSendAtHour] = useState(18);
+  const [savedReminderSendAtHour, setSavedReminderSendAtHour] = useState(18);
+  const [reminderTemplate, setReminderTemplate] = useState(DEFAULT_REMINDER_TEMPLATE);
+  const [savedReminderTemplate, setSavedReminderTemplate] = useState(DEFAULT_REMINDER_TEMPLATE);
+
   // Repeat promotion UI state
   interface RepeatTarget {
     customerKey: string;
@@ -309,6 +318,14 @@ export default function AdminSettingsClient() {
       setEyebrowSurveyQuestions(sq); setSavedEyebrowSurveyQuestions(sq);
       const al: string[] = Array.isArray(raw.allowedAdminLineUserIds) ? raw.allowedAdminLineUserIds : [];
       setAllowedAdminLineUserIds(al); setSavedAllowedAdminLineUserIds(al);
+      // LINE リマインド設定
+      const lr = raw.notifications?.lineReminder || {};
+      const lre = lr.enabled ?? false;
+      setReminderEnabled(lre); setSavedReminderEnabled(lre);
+      const lrh = typeof lr.sendAtHour === 'number' ? lr.sendAtHour : 18;
+      setReminderSendAtHour(lrh); setSavedReminderSendAtHour(lrh);
+      const lrt = lr.template || DEFAULT_REMINDER_TEMPLATE;
+      setReminderTemplate(lrt); setSavedReminderTemplate(lrt);
     } catch (error) {
       const msg = error instanceof ApiClientError
         ? error.message
@@ -455,6 +472,13 @@ export default function AdminSettingsClient() {
           surveyQuestions: eyebrowSurveyQuestions,
         },
         allowedAdminLineUserIds,
+        notifications: {
+          lineReminder: {
+            enabled: reminderEnabled,
+            sendAtHour: reminderSendAtHour,
+            template: reminderTemplate,
+          },
+        },
       } as any, tenantId);
       setStoreName(storeNameInput);
       setSavedOpenTime(openTime);
@@ -470,6 +494,9 @@ export default function AdminSettingsClient() {
       setSavedEyebrowSurveyEnabled(eyebrowSurveyEnabled);
       setSavedEyebrowSurveyQuestions(eyebrowSurveyQuestions);
       setSavedAllowedAdminLineUserIds(allowedAdminLineUserIds);
+      setSavedReminderEnabled(reminderEnabled);
+      setSavedReminderSendAtHour(reminderSendAtHour);
+      setSavedReminderTemplate(reminderTemplate);
 
       // localStorage にローカル設定を保存（営業日等）
       try {
@@ -503,6 +530,9 @@ export default function AdminSettingsClient() {
     setEyebrowSurveyEnabled(savedEyebrowSurveyEnabled);
     setEyebrowSurveyQuestions(savedEyebrowSurveyQuestions);
     setAllowedAdminLineUserIds(savedAllowedAdminLineUserIds);
+    setReminderEnabled(savedReminderEnabled);
+    setReminderSendAtHour(savedReminderSendAtHour);
+    setReminderTemplate(savedReminderTemplate);
   };
 
   const toggleDay = (dayIndex: number) => {
@@ -933,6 +963,96 @@ export default function AdminSettingsClient() {
                 ※ QRコード生成はブラウザの「共有」機能または外部サービスをご利用ください。
               </p>
             </div>
+          </div>
+        </div>
+
+        {/* ============================================================
+            LINE 1日前リマインド設定
+        ============================================================ */}
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <div className="flex items-center gap-3 mb-5">
+            <div className="p-2 bg-green-100 rounded-lg shrink-0">
+              <CalendarDays className="w-5 h-5 text-green-600" />
+            </div>
+            <div>
+              <h2 className="text-base font-semibold text-gray-900">LINE 1日前リマインド</h2>
+              <p className="text-xs text-gray-500">予約の前日に顧客へ LINE で自動リマインドメッセージを送信します</p>
+            </div>
+          </div>
+
+          <div className="space-y-5">
+            {/* ON/OFF トグル */}
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm font-medium text-gray-700">リマインド送信</div>
+                <div className="text-xs text-gray-400 mt-0.5">LINE Messaging API 連携が必要です</div>
+              </div>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <div className="relative">
+                  <input
+                    type="checkbox"
+                    className="sr-only"
+                    checked={reminderEnabled}
+                    onChange={e => setReminderEnabled(e.target.checked)}
+                  />
+                  <div className={`w-10 h-6 rounded-full transition-colors ${reminderEnabled ? 'bg-green-500' : 'bg-gray-300'}`} />
+                  <div className={`absolute top-1 left-1 w-4 h-4 bg-white rounded-full shadow transition-transform ${reminderEnabled ? 'translate-x-4' : ''}`} />
+                </div>
+                <span className="text-xs text-gray-600">{reminderEnabled ? 'ON' : 'OFF'}</span>
+              </label>
+            </div>
+
+            {reminderEnabled && (
+              <div className="space-y-4 pl-0">
+                {/* 送信時刻 */}
+                <div className="flex items-center gap-3">
+                  <label className="text-sm text-gray-600 whitespace-nowrap">前日の送信時刻</label>
+                  <select
+                    value={reminderSendAtHour}
+                    onChange={e => setReminderSendAtHour(Number(e.target.value))}
+                    className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-green-400 focus:border-green-400 outline-none"
+                  >
+                    {Array.from({ length: 24 }, (_, i) => (
+                      <option key={i} value={i}>{String(i).padStart(2, '0')}:00</option>
+                    ))}
+                  </select>
+                  <span className="text-xs text-gray-400">JST</span>
+                </div>
+
+                {/* テンプレート */}
+                <div>
+                  <label className="block text-sm text-gray-600 mb-1">
+                    メッセージテンプレ
+                  </label>
+                  <textarea
+                    rows={6}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-green-400 focus:border-green-400 outline-none resize-none font-mono"
+                    value={reminderTemplate}
+                    onChange={e => setReminderTemplate(e.target.value)}
+                    placeholder={DEFAULT_REMINDER_TEMPLATE}
+                  />
+                  <p className="mt-1 text-xs text-gray-400 leading-relaxed">
+                    利用可能な変数: <code className="bg-gray-100 px-1 rounded">{'{storeName}'}</code> 店舗名 /
+                    {' '}<code className="bg-gray-100 px-1 rounded">{'{date}'}</code> 予約日 /
+                    {' '}<code className="bg-gray-100 px-1 rounded">{'{time}'}</code> 予約時刻 /
+                    {' '}<code className="bg-gray-100 px-1 rounded">{'{menuName}'}</code> メニュー名 /
+                    {' '}<code className="bg-gray-100 px-1 rounded">{'{staffName}'}</code> スタッフ名 /
+                    {' '}<code className="bg-gray-100 px-1 rounded">{'{address}'}</code> 店舗住所 /
+                    {' '}<code className="bg-gray-100 px-1 rounded">{'{manageUrl}'}</code> 予約管理URL
+                  </p>
+                </div>
+
+                {/* 送信の仕組みの説明 */}
+                <div className="bg-green-50 border border-green-200 rounded-lg p-3 text-xs text-green-700 space-y-1">
+                  <p className="font-semibold">動作の仕組み</p>
+                  <ul className="list-disc pl-4 space-y-0.5">
+                    <li>Workers の定期ジョブ（5分ごと）が「前日の指定時刻」に一致したときに実行されます</li>
+                    <li>翌日の予約を検索し、LINE userId が登録済みの顧客にのみ送信します</li>
+                    <li>同じ予約への重複送信は自動で防止されます（<code className="bg-green-100 px-1 rounded">reminder_logs</code> テーブルで管理）</li>
+                  </ul>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 

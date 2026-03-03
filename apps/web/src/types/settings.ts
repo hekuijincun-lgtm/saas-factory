@@ -28,11 +28,18 @@ export interface ReservationRules {
   anyCapacityPerSlot: number; // 指名なし上限
 }
 
+export interface LineReminderSettings {
+  enabled: boolean;
+  sendAtHour: number; // 0-23 JST
+  template: string;   // {storeName} {date} {time} {menuName} {staffName} {address} {manageUrl}
+}
+
 export interface NotificationSettings {
   enableAdminNotify: boolean;
   slackWebhookUrl?: string;
   email?: string;
   enableCustomerNotify: boolean; // 将来用
+  lineReminder?: LineReminderSettings;
 }
 
 export interface AssignmentSettings {

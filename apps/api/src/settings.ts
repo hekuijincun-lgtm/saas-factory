@@ -28,11 +28,18 @@ export interface ReservationRules {
   anyCapacityPerSlot: number; // 指名なし上限
 }
 
+export interface LineReminderSettings {
+  enabled: boolean;
+  sendAtHour: number; // 0-23 JST
+  template: string;   // {storeName} {date} {time} {menuName} {staffName} {address} {manageUrl}
+}
+
 export interface NotificationSettings {
   enableAdminNotify: boolean;
   slackWebhookUrl?: string;
   email?: string;
   enableCustomerNotify: boolean;
+  lineReminder?: LineReminderSettings;
 }
 
 export interface AssignmentSettings {
@@ -157,6 +164,11 @@ export const DEFAULT_ADMIN_SETTINGS: AdminSettings = {
     slackWebhookUrl: '',
     email: '',
     enableCustomerNotify: false,
+    lineReminder: {
+      enabled: false,
+      sendAtHour: 18,
+      template: '【{storeName}】明日 {date} {time} のご予約があります。\n\nメニュー: {menuName}\nスタッフ: {staffName}\n\n{address}\n\n当日お会いできるのを楽しみにしております！\n\n予約管理: {manageUrl}',
+    },
   },
   assignment: {
     mode: 'manual',
@@ -355,6 +367,13 @@ export function mergeSettings(defaults: AdminSettings, partial: Partial<AdminSet
       slackWebhookUrl: partial.notifications?.slackWebhookUrl ?? defaults.notifications.slackWebhookUrl,
       email: partial.notifications?.email ?? defaults.notifications.email,
       enableCustomerNotify: partial.notifications?.enableCustomerNotify ?? defaults.notifications.enableCustomerNotify,
+      lineReminder: (partial.notifications?.lineReminder || defaults.notifications.lineReminder)
+        ? {
+            enabled: partial.notifications?.lineReminder?.enabled ?? defaults.notifications.lineReminder?.enabled ?? false,
+            sendAtHour: partial.notifications?.lineReminder?.sendAtHour ?? defaults.notifications.lineReminder?.sendAtHour ?? 18,
+            template: partial.notifications?.lineReminder?.template ?? defaults.notifications.lineReminder?.template ?? '',
+          }
+        : undefined,
     },
     assignment: {
       mode: partial.assignment?.mode ?? defaults.assignment.mode,
