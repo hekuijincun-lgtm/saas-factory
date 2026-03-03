@@ -444,15 +444,23 @@ export async function getMenu(tenantId: string = "default"): Promise<MenuItem[]>
       return Number.isFinite(k) ? k : d;
     };
 
-    return list.map((x: any) => ({
-      id: String(x?.id ?? ""),
-      name: String(x?.name ?? ""),
-      price: n(x?.price, 0),
-      durationMin: n(x?.durationMin, 60),
-      active: x?.active !== false,
-      sortOrder: n(x?.sortOrder, 0),
-      tenantId: (x?.tenantId != null ? String(x.tenantId) : tenantId),
-    })) as MenuItem[];
+    return list.map((x: any) => {
+      const rawUrl = x?.imageUrl != null ? String(x.imageUrl) : undefined;
+      // XSS防止: http/https スキームのみ許可
+      const safeImageUrl = rawUrl && /^https?:\/\//i.test(rawUrl) ? rawUrl : undefined;
+      return {
+        id: String(x?.id ?? ""),
+        name: String(x?.name ?? ""),
+        price: n(x?.price, 0),
+        durationMin: n(x?.durationMin, 60),
+        active: x?.active !== false,
+        sortOrder: n(x?.sortOrder, 0),
+        tenantId: (x?.tenantId != null ? String(x.tenantId) : tenantId),
+        ...(x?.imageKey  ? { imageKey: String(x.imageKey) } : {}),
+        ...(safeImageUrl ? { imageUrl: safeImageUrl }       : {}),
+        ...(x?.eyebrow   ? { eyebrow:  x.eyebrow }         : {}),
+      };
+    }) as MenuItem[];
   } catch (error) {
     throw new ApiClientError(error instanceof Error ? error.message : "Failed to fetch menu");
   }
