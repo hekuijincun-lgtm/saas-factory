@@ -3168,8 +3168,21 @@ app.post('/auth/email/start', async (c) => {
   });
 
   if (!emailRes.ok) {
-    const errText = await emailRes.text().catch(() => '');
-    return c.json({ ok: false, error: 'email_send_failed', detail: errText }, 500);
+    const resendStatus = emailRes.status;
+    const errText = await emailRes.text().catch(() => '(unreadable)');
+    // Safe log: status + body only (API key never in scope here)
+    console.error(`[email/start] Resend error ${resendStatus}:`, errText);
+    // Map Resend status to meaningful hint (no secrets in response)
+    const hint =
+      resendStatus === 401 ? 'invalid_or_missing_api_key' :
+      resendStatus === 403 ? 'domain_not_verified_or_restricted_recipient' :
+      resendStatus === 422 ? 'domain_not_verified_or_restricted_recipient' :
+      resendStatus === 429 ? 'resend_rate_limited' :
+      `resend_http_${resendStatus}`;
+    if (isDebug) {
+      return c.json({ ok: false, error: 'email_send_failed', resendStatus, hint, detail: errText }, 500);
+    }
+    return c.json({ ok: false, error: 'email_send_failed', hint }, 500);
   }
 
   return c.json({ ok: true, sent: true, identityKey });
