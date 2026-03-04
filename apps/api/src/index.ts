@@ -3026,6 +3026,271 @@ app.post('/admin/bootstrap-key', async (c) => {
 });
 /* === /BOOTSTRAP_KEY_V1 === */
 
+/* === EMAIL_AUTH_V1 ===
+   POST /auth/email/start   – generate magic link, send via Resend (or debug=1 returns URL)
+   POST /auth/email/verify  – validate token, check RBAC, return identity info
+                              (Pages callback signs the session cookie)
+   Rate limit: max 3 sends per email per 60s (KV: email:rl:{email})
+   D1 auto-init: CREATE TABLE IF NOT EXISTS runs on first call (idempotent, no separate migration needed)
+=== */
+
+// Ensures auth_magic_links table exists (idempotent – safe to call on every request).
+// Replaces a manual wrangler d1 execute when token lacks d1:write scope.
+async function ensureEmailAuthTable(db: D1Database): Promise<void> {
+  await db.prepare(`
+    CREATE TABLE IF NOT EXISTS auth_magic_links (
+      token_hash    TEXT    NOT NULL PRIMARY KEY,
+      identity_key  TEXT    NOT NULL,
+      tenant_id     TEXT    NOT NULL DEFAULT 'default',
+      expires_at    INTEGER NOT NULL,
+      used_at       INTEGER,
+      return_to     TEXT,
+      bootstrap_key TEXT
+    )
+  `).run();
+  await db.prepare(
+    `CREATE INDEX IF NOT EXISTS idx_magic_links_identity ON auth_magic_links(identity_key)`
+  ).run();
+  await db.prepare(
+    `CREATE INDEX IF NOT EXISTS idx_magic_links_expires ON auth_magic_links(expires_at)`
+  ).run();
+}
+
+app.post('/auth/email/start', async (c) => {
+  const env = c.env as any;
+  const kv: KVNamespace = env.SAAS_FACTORY;
+  const db: D1Database = env.DB;
+
+  await ensureEmailAuthTable(db);
+
+  let body: any = {};
+  try { body = await c.req.json(); } catch {}
+
+  const rawEmail: string = String(body.email ?? '').trim().toLowerCase();
+  const returnTo: string = String(body.returnTo ?? '/admin');
+  const tenantId: string = String(body.tenantId ?? 'default');
+  const bootstrapKey: string | undefined = body.bootstrapKey || undefined;
+  const isDebug = body.debug === '1' || body.debug === true;
+
+  // Basic email validation
+  if (!rawEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(rawEmail)) {
+    return c.json({ ok: false, error: 'invalid_email' }, 400);
+  }
+
+  // returnTo safety: must be a relative path (open-redirect guard)
+  const safeReturnTo = (returnTo.startsWith('/') && !returnTo.startsWith('//'))
+    ? returnTo : '/admin';
+
+  // Rate limit: max 3 sends per 60s per email
+  const rlKey = `email:rl:${rawEmail}`;
+  const rlRaw = await kv.get(rlKey);
+  const rlCount = rlRaw ? parseInt(rlRaw, 10) : 0;
+  if (rlCount >= 3) {
+    return c.json({ ok: false, error: 'rate_limited', retryAfter: 60 }, 429);
+  }
+  await kv.put(rlKey, String(rlCount + 1), { expirationTtl: 60 });
+
+  // Generate token (plaintext never stored in DB)
+  const plainToken = crypto.randomUUID() + '-' + crypto.randomUUID();
+  const tokenHash = await sha256Hex(plainToken);
+  const expiresAt = Math.floor(Date.now() / 1000) + 600; // 10 minutes
+  const identityKey = `email:${rawEmail}`;
+
+  // Store hashed token in D1
+  await db.prepare(
+    `INSERT INTO auth_magic_links
+       (token_hash, identity_key, tenant_id, expires_at, return_to, bootstrap_key)
+     VALUES (?, ?, ?, ?, ?, ?)`
+  ).bind(tokenHash, identityKey, tenantId, expiresAt, safeReturnTo, bootstrapKey ?? null).run();
+
+  // Build callback URL (Pages edge function handles session signing)
+  const webOrigin = (env.WEB_ORIGIN ?? env.PAGES_ORIGIN ?? 'https://saas-factory-web-v2.pages.dev')
+    .replace(/\/+$/, '');
+  const cbParams = new URLSearchParams({ token: plainToken, returnTo: safeReturnTo });
+  if (tenantId !== 'default') cbParams.set('tenantId', tenantId);
+  if (bootstrapKey) cbParams.set('bootstrapKey', bootstrapKey);
+  const callbackUrl = `${webOrigin}/api/auth/email/callback?${cbParams.toString()}`;
+
+  // Debug mode: skip email, return URL directly
+  if (isDebug) {
+    return c.json({ ok: true, debug: true, callbackUrl, identityKey, expiresAt,
+                    note: 'email not sent in debug mode' });
+  }
+
+  // Send via Resend
+  const resendApiKey: string = env.RESEND_API_KEY ?? '';
+  if (!resendApiKey) {
+    return c.json({ ok: false, error: 'email_not_configured',
+                    hint: 'set RESEND_API_KEY in Workers env' }, 500);
+  }
+
+  const emailFrom: string = env.EMAIL_FROM ?? 'SaaS Factory <no-reply@saas-factory.app>';
+  const emailRes = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${resendApiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      from: emailFrom,
+      to: [rawEmail],
+      subject: '管理画面ログインリンク',
+      html: `<!DOCTYPE html>
+<html lang="ja">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f8fafc;font-family:sans-serif">
+<div style="max-width:480px;margin:40px auto;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.08)">
+  <div style="background:#1e293b;padding:32px 32px 24px">
+    <div style="font-size:11px;letter-spacing:0.1em;color:rgba(255,255,255,0.6)">ADMIN LOGIN</div>
+    <h1 style="margin:8px 0 0;font-size:22px;font-weight:600;color:#fff">管理画面ログインリンク</h1>
+  </div>
+  <div style="padding:32px">
+    <p style="margin:0 0 20px;font-size:14px;color:#475569;line-height:1.6">
+      以下のボタンをクリックして管理画面にログインしてください。<br>
+      このリンクは <strong>10分間</strong> 有効で、1度しか使えません。
+    </p>
+    <a href="${callbackUrl}" style="display:inline-block;background:#4f46e5;color:#fff;padding:14px 28px;border-radius:32px;text-decoration:none;font-weight:600;font-size:15px">
+      管理画面にログイン
+    </a>
+    <p style="margin:24px 0 0;font-size:12px;color:#94a3b8">
+      ボタンが機能しない場合はこのURLをブラウザに貼り付けてください:<br>
+      <a href="${callbackUrl}" style="color:#6366f1;word-break:break-all">${callbackUrl}</a>
+    </p>
+    <hr style="margin:24px 0;border:none;border-top:1px solid #f1f5f9">
+    <p style="margin:0;font-size:11px;color:#cbd5e1">
+      このメールに心当たりがない場合は無視してください。リンクを開かなければ何も起きません。
+    </p>
+  </div>
+</div>
+</body></html>`,
+    }),
+  });
+
+  if (!emailRes.ok) {
+    const errText = await emailRes.text().catch(() => '');
+    return c.json({ ok: false, error: 'email_send_failed', detail: errText }, 500);
+  }
+
+  return c.json({ ok: true, sent: true, identityKey });
+});
+
+app.post('/auth/email/verify', async (c) => {
+  const env = c.env as any;
+  const kv: KVNamespace = env.SAAS_FACTORY;
+  const db: D1Database = env.DB;
+
+  await ensureEmailAuthTable(db);
+
+  let body: any = {};
+  try { body = await c.req.json(); } catch {}
+
+  const { token, tenantId: bodyTenantId, bootstrapKey: bodyBootstrapKey } = body as {
+    token?: string; tenantId?: string; bootstrapKey?: string;
+  };
+
+  if (!token) {
+    return c.json({ ok: false, error: 'missing_token' }, 400);
+  }
+
+  const tokenHash = await sha256Hex(token);
+  const now = Math.floor(Date.now() / 1000);
+
+  // D1 lookup
+  const row = await db.prepare(
+    'SELECT * FROM auth_magic_links WHERE token_hash = ?'
+  ).bind(tokenHash).first() as any;
+
+  if (!row) {
+    return c.json({ ok: false, error: 'invalid_token' }, 401);
+  }
+  if (row.used_at) {
+    return c.json({ ok: false, error: 'token_used' }, 401);
+  }
+  if (row.expires_at < now) {
+    return c.json({ ok: false, error: 'token_expired' }, 401);
+  }
+
+  // Mark as used (single-use guarantee)
+  await db.prepare(
+    'UPDATE auth_magic_links SET used_at = ? WHERE token_hash = ?'
+  ).bind(now, tokenHash).run();
+
+  const identityKey: string = row.identity_key;
+  const tenantId: string = bodyTenantId ?? row.tenant_id ?? 'default';
+  const bootstrapKey: string | undefined = bodyBootstrapKey ?? row.bootstrap_key ?? undefined;
+  const email: string = identityKey.startsWith('email:') ? identityKey.slice(6) : identityKey;
+  const displayName: string = email;
+
+  // --- Step 1: RBAC members check (admin:members:{tenantId}) ---
+  const membersRaw = await kv.get(`admin:members:${tenantId}`);
+  const membersStore: AdminMembersStore | null = membersRaw ? JSON.parse(membersRaw) : null;
+
+  if (membersStore && membersStore.members.length > 0) {
+    const member = membersStore.members.find((m: AdminMember) => m.lineUserId === identityKey);
+    if (member && member.enabled) {
+      // Update displayName if changed
+      if (member.displayName !== displayName) {
+        member.displayName = displayName;
+        await kv.put(`admin:members:${tenantId}`, JSON.stringify(membersStore));
+      }
+      return c.json({ ok: true, identityKey, email, displayName, allowed: true,
+                      role: member.role, membersFound: true });
+    }
+    return c.json({ ok: true, identityKey, email, displayName, allowed: false,
+                    membersFound: true });
+  }
+
+  // --- Step 2: Bootstrap key check ---
+  if (bootstrapKey) {
+    const bsRaw = await kv.get(`admin:bootstrap:${tenantId}`);
+    if (bsRaw) {
+      const bs: AdminBootstrapStore = JSON.parse(bsRaw);
+      const keyHash = await sha256Hex(bootstrapKey);
+      const used = !!bs.usedAt;
+      const expired = new Date(bs.expiresAt) <= new Date();
+      const valid = (bs.keyHash === keyHash && !used && !expired);
+      if (valid) {
+        const bootstrapped: AdminMembersStore = {
+          version: 1,
+          members: [{
+            lineUserId: identityKey,
+            role: 'owner',
+            enabled: true,
+            displayName,
+            createdAt: new Date().toISOString(),
+          }],
+        };
+        await kv.put(`admin:members:${tenantId}`, JSON.stringify(bootstrapped));
+        bs.usedAt = new Date().toISOString();
+        bs.usedBy = identityKey;
+        await kv.put(`admin:bootstrap:${tenantId}`, JSON.stringify(bs));
+        return c.json({ ok: true, identityKey, email, displayName, allowed: true, role: 'owner',
+                        membersFound: false, bootstrapped: true });
+      }
+    }
+    return c.json({ ok: true, identityKey, email, displayName, allowed: false,
+                    membersFound: false, bootstrapInfo: { present: !!bootstrapKey, valid: false } });
+  }
+
+  // --- Step 3: Legacy fallback (allowedAdminLineUserIds) ---
+  const settingsRaw = (await kv.get(`settings:${tenantId}`, 'json') as any) ?? {};
+  const allowedList: string[] = Array.isArray(settingsRaw.allowedAdminLineUserIds)
+    ? settingsRaw.allowedAdminLineUserIds : [];
+
+  if (allowedList.length === 0) {
+    // Self-seed: brand-new tenant, first email login becomes owner
+    await kv.put(`settings:${tenantId}`, JSON.stringify({
+      ...settingsRaw, allowedAdminLineUserIds: [identityKey],
+    }));
+    return c.json({ ok: true, identityKey, email, displayName, allowed: true,
+                    role: 'owner', membersFound: false, seeded: true });
+  }
+
+  const allowed = allowedList.includes(identityKey);
+  return c.json({ ok: true, identityKey, email, displayName, allowed, membersFound: false });
+});
+/* === /EMAIL_AUTH_V1 === */
+
 /* === LINE_AUTH_EXCHANGE_V1 ===
    POST /auth/line/exchange
    Exchanges a LINE OAuth code for userId + displayName,

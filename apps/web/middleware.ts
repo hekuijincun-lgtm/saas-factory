@@ -84,6 +84,7 @@ export async function middleware(req: NextRequest) {
   //
   // Gated behind env flag for gradual rollout.
   // Exempt paths: /admin/unauthorized, /admin/line-setup, /api/*
+  // Redirects to /login (email magic-link) — LINE fallback is on that page.
   if (
     process.env.REQUIRE_LINE_AUTH === "1" &&
     pathname.startsWith("/admin/") &&
@@ -99,28 +100,18 @@ export async function middleware(req: NextRequest) {
       if (secret) {
         const valid = await verifySessionHasUserId(sessionToken, secret);
         if (!valid) {
-          // Invalid or old-format session → redirect to login
-          const tenantId = req.nextUrl.searchParams.get("tenantId") || "default";
-          const loginUrl = new URL(`/api/auth/line/start`, req.nextUrl.origin);
-          // Note: /api/auth/line/start is on Workers, so construct direct URL
-          // or use the Pages API route equivalent
-          const startUrl = new URL(
-            `/api/proxy/auth/line/start?tenantId=${encodeURIComponent(tenantId)}&returnTo=${encodeURIComponent(pathname)}`,
-            req.nextUrl.origin
-          );
-          // Fallback to line-setup if no proxy route exists for start
-          void loginUrl; void startUrl;
+          // Invalid / expired session → redirect to login
           const target = new URL(
-            `/admin/line-setup?reason=session_expired&returnTo=${encodeURIComponent(pathname)}`,
+            `/login?reason=session_expired&returnTo=${encodeURIComponent(pathname)}`,
             req.nextUrl.origin
           );
           return NextResponse.redirect(target);
         }
       }
     } else {
-      // No session at all → redirect to login page
+      // No session → redirect to login
       const target = new URL(
-        `/admin/line-setup?reason=not_logged_in&returnTo=${encodeURIComponent(pathname)}`,
+        `/login?reason=not_logged_in&returnTo=${encodeURIComponent(pathname)}`,
         req.nextUrl.origin
       );
       return NextResponse.redirect(target);
@@ -128,7 +119,7 @@ export async function middleware(req: NextRequest) {
   }
 
   const res = NextResponse.next();
-  res.headers.set("x-mw-stamp", "MW_20260302_LINEID_AUTH");
+  res.headers.set("x-mw-stamp", "MW_20260304_EMAIL_AUTH");
   return res;
 }
 
