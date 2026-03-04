@@ -2,6 +2,8 @@ export const runtime = "edge";
 
 import { NextResponse } from "next/server";
 
+// ─── crypto helpers ──────────────────────────────────────────────────────────
+
 function b64urlFromBytes(bytes: Uint8Array) {
   let s = "";
   for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
@@ -39,11 +41,48 @@ function resolveApiBase(): string {
   return (base as string).replace(/\/+$/, "");
 }
 
+// ─── diagnostic helpers ───────────────────────────────────────────────────────
+//
+// applyDiag attaches non-sensitive diagnostic signals to every response.
+// No tokens, UIDs, codes, or state values are included.
+//
+// Signals added:
+//   1. Response header  x-line-cb-step: <stepLabel>
+//      → readable via curl -D - (used by diag-line-callback.ps1)
+//   2. Cookie  line_cb=<cbValue>
+//      → value visible in HTTP Set-Cookie; encrypted in browser SQLite
+//      → ex: "ok:done" / "ng:exchange_failed" / "ng:secret_missing"
+//   3. Cookie  line_cb_<cbValue_underscored>=1
+//      → cookie NAME encodes the step — plain-text in browser SQLite
+//      → ex: name="line_cb_ok_done" / "line_cb_ng_exchange_failed"
+//      → verify-line-session.ps1 reads this without needing DPAPI decryption
+
+const LINE_CB_MAX_AGE = 3600; // 1 hour — long enough to verify, short enough to auto-expire
+
+function applyDiag<T extends Response>(res: T, cbValue: string, stepLabel: string): T {
+  // Header: always observable regardless of browser state
+  res.headers.set("x-line-cb-step", stepLabel);
+  // Cookie 1: value holds the step code (encrypted in DB, but visible in HTTP header)
+  res.headers.append(
+    "Set-Cookie",
+    `line_cb=${cbValue}; Path=/; Secure; SameSite=Lax; Max-Age=${LINE_CB_MAX_AGE}`
+  );
+  // Cookie 2: name encodes the step (name column is plain-text in SQLite — key diagnostic)
+  const nameEncoded = `line_cb_${cbValue.replace(/:/g, "_")}`;
+  res.headers.append(
+    "Set-Cookie",
+    `${nameEncoded}=1; Path=/; Secure; SameSite=Lax; Max-Age=${LINE_CB_MAX_AGE}`
+  );
+  return res;
+}
+
+// ─── route handler ────────────────────────────────────────────────────────────
+
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const isDebug = url.searchParams.get("debug") === "1";
 
-  // Shared debug context — updated at each step
+  // step tracks the current processing stage for diagnostics
   let step = "init";
   const ctx: Record<string, any> = {
     hasCode: !!url.searchParams.get("code"),
@@ -51,6 +90,7 @@ export async function GET(req: Request) {
     hasReturnTo: !!url.searchParams.get("returnTo"),
   };
 
+  // jsonError: debug-only JSON response; applyDiag adds diagnostic signals at call site
   function jsonError(message: string, extra?: object): Response {
     return new Response(
       JSON.stringify({ ok: false, step, message, ...ctx, ...extra }),
@@ -65,8 +105,11 @@ export async function GET(req: Request) {
     const stateRaw = url.searchParams.get("state") || "";
 
     if (!code || !stateRaw) {
-      if (isDebug) return jsonError("missing code or state");
-      return NextResponse.redirect(new URL("/admin/line-setup?reason=missing_code", url.origin));
+      if (isDebug) return applyDiag(jsonError("missing code or state"), "ng:missing_code", step);
+      return applyDiag(
+        NextResponse.redirect(new URL("/admin/line-setup?reason=missing_code", url.origin)),
+        "ng:missing_code", step
+      );
     }
 
     // ── STEP: parse_state ──────────────────────────────────────────────────
@@ -78,7 +121,7 @@ export async function GET(req: Request) {
       if (s?.tenantId) tenantId = String(s.tenantId);
       if (s?.returnTo && typeof s.returnTo === "string") returnTo = s.returnTo;
     } catch {
-      if (isDebug) return jsonError("state base64/JSON parse failed");
+      if (isDebug) return applyDiag(jsonError("state base64/JSON parse failed"), "ng:bad_state", step);
     }
 
     // Override returnTo from query param or cookie
@@ -115,16 +158,28 @@ export async function GET(req: Request) {
 
     if (!exchangeRes.ok) {
       const detail = await exchangeRes.text().catch(() => "");
-      if (isDebug) return jsonError("exchange HTTP error", { exchangeStatus: exchangeRes.status, detail });
-      return NextResponse.redirect(new URL("/admin/line-setup?reason=exchange_failed", url.origin));
+      if (isDebug) return applyDiag(
+        jsonError("exchange HTTP error", { exchangeStatus: exchangeRes.status, detail }),
+        "ng:exchange_failed", step
+      );
+      return applyDiag(
+        NextResponse.redirect(new URL("/admin/line-setup?reason=exchange_failed", url.origin)),
+        "ng:exchange_failed", step
+      );
     }
 
     const exchangeData = await exchangeRes.json() as any;
 
     if (!exchangeData.ok) {
       const reason = encodeURIComponent(exchangeData.error ?? "exchange_error");
-      if (isDebug) return jsonError("exchange returned ok=false", { exchangeError: exchangeData.error ?? exchangeData });
-      return NextResponse.redirect(new URL(`/admin/line-setup?reason=${reason}`, url.origin));
+      if (isDebug) return applyDiag(
+        jsonError("exchange returned ok=false", { exchangeError: exchangeData.error ?? exchangeData }),
+        "ng:exchange_failed", step
+      );
+      return applyDiag(
+        NextResponse.redirect(new URL(`/admin/line-setup?reason=${reason}`, url.origin)),
+        "ng:exchange_failed", step
+      );
     }
 
     const { userId, displayName, allowed } = exchangeData as {
@@ -138,9 +193,15 @@ export async function GET(req: Request) {
     // signup=1 flows always pass — new users don't exist in the allow list yet
     step = "allowed_check";
     if (!allowed && !isSignup) {
-      if (isDebug) return jsonError("userId not in allowedAdminLineUserIds and isSignup=false");
-      return NextResponse.redirect(
-        new URL(`/admin/unauthorized?userId=${encodeURIComponent(userId)}`, url.origin)
+      if (isDebug) return applyDiag(
+        jsonError("userId not in allowedAdminLineUserIds and isSignup=false"),
+        "ng:unauthorized", step
+      );
+      return applyDiag(
+        NextResponse.redirect(
+          new URL(`/admin/unauthorized?userId=${encodeURIComponent(userId)}`, url.origin)
+        ),
+        "ng:unauthorized", step
       );
     }
 
@@ -167,8 +228,14 @@ export async function GET(req: Request) {
     })();
 
     if (!secret) {
-      if (isDebug) return jsonError("LINE_SESSION_SECRET not configured");
-      return NextResponse.redirect(new URL("/admin/line-setup?reason=secret", url.origin));
+      if (isDebug) return applyDiag(
+        jsonError("LINE_SESSION_SECRET not configured"),
+        "ng:secret_missing", step
+      );
+      return applyDiag(
+        NextResponse.redirect(new URL("/admin/line-setup?reason=secret", url.origin)),
+        "ng:secret_missing", step
+      );
     }
 
     const sessionTenantId = signupTenantId ?? tenantId;
@@ -177,28 +244,32 @@ export async function GET(req: Request) {
     // ── STEP: set_cookie / redirect ────────────────────────────────────────
     step = "set_cookie";
 
-    // In debug mode: return JSON summary instead of actually redirecting
+    // Debug mode: return JSON summary (no session cookies set, but diagnostic signals applied)
     if (isDebug) {
-      return new Response(
-        JSON.stringify({
-          ok: true,
-          step: "done",
-          message: "would redirect to returnTo (debug: no cookies set)",
-          hasCode: true,
-          hasState: true,
-          hasReturnTo: !!url.searchParams.get("returnTo"),
-          parsedReturnTo: returnTo,
-          tenantId,
-          sessionTenantId,
-          isSignup,
-          signupTenantId,
-          allowed,
-          displayName,
-        }),
-        { status: 200, headers: { "content-type": "application/json" } }
+      return applyDiag(
+        new Response(
+          JSON.stringify({
+            ok: true,
+            step: "done",
+            message: "would redirect to returnTo (debug: no session cookies set)",
+            hasCode: true,
+            hasState: true,
+            hasReturnTo: !!url.searchParams.get("returnTo"),
+            parsedReturnTo: returnTo,
+            tenantId,
+            sessionTenantId,
+            isSignup,
+            signupTenantId,
+            allowed,
+            displayName,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        ),
+        "ok:debug", step
       );
     }
 
+    // Success: set session cookies and redirect
     const res = NextResponse.redirect(new URL(returnTo, url.origin));
     res.headers.append(
       "Set-Cookie",
@@ -218,26 +289,31 @@ export async function GET(req: Request) {
         `line_tenant=${signupTenantId}; Path=/; Secure; SameSite=Lax; Max-Age=604800`
       );
     }
-    return res;
+    return applyDiag(res, "ok:done", step);
 
   } catch (e: any) {
+    const origin = new URL(req.url).origin;
     if (isDebug) {
-      return new Response(
-        JSON.stringify({
-          ok: false,
-          step,
-          message: String(e?.message ?? e),
-          hasCode: !!url.searchParams.get("code"),
-          hasState: !!url.searchParams.get("state"),
-          hasReturnTo: !!url.searchParams.get("returnTo"),
-          parsedReturnTo: ctx.parsedReturnTo ?? null,
-          isSignup: ctx.isSignup ?? null,
-        }),
-        { status: 200, headers: { "content-type": "application/json" } }
+      return applyDiag(
+        new Response(
+          JSON.stringify({
+            ok: false,
+            step,
+            message: String(e?.message ?? e),
+            hasCode: !!url.searchParams.get("code"),
+            hasState: !!url.searchParams.get("state"),
+            hasReturnTo: !!url.searchParams.get("returnTo"),
+            parsedReturnTo: ctx.parsedReturnTo ?? null,
+            isSignup: ctx.isSignup ?? null,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        ),
+        "ng:exception", step
       );
     }
-    return NextResponse.redirect(
-      new URL("/admin/line-setup?reason=unknown", new URL(req.url).origin)
+    return applyDiag(
+      NextResponse.redirect(new URL("/admin/line-setup?reason=unknown", origin)),
+      "ng:exception", step
     );
   }
 }
