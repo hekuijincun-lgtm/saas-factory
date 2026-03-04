@@ -37,3 +37,7 @@ apps/web/build.err.txt*
 
 .vercel
 
+
+# local secrets (never commit)
+.secrets*
+.secrets.local.json

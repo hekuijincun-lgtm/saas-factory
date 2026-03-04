@@ -183,7 +183,7 @@ export async function saveMessagingConfig(
 
 /**
  * LINE Messaging API 設定を削除
- * 
+ *
  * @param tenantId - テナントID（指定されていない場合は 'default' が自動付与される）
  * @returns 削除後のステータス
  */
@@ -196,5 +196,71 @@ export async function deleteMessagingConfig(tenantId?: string): Promise<Messagin
     }
     throw new ApiClientError('Failed to delete Messaging API config');
   }
+}
+
+// ============================================================================
+// Admin Members (RBAC)
+// ============================================================================
+
+export type MemberRole = 'owner' | 'admin' | 'viewer';
+
+export interface AdminMember {
+  lineUserId: string;
+  role: MemberRole;
+  enabled: boolean;
+  displayName?: string;
+  createdAt: string;
+}
+
+export interface AdminMembersStore {
+  version: 1;
+  members: AdminMember[];
+}
+
+/**
+ * 管理者メンバー一覧を取得
+ */
+export async function fetchAdminMembers(tenantId?: string): Promise<AdminMembersStore> {
+  const res = await apiGet<any>('/admin/members', { tenantId });
+  return (res?.data ?? { version: 1, members: [] }) as AdminMembersStore;
+}
+
+/**
+ * 管理者メンバー一覧を保存（callerLineUserId が owner の場合のみ許可）
+ */
+export async function saveAdminMembers(
+  store: AdminMembersStore,
+  callerLineUserId: string,
+  tenantId?: string
+): Promise<AdminMembersStore> {
+  const res = await apiPut<any>('/admin/members',
+    { ...store, callerLineUserId }, { tenantId });
+  return (res?.data ?? store) as AdminMembersStore;
+}
+
+// ============================================================================
+// Bootstrap Key
+// ============================================================================
+
+export interface BootstrapKeyResponse {
+  ok: boolean;
+  tenantId: string;
+  bootstrapKeyPlain: string;
+  expiresAt: string;
+  error?: string;
+}
+
+/**
+ * Bootstrap Key を発行（owner 登録用使い捨てトークン、24h 有効）
+ */
+export async function createBootstrapKey(
+  callerLineUserId: string,
+  tenantId?: string,
+): Promise<BootstrapKeyResponse> {
+  return await apiPost<BootstrapKeyResponse>(
+    '/admin/bootstrap-key',
+    { callerLineUserId },
+    { tenantId },
+  );
 }
 

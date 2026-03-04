@@ -119,10 +119,10 @@ bindings = [
   { name = "SLOT_LOCK", class_name = "SlotLock" }
 ]
 
-# [[env.production.r2_buckets]]  ← APIトークンにR2権限が必要。有効化後にredeploy。
-# binding = "MENU_IMAGES"
-# bucket_name = "saas-factory-menu-images"
-# preview_bucket_name = "saas-factory-menu-images"
+[[env.production.r2_buckets]]
+binding = "MENU_IMAGES"
+bucket_name = "saas-factory-menu-images"
+preview_bucket_name = "saas-factory-menu-images"
 
 [[migrations]]
 tag = "v1-sqlite-do"

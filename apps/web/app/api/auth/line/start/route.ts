@@ -11,6 +11,7 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const debug = url.searchParams.get("debug") === "1";
   const tenantId = url.searchParams.get("tenantId") ?? "default";
+  const bootstrapKey = url.searchParams.get("bootstrapKey") ?? null;
 
   const apiBase = resolveUpstreamBase();
   if (!apiBase) {
@@ -24,6 +25,7 @@ export async function GET(req: Request) {
     const w = new URL("/auth/line/start", apiBase);
     w.searchParams.set("tenantId", tenantId);
     w.searchParams.set("returnTo", returnTo);
+    if (bootstrapKey) w.searchParams.set("bootstrapKey", bootstrapKey);
 
     return NextResponse.json({
       ok: true,
@@ -33,6 +35,7 @@ export async function GET(req: Request) {
       tenantId,
       apiBase,
       returnTo,
+      bootstrapKeyPresent: !!bootstrapKey,
       redirectTo: w.toString(),
       at: new Date().toISOString(),
     });
@@ -41,6 +44,7 @@ export async function GET(req: Request) {
   const w = new URL("/auth/line/start", apiBase);
   w.searchParams.set("tenantId", tenantId);
   w.searchParams.set("returnTo", returnTo);
+  if (bootstrapKey) w.searchParams.set("bootstrapKey", bootstrapKey);
 
   const res = NextResponse.redirect(w.toString(), 302);
   // keep returnTo across LINE roundtrip (fallback)

@@ -24,7 +24,7 @@ async function hmacSha256B64url(message: string, secret: string) {
 async function verifyAndParseSession(
   token: string,
   secret: string
-): Promise<{ userId: string; tenantId: string; displayName: string } | null> {
+): Promise<{ userId: string; tenantId: string; displayName: string; role: string | null } | null> {
   const dotIdx = token.lastIndexOf(".");
   if (dotIdx < 1) return null;
   const bodyB64u = token.slice(0, dotIdx);
@@ -41,6 +41,7 @@ async function verifyAndParseSession(
       userId: payload.userId,
       tenantId: payload.tenantId ?? "default",
       displayName: payload.displayName ?? "",
+      role: payload.role ?? null,
     };
   } catch {
     return null;
@@ -78,5 +79,6 @@ export async function GET(req: Request) {
     userId: parsed.userId,
     tenantId: parsed.tenantId,
     displayName: parsed.displayName,
+    role: parsed.role ?? null,
   });
 }

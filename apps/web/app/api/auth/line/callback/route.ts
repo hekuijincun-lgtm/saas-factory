@@ -116,10 +116,12 @@ export async function GET(req: Request) {
     step = "parse_state";
     let tenantId = "default";
     let returnTo = "/admin/settings";
+    let bootstrapKey: string | null = null;
     try {
       const s = JSON.parse(atob(stateRaw));
       if (s?.tenantId) tenantId = String(s.tenantId);
       if (s?.returnTo && typeof s.returnTo === "string") returnTo = s.returnTo;
+      if (s?.bootstrapKey && typeof s.bootstrapKey === "string") bootstrapKey = s.bootstrapKey;
     } catch {
       if (isDebug) return applyDiag(jsonError("state base64/JSON parse failed"), "ng:bad_state", step);
     }
@@ -153,7 +155,7 @@ export async function GET(req: Request) {
     const exchangeRes = await fetch(`${apiBase}/auth/line/exchange`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "cache-control": "no-store" },
-      body: JSON.stringify({ code, tenantId, redirectUri }),
+      body: JSON.stringify({ code, tenantId, redirectUri, ...(bootstrapKey ? { bootstrapKey } : {}) }),
     });
 
     if (!exchangeRes.ok) {
@@ -182,8 +184,10 @@ export async function GET(req: Request) {
       );
     }
 
-    const { userId, displayName, allowed } = exchangeData as {
+    const { userId, displayName, allowed, role, membersFound, bootstrapped, bootstrapInfo } = exchangeData as {
       userId: string; displayName: string; allowed: boolean;
+      role?: string; membersFound?: boolean; bootstrapped?: boolean;
+      bootstrapInfo?: { present: boolean; valid: boolean; used: boolean; expired: boolean };
     };
 
     ctx.displayName = displayName;
@@ -239,7 +243,7 @@ export async function GET(req: Request) {
     }
 
     const sessionTenantId = signupTenantId ?? tenantId;
-    const token = await signSession({ userId, tenantId: sessionTenantId, displayName, ts: Date.now() }, secret);
+    const token = await signSession({ userId, tenantId: sessionTenantId, displayName, role: role ?? null, ts: Date.now() }, secret);
 
     // ── STEP: set_cookie / redirect ────────────────────────────────────────
     step = "set_cookie";
@@ -257,11 +261,16 @@ export async function GET(req: Request) {
             hasReturnTo: !!url.searchParams.get("returnTo"),
             parsedReturnTo: returnTo,
             tenantId,
+            lineUserId: userId,
             sessionTenantId,
             isSignup,
             signupTenantId,
+            membersFound: membersFound ?? false,
             allowed,
+            role: role ?? null,
             displayName,
+            bootstrapped: bootstrapped ?? false,
+            bootstrap: { present: !!bootstrapKey, ...(bootstrapInfo ?? {}) },
           }),
           { status: 200, headers: { "content-type": "application/json" } }
         ),

@@ -71,6 +71,7 @@ export interface IntegrationSettings {
 
 export interface OnboardingSettings {
   lineConnected?: boolean;
+  enabled?: boolean;  // true のとき初回ログインで owner ブートストラップ
 }
 
 /** 業種バーティカル識別子 */

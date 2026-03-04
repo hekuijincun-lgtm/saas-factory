@@ -71,6 +71,7 @@ export interface IntegrationSettings {
 
 export interface OnboardingSettings {
   lineConnected?: boolean;
+  enabled?: boolean;  // true のとき初回ログインで owner ブートストラップ
 }
 
 /** 業種バーティカル識別子 */
@@ -403,6 +404,7 @@ export function mergeSettings(defaults: AdminSettings, partial: Partial<AdminSet
     onboarding: (partial.onboarding || defaults.onboarding)
       ? {
           lineConnected: partial.onboarding?.lineConnected ?? defaults.onboarding?.lineConnected,
+          enabled: partial.onboarding?.enabled ?? defaults.onboarding?.enabled,
         }
       : undefined,
     eyebrow: (partial.eyebrow || defaults.eyebrow)

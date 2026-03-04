@@ -2853,7 +2853,11 @@ app.get("/auth/line/start", async (c) => {
     );
   }
 
-  const stateObj = { tenantId, returnTo, ts: Date.now() };
+  const bootstrapKey = c.req.query("bootstrapKey") || undefined;
+  const stateObj = {
+    tenantId, returnTo, ts: Date.now(),
+    ...(bootstrapKey ? { bootstrapKey } : {}),
+  };
   const state = btoa(JSON.stringify(stateObj));
 
   const scope = "profile%20openid";
@@ -2891,6 +2895,137 @@ app.get("/auth/line/callback", async (c) => {
 });
 /* === /LINE_OAUTH_MIN_ROUTES_V1 === */
 
+async function sha256Hex(input: string): Promise<string> {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(input));
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+/* === ADMIN_MEMBERS_V1 ===
+   GET  /admin/members?tenantId=  → { ok, tenantId, data: AdminMembersStore }
+   PUT  /admin/members            → body: { callerLineUserId, members[] }
+                                    owner のみ更新可（callerLineUserId で自己検証）
+=== */
+
+type MemberRole = 'owner' | 'admin' | 'viewer';
+interface AdminMember {
+  lineUserId: string;
+  role: MemberRole;
+  enabled: boolean;
+  displayName?: string;
+  createdAt: string;
+}
+interface AdminMembersStore { version: 1; members: AdminMember[]; }
+
+app.get('/admin/members', async (c) => {
+  const tenantId = getTenantId(c, null);
+  const kv = (c.env as any).SAAS_FACTORY as KVNamespace;
+  const raw = await kv.get(`admin:members:${tenantId}`);
+  const store: AdminMembersStore = raw
+    ? JSON.parse(raw)
+    : { version: 1, members: [] };
+  return c.json({ ok: true, tenantId, data: store });
+});
+
+app.put('/admin/members', async (c) => {
+  const tenantId = getTenantId(c, null);
+  const kv = (c.env as any).SAAS_FACTORY as KVNamespace;
+  let body: any = {};
+  try { body = await c.req.json(); } catch {}
+  const { callerLineUserId, members } = body as {
+    callerLineUserId?: string;
+    members?: AdminMember[];
+  };
+  if (!Array.isArray(members)) {
+    return c.json({ ok: false, error: 'members array required' }, 400);
+  }
+  // 呼び出し元の役割を検証（既存 members がある場合は caller が owner か確認）
+  const rawCurrent = await kv.get(`admin:members:${tenantId}`);
+  const current: AdminMembersStore = rawCurrent
+    ? JSON.parse(rawCurrent)
+    : { version: 1, members: [] };
+  if (current.members.length > 0) {
+    const caller = current.members.find(
+      (m: AdminMember) => m.lineUserId === callerLineUserId && m.enabled && m.role === 'owner'
+    );
+    if (!caller) {
+      return c.json({ ok: false, error: 'forbidden', reason: 'owner_required' }, 403);
+    }
+  }
+  // 少なくとも 1 人の enabled owner が残ることを保証
+  const enabledOwners = members.filter((m: AdminMember) => m.role === 'owner' && m.enabled);
+  if (enabledOwners.length === 0) {
+    return c.json({ ok: false, error: 'at_least_one_owner_required' }, 400);
+  }
+  const next: AdminMembersStore = { version: 1, members };
+  await kv.put(`admin:members:${tenantId}`, JSON.stringify(next));
+  return c.json({ ok: true, tenantId, data: next });
+});
+/* === /ADMIN_MEMBERS_V1 === */
+
+/* === BOOTSTRAP_KEY_V1 ===
+   POST /admin/bootstrap-key?tenantId=
+   Body: { callerLineUserId? }
+   Issues a one-time bootstrap key (SHA-256 stored in KV, plain returned once).
+   Caller must be owner (if members exist) or legacy allowlist / brand-new tenant.
+=== */
+
+interface AdminBootstrapStore {
+  version: 1;
+  keyHash: string;
+  expiresAt: string;
+  createdAt: string;
+  usedAt?: string;
+  usedBy?: string;
+}
+
+app.post('/admin/bootstrap-key', async (c) => {
+  const tenantId = getTenantId(c, null);
+  const kv = (c.env as any).SAAS_FACTORY as KVNamespace;
+  let body: any = {};
+  try { body = await c.req.json(); } catch {}
+  const { callerLineUserId } = body as { callerLineUserId?: string };
+
+  // 権限チェック
+  const membersRaw = await kv.get(`admin:members:${tenantId}`);
+  if (membersRaw) {
+    const store: AdminMembersStore = JSON.parse(membersRaw);
+    if (store.members.length > 0) {
+      const caller = store.members.find(
+        (m: AdminMember) => m.lineUserId === callerLineUserId && m.enabled && m.role === 'owner'
+      );
+      if (!caller) {
+        return c.json({ ok: false, error: 'forbidden', reason: 'owner_required' }, 403);
+      }
+    }
+  } else {
+    // members 未存在 → legacy allowlist チェック（移行期間）
+    const settingsRaw = (await kv.get(`settings:${tenantId}`, 'json') as any) ?? {};
+    const allowedList: string[] = Array.isArray(settingsRaw.allowedAdminLineUserIds)
+      ? settingsRaw.allowedAdminLineUserIds : [];
+    if (allowedList.length > 0 && callerLineUserId && !allowedList.includes(callerLineUserId)) {
+      return c.json({ ok: false, error: 'forbidden', reason: 'not_in_allowlist' }, 403);
+    }
+    // allowList が空 = ブランニューテナント → 允可
+  }
+
+  // 鍵生成
+  const plainKey = crypto.randomUUID() + '-' + crypto.randomUUID().slice(0, 8);
+  const keyHash = await sha256Hex(plainKey);
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
+
+  const store: AdminBootstrapStore = {
+    version: 1,
+    keyHash,
+    expiresAt,
+    createdAt: now.toISOString(),
+  };
+  await kv.put(`admin:bootstrap:${tenantId}`, JSON.stringify(store), { expirationTtl: 86400 });
+
+  return c.json({ ok: true, tenantId, bootstrapKeyPlain: plainKey, expiresAt });
+});
+/* === /BOOTSTRAP_KEY_V1 === */
+
 /* === LINE_AUTH_EXCHANGE_V1 ===
    POST /auth/line/exchange
    Exchanges a LINE OAuth code for userId + displayName,
@@ -2902,8 +3037,8 @@ app.post("/auth/line/exchange", async (c) => {
   const env = c.env as any;
   let body: any = {};
   try { body = await c.req.json(); } catch {}
-  const { code, tenantId = 'default', redirectUri } = body as {
-    code?: string; tenantId?: string; redirectUri?: string;
+  const { code, tenantId = 'default', redirectUri, bootstrapKey } = body as {
+    code?: string; tenantId?: string; redirectUri?: string; bootstrapKey?: string;
   };
 
   if (!code || !redirectUri) {
@@ -2971,24 +3106,79 @@ app.post("/auth/line/exchange", async (c) => {
     return c.json({ ok: true, userId, displayName, allowed: true });
   }
 
-  // Check allowed list from KV settings
+  // --- Step 1: RBAC members check (admin:members:{tenantId}) ---
   const kv: KVNamespace = env.SAAS_FACTORY;
+  const membersRaw = await kv.get(`admin:members:${tenantId}`);
+  const membersStore: AdminMembersStore | null = membersRaw ? JSON.parse(membersRaw) : null;
+
+  if (membersStore && membersStore.members.length > 0) {
+    // RBAC パス: members が存在する場合
+    const member = membersStore.members.find((m: AdminMember) => m.lineUserId === userId);
+    if (member && member.enabled) {
+      // displayName を更新（ログインのたびに最新を保存）
+      if (member.displayName !== displayName) {
+        member.displayName = displayName;
+        await kv.put(`admin:members:${tenantId}`, JSON.stringify(membersStore));
+      }
+      return c.json({ ok: true, userId, displayName, allowed: true,
+                      role: member.role, membersFound: true });
+    }
+    return c.json({ ok: true, userId, displayName, allowed: false,
+                    membersFound: true });
+  }
+
+  // --- Step 2: Bootstrap key 検証 ---
+  if (bootstrapKey) {
+    const bsRaw = await kv.get(`admin:bootstrap:${tenantId}`);
+    const bootstrapInfo: { present: boolean; valid: boolean; used: boolean; expired: boolean } =
+      { present: !!bsRaw, valid: false, used: false, expired: false };
+    if (bsRaw) {
+      const bs: AdminBootstrapStore = JSON.parse(bsRaw);
+      const keyHash = await sha256Hex(bootstrapKey);
+      bootstrapInfo.used = !!bs.usedAt;
+      bootstrapInfo.expired = new Date(bs.expiresAt) <= new Date();
+      bootstrapInfo.valid = (bs.keyHash === keyHash && !bootstrapInfo.used && !bootstrapInfo.expired);
+      if (bootstrapInfo.valid) {
+        const bootstrapped: AdminMembersStore = {
+          version: 1,
+          members: [{
+            lineUserId: userId,
+            role: 'owner',
+            enabled: true,
+            displayName,
+            createdAt: new Date().toISOString(),
+          }],
+        };
+        await kv.put(`admin:members:${tenantId}`, JSON.stringify(bootstrapped));
+        bs.usedAt = new Date().toISOString();
+        bs.usedBy = userId;
+        await kv.put(`admin:bootstrap:${tenantId}`, JSON.stringify(bs));
+        return c.json({ ok: true, userId, displayName, allowed: true, role: 'owner',
+                        membersFound: false, bootstrapped: true, bootstrapInfo });
+      }
+      return c.json({ ok: true, userId, displayName, allowed: false,
+                      membersFound: false, bootstrapInfo });
+    }
+    return c.json({ ok: true, userId, displayName, allowed: false,
+                    membersFound: false, bootstrapInfo: { present: false, valid: false, used: false, expired: false } });
+  }
+
+  // --- Step 3: Legacy fallback (allowedAdminLineUserIds) ---
   const settingsRaw = (await kv.get(`settings:${tenantId}`, 'json') as any) ?? {};
   const allowedList: string[] = Array.isArray(settingsRaw.allowedAdminLineUserIds)
-    ? settingsRaw.allowedAdminLineUserIds
-    : [];
+    ? settingsRaw.allowedAdminLineUserIds : [];
 
-  // Self-seed: if list is empty, first user becomes admin
   if (allowedList.length === 0) {
+    // 従来の self-seed
     await kv.put(`settings:${tenantId}`, JSON.stringify({
-      ...settingsRaw,
-      allowedAdminLineUserIds: [userId],
+      ...settingsRaw, allowedAdminLineUserIds: [userId],
     }));
-    return c.json({ ok: true, userId, displayName, allowed: true, seeded: true });
+    return c.json({ ok: true, userId, displayName, allowed: true,
+                    role: 'owner', membersFound: false, seeded: true });
   }
 
   const allowed = allowedList.includes(userId);
-  return c.json({ ok: true, userId, displayName, allowed });
+  return c.json({ ok: true, userId, displayName, allowed, membersFound: false });
 });
 /* === /LINE_AUTH_EXCHANGE_V1 === */
 
