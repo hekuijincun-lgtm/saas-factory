@@ -3071,6 +3071,7 @@ app.post('/auth/email/start', async (c) => {
   const tenantId: string = String(body.tenantId ?? 'default');
   const bootstrapKey: string | undefined = body.bootstrapKey || undefined;
   const isDebug = body.debug === '1' || body.debug === true;
+  const isDiagnose = body.diagnose === '1' || body.diagnose === true; // like debug but goes through Resend
 
   // Basic email validation
   if (!rawEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(rawEmail)) {
@@ -3179,7 +3180,7 @@ app.post('/auth/email/start', async (c) => {
       resendStatus === 422 ? 'domain_not_verified_or_restricted_recipient' :
       resendStatus === 429 ? 'resend_rate_limited' :
       `resend_http_${resendStatus}`;
-    if (isDebug) {
+    if (isDiagnose) {
       return c.json({ ok: false, error: 'email_send_failed', resendStatus, hint, detail: errText }, 500);
     }
     return c.json({ ok: false, error: 'email_send_failed', hint }, 500);
