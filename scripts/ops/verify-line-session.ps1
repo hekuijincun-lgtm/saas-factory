@@ -1,35 +1,38 @@
 #Requires -Version 7
 <#
 .SYNOPSIS
-  Edge の Cookies DB から line_session / line_cb 診断 cookie の有無を確認する。
-  exit 0 = OK (line_session あり / has_value=1)
+  Edge / Chrome の全プロファイル Cookies DB から
+  line_session / line_cb_* 診断 cookie を検索して診断する。
+  exit 0 = OK (line_session または line_cb_ok_done あり)
   exit 1 = 実行エラー (sqlite3 未検出 / DB 見つからず)
   exit 2 = NG  (line_session なし)
 
 .PARAMETER AllLine
-  デフォルトの検索対象に加えて name LIKE 'line_%' の全 cookie を表示する。
+  検索対象を name LIKE 'line_%' に拡張して全 line_* cookie を表示する。
+
+.PARAMETER EdgeProfileDir
+  open-line-login.ps1 から渡されるプロファイルヒント（例: "Default", "Profile 1"）。
+  指定したプロファイルの DB を先頭に並べて優先探索する。
 
 .NOTES
-  診断 cookie (line_cb_*) について
-  ─────────────────────────────────────────────────────────────
-  callback/route.ts が全 return 経路で line_cb_<step>=1 という cookie を
-  セットする。Chromium は cookie value を DPAPI 暗号化して格納するが、
-  cookie の name 列は平文で SQLite に保存されるため、name を読むだけで
-  どのステップで止まったかが分かる。
+  診断 cookie (line_cb_*) の仕組み:
+    callback/route.ts が全 return 経路で line_cb_<step>=1 をセットする。
+    Chromium は cookie value を DPAPI で暗号化するが、cookie の name 列は
+    平文で SQLite に保存される。verify は name を読むだけで原因が分かる。
 
-  有効なステップ名（line_cb_ の後に続く文字列）:
-    ok_done            → ログイン成功（line_session がセットされているはず）
-    ok_debug           → debug=1 モード（実際の cookie はセットされない）
-    ng_missing_code    → code/state パラメータ欠落
-    ng_bad_state       → state の Base64/JSON 解析失敗
-    ng_exchange_failed → LINE token exchange 失敗 → LINE_LOGIN_CHANNEL_SECRET を確認
-    ng_unauthorized    → userId が allowedAdminLineUserIds に未登録
-    ng_secret_missing  → LINE_SESSION_SECRET が Pages 環境変数に未設定
-    ng_exception       → callback で予期しない例外が発生
-  ─────────────────────────────────────────────────────────────
+    step 名一覧:
+      ok_done            -> ログイン成功
+      ok_debug           -> debug=1 モード（session cookie はセットされない）
+      ng_missing_code    -> code/state パラメータ欠落
+      ng_bad_state       -> state の Base64/JSON 解析失敗
+      ng_exchange_failed -> LINE token exchange 失敗 (LINE_LOGIN_CHANNEL_SECRET 確認)
+      ng_unauthorized    -> userId が allowedAdminLineUserIds に未登録
+      ng_secret_missing  -> LINE_SESSION_SECRET が Pages に未設定
+      ng_exception       -> callback で予期しない例外
 #>
 param(
-    [switch]$AllLine
+    [switch]$AllLine,
+    [string]$EdgeProfileDir = ""
 )
 
 Set-StrictMode -Off
@@ -38,7 +41,7 @@ $ErrorActionPreference = "Stop"
 # 診断ステップの説明テーブル
 $cbStepMap = @{
     "ok_done"            = "✅ ログイン成功（line_session がセットされているはず）"
-    "ok_debug"           = "⚠ debug=1 モード（実際の session cookie はセットされない）"
+    "ok_debug"           = "⚠  debug=1 モード（実際の session cookie はセットされない）"
     "ng_missing_code"    = "❌ code/state パラメータ欠落（LINE→callback リダイレクト失敗）"
     "ng_bad_state"       = "❌ state の Base64/JSON 解析失敗"
     "ng_exchange_failed" = "❌ LINE token exchange 失敗 → LINE_LOGIN_CHANNEL_SECRET を確認"
@@ -54,9 +57,8 @@ Write-Host ""
 Write-Host "╔══════════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
 Write-Host "║       LINE Session Cookie Verifier  (verify-line-session)    ║" -ForegroundColor Cyan
 Write-Host "╚══════════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
-if ($AllLine) {
-    Write-Host "  モード: -AllLine (name LIKE 'line_%' を全表示)" -ForegroundColor DarkYellow
-}
+if ($AllLine)       { Write-Host "  モード: -AllLine (name LIKE 'line_%')" -ForegroundColor DarkYellow }
+if ($EdgeProfileDir){ Write-Host "  ヒント: Edge / $EdgeProfileDir を優先検索" -ForegroundColor DarkCyan }
 Write-Host ""
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -88,21 +90,18 @@ function Find-Sqlite3 {
         $exe = Join-Path $dir "sqlite3.exe"
         if (Test-Path $exe) { return $exe }
     }
-
     $wingetBase = "$env:LOCALAPPDATA\Microsoft\WinGet\Packages"
     if (Test-Path $wingetBase) {
         $hit = Get-ChildItem -Path $wingetBase -Filter "sqlite3.exe" -Recurse -Depth 5 `
                -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($hit) { return $hit.FullName }
     }
-
     foreach ($root in @("$env:ProgramFiles", "${env:ProgramFiles(x86)}", "$env:LOCALAPPDATA\Programs")) {
         if (-not $root) { continue }
         $hit = Get-ChildItem -Path $root -Filter "sqlite3.exe" -Recurse -Depth 4 `
                -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($hit) { return $hit.FullName }
     }
-
     return $null
 }
 
@@ -116,65 +115,118 @@ if (-not $sqlite3) {
 Write-Host "  ✓ sqlite3: $sqlite3" -ForegroundColor Green
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 3. Edge Cookies DB の候補を収集
+# 3. Edge + Chrome の全プロファイル Cookies DB を列挙
 # ─────────────────────────────────────────────────────────────────────────────
 Write-Host ""
-Write-Host "► [3/4] Locating Edge Cookies database..." -ForegroundColor Yellow
+Write-Host "► [3/4] Enumerating Edge + Chrome Cookies databases..." -ForegroundColor Yellow
 
-$edgeBase = "$env:LOCALAPPDATA\Microsoft\Edge\User Data"
+$allCandidates = [System.Collections.Generic.List[object]]::new()
 
-$candidates = [System.Collections.Generic.List[string]]::new()
-@(
-    "$edgeBase\Default\Network\Cookies",
-    "$edgeBase\Default\Cookies"
-) | Where-Object { Test-Path $_ } | ForEach-Object { $candidates.Add($_) }
+# ブラウザルートと表示名のテーブル
+$browsers = @(
+    [pscustomobject]@{ Name = "Edge";   Root = "$env:LOCALAPPDATA\Microsoft\Edge\User Data" },
+    [pscustomobject]@{ Name = "Chrome"; Root = "$env:LOCALAPPDATA\Google\Chrome\User Data"  }
+)
 
-Get-ChildItem -Path $edgeBase -Filter "Profile *" -Directory -ErrorAction SilentlyContinue |
-    Sort-Object Name |
-    ForEach-Object {
-        $nw = Join-Path $_.FullName "Network\Cookies"
-        $pl = Join-Path $_.FullName "Cookies"
-        if (Test-Path $nw) { $candidates.Add($nw) }
-        elseif (Test-Path $pl) { $candidates.Add($pl) }
+foreach ($browser in $browsers) {
+    $bRoot = $browser.Root
+    if (-not (Test-Path $bRoot)) {
+        Write-Host "  (skip) $($browser.Name): $bRoot not found" -ForegroundColor DarkGray
+        continue
     }
 
-if ($candidates.Count -eq 0) {
-    Write-Host "  ✗ No Edge Cookies DB found under: $edgeBase" -ForegroundColor Red
-    Write-Host "  → Edge may never have been used, or profile path differs." -ForegroundColor Cyan
+    # プロファイルディレクトリを収集
+    $profileDirs = [System.Collections.Generic.List[string]]::new()
+    $profileDirs.Add("Default")
+
+    Get-ChildItem -Path $bRoot -Filter "Profile *" -Directory -ErrorAction SilentlyContinue |
+        Sort-Object Name |
+        ForEach-Object { $profileDirs.Add($_.Name) }
+
+    $guestPath = Join-Path $bRoot "Guest Profile"
+    if (Test-Path $guestPath) { $profileDirs.Add("Guest Profile") }
+
+    foreach ($pName in $profileDirs) {
+        $pPath = Join-Path $bRoot $pName
+        if (-not (Test-Path $pPath)) { continue }
+
+        # Network\Cookies を優先、次に Cookies
+        foreach ($cookieRel in @("Network\Cookies", "Cookies")) {
+            $fullPath = Join-Path $pPath $cookieRel
+            if (Test-Path $fullPath) {
+                $allCandidates.Add([pscustomobject]@{
+                    Browser = $browser.Name
+                    Profile = $pName
+                    DbPath  = $fullPath
+                })
+            }
+        }
+    }
+}
+
+if ($allCandidates.Count -eq 0) {
+    Write-Host "  ✗ Cookies DB が一つも見つかりません。" -ForegroundColor Red
+    Write-Host "  Edge または Chrome がインストールされているか確認してください。" -ForegroundColor Yellow
     exit 1
 }
+
+# EdgeProfileDir が指定されている場合、そのプロファイルを先頭に並べ替え
+$priorityCandidates = [System.Collections.Generic.List[object]]::new()
+$otherCandidates    = [System.Collections.Generic.List[object]]::new()
+
+foreach ($c in $allCandidates) {
+    if ($EdgeProfileDir -and $c.Browser -eq "Edge" -and $c.Profile -eq $EdgeProfileDir) {
+        $priorityCandidates.Add($c)
+    } else {
+        $otherCandidates.Add($c)
+    }
+}
+
+if ($EdgeProfileDir -and $priorityCandidates.Count -eq 0) {
+    Write-Host "  ⚠ Edge / $EdgeProfileDir の DB が見つかりません。全プロファイルを検索します。" -ForegroundColor Yellow
+}
+
+$candidates = [System.Collections.Generic.List[object]]::new()
+foreach ($c in $priorityCandidates) { $candidates.Add($c) }
+foreach ($c in $otherCandidates)    { $candidates.Add($c) }
+
 Write-Host "  Found $($candidates.Count) DB candidate(s):" -ForegroundColor Gray
-$candidates | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
+foreach ($c in $candidates) {
+    Write-Host "    [$($c.Browser) / $($c.Profile)]  $($c.DbPath)" -ForegroundColor DarkGray
+}
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 4. 全候補 DB を走査（打ち切りなし）
+# 4. 全 DB を走査して line_* cookies を検索（打ち切りなし）
 # ─────────────────────────────────────────────────────────────────────────────
 Write-Host ""
 Write-Host "► [4/4] Searching ALL DBs for line cookies..." -ForegroundColor Yellow
 
-# SQL columns: host_key | name | path | expires_utc | value_len | enc_len | has_value
-# ORDER BY expires_utc DESC: 直近のログイン試行の cookie が先頭に来る
+# WHERE 句: デフォルトは session + cb 系。-AllLine で全 line_*
 if ($AllLine) {
     $whereClause = "name LIKE 'line_%'"
 } else {
-    # line_cb  = 診断 cookie (value 暗号化)
-    # line_cb% = 診断 cookie (name にステップ名を含む、平文で読める)
-    $whereClause = "name IN ('line_session', 'line_uid', 'line_return_to', 'line_cb') OR name LIKE 'line_cb_%'"
+    $whereClause = "name IN ('line_session', 'line_uid', 'line_return_to') OR name LIKE 'line_cb%'"
 }
+# host_key|name|path|expires_utc|value_len|enc_len|has_value
 $sqlQuery = "SELECT host_key, name, path, expires_utc, LENGTH(value) AS value_len, LENGTH(encrypted_value) AS enc_len, CASE WHEN LENGTH(value) > 0 OR LENGTH(encrypted_value) > 0 THEN 1 ELSE 0 END AS has_value FROM cookies WHERE $whereClause ORDER BY expires_utc DESC;"
 
-$tmpDb              = Join-Path $env:TEMP "edge_cookies_verify_tmp.db"
-$lineSessionFoundDb = $null
-$lineSessionRow     = $null
-$cbStepCookies      = [System.Collections.Generic.List[string]]::new()
-$allDbResults       = [System.Collections.Generic.List[object]]::new()
+$tmpDb                   = Join-Path $env:TEMP "edge_cookies_verify_tmp.db"
+$lineSessionFoundDb      = $null
+$lineSessionFoundBrowser = $null
+$lineSessionFoundProfile = $null
+$lineSessionRow          = $null
+$lineCbOkDoneDb          = $null
+$lineCbOkDoneBrowser     = $null
+$lineCbOkDoneProfile     = $null
+$cbStepCookies           = [System.Collections.Generic.List[string]]::new()
 
-foreach ($dbPath in $candidates) {
+foreach ($candidate in $candidates) {
     Write-Host ""
-    Write-Host "  ── $dbPath" -ForegroundColor DarkCyan
+    Write-Host "  ── [$($candidate.Browser) / $($candidate.Profile)]" -ForegroundColor DarkCyan
+    Write-Host "     $($candidate.DbPath)" -ForegroundColor DarkGray
 
     try {
-        Copy-Item -Path $dbPath -Destination $tmpDb -Force
+        Copy-Item -Path $candidate.DbPath -Destination $tmpDb -Force
     } catch {
         Write-Host "    ⚠ Copy failed (locked or permission denied): $_" -ForegroundColor Yellow
         continue
@@ -203,60 +255,52 @@ foreach ($dbPath in $candidates) {
 
     Write-Host "    host_key | name | path | expires_utc | value_len | enc_len | has_value" -ForegroundColor DarkGray
 
-    $dbHasSession = $false
-
-    if ($dbRows.Count -gt 0) {
+    if ($dbRows.Count -eq 0) {
+        Write-Host "    (no cookies matched)" -ForegroundColor DarkYellow
+    } else {
         foreach ($row in $dbRows) {
             $p        = $row -split "\|"
             $name     = if ($p.Count -gt 1) { $p[1] } else { "" }
             $hasValue = if ($p.Count -gt 6) { $p[6] } else { "0" }
 
-            # 表示色の決定
-            if ($name -eq "line_session") {
-                $color = if ($hasValue -eq "1") { "Green" } else { "DarkYellow" }
-            } elseif ($name -like "line_cb_ok_*") {
-                $color = "Green"
-            } elseif ($name -like "line_cb_ng_*") {
-                $color = "Red"
-            } elseif ($name -eq "line_cb") {
-                $color = "Magenta"
-            } elseif ($name -eq "line_uid") {
-                $color = "Cyan"
-            } elseif ($name -eq "line_return_to") {
-                $color = "Yellow"
-            } else {
-                $color = "Gray"
-            }
+            # 表示色
+            if     ($name -eq "line_session")         { $color = if ($hasValue -eq "1") { "Green" } else { "DarkYellow" } }
+            elseif ($name -like "line_cb_ok_*")       { $color = "Green"   }
+            elseif ($name -like "line_cb_ng_*")       { $color = "Red"     }
+            elseif ($name -eq "line_cb")              { $color = "Magenta" }
+            elseif ($name -eq "line_uid")             { $color = "Cyan"    }
+            elseif ($name -eq "line_return_to")       { $color = "Yellow"  }
+            else                                      { $color = "Gray"    }
+
             Write-Host "    $row" -ForegroundColor $color
 
             # line_session 検出
             if ($name -eq "line_session" -and $hasValue -eq "1") {
-                $dbHasSession = $true
                 if ($null -eq $lineSessionFoundDb) {
-                    $lineSessionFoundDb = $dbPath
-                    $lineSessionRow     = $row
+                    $lineSessionFoundDb      = $candidate.DbPath
+                    $lineSessionFoundBrowser = $candidate.Browser
+                    $lineSessionFoundProfile = $candidate.Profile
+                    $lineSessionRow          = $row
                 }
             }
 
-            # line_cb_* 診断 cookie 収集（has_value=1 のもの）
+            # line_cb_* 診断 cookie 収集
             if ($name -like "line_cb_*" -and $hasValue -eq "1") {
                 if ($cbStepCookies -notcontains $name) {
                     $cbStepCookies.Add($name)
                 }
+                # line_cb_ok_done を別途記録
+                if ($name -eq "line_cb_ok_done" -and $null -eq $lineCbOkDoneDb) {
+                    $lineCbOkDoneDb      = $candidate.DbPath
+                    $lineCbOkDoneBrowser = $candidate.Browser
+                    $lineCbOkDoneProfile = $candidate.Profile
+                }
             }
         }
-    } else {
-        Write-Host "    (no cookies matched)" -ForegroundColor DarkYellow
     }
 
-    $allDbResults.Add([pscustomobject]@{
-        DbPath     = $dbPath
-        Rows       = $dbRows
-        HasSession = $dbHasSession
-    })
-
     Remove-Item $tmpDb -Force -ErrorAction SilentlyContinue
-    # ★ break なし：全 DB を走査する
+    # ★ break なし：全 DB を走査し続ける
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -265,18 +309,17 @@ foreach ($dbPath in $candidates) {
 if ($cbStepCookies.Count -gt 0) {
     Write-Host ""
     Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor DarkGray
-    Write-Host " 診断 cookie (line_cb_*) が見つかりました" -ForegroundColor Magenta
+    Write-Host " 診断 cookie (line_cb_*) 解析結果" -ForegroundColor Magenta
     Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor DarkGray
     foreach ($cbName in $cbStepCookies) {
-        $cbStep = $cbName -replace "^line_cb_", ""
-        $cbDesc = if ($cbStepMap.ContainsKey($cbStep)) { $cbStepMap[$cbStep] } else { "(不明なステップ: $cbStep)" }
+        $cbStep  = $cbName -replace "^line_cb_", ""
+        $cbDesc  = if ($cbStepMap.ContainsKey($cbStep)) { $cbStepMap[$cbStep] } else { "(不明なステップ: $cbStep)" }
         $cbColor = if ($cbName -like "line_cb_ok_*") { "Green" } else { "Red" }
         Write-Host ""
         Write-Host "  cookie : $cbName" -ForegroundColor $cbColor
         Write-Host "  step   : $cbStep" -ForegroundColor $cbColor
         Write-Host "  meaning: $cbDesc" -ForegroundColor White
     }
-    Write-Host ""
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -286,10 +329,16 @@ Write-Host ""
 Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor DarkGray
 Write-Host ""
 
+$hasOkDoneCb = $cbStepCookies -contains "line_cb_ok_done"
+$hasNgCb     = @($cbStepCookies | Where-Object { $_ -like "line_cb_ng_*" }).Count -gt 0
+
 if ($null -ne $lineSessionFoundDb) {
+    # ─── OK: line_session 発見 ───────────────────────────────────────────
     Write-Host "✅  OK: line_session found (has_value=1)" -ForegroundColor Green
     Write-Host ""
-    Write-Host "  DB  : $lineSessionFoundDb" -ForegroundColor Cyan
+    Write-Host "  Browser : $lineSessionFoundBrowser" -ForegroundColor Cyan
+    Write-Host "  Profile : $lineSessionFoundProfile" -ForegroundColor Cyan
+    Write-Host "  DB      : $lineSessionFoundDb" -ForegroundColor Cyan
     if ($lineSessionRow) {
         $p = $lineSessionRow -split "\|"
         Write-Host "  host_key  : $($p[0])" -ForegroundColor Cyan
@@ -304,38 +353,51 @@ if ($null -ne $lineSessionFoundDb) {
     Write-Host "  → enable-require-line-auth.ps1 を実行して認証ゲートを有効化できます。" -ForegroundColor Cyan
     exit 0
 
-} else {
-    # line_cb_* で原因が特定できているか？
-    $diagAvailable = $cbStepCookies.Count -gt 0
-
-    if ($diagAvailable) {
-        Write-Host "❌  NG: line_session missing" -ForegroundColor Red
-        Write-Host "    ただし line_cb_* 診断 cookie から原因が特定されています。" -ForegroundColor Yellow
-        Write-Host "    上の「診断 cookie」セクションを参照してください。" -ForegroundColor Yellow
-    } else {
-        # 全 DB で見つかった cookie 名を集約
-        $allNames = @()
-        foreach ($r in $allDbResults) {
-            foreach ($row in $r.Rows) {
-                $n = ($row -split "\|")[1]
-                if ($n -and $allNames -notcontains $n) { $allNames += $n }
-            }
-        }
-        $others = if ($allNames.Count -gt 0) { $allNames -join ", " } else { "none" }
-
-        Write-Host "❌  NG: line_session missing (診断 cookie も見つかりません)" -ForegroundColor Red
-        Write-Host "    Scanned $($candidates.Count) DB(s)  |  found: $others" -ForegroundColor DarkYellow
-        Write-Host ""
-        Write-Host "  考えられる原因：" -ForegroundColor Yellow
-        Write-Host "  1. LINE ログインがまだ完了していない → open-line-login.ps1 を再実行。" -ForegroundColor Yellow
-        Write-Host "  2. line_cb_* が別プロファイルにある → -AllLine で全 line_% を確認。" -ForegroundColor Yellow
-        Write-Host "     .\scripts\ops\verify-line-session.ps1 -AllLine" -ForegroundColor DarkGray
-        Write-Host "  3. callback route が古い（applyDiag 未反映） → Pages を再デプロイ。" -ForegroundColor Yellow
-    }
+} elseif ($hasOkDoneCb) {
+    # ─── OK (via line_cb_ok_done): callback 成功の確認 ──────────────────
+    Write-Host "✅  OK (line_cb_ok_done): callback が成功しています。" -ForegroundColor Green
     Write-Host ""
-    Write-Host "  debug=1 でコールバックステップを確認:" -ForegroundColor DarkGray
+    Write-Host "  Browser : $lineCbOkDoneBrowser" -ForegroundColor Cyan
+    Write-Host "  Profile : $lineCbOkDoneProfile" -ForegroundColor Cyan
+    Write-Host "  DB      : $lineCbOkDoneDb" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "  line_session の enc_len が 0 の可能性があります。" -ForegroundColor Yellow
+    Write-Host "  実際の /admin アクセスで動作確認してください。" -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "  → enable-require-line-auth.ps1 を実行して認証ゲートを有効化できます。" -ForegroundColor Cyan
+    exit 0
+
+} elseif ($hasNgCb) {
+    # ─── NG: 診断 cookie から原因特定済み ────────────────────────────────
+    Write-Host "❌  NG: line_session missing" -ForegroundColor Red
+    Write-Host "    上の「診断 cookie 解析結果」セクションに原因が表示されています。" -ForegroundColor Yellow
+    Write-Host "    そこに記載の対処を行ってから open-line-login.ps1 を再実行してください。" -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "  debug=1 で詳細確認:" -ForegroundColor DarkGray
     $state64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes('{"tenantId":"default","returnTo":"/admin/settings"}'))
     Write-Host "  curl.exe -sS `"https://saas-factory-web-v2.pages.dev/api/auth/line/callback?debug=1&code=dummy&state=$state64`" | ConvertFrom-Json | Format-List" -ForegroundColor DarkGray
+    Write-Host ""
+    exit 2
+
+} else {
+    # ─── NG: 何も見つからない ────────────────────────────────────────────
+    $totalDbs = $candidates.Count
+    Write-Host "❌  NG: line_session も line_cb_* も見つかりません" -ForegroundColor Red
+    Write-Host "    検索した DB 数: $totalDbs" -ForegroundColor DarkYellow
+    Write-Host ""
+    Write-Host "  考えられる原因：" -ForegroundColor Yellow
+    Write-Host "  1. LINE ログインがまだ完了していない。" -ForegroundColor Yellow
+    Write-Host "     → open-line-login.ps1 を実行してログインしてください。" -ForegroundColor White
+    Write-Host ""
+    Write-Host "  2. ログインに使ったプロファイルが違う。" -ForegroundColor Yellow
+    Write-Host "     → -AllLine で全 line_% cookie を表示して手がかりを探す。" -ForegroundColor White
+    Write-Host "       .\scripts\ops\verify-line-session.ps1 -AllLine" -ForegroundColor DarkGray
+    Write-Host ""
+    Write-Host "  3. callback route が診断 cookie 未対応（古いデプロイ）。" -ForegroundColor Yellow
+    Write-Host "     → Pages の最新デプロイを確認して再試行。" -ForegroundColor White
+    Write-Host ""
+    Write-Host "  4. Edge の別プロファイルを指定して再試行：" -ForegroundColor Yellow
+    Write-Host "     .\scripts\ops\open-line-login.ps1 -ProfileDir `"Profile 1`"" -ForegroundColor DarkGray
     Write-Host ""
     exit 2
 }
