@@ -3096,19 +3096,20 @@ app.post('/auth/email/start', async (c) => {
   const expiresAt = Math.floor(Date.now() / 1000) + 600; // 10 minutes
   const identityKey = `email:${rawEmail}`;
 
-  // Store hashed token in D1
+  // Store hashed token in D1 (bootstrap_key stored as SHA-256 hash, never plaintext)
+  const bsKeyHash = bootstrapKey ? await sha256Hex(bootstrapKey) : null;
   await db.prepare(
     `INSERT INTO auth_magic_links
        (token_hash, identity_key, tenant_id, expires_at, return_to, bootstrap_key)
      VALUES (?, ?, ?, ?, ?, ?)`
-  ).bind(tokenHash, identityKey, tenantId, expiresAt, safeReturnTo, bootstrapKey ?? null).run();
+  ).bind(tokenHash, identityKey, tenantId, expiresAt, safeReturnTo, bsKeyHash).run();
 
   // Build callback URL (Pages edge function handles session signing)
+  // bootstrap_key is NOT included in URL — verify reads it from D1 to avoid URL exposure
   const webOrigin = (env.WEB_ORIGIN ?? env.PAGES_ORIGIN ?? 'https://saas-factory-web-v2.pages.dev')
     .replace(/\/+$/, '');
   const cbParams = new URLSearchParams({ token: plainToken, returnTo: safeReturnTo });
   if (tenantId !== 'default') cbParams.set('tenantId', tenantId);
-  if (bootstrapKey) cbParams.set('bootstrapKey', bootstrapKey);
   const callbackUrl = `${webOrigin}/api/auth/email/callback?${cbParams.toString()}`;
 
   // Debug mode: skip email, return URL directly
@@ -3184,8 +3185,8 @@ app.post('/auth/email/verify', async (c) => {
   let body: any = {};
   try { body = await c.req.json(); } catch {}
 
-  const { token, tenantId: bodyTenantId, bootstrapKey: bodyBootstrapKey } = body as {
-    token?: string; tenantId?: string; bootstrapKey?: string;
+  const { token, tenantId: bodyTenantId } = body as {
+    token?: string; tenantId?: string;
   };
 
   if (!token) {
@@ -3217,7 +3218,8 @@ app.post('/auth/email/verify', async (c) => {
 
   const identityKey: string = row.identity_key;
   const tenantId: string = bodyTenantId ?? row.tenant_id ?? 'default';
-  const bootstrapKey: string | undefined = bodyBootstrapKey ?? row.bootstrap_key ?? undefined;
+  // bootstrap_key in D1 is SHA-256 hash (set by /start); plaintext never stored
+  const bsKeyHash: string | null = row.bootstrap_key ?? null;
   const email: string = identityKey.startsWith('email:') ? identityKey.slice(6) : identityKey;
   const displayName: string = email;
 
@@ -3240,15 +3242,15 @@ app.post('/auth/email/verify', async (c) => {
                     membersFound: true });
   }
 
-  // --- Step 2: Bootstrap key check ---
-  if (bootstrapKey) {
+  // --- Step 2: Bootstrap key check (hash comparison — plaintext never leaves D1) ---
+  if (bsKeyHash) {
     const bsRaw = await kv.get(`admin:bootstrap:${tenantId}`);
     if (bsRaw) {
       const bs: AdminBootstrapStore = JSON.parse(bsRaw);
-      const keyHash = await sha256Hex(bootstrapKey);
+      // D1 stores SHA-256 hash; compare directly with bs.keyHash (also SHA-256)
       const used = !!bs.usedAt;
       const expired = new Date(bs.expiresAt) <= new Date();
-      const valid = (bs.keyHash === keyHash && !used && !expired);
+      const valid = (bs.keyHash === bsKeyHash && !used && !expired);
       if (valid) {
         const bootstrapped: AdminMembersStore = {
           version: 1,
@@ -3269,7 +3271,7 @@ app.post('/auth/email/verify', async (c) => {
       }
     }
     return c.json({ ok: true, identityKey, email, displayName, allowed: false,
-                    membersFound: false, bootstrapInfo: { present: !!bootstrapKey, valid: false } });
+                    membersFound: false, bootstrapError: 'invalid_or_used' });
   }
 
   // --- Step 3: Legacy fallback (allowedAdminLineUserIds) ---

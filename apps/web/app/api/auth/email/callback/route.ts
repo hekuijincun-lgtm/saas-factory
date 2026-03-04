@@ -49,7 +49,6 @@ export async function GET(req: Request) {
   const token = url.searchParams.get("token");
   const returnToRaw = url.searchParams.get("returnTo") ?? "/admin";
   const tenantId = url.searchParams.get("tenantId") ?? "default";
-  const bootstrapKey = url.searchParams.get("bootstrapKey") ?? undefined;
 
   // ── open-redirect guard ───────────────────────────────────────────────────
   const returnTo =
@@ -74,11 +73,7 @@ export async function GET(req: Request) {
   const verifyRes = await fetch(`${apiBase}/auth/email/verify`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "cache-control": "no-store" },
-    body: JSON.stringify({
-      token,
-      tenantId,
-      ...(bootstrapKey ? { bootstrapKey } : {}),
-    }),
+    body: JSON.stringify({ token, tenantId }),
   }).catch(() => null);
 
   if (!verifyRes || !verifyRes.ok) {
@@ -113,6 +108,7 @@ export async function GET(req: Request) {
     role,
     membersFound,
     bootstrapped,
+    bootstrapError,
   } = data as {
     identityKey: string;
     email: string;
@@ -121,15 +117,19 @@ export async function GET(req: Request) {
     role?: string;
     membersFound?: boolean;
     bootstrapped?: boolean;
+    bootstrapError?: string;
   };
 
   // ── unauthorized ──────────────────────────────────────────────────────────
   if (!allowed) {
     if (isDebug) {
       return new Response(
-        JSON.stringify({ ok: false, step: "allowed_check", identityKey, membersFound, bootstrapped }),
+        JSON.stringify({ ok: false, step: "allowed_check", identityKey, membersFound, bootstrapped, bootstrapError }),
         { status: 200, headers: { "content-type": "application/json" } }
       );
+    }
+    if (bootstrapError) {
+      return NextResponse.redirect(new URL(`/login?reason=invalid_bootstrap_key`, url.origin));
     }
     return NextResponse.redirect(
       new URL(`/admin/unauthorized?userId=${encodeURIComponent(identityKey)}`, url.origin)

@@ -5,13 +5,14 @@ import { useState } from "react";
 interface Props {
   tenantId: string;
   returnTo: string;
-  bootstrapKey: string | null;
   reason: string | null;
   isDebug: boolean;
 }
 
-export default function LoginForm({ tenantId, returnTo, bootstrapKey, reason, isDebug }: Props) {
+export default function LoginForm({ tenantId, returnTo, reason, isDebug }: Props) {
   const [email, setEmail] = useState("");
+  const [bootstrapKey, setBootstrapKey] = useState("");
+  const [showBootstrapKey, setShowBootstrapKey] = useState(false);
   const [status, setStatus] = useState<"idle" | "loading" | "sent" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState("");
   const [debugLink, setDebugLink] = useState<string | null>(null);
@@ -33,7 +34,7 @@ export default function LoginForm({ tenantId, returnTo, bootstrapKey, reason, is
           email: trimmed,
           returnTo,
           tenantId,
-          ...(bootstrapKey ? { bootstrapKey } : {}),
+          ...(bootstrapKey.trim() ? { bootstrapKey: bootstrapKey.trim() } : {}),
           ...(isDebug ? { debug: "1" } : {}),
         }),
       });
@@ -49,6 +50,8 @@ export default function LoginForm({ tenantId, returnTo, bootstrapKey, reason, is
             ? "メールアドレスの形式が正しくありません。"
             : err === "email_not_configured"
             ? "メール送信が設定されていません（管理者に連絡してください）。"
+            : err === "invalid_bootstrap_key"
+            ? "招待コードが無効または使用済みです。"
             : `エラー: ${err || "不明なエラー"}`;
         setErrorMsg(msg);
         setStatus("error");
@@ -58,6 +61,7 @@ export default function LoginForm({ tenantId, returnTo, bootstrapKey, reason, is
       if (data.debug && typeof data.callbackUrl === "string") {
         setDebugLink(data.callbackUrl);
       }
+      setBootstrapKey("");
       setStatus("sent");
     } catch {
       setErrorMsg("ネットワークエラーが発生しました。");
@@ -68,7 +72,6 @@ export default function LoginForm({ tenantId, returnTo, bootstrapKey, reason, is
   // Build LINE login URL preserving context
   const lineParams = new URLSearchParams({ returnTo });
   if (tenantId !== "default") lineParams.set("tenantId", tenantId);
-  if (bootstrapKey) lineParams.set("bootstrapKey", bootstrapKey);
   const lineStartUrl = `/api/auth/line/start?${lineParams.toString()}`;
 
   return (
@@ -169,6 +172,30 @@ export default function LoginForm({ tenantId, returnTo, bootstrapKey, reason, is
                   autoComplete="email"
                   className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100 transition"
                 />
+              </div>
+
+              {/* Bootstrap key input (optional — for first-time owner registration) */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                  招待コード（任意）
+                </label>
+                <div className="relative">
+                  <input
+                    type={showBootstrapKey ? "text" : "password"}
+                    value={bootstrapKey}
+                    onChange={(e) => setBootstrapKey(e.target.value)}
+                    placeholder="初回登録用の招待コードがある場合のみ"
+                    autoComplete="off"
+                    className="w-full rounded-xl border border-slate-200 px-4 py-3 pr-16 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100 transition"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowBootstrapKey(v => !v)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-slate-600 px-1"
+                  >
+                    {showBootstrapKey ? "隠す" : "表示"}
+                  </button>
+                </div>
               </div>
 
               {status === "error" && (

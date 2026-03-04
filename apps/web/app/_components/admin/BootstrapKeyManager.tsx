@@ -59,9 +59,9 @@ export default function BootstrapKeyManager() {
     }
   }
 
-  function getLoginUrl(key: string) {
+  function getLoginUrl() {
     const origin = typeof window !== 'undefined' ? window.location.origin : '';
-    const params = new URLSearchParams({ bootstrapKey: key });
+    const params = new URLSearchParams();
     if (tenantId) params.set('tenantId', tenantId);
     return `${origin}/login?${params.toString()}`;
   }
@@ -86,7 +86,8 @@ export default function BootstrapKeyManager() {
           <h2 className="text-base font-semibold text-gray-900">Bootstrap Key 発行</h2>
           <p className="mt-1 text-sm text-gray-500">
             新しい管理者オーナーを安全に登録するための使い捨てトークンです。
-            発行した URL を相手に共有し、LINE ログインすることでオーナーとして自動登録されます。
+            ログイン URL と招待コードを別々に共有してください。
+            受け取った方が /login でメールアドレスと招待コードを入力するとオーナーとして登録されます。
           </p>
           <ul className="mt-3 text-sm text-gray-500 space-y-1 list-disc list-inside">
             <li>キーは SHA-256 ハッシュのみ保存（平文は KV に残りません）</li>
@@ -156,13 +157,13 @@ export default function BootstrapKeyManager() {
 
           {/* ログイン URL */}
           <div>
-            <p className="text-xs font-medium text-gray-600 mb-1">ログイン URL（共有用）</p>
+            <p className="text-xs font-medium text-gray-600 mb-1">ログイン URL（招待コードは別途共有）</p>
             <div className="flex items-center gap-2">
               <code className="flex-1 rounded-lg bg-white border border-yellow-300 px-3 py-2 text-xs font-mono break-all text-gray-800 select-all">
-                {getLoginUrl(result.bootstrapKeyPlain)}
+                {getLoginUrl()}
               </code>
               <button
-                onClick={() => copyText(getLoginUrl(result.bootstrapKeyPlain), setUrlCopied)}
+                onClick={() => copyText(getLoginUrl(), setUrlCopied)}
                 className="shrink-0 rounded-lg border border-yellow-300 bg-white px-3 py-2 text-xs font-medium text-gray-700 hover:bg-yellow-50 transition-colors"
               >
                 {urlCopied ? '✓ コピー済み' : 'コピー'}
@@ -171,8 +172,9 @@ export default function BootstrapKeyManager() {
           </div>
 
           <p className="text-xs text-yellow-700">
-            この URL を受け取った方が LINE ログインすると、オーナーとして自動登録されます。
-            URL を閉じると再表示できません（再発行が必要です）。
+            ログイン URL と招待コード（Bootstrap Key）を別々に相手に共有してください。
+            /login でメールアドレスと招待コードを入力するとオーナーとして自動登録されます。
+            キーを閉じると再表示できません（再発行が必要です）。
           </p>
         </div>
       )}

@@ -8,7 +8,6 @@ export default async function LoginPage({
   searchParams: Promise<{
     tenantId?: string;
     returnTo?: string;
-    bootstrapKey?: string;
     reason?: string;
     debug?: string;
   }>;
@@ -22,7 +21,6 @@ export default async function LoginPage({
     rawReturnTo.startsWith("/") && !rawReturnTo.startsWith("//")
       ? rawReturnTo
       : "/admin";
-  const bootstrapKey = params.bootstrapKey ?? null;
   const reason = params.reason ?? null;
   const isDebug = params.debug === "1";
 
@@ -30,7 +28,6 @@ export default async function LoginPage({
     <LoginForm
       tenantId={tenantId}
       returnTo={returnTo}
-      bootstrapKey={bootstrapKey}
       reason={reason}
       isDebug={isDebug}
     />
