@@ -468,7 +468,7 @@ export async function POST(req: Request) {
   // ── debug=1 POST: return tenant resolution trace without processing ──────
   if (debugMode === "1") {
     // Wait briefly for log POST to complete so we can report its status
-    await new Promise(r => setTimeout(r, 300));
+    await new Promise(r => setTimeout(r, 800));
     return NextResponse.json({
       ok: true, stamp: STAMP, where, debug: 1,
       step: "tenant_resolved",
