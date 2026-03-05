@@ -10,6 +10,8 @@ interface Props {
   onBack: () => void;
   onDone: () => void;
   consentText?: string;
+  /** 施術同意文（眉毛施術設定で設定した長文テキスト）— チェックボックスの前に独立したブロックとして表示 */
+  treatmentConsentText?: string;
   surveyQuestions?: EyebrowSurveyQuestion[];
   tenantId?: string;
 }
@@ -83,7 +85,7 @@ function SuccessScreen({
   );
 }
 
-export default function StepConfirm({ booking, onBack, onDone, consentText, surveyQuestions, tenantId }: Props) {
+export default function StepConfirm({ booking, onBack, onDone, consentText, treatmentConsentText, surveyQuestions, tenantId }: Props) {
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
@@ -263,6 +265,16 @@ export default function StepConfirm({ booking, onBack, onDone, consentText, surv
           />
         </div>
       </div>
+
+      {/* 施術同意文 — separate treatment consent block (only shown if set by admin) */}
+      {treatmentConsentText && (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+          <p className="text-xs font-semibold text-amber-700 mb-2">施術同意文</p>
+          <div className="max-h-40 overflow-y-auto text-xs text-amber-900 leading-relaxed whitespace-pre-wrap">
+            {treatmentConsentText}
+          </div>
+        </div>
+      )}
 
       {/* Agree checkbox */}
       <label className="flex items-start gap-3 cursor-pointer">

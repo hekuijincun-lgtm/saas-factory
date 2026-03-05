@@ -134,6 +134,8 @@ export default function BookingFlow() {
 
   // 管理者設定（consentText, staffSelectionEnabled, eyebrow survey）
   const [consentText, setConsentText] = useState(DEFAULT_CONSENT);
+  // 施術同意文 (eyebrow treatment consent) — displayed as a separate text block in StepConfirm
+  const [treatmentConsentText, setTreatmentConsentText] = useState<string>('');
   const [staffSelectionEnabled, setStaffSelectionEnabled] = useState(true);
   const [surveyEnabled, setSurveyEnabled] = useState(false);
   const [surveyQuestions, setSurveyQuestions] = useState<EyebrowSurveyQuestion[]>([]);
@@ -154,8 +156,12 @@ export default function BookingFlow() {
   useEffect(() => {
     fetchAdminSettings(tenantId).then(settings => {
       const raw = settings as any;
+      // Generic booking agreement checkbox text (top-level)
       const ct = raw.consentText || raw.eyebrow?.consentText;
       if (ct) setConsentText(ct);
+      // Treatment-specific consent text — displayed as a SEPARATE block above the checkbox
+      const tct = String(raw.eyebrow?.consentText ?? raw.verticalConfig?.consentText ?? "").trim();
+      if (tct) setTreatmentConsentText(tct);
       if (raw.staffSelectionEnabled === false) setStaffSelectionEnabled(false);
       if (raw.eyebrow?.surveyEnabled === true) setSurveyEnabled(true);
       if (Array.isArray(raw.eyebrow?.surveyQuestions)) setSurveyQuestions(raw.eyebrow.surveyQuestions);
@@ -279,6 +285,7 @@ export default function BookingFlow() {
           onBack={handleBackFromConfirm}
           onDone={reset}
           consentText={consentText}
+          treatmentConsentText={treatmentConsentText}
           surveyQuestions={enabledSurveyQuestions}
           tenantId={tenantId}
         />

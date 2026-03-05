@@ -279,13 +279,13 @@ export default function LineSetupPage() {
     setMessage("");
     try {
       const payload: Creds = {
-        channelId:        (creds.channelId ?? "").trim(),
-        channelSecret:    (creds.channelSecret ?? "").trim(),
+        channelId:          (creds.channelId ?? "").trim(),
+        channelSecret:      (creds.channelSecret ?? "").trim(),
         channelAccessToken: (creds.channelAccessToken ?? "").trim(),
-        bookingUrl:       (creds.bookingUrl ?? "").trim(),
+        bookingUrl:         (creds.bookingUrl ?? "").trim(),
       };
 
-      // 既存の /admin/settings に統合して保存
+      // Step 1: save via general settings (saves channelId + onboarding flag)
       await saveAdminSettings(
         {
           integrations: {
@@ -301,6 +301,22 @@ export default function LineSetupPage() {
         },
         tenantId
       );
+
+      // Step 2: also call the dedicated save endpoint to trigger /v2/bot/info fetch
+      // → writes line:destination-to-tenant:{botUserId} KV key (enables webhook without ?tenantId=)
+      // Best-effort: don't fail the whole save if this step fails
+      await fetch(
+        `/api/proxy/admin/integrations/line/messaging/save?tenantId=${encodeURIComponent(tenantId)}`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            channelAccessToken: payload.channelAccessToken,
+            channelSecret:      payload.channelSecret,
+            webhookUrl:         payload.bookingUrl || undefined,
+          }),
+        }
+      ).catch(() => null);
 
       setMessage("保存しました ✅");
       setInitialCreds(payload);

@@ -236,7 +236,14 @@ async function getTenantLineConfig(
     process.env.NEXT_PUBLIC_API_BASE ??
     ""
   ).replace(/\/+$/, "");
-  const adminToken = process.env.ADMIN_TOKEN ?? "";
+  // Read ADMIN_TOKEN: CF Pages bindings (secrets) live in getRequestContext().env,
+  // NOT in process.env. Check binding first; fall back to plain env var.
+  let adminToken = "";
+  try {
+    const cfEnv = (getRequestContext()?.env as any);
+    if (cfEnv?.ADMIN_TOKEN) adminToken = String(cfEnv.ADMIN_TOKEN);
+  } catch {}
+  if (!adminToken) adminToken = process.env.ADMIN_TOKEN ?? "";
 
   if (apiBase) {
     try {
@@ -333,11 +340,15 @@ export async function POST(req: Request) {
   const raw = await req.arrayBuffer();
 
   // Resolve tenantId: query param → destination KV lookup → env default → "default"
-  let tenantId = searchParams.get("tenantId") ?? process.env.LINE_DEFAULT_TENANT_ID ?? null;
+  let tenantId: string | null = searchParams.get("tenantId") ?? process.env.LINE_DEFAULT_TENANT_ID ?? null;
+  let resolvedBy = tenantId ? "query_param" : "pending";
+  let destination = "";
+  let kvHit = false;
+
   if (!tenantId) {
     try {
       const payloadForLookup = JSON.parse(new TextDecoder().decode(raw));
-      const destination = String(payloadForLookup?.destination ?? "").trim();
+      destination = String(payloadForLookup?.destination ?? "").trim();
       if (destination) {
         const apiBase = (
           process.env.API_BASE ?? process.env.NEXT_PUBLIC_API_BASE ?? ""
@@ -348,15 +359,62 @@ export async function POST(req: Request) {
           ).catch(() => null);
           if (r?.ok) {
             const d = await r.json() as any;
-            if (d?.tenantId) tenantId = String(d.tenantId);
+            if (d?.tenantId) {
+              tenantId = String(d.tenantId);
+              kvHit = true;
+              resolvedBy = "destination_kv";
+            }
           }
+          if (!tenantId) {
+            resolvedBy = "destination_miss"; // destination present but no KV entry
+          }
+        } else {
+          resolvedBy = "no_api_base";
         }
+      } else {
+        resolvedBy = "no_destination";
       }
-    } catch { /* ignore — fall through to default */ }
+    } catch { resolvedBy = "parse_error"; }
   }
-  tenantId = tenantId ?? "default";
+
+  if (!tenantId && process.env.LINE_DEFAULT_TENANT_ID) {
+    tenantId = process.env.LINE_DEFAULT_TENANT_ID;
+    resolvedBy = "env_default";
+  }
+  if (!tenantId) {
+    tenantId = "default";
+    if (resolvedBy === "pending") resolvedBy = "hardcoded_default";
+    else if (resolvedBy === "destination_miss" || resolvedBy === "no_destination" ||
+             resolvedBy === "parse_error" || resolvedBy === "no_api_base") {
+      resolvedBy += "+hardcoded_default";
+    }
+  }
 
   const cfg = await getTenantLineConfig(tenantId, origin);
+
+  // ── debug=1 POST: return tenant resolution trace without processing ──────
+  if (debugMode === "1") {
+    const sigOk = sig ? await verifyLineSignature(raw, sig, cfg.channelSecret).catch(() => false) : false;
+    return NextResponse.json({
+      ok: true, stamp: STAMP, where, debug: 1,
+      step: "tenant_resolved",
+      destination: destination || null,
+      resolvedTenantId: tenantId,
+      resolvedBy,
+      kvHit,
+      cfgSource: cfg.source,
+      cfgHasSecret: !!cfg.channelSecret,
+      cfgHasToken:  !!cfg.channelAccessToken,
+      sigVerified: sigOk,
+      hasSig: !!sig,
+      allowBadSig,
+      hint: resolvedBy.includes("destination_miss")
+        ? "KV key missing — re-save LINE credentials for this tenant"
+        : resolvedBy === "no_api_base"
+        ? "API_BASE env var not set in Pages — cannot look up KV"
+        : undefined,
+    });
+  }
 
   if (!cfg.channelSecret) {
     return NextResponse.json(

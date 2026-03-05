@@ -365,6 +365,31 @@ app.get("/__build", (c) => c.json({ ok: true, stamp: "API_BUILD_V1" }));
     const merged = { ...existing, ...patch }
     await kv.put(key, JSON.stringify(merged))
 
+    // Auto-register LINE destination-to-tenant when credentials are present.
+    // Runs as waitUntil so it doesn't block the response.
+    // Handles both line-setup page (PUT /admin/settings) and any other save path.
+    const lineToken = String(
+      patch.integrations?.line?.channelAccessToken
+      ?? existing?.integrations?.line?.channelAccessToken
+      ?? ""
+    ).trim();
+    if (lineToken) {
+      const registerBot = async () => {
+        try {
+          const botCheck = await verifyLineToken(lineToken);
+          if (botCheck.status === "ok" && botCheck.userId) {
+            await kv.put(`line:destination-to-tenant:${botCheck.userId}`, tenantId);
+          }
+        } catch {}
+      };
+      const execCtx = (c as any).executionCtx ?? (c as any).execution;
+      if (execCtx?.waitUntil) {
+        execCtx.waitUntil(registerBot());
+      } else {
+        registerBot().catch(() => null);
+      }
+    }
+
     return c.json({ ok:true, tenantId, key, saved: merged })
   })
   // === /ADMIN_SETTINGS_V1 ===
@@ -3696,13 +3721,9 @@ app.post("/admin/integrations/line/messaging/save", async (c) => {
     const tokenCheck = await verifyLineToken(channelAccessToken);
     const kind = tokenCheck.status === "ok" ? "linked" : "partial";
 
-    // Write destination-to-tenant mapping so webhook can resolve tenantId without ?tenantId=
+    // Write destination-to-tenant mapping (no TTL = permanent until credentials change)
     if (tokenCheck.status === "ok" && tokenCheck.userId) {
-      await kv.put(
-        `line:destination-to-tenant:${tokenCheck.userId}`,
-        tenantId,
-        { expirationTtl: 60 * 60 * 24 * 90 } // 90 days
-      );
+      await kv.put(`line:destination-to-tenant:${tokenCheck.userId}`, tenantId);
     }
 
     return c.json({
@@ -3751,13 +3772,18 @@ app.delete("/admin/integrations/line/messaging", async (c) => {
 
 // ── GET /line/destination-to-tenant ─────────────────────────────────────────
 // Resolves tenantId from a LINE webhook `destination` field (= bot channel userId).
-// Written by POST /admin/integrations/line/messaging/save on successful token verify.
-// Used by the Pages webhook route to resolve tenantId without requiring ?tenantId=.
-// Public endpoint — no credentials, destination is not sensitive (it's the bot's own userId).
+// SECURITY: only enabled when ALLOW_PUBLIC_LINE_LOOKUP=1 env var is set.
+// This endpoint is called server-side by the Pages webhook (not from browser), so it is
+// safe to enable in production as long as the source IP is Cloudflare Pages infra.
+// Disable in production if you don't want this public (set ALLOW_PUBLIC_LINE_LOOKUP=0 or unset).
 app.get("/line/destination-to-tenant", async (c) => {
+  const env = c.env as any;
+  if (env?.ALLOW_PUBLIC_LINE_LOOKUP !== "1") {
+    return c.json({ ok: false, error: "not_found" }, 404);
+  }
   const destination = (c.req.query("destination") ?? "").trim();
   if (!destination) return c.json({ ok: false, error: "missing_destination" }, 400);
-  const kv = (c.env as any).SAAS_FACTORY;
+  const kv = env.SAAS_FACTORY;
   if (!kv) return c.json({ ok: false, error: "kv_missing" }, 500);
   const tenantId = await kv.get(`line:destination-to-tenant:${destination}`);
   if (!tenantId) return c.json({ ok: false, error: "not_found" }, 404);
