@@ -2,24 +2,9 @@
 
 import { useState } from "react";
 
-function slugify(s: string): string {
-  return (
-    s
-      .toLowerCase()
-      .replace(/[^\w]/g, "-")
-      .replace(/-+/g, "-")
-      .replace(/^-|-$/g, "")
-      .slice(0, 20) || "shop"
-  );
-}
-
-function randomSuffix(): string {
-  return Math.random().toString(36).slice(2, 6);
-}
-
 export default function SignupPage() {
   const [email, setEmail] = useState("");
-  const [tenantName, setTenantName] = useState("");
+  const [storeName, setStoreName] = useState("");
   const [status, setStatus] = useState<"idle" | "loading" | "sent" | "error">(
     "idle"
   );
@@ -30,10 +15,6 @@ export default function SignupPage() {
     e.preventDefault();
     const emailTrimmed = email.trim().toLowerCase();
     if (!emailTrimmed) return;
-
-    const name = tenantName.trim() || emailTrimmed.split("@")[0];
-    const tenantId = slugify(name) + "-" + randomSuffix();
-    const returnTo = `/admin?tenantId=${encodeURIComponent(tenantId)}`;
 
     const isDebug =
       typeof window !== "undefined" &&
@@ -48,10 +29,8 @@ export default function SignupPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         email: emailTrimmed,
-        tenantId,
-        tenantName: name,
-        signup: "1",
-        returnTo,
+        storeName: storeName.trim(),
+        signup: true,
         ...(isDebug ? { debug: "1" } : {}),
       }),
     }).catch(() => null);
@@ -161,8 +140,8 @@ export default function SignupPage() {
               </label>
               <input
                 type="text"
-                value={tenantName}
-                onChange={(e) => setTenantName(e.target.value)}
+                value={storeName}
+                onChange={(e) => setStoreName(e.target.value)}
                 placeholder="例：渋谷ネイルサロン"
                 maxLength={40}
                 className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100 transition"

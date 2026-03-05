@@ -3067,22 +3067,17 @@ app.post('/auth/email/start', async (c) => {
   try { body = await c.req.json(); } catch {}
 
   const rawEmail: string = String(body.email ?? '').trim().toLowerCase();
-  const returnTo: string = String(body.returnTo ?? '/admin');
-  const tenantId: string = String(body.tenantId ?? 'default');
   const bootstrapKey: string | undefined = body.bootstrapKey || undefined;
   const isDebug = body.debug === '1' || body.debug === true;
   const isDiagnose = body.diagnose === '1' || body.diagnose === true; // like debug but goes through Resend
+  const isSignup = body.signup === true || body.signup === '1' || body.signup === 'true';
 
   // Basic email validation
   if (!rawEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(rawEmail)) {
     return c.json({ ok: false, error: 'invalid_email' }, 400);
   }
 
-  // returnTo safety: must be a relative path (open-redirect guard)
-  const safeReturnTo = (returnTo.startsWith('/') && !returnTo.startsWith('//'))
-    ? returnTo : '/admin';
-
-  // Rate limit: max 3 sends per 60s per email
+  // Rate limit: max 3 sends per 60s per email (checked before any KV writes)
   const rlKey = `email:rl:${rawEmail}`;
   const rlRaw = await kv.get(rlKey);
   const rlCount = rlRaw ? parseInt(rlRaw, 10) : 0;
@@ -3091,11 +3086,22 @@ app.post('/auth/email/start', async (c) => {
   }
   await kv.put(rlKey, String(rlCount + 1), { expirationTtl: 60 });
 
-  // Signup: store pending init metadata so /verify can provision tenant on first login
-  if (body.signup === '1' || body.signup === true) {
-    const tn = String(body.tenantName ?? '').trim().slice(0, 80) || rawEmail.split('@')[0];
-    await kv.put(`signup:init:${tenantId}`, JSON.stringify({ tenantName: tn, ownerEmail: rawEmail }),
+  // Determine tenantId + returnTo: server-generated for signup, client-provided for login
+  let tenantId: string;
+  let safeReturnTo: string;
+  if (isSignup) {
+    const storeName = String(body.storeName ?? '').trim().slice(0, 80) || rawEmail.split('@')[0];
+    const base = storeName.toLowerCase()
+      .replace(/[^\w]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 20) || 'shop';
+    tenantId = base + '-' + crypto.randomUUID().slice(0, 4);
+    safeReturnTo = `/admin?tenantId=${encodeURIComponent(tenantId)}`;
+    await kv.put(`signup:init:${tenantId}`, JSON.stringify({ storeName, ownerEmail: rawEmail }),
                  { expirationTtl: 900 }); // 15 min
+  } else {
+    tenantId = String(body.tenantId ?? 'default');
+    const returnTo = String(body.returnTo ?? '/admin');
+    safeReturnTo = (returnTo.startsWith('/') && !returnTo.startsWith('//'))
+      ? returnTo : '/admin';
   }
 
   // Generate token (plaintext never stored in DB)
@@ -3247,8 +3253,8 @@ app.post('/auth/email/verify', async (c) => {
   // --- Signup provisioning (signup:init written by /start when signup=1) ---
   const signupInitRaw = await kv.get(`signup:init:${tenantId}`);
   if (signupInitRaw) {
-    const si: { tenantName?: string } = JSON.parse(signupInitRaw);
-    const storedName = si.tenantName || email;
+    const si: { storeName?: string } = JSON.parse(signupInitRaw);
+    const storedName = si.storeName || email;
     const ownerStore: AdminMembersStore = {
       version: 1,
       members: [{
@@ -3259,6 +3265,7 @@ app.post('/auth/email/verify', async (c) => {
         createdAt: new Date().toISOString(),
       }],
     };
+    await kv.put('tenant:exists:' + tenantId, '1');
     await kv.put(`admin:members:${tenantId}`, JSON.stringify(ownerStore));
     const seedSettings = mergeSettings(DEFAULT_ADMIN_SETTINGS, {
       storeName: storedName,
