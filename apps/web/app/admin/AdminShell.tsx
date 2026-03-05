@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useAdminTenantId } from "@/src/lib/useAdminTenantId";
+import { useAdminTenantId, withTenant } from "@/src/lib/useAdminTenantId";
 import {
   Settings,
   ClipboardList,
@@ -43,11 +43,6 @@ const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
 // サイドバー内部
 // ============================================================
 
-/** tenantId をパスに付与する。tenantId が空でなければ常に付与（default を含む）。 */
-function withTenant(path: string, tenantId: string): string {
-  if (!tenantId) return path;
-  return `${path}?tenantId=${encodeURIComponent(tenantId)}`;
-}
 
 function Sidebar({
   storeName,
@@ -173,16 +168,22 @@ export default function AdminShell({
   useEffect(() => {
     if (tenantStatus !== "ready") return;
 
-    // セッションから tenantId を取得（URL より優先）
+    // ── URL canonicalization ──────────────────────────────────────────
+    // セッション tenantId を正として URL を正規化する。
+    // ① URL の tenantId が間違っている → 修正
+    // ② URL に tenantId がなく、セッションが non-default → 付与
+    // ③ その他（URL 正しい or default テナント+URL なし）→ 何もしない
+    // ※ early return は廃止: リダイレクトと settings fetch を並行実行する
     const params = new URLSearchParams(window.location.search);
     const urlTenantId = params.get("tenantId");
-
-    // URL の tenantId がセッションと異なる場合はリダイレクトして正規化
-    if (urlTenantId && urlTenantId !== sessionTenantId) {
+    const needsCanon =
+      (urlTenantId !== null && urlTenantId !== sessionTenantId) ||
+      (urlTenantId === null && sessionTenantId !== "default");
+    if (needsCanon) {
       const newParams = new URLSearchParams(window.location.search);
       newParams.set("tenantId", sessionTenantId);
       router.replace(`${window.location.pathname}?${newParams.toString()}`);
-      return;
+      // early return 廃止 → settings fetch を続行（storeName 取得漏れ防止）
     }
 
     // API から storeName + onboarding フラグを取得

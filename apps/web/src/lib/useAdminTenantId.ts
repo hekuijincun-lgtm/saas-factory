@@ -48,6 +48,16 @@ export interface AdminTenantState {
   role: string | null;
 }
 
+/**
+ * admin ページ遷移用 URL ヘルパ（単一実装）。
+ * tenantId を path の ?tenantId= に付与する。
+ * AdminShell / onboarding / page.tsx など全 admin リンクで共用する。
+ */
+export function withTenant(path: string, tenantId: string): string {
+  if (!tenantId) return path;
+  return `${path}?tenantId=${encodeURIComponent(tenantId)}`;
+}
+
 export function useAdminTenantId(): AdminTenantState {
   const [state, setState] = useState<AdminTenantState>({
     status: "loading",

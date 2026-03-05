@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import AdminTopBar from '../_components/ui/AdminTopBar';
 import AdminDashboard from '../_components/admin/AdminDashboard';
-import { useAdminTenantId } from '@/src/lib/useAdminTenantId';
+import { useAdminTenantId, withTenant } from '@/src/lib/useAdminTenantId';
 
 function OnboardingBanner() {
   const { tenantId } = useAdminTenantId();
@@ -36,7 +36,7 @@ function OnboardingBanner() {
         </div>
       </div>
       <Link
-        href={`/admin/onboarding?tenantId=${encodeURIComponent(tenantId)}`}
+        href={withTenant("/admin/onboarding", tenantId)}
         className="flex-shrink-0 rounded-xl border border-amber-300 bg-white px-4 py-2 text-xs font-semibold text-amber-800 hover:bg-amber-100 transition-colors"
       >
         設定を完了する →

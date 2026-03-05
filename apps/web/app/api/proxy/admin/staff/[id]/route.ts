@@ -51,6 +51,10 @@ async function forward(req: Request, method: string): Promise<Response> {
     },
   });
   if (tokenInjected) out.headers.set("x-admin-token-present", "1");
+  // Tenant observability headers
+  out.headers.set("x-tenant-query",     tenantId);
+  out.headers.set("x-tenant-session",   sessionTenantId ?? "(none)");
+  out.headers.set("x-tenant-effective", sessionTenantId ?? tenantId);
   if (isDebug) {
     applyDebugHeaders(out.headers, { stamp: makeDebugStamp(), isAdminRoute: true, tokenConfigured, tokenInjected });
   }

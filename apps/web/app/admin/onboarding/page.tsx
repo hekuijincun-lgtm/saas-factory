@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import AdminTopBar from '../../_components/ui/AdminTopBar';
 import { saveAdminSettings } from '../../lib/adminApi';
+import { withTenant } from '@/src/lib/useAdminTenantId';
 
 interface CheckItem {
   id: string;
@@ -175,7 +176,7 @@ export default function OnboardingPage() {
               {/* Action link — tenantId を維持して遷移 */}
               {!item.done && (
                 <Link
-                  href={`${item.href}?tenantId=${encodeURIComponent(tenantId)}`}
+                  href={withTenant(item.href, tenantId)}
                   className="flex-shrink-0 rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
                 >
                   設定する →

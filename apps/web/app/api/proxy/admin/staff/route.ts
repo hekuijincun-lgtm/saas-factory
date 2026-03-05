@@ -46,6 +46,10 @@ async function forward(req: Request): Promise<Response> {
     headers: { "content-type": outCt, "cache-control": "no-store" },
   });
   if (tokenInjected) out.headers.set("x-admin-token-present", "1");
+  // Tenant observability headers — always present so curl/devtools can verify isolation
+  out.headers.set("x-tenant-query",     tenantId);
+  out.headers.set("x-tenant-session",   sessionTenantId ?? "(none)");
+  out.headers.set("x-tenant-effective", sessionTenantId ?? tenantId);
   if (isDebug) {
     applyDebugHeaders(out.headers, { stamp: makeDebugStamp(), isAdminRoute: true, tokenConfigured, tokenInjected });
   }
