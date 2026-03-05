@@ -489,6 +489,8 @@ export async function POST(req: Request) {
       logPostStatus: _logPostStatus,
       logHasApiBase: !!webhookLogApiBase,
       logHasToken: !!internalToken,
+      _dbgTokenLen: internalToken.length,
+      _dbgApiBase: webhookLogApiBase.substring(0, 40),
       hint: resolvedBy.includes("destination_miss")
         ? "KV key missing — re-save LINE credentials for this tenant"
         : resolvedBy === "no_api_base"
