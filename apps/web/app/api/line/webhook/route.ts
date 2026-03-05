@@ -455,6 +455,38 @@ export async function POST(req: Request) {
   }
 
   const events = Array.isArray(payload?.events) ? payload.events : [];
+
+  // ── Webhook receipt log: persist to KV for diagnostic UI ──────────────────
+  {
+    const apiBase = (
+      process.env.API_BASE ?? process.env.NEXT_PUBLIC_API_BASE ?? ""
+    ).replace(/\/+$/, "");
+    const firstEvent = events[0] as any;
+    const logPayload = {
+      ts: new Date().toISOString(),
+      tenantId,
+      destination: destination || payload?.destination || null,
+      resolvedBy,
+      sigVerified: verified,
+      hasSig: !!sig,
+      allowBadSig,
+      eventCount: events.length,
+      firstEventType: firstEvent?.type ?? null,
+      firstMessageType: firstEvent?.message?.type ?? null,
+      firstText: String(firstEvent?.message?.text ?? "").slice(0, 80) || null,
+      hasReplyToken: !!firstEvent?.replyToken,
+      stamp: STAMP,
+    };
+    if (apiBase) {
+      // Fire-and-forget: save webhook receipt log via Workers
+      fetch(`${apiBase}/admin/integrations/line/last-webhook`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tenantId, log: logPayload }),
+      }).catch(() => null);
+    }
+  }
+
   const ev = events.find(
     (x: any) =>
       x?.type === "message" && x?.message?.type === "text" && x?.replyToken
