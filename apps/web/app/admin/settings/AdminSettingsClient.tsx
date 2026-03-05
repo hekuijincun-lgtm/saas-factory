@@ -2,7 +2,7 @@
 "use client";
 
 import { useState, useEffect } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useAdminTenantId } from '@/src/lib/useAdminTenantId';
 import { CalendarDays, Building2, Clock, Link as LinkIcon, AlertCircle, RefreshCw, Save, Scissors, Plus, Trash2 } from 'lucide-react';
 import type { EyebrowSurveyQuestion } from '@/src/types/settings';
 import DebugHydration from './DebugHydration';
@@ -43,7 +43,7 @@ const FALLBACK_STORE_NAME = 'Lumiere 表参道';
 // ============================================================
 
 export default function AdminSettingsClient() {
-  const searchParams = useSearchParams();
+  const { tenantId } = useAdminTenantId();
 
   // --- localStorageベースのテナント設定（営業日・予約窓 等） ---
   const [localTenant, setLocalTenant] = useState<LocalTenant>(INITIAL_LOCAL_TENANT);
@@ -166,8 +166,6 @@ export default function AdminSettingsClient() {
   const [rpSendResult, setRpSendResult] = useState<RepeatSendResult | null>(null);
   const [rpSendError, setRpSendError] = useState<string | null>(null);
 
-  // tenantId は URL クエリから取得
-  const tenantId = searchParams?.get('tenantId') || 'default';
 
   // ============================================================
   // Backfill: customerKey 補完

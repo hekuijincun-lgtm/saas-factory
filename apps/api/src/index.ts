@@ -141,6 +141,10 @@ app.use('/admin/*', async (c, next) => {
 });
 
 function getTenantId(c, body) {
+  // x-session-tenant-id: injected by Pages proxy after HMAC-verifying line_session cookie.
+  // Authoritative for admin routes; overrides URL query param.
+  const sessionTid = c.req.header("x-session-tenant-id");
+  if (sessionTid && sessionTid !== "default") return sessionTid;
   try {
     const url = new URL(c.req.url)
     return (
@@ -162,7 +166,7 @@ app.get("/__build", (c) => c.json({ ok: true, stamp: "API_BUILD_V1" }));
   app.get('/admin/settings', async (c) => {
     const debug = c.req.query('debug') === '1'
     const tenantId =
-      (c.req.query('tenantId') || c.req.header('x-tenant-id') || 'default').trim() || 'default'
+      (c.req.header('x-session-tenant-id') || c.req.query('tenantId') || c.req.header('x-tenant-id') || 'default').trim() || 'default'
 
     const envAny: any = (c as any).env || (c as any)
     const kv = (envAny && (envAny.SAAS_FACTORY || envAny.KV || envAny.SAAS_FACTORY_KV)) || null

@@ -1,6 +1,6 @@
 /* LITERAL_OK_20260221_144234 */
 export const runtime = "edge";
-import { isAdminPathname, readAdminToken, injectAdminToken, makeDebugStamp, applyDebugHeaders } from '../_lib/proxy';
+import { isAdminPathname, readAdminToken, injectAdminToken, makeDebugStamp, applyDebugHeaders, readSessionTenantId } from '../_lib/proxy';
 
 type Ctx = { params: any };
 
@@ -74,6 +74,12 @@ async function proxy(req: Request, ctx: Ctx): Promise<Response> {
   const isAdminRoute = isAdminPathname(upstream.pathname);
   const isTokenConfigured = isAdminRoute && !!readAdminToken();
   const adminTokenInjected = injectAdminToken(headers, upstream.pathname);
+
+  // セッション tenantId を注入（HMAC 検証済み → Workers が信頼できる）
+  if (isAdminRoute) {
+    const sessionTenantId = await readSessionTenantId(req);
+    if (sessionTenantId) headers.set('x-session-tenant-id', sessionTenantId);
+  }
 
   let method = (req.method === "PATCH" ? "PUT" : req.method).toUpperCase();
 

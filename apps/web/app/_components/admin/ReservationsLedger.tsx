@@ -1,8 +1,8 @@
 'use client';
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { useSearchParams } from 'next/navigation';
 import { getReservations, cancelReservationById, assignStaffToReservation, getStaff, createReservation, getMenu, type Reservation, type Staff, type MenuItem } from '@/src/lib/bookingApi';
+import { useAdminTenantId } from '@/src/lib/useAdminTenantId';
 import { ApiClientError } from '@/src/lib/apiClient';
 import { ChevronLeft, ChevronRight, Plus } from 'lucide-react';
 import ReservationDetailPanel from './ReservationDetailPanel';
@@ -34,9 +34,7 @@ function generateTimeSlots(open = '10:00', close = '19:00', interval = 60): stri
 }
 
 export default function ReservationsLedger() {
-  // tenantId は URL クエリから取得（なければ default）
-  const searchParams = useSearchParams();
-  const tenantId = searchParams?.get('tenantId') || 'default';
+  const { tenantId } = useAdminTenantId();
   // settings hook (失敗時は 10:00/19:00/30min fallback で継続)
   const { settings: bizSettings } = useAdminSettings(tenantId);
 

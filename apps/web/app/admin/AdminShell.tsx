@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { useAdminTenantId } from "@/src/lib/useAdminTenantId";
 import {
   Settings,
   ClipboardList,
@@ -155,16 +156,29 @@ export default function AdminShell({
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const router = useRouter();
   const pathname = usePathname();
+  const { status: tenantStatus, tenantId: sessionTenantId } = useAdminTenantId();
 
   useEffect(() => {
     setMounted(true);
+  }, []);
 
-    // tenantId を URL から取得（なければ default）
+  useEffect(() => {
+    if (tenantStatus !== "ready") return;
+
+    // セッションから tenantId を取得（URL より優先）
     const params = new URLSearchParams(window.location.search);
-    const tenantId = params.get("tenantId") || "default";
+    const urlTenantId = params.get("tenantId");
+
+    // URL の tenantId がセッションと異なる場合はリダイレクトして正規化
+    if (urlTenantId && urlTenantId !== sessionTenantId) {
+      const newParams = new URLSearchParams(window.location.search);
+      newParams.set("tenantId", sessionTenantId);
+      router.replace(`${window.location.pathname}?${newParams.toString()}`);
+      return;
+    }
 
     // API から storeName + onboarding フラグを取得
-    fetch(`/api/proxy/admin/settings?tenantId=${encodeURIComponent(tenantId)}`)
+    fetch(`/api/proxy/admin/settings?tenantId=${encodeURIComponent(sessionTenantId)}`)
       .then((r) => r.json())
       .then((data: any) => {
         // API returns { ok, tenantId, data: { storeName, ... } }
@@ -174,24 +188,17 @@ export default function AdminShell({
         }
 
         // onboardingCompleted===false (signup ユーザーのみ) → /admin/onboarding へ redirect
-        // undefined の既存テナントは影響なし (strict === false のみ)
         const oc =
           data?.data?.onboarding?.onboardingCompleted ??
           data?.onboarding?.onboardingCompleted;
         if (oc === false && !pathname?.startsWith("/admin/onboarding")) {
-          // tenantId: URL → line_tenant cookie の順で取得
-          let tid = params.get("tenantId") || "";
-          if (!tid) {
-            const m = document.cookie.match(/(?:^|;\s*)line_tenant=([^;]+)/);
-            tid = m ? m[1] : "default";
-          }
-          router.push(`/admin/onboarding?tenantId=${encodeURIComponent(tid)}`);
+          router.push(`/admin/onboarding?tenantId=${encodeURIComponent(sessionTenantId)}`);
         }
       })
       .catch(() => {
         // API 失敗時はフォールバック名のまま
       });
-  }, []);
+  }, [tenantStatus, sessionTenantId]);
 
   // hydration mismatch 完全防止
   if (!mounted) return null;

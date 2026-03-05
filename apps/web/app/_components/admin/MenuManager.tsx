@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { getMenu, createMenuItem, updateMenuItem, deleteMenuItem, type MenuItem, type MenuItemEyebrow } from '@/src/lib/bookingApi';
+import { useAdminTenantId } from '@/src/lib/useAdminTenantId';
 import { ApiClientError } from '@/src/lib/apiClient';
 import Card from '../ui/Card';
 import DataTable from '../ui/DataTable';
@@ -18,10 +19,8 @@ function fileToDataUrl(file: File): Promise<string> {
 }
 
 export default function MenuManager({ tenantId: tenantIdProp }: { tenantId?: string }) {
-  // tenantId (safe): read from query string, fallback to "default"
-  const tenantId = tenantIdProp ?? (typeof window !== "undefined"
-      ? (new URLSearchParams(window.location.search).get("tenantId") || undefined)
-      : undefined) ?? "default";
+  const { tenantId: sessionTenantId } = useAdminTenantId();
+  const tenantId = tenantIdProp ?? sessionTenantId;
 
   const [menuList, setMenuList] = useState<MenuItem[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
@@ -51,7 +50,6 @@ export default function MenuManager({ tenantId: tenantIdProp }: { tenantId?: str
     setLoading(true);
     setError(null);
     try {
-      const tenantId = tenantIdProp ?? new URLSearchParams(window.location.search).get('tenantId') ?? 'default';
       const menu = await getMenu(tenantId);
       const items = Array.isArray(menu)
         ? menu

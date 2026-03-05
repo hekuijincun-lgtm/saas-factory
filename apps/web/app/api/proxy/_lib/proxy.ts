@@ -145,6 +145,56 @@ export function applyDebugHeaders(
   headers.set('x-admin-token-present', opts.tokenInjected ? '1' : '0');
 }
 
+// ── Session tenant injection ───────────────────────────────────────────────
+
+/**
+ * Read + HMAC-verify line_session cookie; return tenantId from payload or null.
+ * Used by catch-all proxy to inject x-session-tenant-id into upstream requests.
+ */
+export async function readSessionTenantId(req: Request): Promise<string | null> {
+  const cookie = req.headers.get('cookie') ?? '';
+  const m = cookie.match(/(?:^|;\s*)line_session=([^;]+)/);
+  if (!m) return null;
+  const token = decodeURIComponent(m[1]);
+
+  let secret: string | undefined;
+  try {
+    const ctx = getRequestContext();
+    const v = (ctx?.env as any)?.LINE_SESSION_SECRET;
+    if (typeof v === 'string' && v.trim()) secret = v.trim();
+  } catch {}
+  if (!secret) {
+    const v2 = (process.env as any)?.LINE_SESSION_SECRET;
+    secret = typeof v2 === 'string' && v2.trim() ? v2.trim() : undefined;
+  }
+  if (!secret) return null;
+
+  const dotIdx = token.lastIndexOf('.');
+  if (dotIdx < 1) return null;
+  const bodyB64u = token.slice(0, dotIdx);
+  const sigB64u = token.slice(dotIdx + 1);
+
+  try {
+    const enc = new TextEncoder();
+    const key = await crypto.subtle.importKey(
+      'raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']
+    );
+    const sigBuf = await crypto.subtle.sign('HMAC', key, enc.encode(bodyB64u));
+    const sigBytes = new Uint8Array(sigBuf);
+    let sigStr = '';
+    for (let i = 0; i < sigBytes.length; i++) sigStr += String.fromCharCode(sigBytes[i]);
+    const expectedSig = btoa(sigStr).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+    if (expectedSig !== sigB64u) return null;
+
+    const bodyJson = atob(bodyB64u.replace(/-/g, '+').replace(/_/g, '/'));
+    const payload = JSON.parse(bodyJson);
+    const tid = payload.tenantId;
+    return typeof tid === 'string' && tid && tid !== 'default' ? tid : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function proxyFetch(
   req: Request,
   upstreamPath: string,

@@ -1,8 +1,8 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useSearchParams } from 'next/navigation';
 import { getStaff, createStaff, updateStaff, type Staff, type StaffEyebrow } from '@/src/lib/bookingApi';
+import { useAdminTenantId } from '@/src/lib/useAdminTenantId';
 import { ApiClientError } from '@/src/lib/apiClient';
 import Card from '../ui/Card';
 import DataTable from '../ui/DataTable';
@@ -15,8 +15,7 @@ import { useAdminSettings } from '../../admin/_lib/useAdminSettings';
 import { fetchAdminSettings, saveAdminSettings } from '../../lib/adminApi';
 
 export default function StaffManager() {
-  const searchParams = useSearchParams();
-  const tenantId = searchParams?.get('tenantId') || 'default';
+  const { tenantId } = useAdminTenantId();
   const { settings: bizSettings } = useAdminSettings(tenantId);
   // settings 由来の時刻選択肢（fallback: 10:00-20:00/30min）
   const settingsTimeOptions = generateTimeOptions(bizSettings.open, bizSettings.close, bizSettings.interval) as TimeStr[];
