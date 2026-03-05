@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { resolveVertical } from "./settings";
+import { resolveVertical, DEFAULT_ADMIN_SETTINGS, mergeSettings } from "./settings";
 import { getRepeatConfig, getStyleLabel, buildRepeatMessage, eyebrowOnboardingChecks } from "./verticals/eyebrow";
 
 // test helper (lock reproduction)
@@ -3091,6 +3091,13 @@ app.post('/auth/email/start', async (c) => {
   }
   await kv.put(rlKey, String(rlCount + 1), { expirationTtl: 60 });
 
+  // Signup: store pending init metadata so /verify can provision tenant on first login
+  if (body.signup === '1' || body.signup === true) {
+    const tn = String(body.tenantName ?? '').trim().slice(0, 80) || rawEmail.split('@')[0];
+    await kv.put(`signup:init:${tenantId}`, JSON.stringify({ tenantName: tn, ownerEmail: rawEmail }),
+                 { expirationTtl: 900 }); // 15 min
+  }
+
   // Generate token (plaintext never stored in DB)
   const plainToken = crypto.randomUUID() + '-' + crypto.randomUUID();
   const tokenHash = await sha256Hex(plainToken);
@@ -3236,6 +3243,32 @@ app.post('/auth/email/verify', async (c) => {
   const bsKeyHash: string | null = row.bootstrap_key ?? null;
   const email: string = identityKey.startsWith('email:') ? identityKey.slice(6) : identityKey;
   const displayName: string = email;
+
+  // --- Signup provisioning (signup:init written by /start when signup=1) ---
+  const signupInitRaw = await kv.get(`signup:init:${tenantId}`);
+  if (signupInitRaw) {
+    const si: { tenantName?: string } = JSON.parse(signupInitRaw);
+    const storedName = si.tenantName || email;
+    const ownerStore: AdminMembersStore = {
+      version: 1,
+      members: [{
+        lineUserId: identityKey,
+        role: 'owner',
+        enabled: true,
+        displayName,
+        createdAt: new Date().toISOString(),
+      }],
+    };
+    await kv.put(`admin:members:${tenantId}`, JSON.stringify(ownerStore));
+    const seedSettings = mergeSettings(DEFAULT_ADMIN_SETTINGS, {
+      storeName: storedName,
+      tenant: { name: storedName, email },
+    });
+    await kv.put('settings:' + tenantId, JSON.stringify(seedSettings));
+    await kv.delete(`signup:init:${tenantId}`);
+    return c.json({ ok: true, identityKey, email, displayName, allowed: true,
+                    role: 'owner', membersFound: false, signedUp: true });
+  }
 
   // --- Step 1: RBAC members check (admin:members:{tenantId}) ---
   const membersRaw = await kv.get(`admin:members:${tenantId}`);
