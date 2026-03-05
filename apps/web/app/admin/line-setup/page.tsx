@@ -254,8 +254,10 @@ type WebhookLog = {
   firstEventType?: string | null;
   firstText?: string | null;
   sigVerified?: boolean;
+  hasSig?: boolean;
   hasReplyToken?: boolean;
   resolvedBy?: string;
+  parseError?: string | null;
 } | null;
 
 function MappingDiagnosticCard({
@@ -362,8 +364,22 @@ function MappingDiagnosticCard({
               <div><span className="text-slate-400">時刻:</span> {lastWebhook.ts}</div>
               <div><span className="text-slate-400">イベント数:</span> {lastWebhook.eventCount ?? 0}</div>
               {lastWebhook.firstEventType && <div><span className="text-slate-400">種類:</span> {lastWebhook.firstEventType}{lastWebhook.firstText ? ` — "${lastWebhook.firstText}"` : ""}</div>}
-              <div><span className="text-slate-400">署名:</span> {lastWebhook.sigVerified ? "OK" : "NG"} / <span className="text-slate-400">replyToken:</span> {lastWebhook.hasReplyToken ? "あり" : "なし"}</div>
+              <div>
+                <span className="text-slate-400">署名:</span>{" "}
+                {lastWebhook.hasSig === false
+                  ? <span className="text-amber-600">なし（署名ヘッダ未送信）</span>
+                  : lastWebhook.sigVerified
+                    ? <span className="text-emerald-600">OK</span>
+                    : <span className="text-red-600">NG（Channel Secret を確認）</span>}
+                {" / "}
+                <span className="text-slate-400">replyToken:</span> {lastWebhook.hasReplyToken ? "あり" : "なし"}
+              </div>
               <div><span className="text-slate-400">解決方法:</span> {lastWebhook.resolvedBy}</div>
+              {!lastWebhook.sigVerified && lastWebhook.hasSig && (
+                <div className="rounded border border-red-200 bg-red-50 px-2 py-1 text-red-700 text-[11px]">
+                  Webhook は到達していますが署名検証に失敗しています。Channel Secret が正しいか確認してください。
+                </div>
+              )}
             </div>
           )}
         </div>

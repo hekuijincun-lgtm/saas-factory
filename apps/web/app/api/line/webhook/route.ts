@@ -394,11 +394,62 @@ export async function POST(req: Request) {
     );
   }
 
+  // ── Webhook receipt log helper: fire-and-forget to Workers KV ──────────────
+  const webhookLogApiBase = (
+    process.env.API_BASE ?? process.env.NEXT_PUBLIC_API_BASE ?? ""
+  ).replace(/\/+$/, "");
+  function saveWebhookLog(log: Record<string, unknown>) {
+    if (!webhookLogApiBase) return;
+    fetch(`${webhookLogApiBase}/admin/integrations/line/last-webhook`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tenantId, log: { ts: new Date().toISOString(), tenantId, stamp: STAMP, ...log } }),
+    }).catch(() => null);
+  }
+
+  // ── Phase 1: parse body (best-effort, before sig check) ───────────────────
+  let payload: any = null;
+  let parseError: string | null = null;
+  let events: any[] = [];
+  try {
+    payload = JSON.parse(new TextDecoder().decode(raw));
+    events = Array.isArray(payload?.events) ? payload.events : [];
+  } catch (e: any) {
+    parseError = String(e?.message ?? e);
+  }
+
+  const firstEvent = events[0] as any;
+  if (!destination && payload?.destination) {
+    destination = String(payload.destination).trim();
+  }
+
+  // ── Phase 2: resolve config + sig check ───────────────────────────────────
   const cfg = await getTenantLineConfig(tenantId, origin);
+  const verified = (sig && cfg.channelSecret)
+    ? await verifyLineSignature(raw, sig, cfg.channelSecret).catch(() => false)
+    : false;
+
+  // ── Save receipt log (BEFORE any early-return) ────────────────────────────
+  saveWebhookLog({
+    destination: destination || null,
+    resolvedBy,
+    hasSig: !!sig,
+    sigVerified: verified,
+    allowBadSig,
+    bodyLen: raw.byteLength,
+    parseError,
+    eventCount: events.length,
+    firstEventType: firstEvent?.type ?? null,
+    firstMessageType: firstEvent?.message?.type ?? null,
+    firstText: String(firstEvent?.message?.text ?? "").slice(0, 80) || null,
+    hasReplyToken: !!firstEvent?.replyToken,
+    cfgSource: cfg.source,
+    cfgHasSecret: !!cfg.channelSecret,
+    cfgHasToken: !!cfg.channelAccessToken,
+  });
 
   // ── debug=1 POST: return tenant resolution trace without processing ──────
   if (debugMode === "1") {
-    const sigOk = sig ? await verifyLineSignature(raw, sig, cfg.channelSecret).catch(() => false) : false;
     return NextResponse.json({
       ok: true, stamp: STAMP, where, debug: 1,
       step: "tenant_resolved",
@@ -409,9 +460,11 @@ export async function POST(req: Request) {
       cfgSource: cfg.source,
       cfgHasSecret: !!cfg.channelSecret,
       cfgHasToken:  !!cfg.channelAccessToken,
-      sigVerified: sigOk,
+      sigVerified: verified,
       hasSig: !!sig,
       allowBadSig,
+      parseError,
+      eventCount: events.length,
       hint: resolvedBy.includes("destination_miss")
         ? "KV key missing — re-save LINE credentials for this tenant"
         : resolvedBy === "no_api_base"
@@ -433,7 +486,6 @@ export async function POST(req: Request) {
     );
   }
 
-  const verified = sig ? await verifyLineSignature(raw, sig, cfg.channelSecret) : false;
   if (!verified && !allowBadSig) {
     return NextResponse.json(
       {
@@ -444,47 +496,11 @@ export async function POST(req: Request) {
     );
   }
 
-  let payload: any;
-  try {
-    payload = JSON.parse(new TextDecoder().decode(raw));
-  } catch (e: any) {
+  if (parseError) {
     return NextResponse.json(
-      { ok: false, stamp: STAMP, where, tenantId, error: "invalid_json", message: String(e?.message ?? e) },
+      { ok: false, stamp: STAMP, where, tenantId, error: "invalid_json", message: parseError },
       { status: 400 }
     );
-  }
-
-  const events = Array.isArray(payload?.events) ? payload.events : [];
-
-  // ── Webhook receipt log: persist to KV for diagnostic UI ──────────────────
-  {
-    const apiBase = (
-      process.env.API_BASE ?? process.env.NEXT_PUBLIC_API_BASE ?? ""
-    ).replace(/\/+$/, "");
-    const firstEvent = events[0] as any;
-    const logPayload = {
-      ts: new Date().toISOString(),
-      tenantId,
-      destination: destination || payload?.destination || null,
-      resolvedBy,
-      sigVerified: verified,
-      hasSig: !!sig,
-      allowBadSig,
-      eventCount: events.length,
-      firstEventType: firstEvent?.type ?? null,
-      firstMessageType: firstEvent?.message?.type ?? null,
-      firstText: String(firstEvent?.message?.text ?? "").slice(0, 80) || null,
-      hasReplyToken: !!firstEvent?.replyToken,
-      stamp: STAMP,
-    };
-    if (apiBase) {
-      // Fire-and-forget: save webhook receipt log via Workers
-      fetch(`${apiBase}/admin/integrations/line/last-webhook`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tenantId, log: logPayload }),
-      }).catch(() => null);
-    }
   }
 
   const ev = events.find(
