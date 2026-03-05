@@ -172,10 +172,10 @@ export default function OnboardingPage() {
                 <p className="text-xs text-slate-500 mt-0.5">{item.description}</p>
               </div>
 
-              {/* Action link */}
+              {/* Action link — tenantId を維持して遷移 */}
               {!item.done && (
                 <Link
-                  href={item.href}
+                  href={`${item.href}?tenantId=${encodeURIComponent(tenantId)}`}
                   className="flex-shrink-0 rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
                 >
                   設定する →

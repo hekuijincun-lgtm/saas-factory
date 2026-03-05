@@ -43,14 +43,22 @@ const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
 // サイドバー内部
 // ============================================================
 
+/** tenantId をパスに付与する。tenantId が空でなければ常に付与（default を含む）。 */
+function withTenant(path: string, tenantId: string): string {
+  if (!tenantId) return path;
+  return `${path}?tenantId=${encodeURIComponent(tenantId)}`;
+}
+
 function Sidebar({
   storeName,
   isOpen,
   onClose,
+  tenantId,
 }: {
   storeName: string;
   isOpen: boolean;
   onClose: () => void;
+  tenantId: string;
 }) {
   const pathname = usePathname();
 
@@ -104,7 +112,7 @@ function Sidebar({
         <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
           {adminNavItems.map(({ href, label }) => {
             const Icon = ICON_MAP[href] ?? Settings;
-            // ダッシュボード(/admin)は完全一致のみ active
+            // ダッシュボード(/admin)は完全一致のみ active（pathname はクエリを含まない）
             const isActive =
               href === "/admin"
                 ? pathname === "/admin"
@@ -112,7 +120,7 @@ function Sidebar({
             return (
               <Link
                 key={href}
-                href={href}
+                href={withTenant(href, tenantId)}
                 onClick={onClose}
                 className={[
                   "relative flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium transition-all duration-150",
@@ -210,6 +218,7 @@ export default function AdminShell({
         storeName={storeName}
         isOpen={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
+        tenantId={sessionTenantId}
       />
 
       {/* メインコンテンツ */}

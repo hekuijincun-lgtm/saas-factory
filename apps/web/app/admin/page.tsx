@@ -5,12 +5,14 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import AdminTopBar from '../_components/ui/AdminTopBar';
 import AdminDashboard from '../_components/admin/AdminDashboard';
+import { useAdminTenantId } from '@/src/lib/useAdminTenantId';
 
 function OnboardingBanner() {
+  const { tenantId } = useAdminTenantId();
   const [show, setShow] = useState(false);
 
   useEffect(() => {
-    fetch('/api/proxy/admin/settings?tenantId=default', { cache: 'no-store' })
+    fetch(`/api/proxy/admin/settings?tenantId=${encodeURIComponent(tenantId)}`, { cache: 'no-store' })
       .then(r => r.ok ? r.json() : null)
       .then((json: any) => {
         const s = json?.data ?? json;
@@ -18,7 +20,9 @@ function OnboardingBanner() {
         if (!lineConnected) setShow(true);
       })
       .catch(() => {});
-  }, []);
+  // tenantId が確定してから fetch する
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantId]);
 
   if (!show) return null;
 
@@ -32,7 +36,7 @@ function OnboardingBanner() {
         </div>
       </div>
       <Link
-        href="/admin/onboarding"
+        href={`/admin/onboarding?tenantId=${encodeURIComponent(tenantId)}`}
         className="flex-shrink-0 rounded-xl border border-amber-300 bg-white px-4 py-2 text-xs font-semibold text-amber-800 hover:bg-amber-100 transition-colors"
       >
         設定を完了する →
