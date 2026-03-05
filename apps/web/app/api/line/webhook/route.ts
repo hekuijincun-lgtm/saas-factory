@@ -395,16 +395,33 @@ export async function POST(req: Request) {
   }
 
   // ── Webhook receipt log helper: fire-and-forget to Workers KV ──────────────
+  // Uses /internal/line/last-webhook (shared secret) instead of /admin/ (requires ADMIN_TOKEN)
   const webhookLogApiBase = (
     process.env.API_BASE ?? process.env.NEXT_PUBLIC_API_BASE ?? ""
   ).replace(/\/+$/, "");
+  let internalToken = "";
+  try {
+    const cfEnv = (getRequestContext()?.env as any);
+    if (cfEnv?.LINE_INTERNAL_TOKEN) internalToken = String(cfEnv.LINE_INTERNAL_TOKEN);
+  } catch {}
+  if (!internalToken) internalToken = process.env.LINE_INTERNAL_TOKEN ?? "";
+
+  let _logPostStatus: number | null = null;
+  let _logPostOk: boolean | null = null;
   function saveWebhookLog(log: Record<string, unknown>) {
-    if (!webhookLogApiBase) return;
-    fetch(`${webhookLogApiBase}/admin/integrations/line/last-webhook`, {
+    if (!webhookLogApiBase || !internalToken) {
+      _logPostOk = false;
+      _logPostStatus = !webhookLogApiBase ? -1 : -2; // -1=no apiBase, -2=no token
+      return;
+    }
+    fetch(`${webhookLogApiBase}/internal/line/last-webhook?tenantId=${encodeURIComponent(tenantId!)}`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ tenantId, log: { ts: new Date().toISOString(), tenantId, stamp: STAMP, ...log } }),
-    }).catch(() => null);
+      headers: {
+        "Content-Type": "application/json",
+        "x-internal-token": internalToken,
+      },
+      body: JSON.stringify({ log: { ts: new Date().toISOString(), tenantId, stamp: STAMP, ...log } }),
+    }).then(r => { _logPostStatus = r.status; _logPostOk = r.ok; }).catch(() => { _logPostStatus = 0; _logPostOk = false; });
   }
 
   // ── Phase 1: parse body (best-effort, before sig check) ───────────────────
@@ -450,6 +467,8 @@ export async function POST(req: Request) {
 
   // ── debug=1 POST: return tenant resolution trace without processing ──────
   if (debugMode === "1") {
+    // Wait briefly for log POST to complete so we can report its status
+    await new Promise(r => setTimeout(r, 300));
     return NextResponse.json({
       ok: true, stamp: STAMP, where, debug: 1,
       step: "tenant_resolved",
@@ -465,10 +484,17 @@ export async function POST(req: Request) {
       allowBadSig,
       parseError,
       eventCount: events.length,
+      logPostAttempt: !!webhookLogApiBase && !!internalToken,
+      logPostOk: _logPostOk,
+      logPostStatus: _logPostStatus,
+      logHasApiBase: !!webhookLogApiBase,
+      logHasToken: !!internalToken,
       hint: resolvedBy.includes("destination_miss")
         ? "KV key missing — re-save LINE credentials for this tenant"
         : resolvedBy === "no_api_base"
         ? "API_BASE env var not set in Pages — cannot look up KV"
+        : !internalToken
+        ? "LINE_INTERNAL_TOKEN not set in Pages env — webhook logs cannot be saved"
         : undefined,
     });
   }
