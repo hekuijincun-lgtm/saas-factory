@@ -157,6 +157,35 @@ function getTenantId(c, body) {
     return (body?.tenantId ?? null) ?? c.req.header("x-tenant-id") ?? "default"
   }
 }
+
+/**
+ * Phase 2: mismatch guard.
+ * Returns a 403 Response if ENFORCE_TENANT_MISMATCH=1 env var is set AND
+ * the session tenant differs from the URL query tenant.
+ * Returns null when no violation.
+ */
+function checkTenantMismatch(c: any): Response | null {
+  const enforce = (c.env as any)?.ENFORCE_TENANT_MISMATCH === '1';
+  if (!enforce) return null;
+  const sessionTid = c.req.header('x-session-tenant-id')?.trim();
+  const queryTid = c.req.query('tenantId')?.trim();
+  if (sessionTid && queryTid && sessionTid !== queryTid) {
+    return c.json({ ok: false, error: 'forbidden_tenant_mismatch', sessionTenant: sessionTid, queryTenant: queryTid }, 403);
+  }
+  return null;
+}
+
+/**
+ * Debug helper: sets response headers when ?debug=1 to expose tenant resolution.
+ */
+function setTenantDebugHeaders(c: any, tenantId: string, keyExample?: string): void {
+  if (c.req.query('debug') !== '1') return;
+  c.header('x-tenant-from-header', c.req.header('x-session-tenant-id') || '(none)');
+  c.header('x-tenant-from-query', c.req.query('tenantId') || '(none)');
+  c.header('x-tenant-resolved', tenantId);
+  if (keyExample) c.header('x-tenant-key', keyExample);
+}
+
 app.get("/__build", (c) => c.json({ ok: true, stamp: "API_BUILD_V1" }));
 
 
@@ -164,9 +193,10 @@ app.get("/__build", (c) => c.json({ ok: true, stamp: "API_BUILD_V1" }));
     // === ADMIN_SETTINGS_V1 ===
   // GET/PUT admin settings (KV)
   app.get('/admin/settings', async (c) => {
+    const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
     const debug = c.req.query('debug') === '1'
-    const tenantId =
-      (c.req.header('x-session-tenant-id') || c.req.query('tenantId') || c.req.header('x-tenant-id') || 'default').trim() || 'default'
+    const tenantId = getTenantId(c)
+    setTenantDebugHeaders(c, tenantId, `settings:${tenantId}`)
 
     const envAny: any = (c as any).env || (c as any)
     const kv = (envAny && (envAny.SAAS_FACTORY || envAny.KV || envAny.SAAS_FACTORY_KV)) || null
@@ -238,8 +268,8 @@ app.get("/__build", (c) => c.json({ ok: true, stamp: "API_BUILD_V1" }));
   })
 
   app.put('/admin/settings', async (c) => {
-    const tenantId =
-      (c.req.query('tenantId') || c.req.header('x-tenant-id') || 'default').trim() || 'default'
+    const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
+    const tenantId = getTenantId(c)
 
     const envAny: any = (c as any).env || (c as any)
     const kv = (envAny && (envAny.SAAS_FACTORY || envAny.KV || envAny.SAAS_FACTORY_KV)) || null
@@ -1120,8 +1150,10 @@ app.patch("/admin/menu/:id", async (c) => {
  * key: admin:staff:list:${tenantId}
  */
 app.get("/admin/staff", async (c) => {
-  const tenantId = c.req.query("tenantId") || "default"
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
+  const tenantId = getTenantId(c)
   const key = `admin:staff:list:${tenantId}`
+  setTenantDebugHeaders(c, tenantId, key)
 
   const raw = await c.env.SAAS_FACTORY.get(key)
   const data = raw ? JSON.parse(raw) : []
@@ -1130,7 +1162,8 @@ app.get("/admin/staff", async (c) => {
 })
 
 app.post("/admin/staff", async (c) => {
-  const tenantId = c.req.query("tenantId") || "default"
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
+  const tenantId = getTenantId(c)
   const key = `admin:staff:list:${tenantId}`
 
   const body = await c.req.json()
@@ -1152,7 +1185,8 @@ app.post("/admin/staff", async (c) => {
  * (fixes PATCH/DELETE not reaching handler)
  */
 app.all("/admin/staff/:id", async (c) => {
-  const tenantId = c.req.query("tenantId") || "default"
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
+  const tenantId = getTenantId(c)
   const key = `admin:staff:list:${tenantId}`
   const id = c.req.param("id")
   const method = c.req.method
@@ -3530,7 +3564,7 @@ app.post("/auth/line/exchange", async (c) => {
    Protected by /admin/* middleware (ADMIN_TOKEN).
 */
 app.get("/admin/integrations/line/status", async (c) => {
-  const tenantId = c.req.query("tenantId") || "default";
+  const tenantId = getTenantId(c);
   const env = c.env as any;
 
   const channelId   = env.LINE_CHANNEL_ID ?? env.LINE_LOGIN_CHANNEL_ID ?? env.LINE_CLIENT_ID ?? "";

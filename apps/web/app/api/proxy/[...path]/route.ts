@@ -75,6 +75,8 @@ async function proxy(req: Request, ctx: Ctx): Promise<Response> {
   const isTokenConfigured = isAdminRoute && !!readAdminToken();
   const adminTokenInjected = injectAdminToken(headers, upstream.pathname);
 
+  // クライアントからの x-session-tenant-id を必ず strip（偽装防止）
+  headers.delete('x-session-tenant-id');
   // セッション tenantId を注入（HMAC 検証済み → Workers が信頼できる）
   if (isAdminRoute) {
     const sessionTenantId = await readSessionTenantId(req);
