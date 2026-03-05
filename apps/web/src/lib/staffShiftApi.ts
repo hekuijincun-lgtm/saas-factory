@@ -10,9 +10,13 @@ import type { ApiResponse } from '../types';
 /**
  * GET /admin/staff/:id/shift を実行
  */
-export async function getStaffShift(staffId: string): Promise<StaffShift> {
+export async function getStaffShift(staffId: string, tenantId: string = "default"): Promise<StaffShift> {
   try {
-    const response = await apiGet<ApiResponse<StaffShift>>(`/api/proxy/admin/staff/${encodeURIComponent(staffId)}/shift`);
+    const params = new URLSearchParams();
+    params.set("tenantId", tenantId);
+    const response = await apiGet<ApiResponse<StaffShift>>(
+      `/api/proxy/admin/staff/${encodeURIComponent(staffId)}/shift?${params}`
+    );
     if (response.ok && response.data) {
       return response.data;
     }
@@ -36,9 +40,14 @@ export async function getStaffShift(staffId: string): Promise<StaffShift> {
 /**
  * PUT /admin/staff/:id/shift を実行
  */
-export async function updateStaffShift(staffId: string, shift: StaffShift): Promise<void> {
+export async function updateStaffShift(staffId: string, shift: StaffShift, tenantId: string = "default"): Promise<void> {
   try {
-    const response = await apiPut<ApiResponse<StaffShift>>(`/api/proxy/admin/staff/${encodeURIComponent(staffId)}/shift`, shift);
+    const params = new URLSearchParams();
+    params.set("tenantId", tenantId);
+    const response = await apiPut<ApiResponse<StaffShift>>(
+      `/api/proxy/admin/staff/${encodeURIComponent(staffId)}/shift?${params}`,
+      shift
+    );
     if (!response.ok) {
       throw new ApiClientError((('error' in response) && response.error) ? response.error : 'Failed to update shift');
     }

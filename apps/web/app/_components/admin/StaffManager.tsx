@@ -15,7 +15,7 @@ import { useAdminSettings } from '../../admin/_lib/useAdminSettings';
 import { fetchAdminSettings, saveAdminSettings } from '../../lib/adminApi';
 
 export default function StaffManager() {
-  const { tenantId } = useAdminTenantId();
+  const { tenantId, status: tenantStatus } = useAdminTenantId();
   const { settings: bizSettings } = useAdminSettings(tenantId);
   // settings 由来の時刻選択肢（fallback: 10:00-20:00/30min）
   const settingsTimeOptions = generateTimeOptions(bizSettings.open, bizSettings.close, bizSettings.interval) as TimeStr[];
@@ -68,7 +68,7 @@ export default function StaffManager() {
     setLoading(true);
     setError(null);
     try {
-      const staff = await getStaff();
+      const staff = await getStaff(tenantId);
       // 配列チェック
       if (Array.isArray(staff)) {
         setStaffList(staff);
@@ -90,9 +90,12 @@ export default function StaffManager() {
     }
   };
 
+  // tenantId が確定してから取得する（ready 前に default で読まない）
   useEffect(() => {
+    if (tenantStatus !== "ready") return;
     fetchStaff();
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantStatus, tenantId]);
 
   const handleCreate = () => {
     setEditingStaff(null);
@@ -140,7 +143,7 @@ export default function StaffManager() {
           active: formData.active,
           sortOrder: formData.sortOrder,
           eyebrow,
-        });
+        }, tenantId);
       } else {
         await createStaff({
           name: formData.name.trim(),
@@ -148,7 +151,7 @@ export default function StaffManager() {
           active: formData.active,
           sortOrder: formData.sortOrder,
           eyebrow,
-        });
+        }, tenantId);
       }
       await fetchStaff();
       setShowModal(false);
@@ -169,7 +172,7 @@ export default function StaffManager() {
     setLoading(true);
     setError(null);
     try {
-      await updateStaff(staff.id, { active: !staff.active });
+      await updateStaff(staff.id, { active: !staff.active }, tenantId);
       await fetchStaff();
     } catch (err) {
       const errorMessage =
@@ -432,6 +435,7 @@ export default function StaffManager() {
           timeOptions={settingsTimeOptions}
           defaultOpen={bizSettings.open}
           defaultClose={bizSettings.close}
+          tenantId={tenantId}
         />
       )}
     </div>

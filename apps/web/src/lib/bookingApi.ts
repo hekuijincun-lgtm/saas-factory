@@ -336,10 +336,13 @@ export async function cancelReservation(
 
 /**
  * GET /admin/staff を実行
+ * tenantId はセッションから注入されるが、明示的に渡すことで proxy の ?tenantId= も設定する（多重防御）。
  */
-export async function getStaff(): Promise<Staff[]> {
+export async function getStaff(tenantId: string = "default"): Promise<Staff[]> {
   try {
-    const response = await apiGet<ApiResponse<Staff[]>>('/api/proxy/admin/staff');
+    const params = new URLSearchParams();
+    params.set("tenantId", tenantId);
+    const response = await apiGet<ApiResponse<Staff[]>>(`/api/proxy/admin/staff?${params}`);
     if (response.ok && response.data) {
       // 配列チェック
       if (!Array.isArray(response.data)) {
@@ -360,9 +363,11 @@ export async function getStaff(): Promise<Staff[]> {
 /**
  * POST /admin/staff を実行
  */
-export async function createStaff(payload: Omit<Staff, 'id'>): Promise<Staff> {
+export async function createStaff(payload: Omit<Staff, 'id'>, tenantId: string = "default"): Promise<Staff> {
   try {
-    const response = await apiPost<ApiResponse<Staff>>('/api/proxy/admin/staff', payload);
+    const params = new URLSearchParams();
+    params.set("tenantId", tenantId);
+    const response = await apiPost<ApiResponse<Staff>>(`/api/proxy/admin/staff?${params}`, payload);
     if (response.ok && response.data) {
       return response.data;
     }
@@ -376,11 +381,14 @@ export async function createStaff(payload: Omit<Staff, 'id'>): Promise<Staff> {
 }
 
 /**
- * PATCH /admin/staff/:id を実行
+ * PATCH /api/proxy/admin/staff/:id を実行
+ * proxy 経由で直接呼ぶことで x-session-tenant-id の注入が効く。
  */
-export async function updateStaff(id: string, payload: Partial<Omit<Staff, 'id'>>): Promise<Staff> {
+export async function updateStaff(id: string, payload: Partial<Omit<Staff, 'id'>>, tenantId: string = "default"): Promise<Staff> {
   try {
-    const response = await apiPatch<ApiResponse<Staff>>(`/admin/staff/${id}`, payload);
+    const params = new URLSearchParams();
+    params.set("tenantId", tenantId);
+    const response = await apiPatch<ApiResponse<Staff>>(`/api/proxy/admin/staff/${id}?${params}`, payload);
     if (response.ok && response.data) {
       return response.data;
     }

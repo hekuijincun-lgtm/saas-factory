@@ -25,11 +25,13 @@ interface StaffShiftEditorProps {
   defaultOpen?: string;
   /** デフォルト終了時刻（generateDefaultWeekly に渡す; 自動補正の上限にも使用） */
   defaultClose?: string;
+  /** 認証済みセッションの tenantId（省略時は "default"）*/
+  tenantId?: string;
 }
 
 const DAYS_OF_WEEK: Dow[] = [0, 1, 2, 3, 4, 5, 6]; // 日〜土
 
-export default function StaffShiftEditor({ staffId, staffName, onClose, onSave, timeOptions, defaultOpen, defaultClose }: StaffShiftEditorProps) {
+export default function StaffShiftEditor({ staffId, staffName, onClose, onSave, timeOptions, defaultOpen, defaultClose, tenantId = "default" }: StaffShiftEditorProps) {
   const [weekly, setWeekly] = useState<StaffShiftWeekly[]>([]);
   const [exceptions, setExceptions] = useState<StaffShiftException[]>([]);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -46,7 +48,7 @@ export default function StaffShiftEditor({ staffId, staffName, onClose, onSave, 
       setLoading(true);
       setSaveError(null);
       try {
-        const shift = await getStaffShift(staffId);
+        const shift = await getStaffShift(staffId, tenantId);
         if (shift.weekly.length > 0) {
           setWeekly(shift.weekly);
         } else {
@@ -262,7 +264,7 @@ export default function StaffShiftEditor({ staffId, staffName, onClose, onSave, 
 
     setSaveError(null);
     try {
-      await updateStaffShift(staffId, shift);
+      await updateStaffShift(staffId, shift, tenantId);
       onSave(shift);
       setSaveSuccess(true);
       setTimeout(() => {
