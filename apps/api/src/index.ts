@@ -3077,6 +3077,14 @@ app.post('/auth/email/start', async (c) => {
     return c.json({ ok: false, error: 'invalid_email' }, 400);
   }
 
+  // Signup: validate storeName before any KV writes (including rate-limit)
+  if (isSignup) {
+    const rawStoreName = String(body.storeName ?? '').trim();
+    if (rawStoreName.length < 2 || rawStoreName.length > 50) {
+      return c.json({ ok: false, error: 'invalid_store_name' }, 400);
+    }
+  }
+
   // Rate limit: max 3 sends per 60s per email (checked before any KV writes)
   const rlKey = `email:rl:${rawEmail}`;
   const rlRaw = await kv.get(rlKey);
@@ -3090,10 +3098,10 @@ app.post('/auth/email/start', async (c) => {
   let tenantId: string;
   let safeReturnTo: string;
   if (isSignup) {
-    const storeName = String(body.storeName ?? '').trim().slice(0, 80) || rawEmail.split('@')[0];
-    const base = storeName.toLowerCase()
-      .replace(/[^\w]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 20) || 'shop';
-    tenantId = base + '-' + crypto.randomUUID().slice(0, 4);
+    const storeName = String(body.storeName ?? '').trim().slice(0, 50) || rawEmail.split('@')[0];
+    const baseSlug = storeName.toLowerCase()
+      .replace(/[^\w]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 20) || 'store';
+    tenantId = baseSlug + '-' + crypto.randomUUID().slice(0, 4);
     safeReturnTo = `/admin?tenantId=${encodeURIComponent(tenantId)}`;
     await kv.put(`signup:init:${tenantId}`, JSON.stringify({ storeName, ownerEmail: rawEmail }),
                  { expirationTtl: 900 }); // 15 min
@@ -3266,12 +3274,21 @@ app.post('/auth/email/verify', async (c) => {
       }],
     };
     await kv.put('tenant:exists:' + tenantId, '1');
-    await kv.put(`admin:members:${tenantId}`, JSON.stringify(ownerStore));
+    // Idempotency: only write admin:members if not already set (re-click guard)
+    const existingMembers = await kv.get(`admin:members:${tenantId}`);
+    if (!existingMembers) {
+      await kv.put(`admin:members:${tenantId}`, JSON.stringify(ownerStore));
+    }
     const seedSettings = mergeSettings(DEFAULT_ADMIN_SETTINGS, {
       storeName: storedName,
       tenant: { name: storedName, email },
     });
     await kv.put('settings:' + tenantId, JSON.stringify(seedSettings));
+    // admin:settings: key for tenant listing/lookup (simple format)
+    const existingAdminSettings = await kv.get('admin:settings:' + tenantId);
+    if (!existingAdminSettings) {
+      await kv.put('admin:settings:' + tenantId, JSON.stringify({ storeName: storedName }));
+    }
     await kv.delete(`signup:init:${tenantId}`);
     return c.json({ ok: true, identityKey, email, displayName, allowed: true,
                     role: 'owner', membersFound: false, signedUp: true });

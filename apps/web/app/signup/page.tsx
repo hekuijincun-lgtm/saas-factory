@@ -47,6 +47,8 @@ export default function SignupPage() {
       setErrorMsg(
         err === "rate_limited"
           ? "送信回数の上限です。1分後に再試行してください。"
+          : err === "invalid_store_name"
+          ? "ショップ名は2〜50文字で入力してください。"
           : `エラー: ${err || "不明なエラー"}`
       );
       setStatus("error");
