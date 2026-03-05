@@ -379,16 +379,17 @@ export async function POST(req: Request) {
 
   // No default fallback — unknown destination returns 400
   if (!tenantId) {
+    const hint = "Open /admin/line-setup?tenantId=YOUR_TENANT and click Remap to fix destination mapping.";
     if (debugMode === "1") {
       return NextResponse.json({
         ok: false, stamp: STAMP, where, debug: 1,
         error: "unknown_destination",
         destination: destination || null,
-        resolvedBy,
+        resolvedBy, hint,
       }, { status: 400 });
     }
     return NextResponse.json(
-      { ok: false, error: "unknown_destination", destination: destination || null, resolvedBy },
+      { ok: false, error: "unknown_destination", destination: destination || null, resolvedBy, hint },
       { status: 400 }
     );
   }

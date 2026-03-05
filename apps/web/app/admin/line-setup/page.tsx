@@ -166,6 +166,7 @@ function CredentialsCard({
         <FieldRow
           label="Webhook URL（LINE Developers に貼り付け）"
           value={webhookUrl}
+          placeholder="読み込み中..."
           readOnly
           mono
           onChange={() => {}}
@@ -238,6 +239,122 @@ function CredentialsCard({
   );
 }
 
+// ─── Mapping Diagnostic Card ──────────────────────────────────────────────────
+type MappingInfo = {
+  status: "loading" | "no_credentials" | "no_mapping" | "ok" | "mismatch" | "error";
+  botUserId?: string | null;
+  mappedTenantId?: string | null;
+  hasToken?: boolean;
+  error?: string;
+};
+
+function MappingDiagnosticCard({
+  tenantId,
+  mapping,
+  onRemap,
+  remapping,
+  remapMessage,
+  webhookUrl,
+}: {
+  tenantId: string;
+  mapping: MappingInfo;
+  onRemap: () => void;
+  remapping: boolean;
+  remapMessage: string;
+  webhookUrl: string;
+}) {
+  const statusConfig: Record<string, { label: string; cls: string; desc: string }> = {
+    loading:        { label: "...",        cls: "bg-slate-100 text-slate-500 border-slate-200", desc: "確認中..." },
+    no_credentials: { label: "未設定",     cls: "bg-slate-100 text-slate-500 border-slate-200", desc: "LINE credentials が未設定です。上のカードで設定してください。" },
+    no_mapping:     { label: "未紐づけ",   cls: "bg-amber-50 text-amber-700 border-amber-200",  desc: "destination マッピングがありません。「修復」ボタンで作成してください。" },
+    ok:             { label: "OK",         cls: "bg-emerald-50 text-emerald-700 border-emerald-200", desc: "正常に紐づいています。" },
+    mismatch:       { label: "不一致",     cls: "bg-red-50 text-red-700 border-red-200",        desc: "マッピングが別テナントを指しています。「修復」ボタンで修正してください。" },
+    error:          { label: "エラー",     cls: "bg-red-50 text-red-700 border-red-200",        desc: mapping.error ?? "診断エラー" },
+  };
+  const cfg = statusConfig[mapping.status] ?? statusConfig.error;
+  const needsRemap = mapping.status === "no_mapping" || mapping.status === "mismatch";
+
+  return (
+    <div className="rounded-2xl border bg-white shadow-sm">
+      <div className="flex items-start justify-between gap-4 border-b px-5 py-4">
+        <div>
+          <div className="text-base font-semibold text-slate-900">Webhook 紐づけ診断</div>
+          <div className="text-sm text-slate-500">destination → tenantId マッピング状態</div>
+        </div>
+        <span className={`rounded-full border px-3 py-1 text-xs font-semibold whitespace-nowrap ${cfg.cls}`}>
+          {cfg.label}
+        </span>
+      </div>
+
+      <div className="grid gap-3 px-5 py-5 text-sm">
+        <div className="text-slate-600">{cfg.desc}</div>
+
+        {mapping.botUserId && (
+          <div className="flex items-center gap-2">
+            <span className="text-slate-500">Bot userId:</span>
+            <code className="rounded bg-slate-100 px-2 py-0.5 text-xs font-mono">{mapping.botUserId}</code>
+          </div>
+        )}
+        {mapping.mappedTenantId && (
+          <div className="flex items-center gap-2">
+            <span className="text-slate-500">マッピング先:</span>
+            <code className="rounded bg-slate-100 px-2 py-0.5 text-xs font-mono">{mapping.mappedTenantId}</code>
+            {mapping.mappedTenantId === tenantId
+              ? <span className="text-emerald-600 text-xs font-semibold">= このテナント</span>
+              : <span className="text-red-600 text-xs font-semibold">!= このテナント ({tenantId})</span>}
+          </div>
+        )}
+
+        {/* Remap button */}
+        {(needsRemap || mapping.status === "ok") && (
+          <div className="flex items-center gap-3 pt-2">
+            <button
+              type="button"
+              onClick={onRemap}
+              disabled={remapping}
+              className={[
+                "rounded-xl px-4 py-2 text-sm font-semibold transition",
+                needsRemap
+                  ? "bg-amber-500 text-white hover:bg-amber-600"
+                  : "border border-slate-300 text-slate-600 hover:bg-slate-50",
+                remapping ? "opacity-50 cursor-not-allowed" : "",
+              ].join(" ")}
+            >
+              {remapping ? "修復中..." : needsRemap ? "紐づけを修復 (Remap)" : "再マッピング"}
+            </button>
+            {!needsRemap && <span className="text-xs text-slate-400">問題なければ不要</span>}
+          </div>
+        )}
+
+        {remapMessage && (
+          <div className="rounded-xl border bg-slate-50 px-4 py-3 text-sm text-slate-700 whitespace-pre-wrap">
+            {remapMessage}
+          </div>
+        )}
+
+        {/* LINE Developer Console instructions */}
+        <hr className="border-slate-100" />
+        <div className="text-xs text-slate-500 space-y-1">
+          <div className="font-semibold text-slate-600">LINE Developers Console で確認:</div>
+          <div>1. Webhook URL を以下に設定:</div>
+          <div className="flex items-center gap-2">
+            <code className="rounded bg-slate-100 px-2 py-0.5 text-[11px] font-mono break-all">{webhookUrl}</code>
+            <button
+              type="button"
+              onClick={() => { navigator.clipboard.writeText(webhookUrl).catch(() => {}); }}
+              className="rounded border px-1.5 py-0.5 text-[10px] text-slate-500 hover:bg-slate-50 whitespace-nowrap"
+            >
+              Copy
+            </button>
+          </div>
+          <div>2. 「Use webhook」を <strong>ON</strong> にする</div>
+          <div>3. 「応答メッセージ」は OFF 推奨（AI応答と競合するため）</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 export default function LineSetupPage() {
   const router = useRouter();
@@ -248,7 +365,7 @@ export default function LineSetupPage() {
   const [webhookUrl, setWebhookUrl] = React.useState("");
   React.useEffect(() => {
     setWebhookUrl(
-      `${window.location.origin}/api/line/webhook?tenantId=${encodeURIComponent(tenantId)}`
+      `${window.location.origin}/api/line/webhook`
     );
   }, [tenantId]);
 
@@ -267,6 +384,53 @@ export default function LineSetupPage() {
 
   const [saving, setSaving] = React.useState(false);
   const [message, setMessage] = React.useState("");
+
+  // Mapping diagnostic state
+  const [mapping, setMapping] = React.useState<MappingInfo>({ status: "loading" });
+  const [remapping, setRemapping] = React.useState(false);
+  const [remapMessage, setRemapMessage] = React.useState("");
+
+  // Fetch mapping status on mount and after save/remap
+  const fetchMappingStatus = React.useCallback(async () => {
+    try {
+      const r = await fetch(`/api/proxy/admin/integrations/line/mapping-status?tenantId=${encodeURIComponent(tenantId)}`);
+      if (!r.ok) { setMapping({ status: "error", error: `HTTP ${r.status}` }); return; }
+      const d = await r.json() as any;
+      setMapping({
+        status: d.status ?? "error",
+        botUserId: d.botUserId ?? null,
+        mappedTenantId: d.mappedTenantId ?? null,
+        hasToken: d.hasToken ?? false,
+      });
+    } catch (e: any) {
+      setMapping({ status: "error", error: e?.message ?? "fetch failed" });
+    }
+  }, [tenantId]);
+
+  React.useEffect(() => { fetchMappingStatus(); }, [fetchMappingStatus]);
+
+  async function onRemap() {
+    setRemapping(true);
+    setRemapMessage("");
+    try {
+      const r = await fetch(`/api/proxy/admin/integrations/line/remap?tenantId=${encodeURIComponent(tenantId)}`, {
+        method: "POST",
+      });
+      const d = await r.json() as any;
+      if (r.ok && d.ok) {
+        setRemapMessage(`紐づけを修復しました (destination=${d.botUserId})${d.cleanedUpOld ? "\n旧マッピングをクリーンアップしました" : ""}`);
+        await fetchMappingStatus();
+      } else if (r.status === 409 && d.error === "destination_already_mapped") {
+        setRemapMessage(`このLINE公式アカウントは既にテナント「${d.mappedTenantId}」に紐づいています。先にそのテナントのLINE設定を解除してください。`);
+      } else {
+        setRemapMessage(`修復に失敗: ${d.detail ?? d.error ?? "unknown error"}`);
+      }
+    } catch (e: any) {
+      setRemapMessage(`エラー: ${e?.message ?? String(e)}`);
+    } finally {
+      setRemapping(false);
+    }
+  }
 
   const changed =
     creds.channelId !== initialCreds.channelId ||
@@ -303,8 +467,6 @@ export default function LineSetupPage() {
       );
 
       // Step 2: also call the dedicated save endpoint to trigger /v2/bot/info fetch
-      // → writes line:destination-to-tenant:{botUserId} KV key (enables webhook without ?tenantId=)
-      // Best-effort: don't fail the whole save if this step fails
       let mappingInfo = "";
       try {
         const saveRes = await fetch(
@@ -326,6 +488,9 @@ export default function LineSetupPage() {
           } else if (saveData?.botUserId === null) {
             mappingInfo = "\nbot info 取得に失敗しました。トークンを確認してください";
           }
+        } else if (saveRes.status === 409) {
+          const errData = await saveRes.json() as any;
+          mappingInfo = `\nこのLINE Botは既にテナント「${errData.mappedTenantId}」に紐づいています`;
         }
       } catch {
         // best-effort — don't block the save
@@ -333,6 +498,8 @@ export default function LineSetupPage() {
 
       setMessage(`保存しました ✅${mappingInfo}`);
       setInitialCreds(payload);
+      // Refresh mapping status after save
+      await fetchMappingStatus();
       router.push(`/admin/menu?tenantId=${tenantId}&onboarding=1`);
     } catch (e: any) {
       setMessage(`保存に失敗: ${e?.message ?? String(e)}`);
@@ -350,6 +517,14 @@ export default function LineSetupPage() {
         message={message}
         onSave={onSave}
         changed={changed}
+        webhookUrl={webhookUrl}
+      />
+      <MappingDiagnosticCard
+        tenantId={tenantId}
+        mapping={mapping}
+        onRemap={onRemap}
+        remapping={remapping}
+        remapMessage={remapMessage}
         webhookUrl={webhookUrl}
       />
     </BookingLikeShell>

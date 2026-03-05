@@ -3727,6 +3727,22 @@ app.post("/admin/integrations/line/messaging/save", async (c) => {
     let destinationMapped = false;
     if (tokenCheck.status === "ok" && tokenCheck.userId) {
       botUserId = tokenCheck.userId;
+
+      // 409 if this bot is already mapped to a different tenant
+      const existingMapping = await kv.get(`line:destination-to-tenant:${botUserId}`);
+      if (existingMapping && existingMapping !== tenantId) {
+        return c.json({
+          ok: false, stamp: STAMP, error: "destination_already_mapped",
+          botUserId, mappedTenantId: existingMapping, requestedTenantId: tenantId,
+        }, 409);
+      }
+
+      // Clean up old mapping if tenant was previously mapped to a different botUserId
+      const oldBotUserId = await kv.get(`line:tenant2dest:${tenantId}`);
+      if (oldBotUserId && oldBotUserId !== botUserId) {
+        await kv.delete(`line:destination-to-tenant:${oldBotUserId}`);
+      }
+
       await kv.put(`line:destination-to-tenant:${botUserId}`, tenantId);
       await kv.put(`line:tenant2dest:${tenantId}`, botUserId);
       destinationMapped = true;
@@ -3785,6 +3801,103 @@ app.delete("/admin/integrations/line/messaging", async (c) => {
     });
   } catch (e: any) {
     return c.json({ ok: false, stamp: STAMP, tenantId, error: "delete_error", detail: String(e?.message ?? e) }, 500);
+  }
+});
+
+// ── POST /admin/integrations/line/remap ───────────────────────────────────────
+// Re-generates destination-to-tenant + tenant2dest KV mappings from existing LINE settings.
+// Cleans up stale mappings if botUserId changed. Returns 409 if destination already mapped to another tenant.
+app.post("/admin/integrations/line/remap", async (c) => {
+  const STAMP = "LINE_REMAP_V1_20260305";
+  const tenantId = getTenantId(c, null);
+  try {
+    const kv = (c.env as any).SAAS_FACTORY;
+    if (!kv) return c.json({ ok: false, stamp: STAMP, error: "kv_missing" }, 500);
+
+    // Read existing LINE settings for this tenant
+    const key = `settings:${tenantId}`;
+    let existing: any = {};
+    try { const r = await kv.get(key); if (r) existing = JSON.parse(r); } catch {}
+
+    const lineSettings = existing?.integrations?.line ?? {};
+    const token = String(lineSettings.channelAccessToken ?? "").trim();
+    if (!token) {
+      return c.json({ ok: false, stamp: STAMP, error: "no_token", detail: "channelAccessToken not configured for this tenant" }, 400);
+    }
+
+    // Get botUserId from LINE API
+    const botCheck = await verifyLineToken(token);
+    if (botCheck.status !== "ok" || !botCheck.userId) {
+      return c.json({ ok: false, stamp: STAMP, error: "bot_info_failed", detail: "Could not fetch bot info. Check channelAccessToken." }, 400);
+    }
+    const botUserId = botCheck.userId;
+
+    // Check for duplicate: is this botUserId already mapped to a DIFFERENT tenant?
+    const existingMapping = await kv.get(`line:destination-to-tenant:${botUserId}`);
+    if (existingMapping && existingMapping !== tenantId) {
+      return c.json({
+        ok: false, stamp: STAMP, error: "destination_already_mapped",
+        botUserId, mappedTenantId: existingMapping, requestedTenantId: tenantId,
+        detail: `This LINE bot is already mapped to tenant "${existingMapping}".`,
+      }, 409);
+    }
+
+    // Clean up old mapping if tenant was previously mapped to a different botUserId
+    let cleanedUpOld = false;
+    const oldBotUserId = await kv.get(`line:tenant2dest:${tenantId}`);
+    if (oldBotUserId && oldBotUserId !== botUserId) {
+      await kv.delete(`line:destination-to-tenant:${oldBotUserId}`);
+      cleanedUpOld = true;
+    }
+
+    // Write new mappings
+    await kv.put(`line:destination-to-tenant:${botUserId}`, tenantId);
+    await kv.put(`line:tenant2dest:${tenantId}`, botUserId);
+
+    return c.json({
+      ok: true, stamp: STAMP, tenantId, botUserId,
+      destinationMapped: true, cleanedUpOld,
+    });
+  } catch (e: any) {
+    return c.json({ ok: false, stamp: STAMP, tenantId, error: "remap_error", detail: String(e?.message ?? e) }, 500);
+  }
+});
+
+// ── GET /admin/integrations/line/mapping-status ──────────────────────────────
+// Returns current destination mapping status for a tenant (for diagnostic UI).
+app.get("/admin/integrations/line/mapping-status", async (c) => {
+  const STAMP = "LINE_MAPPING_STATUS_V1_20260305";
+  const tenantId = getTenantId(c, null);
+  try {
+    const kv = (c.env as any).SAAS_FACTORY;
+    if (!kv) return c.json({ ok: false, stamp: STAMP, error: "kv_missing" }, 500);
+
+    // Get stored botUserId for this tenant
+    const storedBotUserId = await kv.get(`line:tenant2dest:${tenantId}`);
+
+    // If we have a stored botUserId, check the reverse mapping
+    let mappedTenantId: string | null = null;
+    if (storedBotUserId) {
+      mappedTenantId = await kv.get(`line:destination-to-tenant:${storedBotUserId}`);
+    }
+
+    // Check if tenant has LINE credentials
+    const key = `settings:${tenantId}`;
+    let existing: any = {};
+    try { const r = await kv.get(key); if (r) existing = JSON.parse(r); } catch {}
+    const hasToken = !!String(existing?.integrations?.line?.channelAccessToken ?? "").trim();
+
+    const isCorrect = storedBotUserId && mappedTenantId === tenantId;
+
+    return c.json({
+      ok: true, stamp: STAMP, tenantId,
+      botUserId: storedBotUserId ?? null,
+      mappedTenantId: mappedTenantId ?? null,
+      hasToken,
+      status: !hasToken ? "no_credentials" : !storedBotUserId ? "no_mapping" : isCorrect ? "ok" : "mismatch",
+    });
+  } catch (e: any) {
+    return c.json({ ok: false, stamp: STAMP, error: "status_error", detail: String(e?.message ?? e) }, 500);
   }
 });
 
