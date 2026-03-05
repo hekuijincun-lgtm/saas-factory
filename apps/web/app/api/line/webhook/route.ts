@@ -339,8 +339,8 @@ export async function POST(req: Request) {
 
   const raw = await req.arrayBuffer();
 
-  // Resolve tenantId: query param → destination KV lookup → env default → "default"
-  let tenantId: string | null = searchParams.get("tenantId") ?? process.env.LINE_DEFAULT_TENANT_ID ?? null;
+  // Resolve tenantId: query param → destination KV lookup → 400 error
+  let tenantId: string | null = searchParams.get("tenantId") ?? null;
   let resolvedBy = tenantId ? "query_param" : "pending";
   let destination = "";
   let kvHit = false;
@@ -366,7 +366,7 @@ export async function POST(req: Request) {
             }
           }
           if (!tenantId) {
-            resolvedBy = "destination_miss"; // destination present but no KV entry
+            resolvedBy = "destination_miss";
           }
         } else {
           resolvedBy = "no_api_base";
@@ -377,17 +377,20 @@ export async function POST(req: Request) {
     } catch { resolvedBy = "parse_error"; }
   }
 
-  if (!tenantId && process.env.LINE_DEFAULT_TENANT_ID) {
-    tenantId = process.env.LINE_DEFAULT_TENANT_ID;
-    resolvedBy = "env_default";
-  }
+  // No default fallback — unknown destination returns 400
   if (!tenantId) {
-    tenantId = "default";
-    if (resolvedBy === "pending") resolvedBy = "hardcoded_default";
-    else if (resolvedBy === "destination_miss" || resolvedBy === "no_destination" ||
-             resolvedBy === "parse_error" || resolvedBy === "no_api_base") {
-      resolvedBy += "+hardcoded_default";
+    if (debugMode === "1") {
+      return NextResponse.json({
+        ok: false, stamp: STAMP, where, debug: 1,
+        error: "unknown_destination",
+        destination: destination || null,
+        resolvedBy,
+      }, { status: 400 });
     }
+    return NextResponse.json(
+      { ok: false, error: "unknown_destination", destination: destination || null, resolvedBy },
+      { status: 400 }
+    );
   }
 
   const cfg = await getTenantLineConfig(tenantId, origin);

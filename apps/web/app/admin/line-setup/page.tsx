@@ -305,20 +305,33 @@ export default function LineSetupPage() {
       // Step 2: also call the dedicated save endpoint to trigger /v2/bot/info fetch
       // → writes line:destination-to-tenant:{botUserId} KV key (enables webhook without ?tenantId=)
       // Best-effort: don't fail the whole save if this step fails
-      await fetch(
-        `/api/proxy/admin/integrations/line/messaging/save?tenantId=${encodeURIComponent(tenantId)}`,
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            channelAccessToken: payload.channelAccessToken,
-            channelSecret:      payload.channelSecret,
-            webhookUrl:         payload.bookingUrl || undefined,
-          }),
+      let mappingInfo = "";
+      try {
+        const saveRes = await fetch(
+          `/api/proxy/admin/integrations/line/messaging/save?tenantId=${encodeURIComponent(tenantId)}`,
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              channelAccessToken: payload.channelAccessToken,
+              channelSecret:      payload.channelSecret,
+              webhookUrl:         payload.bookingUrl || undefined,
+            }),
+          }
+        );
+        if (saveRes.ok) {
+          const saveData = await saveRes.json() as any;
+          if (saveData?.destinationMapped && saveData?.botUserId) {
+            mappingInfo = `\nLINE チャンネルを tenantId=${tenantId} に紐づけました (destination=${saveData.botUserId})`;
+          } else if (saveData?.botUserId === null) {
+            mappingInfo = "\nbot info 取得に失敗しました。トークンを確認してください";
+          }
         }
-      ).catch(() => null);
+      } catch {
+        // best-effort — don't block the save
+      }
 
-      setMessage("保存しました ✅");
+      setMessage(`保存しました ✅${mappingInfo}`);
       setInitialCreds(payload);
       router.push(`/admin/menu?tenantId=${tenantId}&onboarding=1`);
     } catch (e: any) {

@@ -379,6 +379,7 @@ app.get("/__build", (c) => c.json({ ok: true, stamp: "API_BUILD_V1" }));
           const botCheck = await verifyLineToken(lineToken);
           if (botCheck.status === "ok" && botCheck.userId) {
             await kv.put(`line:destination-to-tenant:${botCheck.userId}`, tenantId);
+            await kv.put(`line:tenant2dest:${tenantId}`, botCheck.userId);
           }
         } catch {}
       };
@@ -3721,13 +3722,19 @@ app.post("/admin/integrations/line/messaging/save", async (c) => {
     const tokenCheck = await verifyLineToken(channelAccessToken);
     const kind = tokenCheck.status === "ok" ? "linked" : "partial";
 
-    // Write destination-to-tenant mapping (no TTL = permanent until credentials change)
+    // Write destination-to-tenant mapping + reverse lookup (no TTL = permanent until credentials change)
+    let botUserId: string | null = null;
+    let destinationMapped = false;
     if (tokenCheck.status === "ok" && tokenCheck.userId) {
-      await kv.put(`line:destination-to-tenant:${tokenCheck.userId}`, tenantId);
+      botUserId = tokenCheck.userId;
+      await kv.put(`line:destination-to-tenant:${botUserId}`, tenantId);
+      await kv.put(`line:tenant2dest:${tenantId}`, botUserId);
+      destinationMapped = true;
     }
 
     return c.json({
       ok: true, tenantId, stamp: STAMP, kind,
+      botUserId, destinationMapped,
       checks: { token: tokenCheck.status, webhook: "ng" },
     });
   } catch (e: any) {
@@ -3747,9 +3754,19 @@ app.delete("/admin/integrations/line/messaging", async (c) => {
     let existing: any = {};
     try { const r = await kv.get(key); if (r) existing = JSON.parse(r); } catch {}
 
+    // Clean up destination-to-tenant mapping before removing credentials
+    const existingLine = existing?.integrations?.line ?? {};
+    const oldBotUserId = existingLine.userId || null;
+    // Try reverse lookup if userId not in settings
+    const resolvedBotUserId = oldBotUserId || (await kv.get(`line:tenant2dest:${tenantId}`)) || null;
+    if (resolvedBotUserId) {
+      await kv.delete(`line:destination-to-tenant:${resolvedBotUserId}`);
+      await kv.delete(`line:tenant2dest:${tenantId}`);
+    }
+
     // Remove credential fields but keep metadata (userId, displayName, notify flags etc.)
     const { channelSecret: _s, channelAccessToken: _t, bookingUrl: _b, connected: _c, channelId: _id, ...restLine } =
-      existing?.integrations?.line ?? {};
+      existingLine;
 
     const next = {
       ...existing,
@@ -3763,6 +3780,7 @@ app.delete("/admin/integrations/line/messaging", async (c) => {
     return c.json({
       ok: true, tenantId, stamp: STAMP,
       kind: "unconfigured",
+      cleanedDestination: resolvedBotUserId,
       checks: { token: "ng", webhook: "ng" },
     });
   } catch (e: any) {
@@ -3772,18 +3790,11 @@ app.delete("/admin/integrations/line/messaging", async (c) => {
 
 // ── GET /line/destination-to-tenant ─────────────────────────────────────────
 // Resolves tenantId from a LINE webhook `destination` field (= bot channel userId).
-// SECURITY: only enabled when ALLOW_PUBLIC_LINE_LOOKUP=1 env var is set.
-// This endpoint is called server-side by the Pages webhook (not from browser), so it is
-// safe to enable in production as long as the source IP is Cloudflare Pages infra.
-// Disable in production if you don't want this public (set ALLOW_PUBLIC_LINE_LOOKUP=0 or unset).
+// Called server-side by the Pages webhook handler (not from browser).
 app.get("/line/destination-to-tenant", async (c) => {
-  const env = c.env as any;
-  if (env?.ALLOW_PUBLIC_LINE_LOOKUP !== "1") {
-    return c.json({ ok: false, error: "not_found" }, 404);
-  }
   const destination = (c.req.query("destination") ?? "").trim();
   if (!destination) return c.json({ ok: false, error: "missing_destination" }, 400);
-  const kv = env.SAAS_FACTORY;
+  const kv = (c.env as any).SAAS_FACTORY;
   if (!kv) return c.json({ ok: false, error: "kv_missing" }, 500);
   const tenantId = await kv.get(`line:destination-to-tenant:${destination}`);
   if (!tenantId) return c.json({ ok: false, error: "not_found" }, 404);
