@@ -1,5 +1,5 @@
 export const runtime = "edge";
-import { readAdminToken, injectAdminToken, makeDebugStamp, applyDebugHeaders } from "../../_lib/proxy";
+import { readAdminToken, injectAdminToken, makeDebugStamp, applyDebugHeaders, readSessionTenantId } from "../../_lib/proxy";
 
 function apiBase(): string {
   const v = process.env.API_BASE || process.env.BOOKING_API_BASE || process.env.NEXT_PUBLIC_API_BASE;
@@ -28,6 +28,11 @@ async function forward(req: Request): Promise<Response> {
   const ct = req.headers.get("content-type");
   if (ct) reqHeaders.set("content-type", ct);
   const tokenInjected = injectAdminToken(reqHeaders, upstream.pathname);
+
+  // Inject HMAC-verified session tenantId so Workers overrides URL query param (authoritative).
+  // Mirrors catch-all proxy behaviour; prevents client from spoofing other tenants via ?tenantId=.
+  const sessionTenantId = await readSessionTenantId(req);
+  if (sessionTenantId) reqHeaders.set("x-session-tenant-id", sessionTenantId);
 
   let body: ArrayBuffer | undefined;
   if (method !== "GET" && method !== "HEAD") {
