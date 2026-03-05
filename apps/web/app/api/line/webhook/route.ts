@@ -468,7 +468,7 @@ export async function POST(req: Request) {
   // ── debug=1 POST: return tenant resolution trace without processing ──────
   if (debugMode === "1") {
     // Wait briefly for log POST to complete so we can report its status
-    await new Promise(r => setTimeout(r, 800));
+    await new Promise(r => setTimeout(r, 500));
     return NextResponse.json({
       ok: true, stamp: STAMP, where, debug: 1,
       step: "tenant_resolved",
@@ -489,8 +489,6 @@ export async function POST(req: Request) {
       logPostStatus: _logPostStatus,
       logHasApiBase: !!webhookLogApiBase,
       logHasToken: !!internalToken,
-      _dbgTokenLen: internalToken.length,
-      _dbgApiBase: webhookLogApiBase.substring(0, 40),
       hint: resolvedBy.includes("destination_miss")
         ? "KV key missing — re-save LINE credentials for this tenant"
         : resolvedBy === "no_api_base"
