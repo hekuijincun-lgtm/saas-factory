@@ -3606,8 +3606,8 @@ async function readLineKv(kv: any, tenantId: string): Promise<any> {
   } catch { return {}; }
 }
 
-/** Verify channelAccessToken via LINE Bot API (4-second timeout) */
-async function verifyLineToken(token: string): Promise<"ok" | "ng"> {
+/** Verify channelAccessToken via LINE Bot API (4-second timeout). Returns bot userId on success. */
+async function verifyLineToken(token: string): Promise<{ status: "ok" | "ng"; userId?: string }> {
   try {
     const ac = new AbortController();
     const tid = setTimeout(() => ac.abort(), 4000);
@@ -3616,8 +3616,10 @@ async function verifyLineToken(token: string): Promise<"ok" | "ng"> {
       signal: ac.signal,
     });
     clearTimeout(tid);
-    return r.ok ? "ok" : "ng";
-  } catch { return "ng"; }
+    if (!r.ok) return { status: "ng" };
+    const data = await r.json() as any;
+    return { status: "ok", userId: String(data?.userId ?? "").trim() || undefined };
+  } catch { return { status: "ng" }; }
 }
 
 // ── GET /admin/integrations/line/messaging/status ────────────────────────────
@@ -3640,14 +3642,14 @@ app.get("/admin/integrations/line/messaging/status", async (c) => {
       });
     }
 
-    const tokenCheck = accessToken ? await verifyLineToken(accessToken) : "ng";
+    const tokenCheck = accessToken ? await verifyLineToken(accessToken) : { status: "ng" as const };
     const kind = accessToken && secret
-      ? (tokenCheck === "ok" ? "linked" : "partial")
+      ? (tokenCheck.status === "ok" ? "linked" : "partial")
       : "partial";
 
     return c.json({
       ok: true, tenantId, stamp: STAMP, kind,
-      checks: { token: tokenCheck, webhook: "ng" },
+      checks: { token: tokenCheck.status, webhook: "ng" },
     });
   } catch (e: any) {
     return c.json({ ok: false, stamp: STAMP, tenantId, error: "status_error", detail: String(e?.message ?? e) }, 500);
@@ -3690,13 +3692,22 @@ app.post("/admin/integrations/line/messaging/save", async (c) => {
     };
     await kv.put(key, JSON.stringify(next));
 
-    // Verify token to give accurate status back
+    // Verify token to give accurate status back; capture botUserId (= webhook destination)
     const tokenCheck = await verifyLineToken(channelAccessToken);
-    const kind = tokenCheck === "ok" ? "linked" : "partial";
+    const kind = tokenCheck.status === "ok" ? "linked" : "partial";
+
+    // Write destination-to-tenant mapping so webhook can resolve tenantId without ?tenantId=
+    if (tokenCheck.status === "ok" && tokenCheck.userId) {
+      await kv.put(
+        `line:destination-to-tenant:${tokenCheck.userId}`,
+        tenantId,
+        { expirationTtl: 60 * 60 * 24 * 90 } // 90 days
+      );
+    }
 
     return c.json({
       ok: true, tenantId, stamp: STAMP, kind,
-      checks: { token: tokenCheck, webhook: "ng" },
+      checks: { token: tokenCheck.status, webhook: "ng" },
     });
   } catch (e: any) {
     return c.json({ ok: false, stamp: STAMP, tenantId, error: "save_error", detail: String(e?.message ?? e) }, 500);
@@ -3736,6 +3747,21 @@ app.delete("/admin/integrations/line/messaging", async (c) => {
   } catch (e: any) {
     return c.json({ ok: false, stamp: STAMP, tenantId, error: "delete_error", detail: String(e?.message ?? e) }, 500);
   }
+});
+
+// ── GET /line/destination-to-tenant ─────────────────────────────────────────
+// Resolves tenantId from a LINE webhook `destination` field (= bot channel userId).
+// Written by POST /admin/integrations/line/messaging/save on successful token verify.
+// Used by the Pages webhook route to resolve tenantId without requiring ?tenantId=.
+// Public endpoint — no credentials, destination is not sensitive (it's the bot's own userId).
+app.get("/line/destination-to-tenant", async (c) => {
+  const destination = (c.req.query("destination") ?? "").trim();
+  if (!destination) return c.json({ ok: false, error: "missing_destination" }, 400);
+  const kv = (c.env as any).SAAS_FACTORY;
+  if (!kv) return c.json({ ok: false, error: "kv_missing" }, 500);
+  const tenantId = await kv.get(`line:destination-to-tenant:${destination}`);
+  if (!tenantId) return c.json({ ok: false, error: "not_found" }, 404);
+  return c.json({ ok: true, tenantId });
 });
 
 // ── POST /admin/integrations/line/last-user ─────────────────────────────────

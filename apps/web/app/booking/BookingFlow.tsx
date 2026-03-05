@@ -154,7 +154,8 @@ export default function BookingFlow() {
   useEffect(() => {
     fetchAdminSettings(tenantId).then(settings => {
       const raw = settings as any;
-      if (raw.consentText) setConsentText(raw.consentText);
+      const ct = raw.consentText || raw.eyebrow?.consentText;
+      if (ct) setConsentText(ct);
       if (raw.staffSelectionEnabled === false) setStaffSelectionEnabled(false);
       if (raw.eyebrow?.surveyEnabled === true) setSurveyEnabled(true);
       if (Array.isArray(raw.eyebrow?.surveyQuestions)) setSurveyQuestions(raw.eyebrow.surveyQuestions);

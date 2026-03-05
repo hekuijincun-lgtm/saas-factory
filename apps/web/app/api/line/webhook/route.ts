@@ -323,10 +323,6 @@ export async function GET(req: Request) {
 // ─── POST (LINE webhook) ──────────────────────────────────────────────────────
 export async function POST(req: Request) {
   const { searchParams, origin } = new URL(req.url);
-  const tenantId =
-    searchParams.get("tenantId") ??
-    process.env.LINE_DEFAULT_TENANT_ID ??
-    "default";
 
   // debug モード: "1" = 実送信なし判定のみ, "2" = push のみ同期実送信
   const debugMode = searchParams.get("debug"); // "1" | "2" | null
@@ -335,6 +331,31 @@ export async function POST(req: Request) {
   const allowBadSig = (process.env.LINE_WEBHOOK_ALLOW_BAD_SIGNATURE ?? "0") === "1";
 
   const raw = await req.arrayBuffer();
+
+  // Resolve tenantId: query param → destination KV lookup → env default → "default"
+  let tenantId = searchParams.get("tenantId") ?? process.env.LINE_DEFAULT_TENANT_ID ?? null;
+  if (!tenantId) {
+    try {
+      const payloadForLookup = JSON.parse(new TextDecoder().decode(raw));
+      const destination = String(payloadForLookup?.destination ?? "").trim();
+      if (destination) {
+        const apiBase = (
+          process.env.API_BASE ?? process.env.NEXT_PUBLIC_API_BASE ?? ""
+        ).replace(/\/+$/, "");
+        if (apiBase) {
+          const r = await fetch(
+            `${apiBase}/line/destination-to-tenant?destination=${encodeURIComponent(destination)}`
+          ).catch(() => null);
+          if (r?.ok) {
+            const d = await r.json() as any;
+            if (d?.tenantId) tenantId = String(d.tenantId);
+          }
+        }
+      }
+    } catch { /* ignore — fall through to default */ }
+  }
+  tenantId = tenantId ?? "default";
+
   const cfg = await getTenantLineConfig(tenantId, origin);
 
   if (!cfg.channelSecret) {

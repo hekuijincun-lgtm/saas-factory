@@ -138,6 +138,22 @@ export default function ReservationDetailPanel({
   const surveyAnswers = reservation.meta?.surveyAnswers;
   const hasSurvey = !!surveyAnswers && Object.keys(surveyAnswers).length > 0;
 
+  // questionId → label map (fetched from settings.eyebrow.surveyQuestions)
+  const [qMap, setQMap] = useState<Record<string, string>>({});
+  useEffect(() => {
+    if (!tenantId) return;
+    fetch(`/api/proxy/admin/settings?tenantId=${encodeURIComponent(tenantId)}`, { cache: 'no-store' })
+      .then(r => r.ok ? r.json() : null)
+      .then((json: any) => {
+        const s = json?.data ?? json;
+        const qs: Array<{ id: string; label: string }> = s?.eyebrow?.surveyQuestions ?? [];
+        const map: Record<string, string> = {};
+        for (const q of qs) { if (q.id && q.label) map[q.id] = q.label; }
+        setQMap(map);
+      })
+      .catch(() => {});
+  }, [tenantId]);
+
   const staffName = (() => {
     const sid = reservation.staffId || 'any';
     if (sid === 'any') return '指名なし';
@@ -489,7 +505,7 @@ export default function ReservationDetailPanel({
                   <div key={key} className="bg-gray-50 border border-gray-100 rounded-xl px-4 py-3">
                     <p className="text-xs font-medium text-gray-500 mb-0.5">
                       <span className="text-gray-300 mr-1">{idx + 1}.</span>
-                      {key}
+                      {qMap[key] || key}
                     </p>
                     <p className="text-sm text-gray-800 font-medium">
                       {typeof value === 'boolean'
