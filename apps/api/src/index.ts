@@ -545,7 +545,9 @@ const parseHHMM = (s: string) => {
     const closeMs = ms(closeIso)
 
     const stepMs = slotIntervalMin * 60 * 1000
-    const durMs  = slotMinutes * 60 * 1000
+    // Use requested duration (menu length) if provided; fall back to slotMinutes setting
+    const reqDurMin = Number(c.req.query('durationMin') || 0)
+    const durMs  = (reqDurMin > 0 ? reqDurMin : slotMinutes) * 60 * 1000
 
     const dayStart = date + 'T00:00:00+09:00'
     const dayEnd   = date + 'T23:59:59+09:00'

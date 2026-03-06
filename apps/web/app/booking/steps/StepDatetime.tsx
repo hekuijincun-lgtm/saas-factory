@@ -5,6 +5,7 @@ import { getSlots, type TimeSlot } from '@/src/lib/bookingApi';
 
 interface Props {
   staffId: string | null;
+  durationMin?: number | null;
   onSelect: (date: string, time: string) => void;
   onBack: () => void;
 }
@@ -51,7 +52,7 @@ function ErrorMsg({ msg }: { msg: string }) {
   );
 }
 
-export default function StepDatetime({ staffId, onSelect, onBack }: Props) {
+export default function StepDatetime({ staffId, durationMin, onSelect, onBack }: Props) {
   const [weekOffset, setWeekOffset] = useState(0);
   const [selectedDate, setSelectedDate] = useState<string>('');
   const [slots, setSlots] = useState<TimeSlot[]>([]);
@@ -71,7 +72,7 @@ export default function StepDatetime({ staffId, onSelect, onBack }: Props) {
     if (!selectedDate) return;
     setLoading(true);
     setError(null);
-    getSlots(selectedDate, staffId && staffId !== 'any' ? staffId : undefined)
+    getSlots(selectedDate, staffId && staffId !== 'any' ? staffId : undefined, durationMin ?? undefined)
       .then(r => setSlots(r.slots))
       .catch(e => setError(e.message || 'スロットの取得に失敗しました'))
       .finally(() => setLoading(false));

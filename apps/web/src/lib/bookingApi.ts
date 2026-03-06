@@ -27,6 +27,7 @@ export interface CreateReservationPayload {
   email?: string;
   staffId?: string;
   lineUserId?: string;
+  durationMin?: number;
   meta?: Record<string, any>; // 眉毛カルテ等の拡張メタ（任意）
 }
 
@@ -163,12 +164,15 @@ export interface ApiResponse<T> {
  * GET /api/proxy/slots?date=YYYY-MM-DD&staffId=xxx(optional) を実行
  * Next.js プロキシAPI経由で Worker API の /slots に中継
  */
-export async function getSlots(date: string, staffId?: string): Promise<SlotsResponse> {
+export async function getSlots(date: string, staffId?: string, durationMin?: number): Promise<SlotsResponse> {
   try {
     const params = new URLSearchParams({ date });
     params.append('tenantId', (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('tenantId')) || 'default');
     if (staffId && staffId !== 'any') {
       params.append('staffId', staffId);
+    }
+    if (durationMin && durationMin > 0) {
+      params.append('durationMin', String(durationMin));
     }
     
     // Next.js プロキシAPI経由で取得（相対パスで /api/proxy/slots を呼ぶ）
@@ -231,10 +235,11 @@ export async function createReservation(
     // "YYYY-MM-DD" + "HH:mm" -> ISO-ish string with JST offset
     const startAt = `${date}T${time}:00${tz}`;
 
-    // endAt: default 60 minutes later
+    // endAt: use menu duration or default 60 minutes
+    const durMin = payload.durationMin && payload.durationMin > 0 ? payload.durationMin : 60;
     const [hh, mm] = time.split(":").map((x) => parseInt(x, 10));
     const endDateObj = new Date(`${date}T${time}:00${tz}`);
-    endDateObj.setMinutes(endDateObj.getMinutes() + 60);
+    endDateObj.setMinutes(endDateObj.getMinutes() + durMin);
     const pad = (n: number) => String(n).padStart(2, "0");
     const endAt = `${endDateObj.getFullYear()}-${pad(endDateObj.getMonth() + 1)}-${pad(endDateObj.getDate())}T${pad(endDateObj.getHours())}:${pad(endDateObj.getMinutes())}:00${tz}`;
 

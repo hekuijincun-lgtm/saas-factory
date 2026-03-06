@@ -266,6 +266,7 @@ export default function BookingFlow() {
       {step === 3 && (
         <StepDatetime
           staffId={state.staffId}
+          durationMin={state.menuDurationMin}
           onSelect={handleDatetimeSelect}
           onBack={handleBackFromDatetime}
         />

@@ -135,6 +135,7 @@ export default function StepConfirm({ booking, onBack, onDone, consentText, trea
         staffId:
           booking.staffId === 'any' ? undefined : (booking.staffId ?? undefined),
         lineUserId: booking.lineUserId ?? undefined,
+        durationMin: booking.menuDurationMin ?? undefined,
         ...(Object.keys(metaPayload).length > 0 ? { meta: metaPayload } : {}),
       });
       // save customerKey to localStorage for reservation list lookup
