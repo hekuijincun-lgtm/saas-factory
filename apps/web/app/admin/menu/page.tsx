@@ -12,7 +12,7 @@ export default function Page() {
   return (
     <>
       <AdminTopBar title="メニュー管理" subtitle="メニューの追加・編集を行います。" />
-      <MenuManager key={tenantId} />
+      <MenuManager key={tenantId} tenantId={tenantId} />
     </>
   );
 }
