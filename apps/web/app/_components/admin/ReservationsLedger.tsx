@@ -175,14 +175,18 @@ export default function ReservationsLedger() {
   }, [date, tenantId]);
 
   useEffect(() => {
-    if (date && tenantId && tenantStatus === 'ready') {
+    if (tenantStatus !== 'ready') {
+      setReservations([]);
+      return;
+    }
+    if (date && tenantId) {
       fetchReservations();
     }
   }, [date, tenantId, tenantStatus, fetchReservations]);
 
   // Auto-refresh: poll every 30s + refresh on window focus
   useEffect(() => {
-    if (!date) return;
+    if (!date || tenantStatus !== 'ready') return;
     const handleFocus = () => fetchReservations();
     window.addEventListener('focus', handleFocus);
     const timer = setInterval(() => fetchReservations(), 30_000);
@@ -190,7 +194,7 @@ export default function ReservationsLedger() {
       window.removeEventListener('focus', handleFocus);
       clearInterval(timer);
     };
-  }, [date, fetchReservations]);
+  }, [date, tenantStatus, fetchReservations]);
 
   // KV生データを取得（cycleAvailabilityのサイクル判定用）
   const fetchAvailability = useCallback(async () => {
