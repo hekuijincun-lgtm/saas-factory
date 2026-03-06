@@ -154,14 +154,17 @@ export default function StepConfirm({ booking, onBack, onDone, consentText, trea
         saveCustomerKey(resolvedTenantId, res.customerKey);
       }
       setDone(true);
-    } catch (e: unknown) {
-      console.error("[reserve error]", { status: (e as any)?.status, message: (e as any)?.message, data: (e as any)?.data, raw: e });
-      const raw = e instanceof Error ? e.message : '予約に失敗しました';
-      if (raw.includes('duplicate_slot') || (e as any)?.data?.error === 'duplicate_slot') {
+    } catch (e: any) {
+      console.error("[reserve error]", e);
+      if (
+        e?.message === 'duplicate_slot' ||
+        e?.data?.error === 'duplicate_slot'
+      ) {
+        setError('この時間は直前に埋まりました。別の時間を選択してください。');
         onBack();
         return;
       }
-      setError(mapError(raw));
+      setError('予約に失敗しました');
     } finally {
       setLoading(false);
       submittingRef.current = false;
