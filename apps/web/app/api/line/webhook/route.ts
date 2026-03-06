@@ -185,13 +185,13 @@ async function runAiChat(
 
 // ─── 予約URL組み立て ──────────────────────────────────────────────────────────
 function buildBookingLink(bookingUrl: string, tenantId: string, lineUserId: string): string {
-  const sep = bookingUrl.includes("?") ? "&" : "?";
-  return (
-    bookingUrl +
-    sep +
-    `tenantId=${encodeURIComponent(tenantId)}` +
-    (lineUserId ? `&lu=${encodeURIComponent(lineUserId)}` : "")
-  );
+  // Strip existing tenantId/lu params to avoid duplicates
+  const u = new URL(bookingUrl);
+  u.searchParams.delete("tenantId");
+  u.searchParams.delete("lu");
+  u.searchParams.set("tenantId", tenantId);
+  if (lineUserId) u.searchParams.set("lu", lineUserId);
+  return u.toString();
 }
 
 // ─── 予約 intent 判定 ─────────────────────────────────────────────────────────
