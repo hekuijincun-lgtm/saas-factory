@@ -261,7 +261,7 @@ export default function BookingFlow() {
         <StepMenu tenantId={tenantId} onSelect={handleMenuSelect} />
       )}
       {step === 2 && staffSelectionEnabled && (
-        <StepStaff onSelect={handleStaffSelect} onBack={() => setStep(1)} />
+        <StepStaff tenantId={tenantId} onSelect={handleStaffSelect} onBack={() => setStep(1)} />
       )}
       {step === 3 && (
         <StepDatetime
