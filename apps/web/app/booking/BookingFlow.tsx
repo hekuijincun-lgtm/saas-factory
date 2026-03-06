@@ -139,6 +139,7 @@ export default function BookingFlow() {
   const [staffSelectionEnabled, setStaffSelectionEnabled] = useState(true);
   const [surveyEnabled, setSurveyEnabled] = useState(false);
   const [surveyQuestions, setSurveyQuestions] = useState<EyebrowSurveyQuestion[]>([]);
+  const [slotConflictNotice, setSlotConflictNotice] = useState<string | null>(null);
 
   // lineUserId: URL param を優先し、無ければ localStorage から復元（クライアントのみ）
   useEffect(() => {
@@ -238,6 +239,7 @@ export default function BookingFlow() {
 
   const handleDatetimeSelect = (date: string, time: string) => {
     update({ date, time });
+    setSlotConflictNotice(null);
     setStep(surveyEnabled ? 4 : 5);
   };
 
@@ -248,9 +250,9 @@ export default function BookingFlow() {
     setStep(3);
   };
   const handleBackFromConfirm = () => {
-    console.log("[BookingFlow] handleBackFromConfirm -> step", surveyEnabled ? 4 : 3);
-    // Clear selected date/time so StepDatetime re-fetches fresh slots
+    console.log("[BookingFlow] handleBackFromConfirm -> step 3 (slot conflict)");
     update({ date: null, time: null });
+    setSlotConflictNotice('この時間枠は先に埋まりました。最新の空き状況から別の時間を選択してください。');
     setStep(3);
   };
 
@@ -267,12 +269,19 @@ export default function BookingFlow() {
         <StepStaff tenantId={tenantId} onSelect={handleStaffSelect} onBack={() => setStep(1)} />
       )}
       {step === 3 && (
-        <StepDatetime
-          staffId={state.staffId}
-          durationMin={state.menuDurationMin}
-          onSelect={handleDatetimeSelect}
-          onBack={handleBackFromDatetime}
-        />
+        <>
+          {slotConflictNotice && (
+            <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-xl text-sm text-amber-800">
+              {slotConflictNotice}
+            </div>
+          )}
+          <StepDatetime
+            staffId={state.staffId}
+            durationMin={state.menuDurationMin}
+            onSelect={handleDatetimeSelect}
+            onBack={handleBackFromDatetime}
+          />
+        </>
       )}
       {step === 4 && surveyEnabled && (
         <StepSurvey
