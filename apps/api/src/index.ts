@@ -3721,28 +3721,24 @@ app.post("/admin/integrations/line/messaging/save", async (c) => {
     // Write destination-to-tenant mapping + reverse lookup (no TTL = permanent until credentials change)
     let botUserId: string | null = null;
     let destinationMapped = false;
+    let previousTenantId: string | null = null;
     if (tokenCheck.status === "ok" && tokenCheck.userId) {
       botUserId = tokenCheck.userId;
 
-      // Warn if this bot is already mapped to a different tenant, but don't block save
-      const existingMapping = await kv.get(`line:destination-to-tenant:${botUserId}`);
-      if (existingMapping && existingMapping !== tenantId) {
-        // Settings already saved above (L3715); return success with warning instead of 409
-        return c.json({
-          ok: true, stamp: STAMP, kind, tenantId,
-          warning: "destination_already_mapped",
-          botUserId, mappedTenantId: existingMapping, requestedTenantId: tenantId,
-          destinationMapped: false,
-          checks: { token: tokenCheck.status === "ok" ? "ok" : "ng", webhook: "ng" },
-        });
-      }
-
-      // Clean up old mapping if tenant was previously mapped to a different botUserId
+      // Clean up old mappings:
+      // 1. If this tenant was previously mapped to a different bot, remove old mapping
       const oldBotUserId = await kv.get(`line:tenant2dest:${tenantId}`);
       if (oldBotUserId && oldBotUserId !== botUserId) {
         await kv.delete(`line:destination-to-tenant:${oldBotUserId}`);
       }
+      // 2. If this bot was mapped to a different tenant, clean up that tenant's reverse lookup
+      const existingMapping = await kv.get(`line:destination-to-tenant:${botUserId}`);
+      if (existingMapping && existingMapping !== tenantId) {
+        previousTenantId = existingMapping;
+        await kv.delete(`line:tenant2dest:${existingMapping}`);
+      }
 
+      // Overwrite mapping: last-write-wins (bot belongs to whichever tenant saved last)
       await kv.put(`line:destination-to-tenant:${botUserId}`, tenantId);
       await kv.put(`line:tenant2dest:${tenantId}`, botUserId);
       destinationMapped = true;
@@ -3751,6 +3747,7 @@ app.post("/admin/integrations/line/messaging/save", async (c) => {
     return c.json({
       ok: true, tenantId, stamp: STAMP, kind,
       botUserId, destinationMapped,
+      ...(previousTenantId ? { previousTenantId, remapped: true } : {}),
       checks: { token: tokenCheck.status, webhook: "ng" },
     });
   } catch (e: any) {
@@ -3832,31 +3829,30 @@ app.post("/admin/integrations/line/remap", async (c) => {
     }
     const botUserId = botCheck.userId;
 
-    // Check for duplicate: is this botUserId already mapped to a DIFFERENT tenant?
-    const existingMapping = await kv.get(`line:destination-to-tenant:${botUserId}`);
-    if (existingMapping && existingMapping !== tenantId) {
-      return c.json({
-        ok: false, stamp: STAMP, error: "destination_already_mapped",
-        botUserId, mappedTenantId: existingMapping, requestedTenantId: tenantId,
-        detail: `This LINE bot is already mapped to tenant "${existingMapping}".`,
-      }, 409);
-    }
-
-    // Clean up old mapping if tenant was previously mapped to a different botUserId
+    // Clean up old mappings:
+    // 1. If this tenant was previously mapped to a different bot
     let cleanedUpOld = false;
     const oldBotUserId = await kv.get(`line:tenant2dest:${tenantId}`);
     if (oldBotUserId && oldBotUserId !== botUserId) {
       await kv.delete(`line:destination-to-tenant:${oldBotUserId}`);
       cleanedUpOld = true;
     }
+    // 2. If this bot was mapped to a different tenant, clean up that tenant's reverse lookup
+    const existingMapping = await kv.get(`line:destination-to-tenant:${botUserId}`);
+    let previousTenantId: string | null = null;
+    if (existingMapping && existingMapping !== tenantId) {
+      previousTenantId = existingMapping;
+      await kv.delete(`line:tenant2dest:${existingMapping}`);
+    }
 
-    // Write new mappings
+    // Write new mappings (last-write-wins)
     await kv.put(`line:destination-to-tenant:${botUserId}`, tenantId);
     await kv.put(`line:tenant2dest:${tenantId}`, botUserId);
 
     return c.json({
       ok: true, stamp: STAMP, tenantId, botUserId,
       destinationMapped: true, cleanedUpOld,
+      ...(previousTenantId ? { previousTenantId, remapped: true } : {}),
     });
   } catch (e: any) {
     return c.json({ ok: false, stamp: STAMP, tenantId, error: "remap_error", detail: String(e?.message ?? e) }, 500);
