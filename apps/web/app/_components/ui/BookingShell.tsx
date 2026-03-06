@@ -2,6 +2,7 @@
 
 import type { ReactNode } from 'react';
 import { useEffect, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 
 interface BookingShellProps {
   children: ReactNode;
@@ -10,11 +11,13 @@ interface BookingShellProps {
 const FALLBACK_NAME = 'Lumiere 表参道';
 
 export default function BookingShell({ children }: BookingShellProps) {
+  const searchParams = useSearchParams();
+  const tenantId = searchParams?.get('tenantId') || 'default';
   const [storeName, setStoreName] = useState<string>(FALLBACK_NAME);
 
   useEffect(() => {
     // Fetch storeName from admin settings API; fail silently
-    fetch('/api/proxy/admin/settings?tenantId=default', { cache: 'no-store' })
+    fetch(`/api/proxy/admin/settings?tenantId=${encodeURIComponent(tenantId)}`, { cache: 'no-store' })
       .then(r => r.ok ? r.json() : null)
       .then((json: any) => {
         const name = json?.data?.storeName || json?.storeName;
@@ -23,7 +26,7 @@ export default function BookingShell({ children }: BookingShellProps) {
         }
       })
       .catch(() => {/* keep fallback */});
-  }, []);
+  }, [tenantId]);
 
   return (
     <div className="min-h-screen bg-brand-bg flex items-center justify-center p-4">
