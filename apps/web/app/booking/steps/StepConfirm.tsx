@@ -132,8 +132,7 @@ export default function StepConfirm({ booking, onBack, onDone, consentText, trea
         const slotsRes = await getSlots(booking.date!, staffForSlots, booking.menuDurationMin ?? undefined);
         const slot = slotsRes.slots.find((s: any) => s.time === booking.time);
         if (!slot || !slot.available) {
-          setError('この時間帯は直前に埋まりました。前の画面に戻って別の日時を選んでください。');
-          setIsDuplicate(true);
+          onBack();
           return;
         }
       } catch { /* slots check failed — proceed to reserve and let it decide */ }
@@ -158,9 +157,11 @@ export default function StepConfirm({ booking, onBack, onDone, consentText, trea
     } catch (e: unknown) {
       console.error("[reserve error]", { status: (e as any)?.status, message: (e as any)?.message, data: (e as any)?.data, raw: e });
       const raw = e instanceof Error ? e.message : '予約に失敗しました';
-      const mapped = mapError(raw);
-      setError(mapped);
-      setIsDuplicate(raw.includes('duplicate_slot'));
+      if (raw.includes('duplicate_slot') || (e as any)?.data?.error === 'duplicate_slot') {
+        onBack();
+        return;
+      }
+      setError(mapError(raw));
     } finally {
       setLoading(false);
       submittingRef.current = false;
