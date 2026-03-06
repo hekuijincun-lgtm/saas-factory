@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { getMenu, createMenuItem, updateMenuItem, deleteMenuItem, type MenuItem, type MenuItemEyebrow } from '@/src/lib/bookingApi';
+import { getMenu, deleteMenuItem, type MenuItem, type MenuItemEyebrow } from '@/src/lib/bookingApi';
 import { useAdminTenantId } from '@/src/lib/useAdminTenantId';
 import { ApiClientError } from '@/src/lib/apiClient';
 import Card from '../ui/Card';
@@ -234,7 +234,14 @@ export default function MenuManager({ tenantId: tenantIdProp }: { tenantId?: str
     setLoading(true);
     setError(null);
     try {
-      await updateMenuItem(item.id, { active: !item.active });
+      const res = await fetch(
+        `/api/proxy/admin/menu/${encodeURIComponent(item.id)}?tenantId=${encodeURIComponent(tenantId)}`,
+        { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ active: !item.active }) }
+      );
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({})) as any;
+        throw new Error(d.error || `Failed to toggle active (${res.status})`);
+      }
       await fetchMenu();
     } catch (err) {
       const errorMessage =
