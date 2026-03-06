@@ -101,6 +101,11 @@ export async function fetchLineStatus(tenantId?: string): Promise<LineStatusResp
     return await apiGet<LineStatusResponse>('/admin/integrations/line/status', { tenantId });
   } catch (error) {
     if (error instanceof ApiClientError) {
+      if (error.status === 409) {
+        const d = error.data;
+        if (d && typeof d === 'object' && 'kind' in d) return d as LineStatusResponse;
+        return { ok: true, tenantId: tenantId ?? 'default', kind: 'unconfigured' };
+      }
       throw error;
     }
     throw new ApiClientError('Failed to fetch LINE status');
