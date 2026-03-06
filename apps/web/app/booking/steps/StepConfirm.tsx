@@ -156,11 +156,13 @@ export default function StepConfirm({ booking, onBack, onDone, consentText, trea
       setDone(true);
     } catch (e: any) {
       console.error("[reserve error]", e);
-      if (
+      const isDup =
         e?.message === 'duplicate_slot' ||
-        e?.data?.error === 'duplicate_slot'
-      ) {
-        setError('この時間は直前に埋まりました。別の時間を選択してください。');
+        e?.data?.error === 'duplicate_slot' ||
+        (e?.status === 409 && String(e?.message).includes('duplicate'));
+      console.log("[StepConfirm] catch", { isDup, message: e?.message, status: e?.status, dataError: e?.data?.error });
+      if (isDup) {
+        console.log("[duplicate_slot->back] calling onBack()");
         onBack();
         return;
       }
