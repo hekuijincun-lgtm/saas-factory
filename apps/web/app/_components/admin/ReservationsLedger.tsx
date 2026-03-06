@@ -34,7 +34,7 @@ function generateTimeSlots(open = '10:00', close = '19:00', interval = 60): stri
 }
 
 export default function ReservationsLedger() {
-  const { tenantId } = useAdminTenantId();
+  const { tenantId, status: tenantStatus } = useAdminTenantId();
   // settings hook (失敗時は 10:00/19:00/30min fallback で継続)
   const { settings: bizSettings } = useAdminSettings(tenantId);
 
@@ -175,10 +175,10 @@ export default function ReservationsLedger() {
   }, [date, tenantId]);
 
   useEffect(() => {
-    if (date && tenantId) {
+    if (date && tenantId && tenantStatus === 'ready') {
       fetchReservations();
     }
-  }, [date, tenantId, fetchReservations]);
+  }, [date, tenantId, tenantStatus, fetchReservations]);
 
   // Auto-refresh: poll every 30s + refresh on window focus
   useEffect(() => {
