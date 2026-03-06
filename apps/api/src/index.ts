@@ -3724,13 +3724,17 @@ app.post("/admin/integrations/line/messaging/save", async (c) => {
     if (tokenCheck.status === "ok" && tokenCheck.userId) {
       botUserId = tokenCheck.userId;
 
-      // 409 if this bot is already mapped to a different tenant
+      // Warn if this bot is already mapped to a different tenant, but don't block save
       const existingMapping = await kv.get(`line:destination-to-tenant:${botUserId}`);
       if (existingMapping && existingMapping !== tenantId) {
+        // Settings already saved above (L3715); return success with warning instead of 409
         return c.json({
-          ok: false, stamp: STAMP, error: "destination_already_mapped",
+          ok: true, stamp: STAMP, kind, tenantId,
+          warning: "destination_already_mapped",
           botUserId, mappedTenantId: existingMapping, requestedTenantId: tenantId,
-        }, 409);
+          destinationMapped: false,
+          checks: { token: tokenCheck.status === "ok" ? "ok" : "ng", webhook: "ng" },
+        });
       }
 
       // Clean up old mapping if tenant was previously mapped to a different botUserId
