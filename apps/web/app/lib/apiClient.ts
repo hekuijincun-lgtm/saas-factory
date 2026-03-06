@@ -147,6 +147,7 @@ export async function apiRequest<T>(
       signal: controller.signal,
       headers: {
         'Content-Type': 'application/json',
+        ...(tenantId ? { 'x-session-tenant': tenantId } : {}),
         ...requestOptions.headers,
       },
     });

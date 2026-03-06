@@ -1,5 +1,5 @@
 export const runtime = "edge";
-import { readAdminToken, injectAdminToken, makeDebugStamp, applyDebugHeaders } from '../../_lib/proxy';
+import { readAdminToken, injectAdminToken, readSessionTenantId, makeDebugStamp, applyDebugHeaders } from '../../_lib/proxy';
 
 function apiBase() {
   const v = process.env.API_BASE || process.env.BOOKING_API_BASE || process.env.NEXT_PUBLIC_API_BASE;
@@ -7,48 +7,43 @@ function apiBase() {
   return v.replace(/\/$/, "");
 }
 
-function tenantIdFrom(req: Request) {
+/**
+ * tenantId 解決優先順位:
+ *   1. x-session-tenant-id (HMAC session — catch-all 互換)
+ *   2. URL query param ?tenantId=
+ *   3. request header x-session-tenant (フロント明示指定)
+ *   4. request header x-tenant-id
+ *   5. fallback: "default"
+ */
+async function tenantIdFrom(req: Request): Promise<string> {
+  // 1. session-based (authoritative)
+  const sessionTid = await readSessionTenantId(req);
+  if (sessionTid && sessionTid !== "default") return sessionTid;
+
+  // 2. URL query
   const u = new URL(req.url);
-  return (u.searchParams.get("tenantId") || req.headers.get("x-tenant-id") || "default").trim() || "default";
+  const qTid = u.searchParams.get("tenantId")?.trim();
+  if (qTid) return qTid;
+
+  // 3-4. headers
+  const hTid = (
+    req.headers.get("x-session-tenant") ||
+    req.headers.get("x-tenant-id") ||
+    ""
+  ).trim();
+  if (hTid) return hTid;
+
+  return "default";
 }
 
-export async function GET(req: Request) {
+async function buildUpstream(req: Request) {
   const u = new URL(req.url);
   const isDebug = u.searchParams.get("debug") === "1";
-  const tenantId = tenantIdFrom(req);
+  const tenantId = await tenantIdFrom(req);
 
   const upstream = new URL(apiBase() + "/admin/settings");
   upstream.searchParams.set("tenantId", tenantId);
   if (u.searchParams.get("nocache")) upstream.searchParams.set("nocache", u.searchParams.get("nocache")!);
-
-  const tokenConfigured = !!readAdminToken();
-  const reqHeaders = new Headers({ "accept": "application/json", "x-tenant-id": tenantId });
-  const tokenInjected = injectAdminToken(reqHeaders, upstream.pathname);
-
-  const r = await fetch(upstream.toString(), {
-    method: "GET",
-    headers: reqHeaders,
-    cache: "no-store",
-  });
-
-  const body = await r.text();
-  const out = new Response(body, { status: r.status, headers: { "content-type": "application/json" } });
-  if (tokenInjected) out.headers.set("x-admin-token-present", "1");
-  if (isDebug) {
-    applyDebugHeaders(out.headers, { stamp: makeDebugStamp(), isAdminRoute: true, tokenConfigured, tokenInjected });
-  }
-  return out;
-}
-
-export async function PUT(req: Request) {
-  const u = new URL(req.url);
-  const isDebug = u.searchParams.get("debug") === "1";
-  const tenantId = tenantIdFrom(req);
-
-  const upstream = new URL(apiBase() + "/admin/settings");
-  upstream.searchParams.set("tenantId", tenantId);
-
-  const body = await req.text();
 
   const tokenConfigured = !!readAdminToken();
   const reqHeaders = new Headers({
@@ -58,18 +53,44 @@ export async function PUT(req: Request) {
   });
   const tokenInjected = injectAdminToken(reqHeaders, upstream.pathname);
 
-  const r = await fetch(upstream.toString(), {
-    method: "PUT",
-    headers: reqHeaders,
-    body,
-  });
+  return { upstream, reqHeaders, tenantId, isDebug, tokenConfigured, tokenInjected };
+}
 
-  const outBody = await r.text();
-  const out = new Response(outBody, { status: r.status, headers: { "content-type": "application/json" } });
-  if (tokenInjected) out.headers.set("x-admin-token-present", "1");
-  if (isDebug) {
-    applyDebugHeaders(out.headers, { stamp: makeDebugStamp(), isAdminRoute: true, tokenConfigured, tokenInjected });
+function buildResponse(body: string, status: number, opts: {
+  isDebug: boolean; tokenConfigured: boolean; tokenInjected: boolean; tenantId: string;
+}) {
+  const out = new Response(body, { status, headers: { "content-type": "application/json" } });
+  if (opts.tokenInjected) out.headers.set("x-admin-token-present", "1");
+  out.headers.set("x-tenant-resolved", opts.tenantId);
+  if (opts.isDebug) {
+    applyDebugHeaders(out.headers, { stamp: makeDebugStamp(), isAdminRoute: true, tokenConfigured: opts.tokenConfigured, tokenInjected: opts.tokenInjected });
   }
   return out;
 }
 
+export async function GET(req: Request) {
+  const ctx = await buildUpstream(req);
+
+  const r = await fetch(ctx.upstream.toString(), {
+    method: "GET",
+    headers: ctx.reqHeaders,
+    cache: "no-store",
+  });
+
+  const body = await r.text();
+  return buildResponse(body, r.status, ctx);
+}
+
+export async function PUT(req: Request) {
+  const ctx = await buildUpstream(req);
+  const body = await req.text();
+
+  const r = await fetch(ctx.upstream.toString(), {
+    method: "PUT",
+    headers: ctx.reqHeaders,
+    body,
+  });
+
+  const outBody = await r.text();
+  return buildResponse(outBody, r.status, ctx);
+}

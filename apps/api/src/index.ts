@@ -308,9 +308,14 @@ app.get("/__build", (c) => c.json({ ok: true, stamp: "API_BUILD_V1" }));
     if(body.tenant != null && typeof body.tenant === 'object') patch.tenant = body.tenant
     if(body.businessHours != null && typeof body.businessHours === 'object') patch.businessHours = body.businessHours
     if(body.rules != null && typeof body.rules === 'object') patch.rules = body.rules
-    if(body.notifications != null && typeof body.notifications === 'object') patch.notifications = body.notifications
     if(body.assignment != null && typeof body.assignment === 'object') patch.assignment = body.assignment
     if(body.exceptions != null && Array.isArray(body.exceptions)) patch.exceptions = body.exceptions
+    // allowedAdminLineUserIds: array of strings (LINE userId / email identity)
+    if(body.allowedAdminLineUserIds != null) {
+      patch.allowedAdminLineUserIds = Array.isArray(body.allowedAdminLineUserIds)
+        ? body.allowedAdminLineUserIds.map((x: any) => String(x))
+        : []
+    }
 
     // read existing KV, merge patch on top (partial save - don't overwrite other fields)
     const key = 'settings:' + tenantId
@@ -330,6 +335,14 @@ app.get("/__build", (c) => c.json({ ok: true, stamp: "API_BUILD_V1" }));
       }
       if(bodyInteg.stripe != null && typeof bodyInteg.stripe === 'object') {
         patch.integrations.stripe = { ...(existingInteg.stripe || {}), ...bodyInteg.stripe }
+      }
+    }
+    // notifications: deep merge (lineReminder sub-object も保持)
+    if(body.notifications != null && typeof body.notifications === 'object') {
+      const existingNotif = existing.notifications || {}
+      patch.notifications = { ...existingNotif, ...body.notifications }
+      if(body.notifications.lineReminder != null && typeof body.notifications.lineReminder === 'object') {
+        patch.notifications.lineReminder = { ...(existingNotif.lineReminder || {}), ...body.notifications.lineReminder }
       }
     }
     // onboarding: shallow merge
@@ -1303,24 +1316,7 @@ app.delete("/admin/menu/:id", async (c) => {
     return c.json({ ok: false, error: "exception", detail: String(e?.message ?? e) }, 500);
   }
 });
-app.put("/admin/settings", async (c) => {
-  try {
-    const tenantId = getTenantId(c);
-    const kv = c.env.SAAS_FACTORY;
-
-    const patch = await c.req.json().catch(() => ({} as any));
-
-    const currentRaw = await kv.get(`settings:${tenantId}`);
-    const current = currentRaw ? JSON.parse(currentRaw) : {};
-
-    const next = deepMerge({ ...(current || {}) }, patch);
-    await kv.put(`settings:${tenantId}`, JSON.stringify(next));
-
-    return c.json({ ok: true, tenantId, data: next });
-  } catch (error) {
-    return c.json({ ok: false, error: "Failed to save settings", message: String(error) }, 500);
-  }
-});
+// NOTE: duplicate PUT /admin/settings removed — the primary handler (earlier in file) handles all fields.
 
 /** =========================
  * Admin Reservations (READ / UPDATE / DELETE)

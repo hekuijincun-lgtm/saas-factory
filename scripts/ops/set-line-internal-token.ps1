@@ -1,4 +1,3 @@
-#Requires -Version 7
 <#
 .SYNOPSIS
   LINE_INTERNAL_TOKEN を Workers (secret) + Pages (secret) の両方に設定する。
