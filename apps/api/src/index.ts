@@ -1190,7 +1190,12 @@ app.patch("/admin/menu/:id", async (c) => {
  */
 app.get("/admin/staff", async (c) => {
   const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
-  const tenantId = getTenantId(c)
+  // Query-first resolution: booking flow always sends explicit ?tenantId=
+  // so URL query must take priority over x-session-tenant-id header.
+  const tenantId = c.req.query("tenantId")
+    || c.req.header("x-session-tenant-id")
+    || c.req.header("x-tenant-id")
+    || "default";
   const key = `admin:staff:list:${tenantId}`
   setTenantDebugHeaders(c, tenantId, key)
 
