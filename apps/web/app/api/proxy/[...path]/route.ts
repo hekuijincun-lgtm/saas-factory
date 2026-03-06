@@ -59,7 +59,7 @@ async function proxy(req: Request, ctx: Ctx): Promise<Response> {
   // ✅ query: Next内部の path=... は捨てる（壊す原因）
   const sp = new URLSearchParams(nextUrl.search);
   sp.delete("path");
-  sp.delete("debug"); // strip — don't leak to upstream
+  // debug=1 forwarded to upstream for diagnostic detail in error responses
 
   let upstream = new URL(`${base}/${rel}`);
   const qs = sp.toString();
