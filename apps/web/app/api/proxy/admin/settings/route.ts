@@ -16,14 +16,14 @@ function apiBase() {
  *   5. fallback: "default"
  */
 async function tenantIdFrom(req: Request): Promise<string> {
-  // 1. session-based (authoritative)
-  const sessionTid = await readSessionTenantId(req);
-  if (sessionTid && sessionTid !== "default") return sessionTid;
-
-  // 2. URL query
+  // 1. URL query (highest priority — booking flow sends explicit ?tenantId=)
   const u = new URL(req.url);
   const qTid = u.searchParams.get("tenantId")?.trim();
   if (qTid) return qTid;
+
+  // 2. session-based (admin fallback when no explicit query)
+  const sessionTid = await readSessionTenantId(req);
+  if (sessionTid && sessionTid !== "default") return sessionTid;
 
   // 3-4. headers
   const hTid = (
