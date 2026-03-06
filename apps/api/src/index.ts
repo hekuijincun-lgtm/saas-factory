@@ -2676,7 +2676,7 @@ async function upsertCustomer(
   const tenantId = getTenantId(c, body)
   if(!body){ return c.json({ ok:false, error:"bad_json" }, 400) }
 
-  const staffId = String(body.staffId ?? "")
+  let staffId = String(body.staffId ?? "")
   const startAt = String(body.startAt ?? "")
   const endAt   = String(body.endAt ?? "")
   const customerName = body.customerName ? String(body.customerName) : null
@@ -2689,6 +2689,27 @@ async function upsertCustomer(
   const env = c.env as any
   if(!env.DB) return c.json({ ok:false, error:"DB_not_bound" }, 500)
   if(!env.SLOT_LOCK) return c.json({ ok:false, error:"SLOT_LOCK_not_bound" }, 500)
+
+  // AUTO-ASSIGN: resolve "any" to an actual available staff member to avoid
+  // UNIQUE(tenant_id, staff_id, start_at) collision when multiple "any" bookings
+  // hit the same time slot.
+  if(staffId === "any"){
+    try{
+      const kv = env.SAAS_FACTORY
+      const staffRaw = kv ? await kv.get(`admin:staff:list:${tenantId}`) : null
+      const allStaff: any[] = staffRaw ? JSON.parse(staffRaw) : []
+      const activeIds = allStaff.filter((s: any) => s.active !== false).map((s: any) => String(s.id))
+      if(activeIds.length > 0){
+        // Find staff already booked at this time
+        const busy = await env.DB.prepare(
+          `SELECT staff_id FROM reservations WHERE tenant_id = ? AND start_at = ? AND status != 'cancelled'`
+        ).bind(tenantId, startAt).all()
+        const busySet = new Set((busy.results || []).map((r: any) => String(r.staff_id)))
+        const freeStaff = activeIds.find((sid: string) => !busySet.has(sid))
+        if(freeStaff) staffId = freeStaff
+      }
+    }catch{ /* keep "any" on error — will fail at D1 if truly full */ }
+  }
 
   // DO instance: tenant + staff + date
   const date = new Date(startAt).toISOString().slice(0, 10) // "YYYY-MM-DD"
