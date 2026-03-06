@@ -25,13 +25,23 @@ const ANY_STAFF: StaffOption = {
   role: 'どのスタッフでも可',
 };
 
-export default function StepStaff({ tenantId, onSelect, onBack }: Props) {
+export default function StepStaff({ tenantId: tenantIdProp, onSelect, onBack }: Props) {
+  // URL を信頼源とし、prop が stale でも正しい tenant で fetch する
+  const tenantId = tenantIdProp
+    || (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('tenantId'))
+    || 'default';
+
   const [list, setList] = useState<(StaffOption & { badge?: string })[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let cancelled = false;
+    setList([]);       // stale data clear
+    setLoading(true);
+
     getStaff(tenantId)
       .then(data => {
+        if (cancelled) return;
         const apiStaff = data.map((s, i) => ({
           id: s.id,
           name: s.name,
@@ -41,6 +51,7 @@ export default function StepStaff({ tenantId, onSelect, onBack }: Props) {
         setList([ANY_STAFF, ...apiStaff]);
       })
       .catch(() => {
+        if (cancelled) return;
         // fallback to constants
         const fallback = STAFF.filter(s => s.id !== 'any').map((s, i) => ({
           ...s,
@@ -48,7 +59,9 @@ export default function StepStaff({ tenantId, onSelect, onBack }: Props) {
         }));
         setList([ANY_STAFF, ...fallback]);
       })
-      .finally(() => setLoading(false));
+      .finally(() => { if (!cancelled) setLoading(false); });
+
+    return () => { cancelled = true; };
   }, [tenantId]);
 
   if (loading) return <Spinner />;
