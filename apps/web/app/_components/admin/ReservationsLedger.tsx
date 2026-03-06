@@ -172,13 +172,13 @@ export default function ReservationsLedger() {
     } finally {
       setLoading(false);
     }
-  }, [date]);
+  }, [date, tenantId]);
 
   useEffect(() => {
-    if (date) {
+    if (date && tenantId) {
       fetchReservations();
     }
-  }, [date, fetchReservations]);
+  }, [date, tenantId, fetchReservations]);
 
   // Auto-refresh: poll every 30s + refresh on window focus
   useEffect(() => {
