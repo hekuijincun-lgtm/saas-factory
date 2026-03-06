@@ -2676,7 +2676,8 @@ async function upsertCustomer(
   const tenantId = getTenantId(c, body)
   if(!body){ return c.json({ ok:false, error:"bad_json" }, 400) }
 
-  let staffId = String(body.staffId ?? "")
+  const requestedStaffId = String(body.staffId ?? "")
+  let staffId = requestedStaffId
   const startAt = String(body.startAt ?? "")
   const endAt   = String(body.endAt ?? "")
   const customerName = body.customerName ? String(body.customerName) : null
@@ -2693,6 +2694,7 @@ async function upsertCustomer(
   // AUTO-ASSIGN: resolve "any" to an actual available staff member to avoid
   // UNIQUE(tenant_id, staff_id, start_at) collision when multiple "any" bookings
   // hit the same time slot.
+  let autoAssignInfo: any = null
   if(staffId === "any"){
     try{
       const kv = env.SAAS_FACTORY
@@ -2700,15 +2702,18 @@ async function upsertCustomer(
       const allStaff: any[] = staffRaw ? JSON.parse(staffRaw) : []
       const activeIds = allStaff.filter((s: any) => s.active !== false).map((s: any) => String(s.id))
       if(activeIds.length > 0){
-        // Find staff already booked at this time
+        // Find staff with overlapping reservations (not just exact start_at match)
         const busy = await env.DB.prepare(
-          `SELECT staff_id FROM reservations WHERE tenant_id = ? AND start_at = ? AND status != 'cancelled'`
-        ).bind(tenantId, startAt).all()
+          `SELECT DISTINCT staff_id FROM reservations WHERE tenant_id = ? AND start_at < ? AND end_at > ? AND status != 'cancelled'`
+        ).bind(tenantId, endAt, startAt).all()
         const busySet = new Set((busy.results || []).map((r: any) => String(r.staff_id)))
         const freeStaff = activeIds.find((sid: string) => !busySet.has(sid))
+        autoAssignInfo = { activeIds, busyIds: [...busySet], freeStaff: freeStaff || null }
         if(freeStaff) staffId = freeStaff
+      } else {
+        autoAssignInfo = { activeIds: [], note: "no_active_staff" }
       }
-    }catch{ /* keep "any" on error — will fail at D1 if truly full */ }
+    }catch(e: any){ autoAssignInfo = { error: String(e?.message ?? e) } }
   }
 
   // DO instance: tenant + staff + date
@@ -2716,18 +2721,20 @@ async function upsertCustomer(
     // AUTO-INSERT: ensure (tenantId + ":" + staffId + ":" + date) exists before first use
   const id = env.SLOT_LOCK.idFromName((tenantId + ":" + staffId + ":" + date));
   const stub = env.SLOT_LOCK.get(id);
+  const lockKey = startAt + "|" + endAt
 
   // acquire lock
   const lockRes = await stub.fetch("https://slotlock/lock", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    // AUTO-INSERT: ensure (startAt + "|" + endAt) exists before first use
-    body: JSON.stringify({ key: (startAt + "|" + endAt), ttlSeconds: 30 }),
+    body: JSON.stringify({ key: lockKey, ttlSeconds: 30 }),
   })
 
   if(lockRes.status === 409){
     const j = await lockRes.json().catch(() => ({}))
-    return c.json({ ok:false, error:"slot_locked", ...j }, 409)
+    return c.json({ ok:false, error:"slot_locked", ...j,
+      ...(debug ? { _debug: { reason: "do_lock_conflict", tenantId, requestedStaffId, resolvedStaffId: staffId, startAt, endAt, date, lockKey, doName: tenantId+":"+staffId+":"+date, autoAssignInfo } } : {})
+    }, 409)
   }
   if(!lockRes.ok){
     const t = await lockRes.text().catch(() => "")
@@ -2778,7 +2785,9 @@ async function upsertCustomer(
     const msg = String(e?.message ?? e ?? "")
     // SQLite constraint (unique) => treat as duplicate slot
     if (msg.includes("UNIQUE constraint failed")) {
-      return c.json({ ok:false, error:"duplicate_slot", tenantId, staffId, startAt }, 409)
+      return c.json({ ok:false, error:"duplicate_slot", tenantId, staffId, startAt,
+        ...(debug ? { _debug: { reason: "d1_unique_conflict", requestedStaffId, resolvedStaffId: staffId, endAt, date, lockKey, autoAssignInfo, d1Error: msg } } : {})
+      }, 409)
     }
     throw e
   }
