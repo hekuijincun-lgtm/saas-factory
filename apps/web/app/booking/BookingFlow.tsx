@@ -248,7 +248,10 @@ export default function BookingFlow() {
     setStep(3);
   };
   const handleBackFromConfirm = () => {
-    setStep(surveyEnabled ? 4 : 3);
+    console.log("[BookingFlow] handleBackFromConfirm -> step", surveyEnabled ? 4 : 3);
+    // Clear selected date/time so StepDatetime re-fetches fresh slots
+    update({ date: null, time: null });
+    setStep(3);
   };
 
   const enabledSurveyQuestions = surveyQuestions.filter(q => q.enabled);
