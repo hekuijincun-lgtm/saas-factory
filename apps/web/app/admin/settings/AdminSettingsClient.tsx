@@ -345,9 +345,14 @@ export default function AdminSettingsClient() {
       const status = await fetchMessagingStatus(tenantId);
       setMessagingStatus(status);
     } catch (error) {
-      const msg = error instanceof ApiClientError ? error.message
-        : error instanceof Error ? error.message : 'Messaging API ステータスの取得に失敗しました';
-      setMessagingError(msg);
+      if (error instanceof ApiClientError && error.status === 409) {
+        // 409 は destination_already_mapped 等の状態応答 — エラー表示しない
+        setMessagingError(null);
+      } else {
+        const msg = error instanceof ApiClientError ? error.message
+          : error instanceof Error ? error.message : 'Messaging API ステータスの取得に失敗しました';
+        setMessagingError(msg);
+      }
     } finally {
       setMessagingLoading(false);
     }
@@ -424,7 +429,7 @@ export default function AdminSettingsClient() {
 
     // localStorage からローカル設定を読み込む（営業日等）
     try {
-      const saved = localStorage.getItem('adminLocalTenant');
+      const saved = localStorage.getItem(`adminLocalTenant:${tenantId}`);
       if (saved) {
         const parsed = JSON.parse(saved) as Partial<LocalTenant>;
         const merged = { ...INITIAL_LOCAL_TENANT, ...parsed };
@@ -498,7 +503,7 @@ export default function AdminSettingsClient() {
 
       // localStorage にローカル設定を保存（営業日等）
       try {
-        localStorage.setItem('adminLocalTenant', JSON.stringify(localTenant));
+        localStorage.setItem(`adminLocalTenant:${tenantId}`, JSON.stringify(localTenant));
         setSavedLocalTenant(localTenant);
       } catch { /* ignore */ }
 
