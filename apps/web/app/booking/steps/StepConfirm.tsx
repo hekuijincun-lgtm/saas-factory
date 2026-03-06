@@ -1,7 +1,7 @@
 'use client';
 
 import { useRef, useState } from 'react';
-import { createReservation } from '@/src/lib/bookingApi';
+import { createReservation, getSlots } from '@/src/lib/bookingApi';
 import type { BookingState } from '../BookingFlow';
 import type { EyebrowSurveyQuestion } from '@/src/types/settings';
 
@@ -126,6 +126,18 @@ export default function StepConfirm({ booking, onBack, onDone, consentText, trea
       if (booking.surveyAnswers && Object.keys(booking.surveyAnswers).length > 0) {
         metaPayload.surveyAnswers = booking.surveyAnswers;
       }
+      // Pre-flight: re-check slot availability to catch stale data before hitting reserve
+      try {
+        const staffForSlots = booking.staffId && booking.staffId !== 'any' ? booking.staffId : undefined;
+        const slotsRes = await getSlots(booking.date!, staffForSlots, booking.menuDurationMin ?? undefined);
+        const slot = slotsRes.slots.find((s: any) => s.time === booking.time);
+        if (!slot || !slot.available) {
+          setError('この時間帯は直前に埋まりました。前の画面に戻って別の日時を選んでください。');
+          setIsDuplicate(true);
+          return;
+        }
+      } catch { /* slots check failed — proceed to reserve and let it decide */ }
+
       const res = await createReservation({
         date: booking.date,
         time: booking.time,
