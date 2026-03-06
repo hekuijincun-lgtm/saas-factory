@@ -166,7 +166,7 @@ export interface ApiResponse<T> {
 export async function getSlots(date: string, staffId?: string): Promise<SlotsResponse> {
   try {
     const params = new URLSearchParams({ date });
-    params.append('tenantId', 'default'); // tenantId を追加
+    params.append('tenantId', (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('tenantId')) || 'default');
     if (staffId && staffId !== 'any') {
       params.append('staffId', staffId);
     }
@@ -239,7 +239,7 @@ export async function createReservation(
     const endAt = `${endDateObj.getFullYear()}-${pad(endDateObj.getMonth() + 1)}-${pad(endDateObj.getDate())}T${pad(endDateObj.getHours())}:${pad(endDateObj.getMinutes())}:00${tz}`;
 
     const newPayload: any = {
-      tenantId: "default",
+      tenantId: (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('tenantId')) || "default",
       staffId,
       startAt,
       endAt,
