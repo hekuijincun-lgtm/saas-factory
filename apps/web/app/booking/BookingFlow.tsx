@@ -140,6 +140,7 @@ export default function BookingFlow() {
   const [surveyEnabled, setSurveyEnabled] = useState(false);
   const [surveyQuestions, setSurveyQuestions] = useState<EyebrowSurveyQuestion[]>([]);
   const [slotConflictNotice, setSlotConflictNotice] = useState<string | null>(null);
+  const [slotRefreshKey, setSlotRefreshKey] = useState(0);
 
   // lineUserId: URL param を優先し、無ければ localStorage から復元（クライアントのみ）
   useEffect(() => {
@@ -253,6 +254,7 @@ export default function BookingFlow() {
     console.log("[BookingFlow] handleBackFromConfirm -> step 3 (slot conflict)");
     update({ date: null, time: null });
     setSlotConflictNotice('この時間枠は先に埋まりました。最新の空き状況から別の時間を選択してください。');
+    setSlotRefreshKey(k => k + 1);
     setStep(3);
   };
 
@@ -276,6 +278,7 @@ export default function BookingFlow() {
             </div>
           )}
           <StepDatetime
+            key={slotRefreshKey}
             staffId={state.staffId}
             durationMin={state.menuDurationMin}
             onSelect={handleDatetimeSelect}
