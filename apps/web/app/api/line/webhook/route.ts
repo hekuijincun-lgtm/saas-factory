@@ -259,8 +259,16 @@ async function getTenantLineConfig(
 
         const channelSecret      = String(line?.channelSecret      ?? "").trim();
         const channelAccessToken = String(line?.channelAccessToken ?? "").trim();
-        const bookingUrl = String(line?.bookingUrl ?? "").trim() ||
+        // Ensure bookingUrl uses the resolved tenantId, not a stale default
+        let bookingUrl = String(line?.bookingUrl ?? "").trim() ||
           `${origin}/booking?tenantId=${encodeURIComponent(tenantId)}`;
+        try {
+          const bu = new URL(bookingUrl);
+          if (bu.searchParams.has("tenantId")) {
+            bu.searchParams.set("tenantId", tenantId);
+            bookingUrl = bu.toString();
+          }
+        } catch { /* keep as-is if URL parse fails */ }
 
         if (channelSecret && channelAccessToken) {
           return { channelSecret, channelAccessToken, bookingUrl, source: "kv" };
