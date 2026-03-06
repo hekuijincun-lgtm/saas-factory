@@ -186,7 +186,7 @@ function setTenantDebugHeaders(c: any, tenantId: string, keyExample?: string): v
   if (keyExample) c.header('x-tenant-key', keyExample);
 }
 
-app.get("/__build", (c) => c.json({ ok: true, stamp: "API_BUILD_V1" }));
+app.get("/__build", (c) => c.json({ ok: true, stamp: "API_BUILD_CI_TEST_20260306" }));
 
 
 // --- slots (DUMMY V1) ---
