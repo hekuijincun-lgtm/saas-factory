@@ -340,10 +340,13 @@ export async function cancelReservation(
  * GET /admin/staff を実行
  * tenantId はセッションから注入されるが、明示的に渡すことで proxy の ?tenantId= も設定する（多重防御）。
  */
-export async function getStaff(tenantId: string = "default"): Promise<Staff[]> {
+export async function getStaff(tenantId?: string): Promise<Staff[]> {
   try {
+    const resolvedTenantId = tenantId
+      || (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('tenantId'))
+      || 'default';
     const params = new URLSearchParams();
-    params.set("tenantId", tenantId);
+    params.set("tenantId", resolvedTenantId);
     const response = await apiGet<ApiResponse<Staff[]>>(`/api/proxy/admin/staff?${params}`);
     if (response.ok && response.data) {
       // 配列チェック
