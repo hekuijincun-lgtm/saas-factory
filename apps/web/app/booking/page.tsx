@@ -1,5 +1,8 @@
 // route: /booking
+'use client';
+
 import { Suspense } from 'react';
+import { useSearchParams } from 'next/navigation';
 import BookingShell from '../_components/ui/BookingShell';
 import BookingFlow from './BookingFlow';
 
@@ -11,12 +14,21 @@ function LoadingFallback() {
   );
 }
 
+function BookingPage() {
+  const searchParams = useSearchParams();
+  const tenantId = searchParams?.get('tenantId') || 'default';
+
+  return (
+    <BookingShell key={tenantId}>
+      <BookingFlow key={tenantId} />
+    </BookingShell>
+  );
+}
+
 export default function Page() {
   return (
     <Suspense fallback={<LoadingFallback />}>
-      <BookingShell>
-        <BookingFlow />
-      </BookingShell>
+      <BookingPage />
     </Suspense>
   );
 }
