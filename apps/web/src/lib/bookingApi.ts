@@ -263,9 +263,11 @@ export async function createReservation(
 /**
  * GET /admin/reservations?date=YYYY-MM-DD を実行
  */
-export async function getReservations(date: string): Promise<ReservationsResponse> {
+export async function getReservations(date: string, tenantId?: string): Promise<ReservationsResponse> {
   try {
-    const response = await apiGet<ReservationsResponse>(`/api/proxy/admin/reservations?date=${encodeURIComponent(date)}`);
+    const params = new URLSearchParams({ date });
+    if (tenantId) params.set('tenantId', tenantId);
+    const response = await apiGet<ReservationsResponse>(`/api/proxy/admin/reservations?${params.toString()}`);
     // reservationsが配列かチェック
     if (response.reservations && !Array.isArray(response.reservations)) {
       console.warn('getReservations: response.reservations is not an array, setting to empty array');

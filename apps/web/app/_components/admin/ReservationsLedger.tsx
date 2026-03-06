@@ -152,7 +152,7 @@ export default function ReservationsLedger() {
     setError(null);
 
     try {
-      const response = await getReservations(date);
+      const response = await getReservations(date, tenantId);
       // 配列チェック
       if (Array.isArray(response.reservations)) {
         setReservations(response.reservations);
