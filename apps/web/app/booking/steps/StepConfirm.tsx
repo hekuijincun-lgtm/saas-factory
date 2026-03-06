@@ -156,13 +156,15 @@ export default function StepConfirm({ booking, onBack, onDone, consentText, trea
       setDone(true);
     } catch (e: any) {
       console.error("[reserve error]", e);
-      const isDup =
+      const isSlotConflict =
         e?.message === 'duplicate_slot' ||
         e?.data?.error === 'duplicate_slot' ||
-        (e?.status === 409 && String(e?.message).includes('duplicate'));
-      console.log("[StepConfirm] catch", { isDup, message: e?.message, status: e?.status, dataError: e?.data?.error });
-      if (isDup) {
-        console.log("[duplicate_slot->back] calling onBack()");
+        e?.message === 'slot_locked' ||
+        e?.data?.error === 'slot_locked' ||
+        (e?.status === 409 && (String(e?.message).includes('duplicate') || String(e?.message).includes('slot_locked')));
+      console.log("[StepConfirm] catch", { isSlotConflict, message: e?.message, status: e?.status, dataError: e?.data?.error });
+      if (isSlotConflict) {
+        console.log("[slot_conflict->back] calling onBack()");
         onBack();
         return;
       }
