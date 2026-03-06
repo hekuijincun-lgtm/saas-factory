@@ -144,6 +144,7 @@ export default function StepConfirm({ booking, onBack, onDone, consentText, trea
       }
       setDone(true);
     } catch (e: unknown) {
+      console.error("[reserve error]", { status: (e as any)?.status, message: (e as any)?.message, data: (e as any)?.data, raw: e });
       const raw = e instanceof Error ? e.message : '予約に失敗しました';
       const mapped = mapError(raw);
       setError(mapped);
