@@ -73,7 +73,10 @@ export default function StepDatetime({ staffId, durationMin, onSelect, onBack }:
     setLoading(true);
     setError(null);
     getSlots(selectedDate, staffId && staffId !== 'any' ? staffId : undefined, durationMin ?? undefined)
-      .then(r => setSlots(r.slots))
+      .then(r => {
+        console.log("[StepDatetime] getSlots response", { date: selectedDate, total: r.slots.length, unavailable: r.slots.filter((s: any) => !s.available).length });
+        setSlots(r.slots);
+      })
       .catch(e => setError(e.message || 'スロットの取得に失敗しました'))
       .finally(() => setLoading(false));
   }, [selectedDate, staffId]);
