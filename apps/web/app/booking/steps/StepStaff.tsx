@@ -6,6 +6,7 @@ import { STAFF } from '../../_components/constants/staff';
 import type { StaffOption } from '../BookingFlow';
 
 interface Props {
+  tenantId: string;
   onSelect: (staff: StaffOption) => void;
   onBack: () => void;
 }
@@ -24,12 +25,12 @@ const ANY_STAFF: StaffOption = {
   role: 'どのスタッフでも可',
 };
 
-export default function StepStaff({ onSelect, onBack }: Props) {
+export default function StepStaff({ tenantId, onSelect, onBack }: Props) {
   const [list, setList] = useState<(StaffOption & { badge?: string })[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    getStaff()
+    getStaff(tenantId)
       .then(data => {
         const apiStaff = data.map((s, i) => ({
           id: s.id,
@@ -48,7 +49,7 @@ export default function StepStaff({ onSelect, onBack }: Props) {
         setList([ANY_STAFF, ...fallback]);
       })
       .finally(() => setLoading(false));
-  }, []);
+  }, [tenantId]);
 
   if (loading) return <Spinner />;
 
