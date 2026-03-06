@@ -259,16 +259,19 @@ async function getTenantLineConfig(
 
         const channelSecret      = String(line?.channelSecret      ?? "").trim();
         const channelAccessToken = String(line?.channelAccessToken ?? "").trim();
-        // Ensure bookingUrl uses the resolved tenantId, not a stale default
-        let bookingUrl = String(line?.bookingUrl ?? "").trim() ||
-          `${origin}/booking?tenantId=${encodeURIComponent(tenantId)}`;
+        // Ensure bookingUrl points to /booking (not webhook URL) with correct tenantId
+        const rawBookingUrl = String(line?.bookingUrl ?? "").trim();
+        const fallback = `${origin}/booking?tenantId=${encodeURIComponent(tenantId)}`;
+        let bookingUrl = rawBookingUrl || fallback;
+        // Reject stored URLs that point to webhook endpoint (bad data in KV)
+        if (bookingUrl.includes("/api/line/webhook")) {
+          bookingUrl = fallback;
+        }
         try {
           const bu = new URL(bookingUrl);
-          if (bu.searchParams.has("tenantId")) {
-            bu.searchParams.set("tenantId", tenantId);
-            bookingUrl = bu.toString();
-          }
-        } catch { /* keep as-is if URL parse fails */ }
+          bu.searchParams.set("tenantId", tenantId);
+          bookingUrl = bu.toString();
+        } catch { bookingUrl = fallback; }
 
         if (channelSecret && channelAccessToken) {
           return { channelSecret, channelAccessToken, bookingUrl, source: "kv" };
