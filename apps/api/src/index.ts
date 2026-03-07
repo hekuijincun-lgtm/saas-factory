@@ -545,9 +545,10 @@ const parseHHMM = (s: string) => {
     const closeMs = ms(closeIso)
 
     const stepMs = slotIntervalMin * 60 * 1000
-    // Use requested duration (menu length) if provided; fall back to slotMinutes setting
-    const reqDurMin = Number(c.req.query('durationMin') || 0)
-    const durMs  = (reqDurMin > 0 ? reqDurMin : slotMinutes) * 60 * 1000
+    // Overlap window for availability display uses slot interval (= grid cell width).
+    // Menu duration (durationMin) is validated at /reserve time — not here.
+    // This keeps slots consistent with the admin ledger grid.
+    const overlapMs = stepMs
 
     const dayStart = date + 'T00:00:00+09:00'
     const dayEnd   = date + 'T23:59:59+09:00'
@@ -561,8 +562,10 @@ const parseHHMM = (s: string) => {
           .all()
         reservations = (q.results || []) as any
       } else {
+        // Include both this staff's reservations AND unassigned ('any'/NULL) reservations
+        // Unassigned reservations consume capacity and must be counted
         const q = await db
-          .prepare(`SELECT start_at, end_at, staff_id FROM reservations WHERE tenant_id = ? AND staff_id = ? AND start_at < ? AND end_at > ? AND status != 'cancelled' ORDER BY start_at`)
+          .prepare(`SELECT start_at, end_at, staff_id FROM reservations WHERE tenant_id = ? AND (staff_id = ? OR staff_id = 'any' OR staff_id IS NULL) AND start_at < ? AND end_at > ? AND status != 'cancelled' ORDER BY start_at`)
           .bind(tenantId, staffId, dayEnd, dayStart)
           .all()
         reservations = (q.results || []) as any
@@ -612,8 +615,9 @@ const parseHHMM = (s: string) => {
 
     type SlotStatus = 'available' | 'few' | 'full'
     const slots: Array<{time:string, available:boolean, status:SlotStatus}> = []
-    for(let t = openMs; t + durMs <= closeMs; t += stepMs){
-      const end = t + durMs
+    // Loop boundary matches admin grid: slot starts up to and including closeTime
+    for(let t = openMs; t <= closeMs; t += stepMs){
+      const end = t + overlapMs
       const dt = jstDate(t)
       const time = pad2(dt.getUTCHours()) + ':' + pad2(dt.getUTCMinutes())
 
@@ -637,8 +641,11 @@ const parseHHMM = (s: string) => {
       } else {
         // ── Any staff ── aggregate across active staff
         if(activeStaffIds.length === 0){
-          // No active staff list: fall back to global conflict check (any conflict → unavailable)
-          for(const r of resAll){ if(overlaps(t, end, r.a0, r.a1)){ available = false; break } }
+          // No active staff list: count overlapping reservations vs capacity (assume 1 staff)
+          let conflictCount = 0
+          for(const r of resAll){ if(overlaps(t, end, r.a0, r.a1)) conflictCount++ }
+          // capacity = 1 (unknown staff count), full only when conflictCount >= 1
+          available = conflictCount < 1
           status = available ? 'available' : 'full'
         } else {
           // ── Count-based aggregation (correct capacity model) ──
@@ -681,7 +688,7 @@ const parseHHMM = (s: string) => {
 
     return c.json({
       ok:true, tenantId, staffId, date,
-      settings: debug ? { openTime, closeTime, slotIntervalMin, slotMinutes, closedWeekdays, weekday, hitDefaultKey, hitTenantKey } : undefined,
+      settings: debug ? { openTime, closeTime, slotIntervalMin, overlapMin: slotIntervalMin, closedWeekdays, weekday, hitDefaultKey, hitTenantKey } : undefined,
       _debug: debug ? {
         reservationCount: reservations.length,
         resAllCount: resAll.length,
