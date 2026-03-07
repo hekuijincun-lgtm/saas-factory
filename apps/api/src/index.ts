@@ -28,6 +28,14 @@ import { SlotLock } from "./durable/SlotLock";
 
 type Env = Record<string, unknown>;
 
+// ── Active reservation semantics ─────────────────────────────
+// A reservation is "active" iff its status is NOT in this set.
+// Used by /slots, /reserve, /admin/reservations queries and the
+// partial unique index idx_res_unique_active.
+const CANCELLED_STATUS = 'cancelled' as const;
+// SQL fragment — use in .prepare() template strings.
+const SQL_ACTIVE_FILTER = `status != '${CANCELLED_STATUS}'` as const;
+
 const app = new Hono<{ Bindings: Env }>();
 
 // =============================================================================
@@ -2727,8 +2735,8 @@ async function upsertCustomer(
           staffId = freeStaff
         } else {
           // All active staff are busy — reject (matches /slots full logic)
-          return c.json({ ok:false, error:"duration_overlap", tenantId, staffId, startAt, endAt,
-            ...(debug ? { _debug: { reason: "all_staff_busy", requestedStaffId, autoAssignInfo } } : {})
+          return c.json({ ok:false, error:"duration_overlap", reason: "all_staff_busy", tenantId, staffId, startAt, endAt,
+            ...(debug ? { _debug: { requestedStaffId, autoAssignInfo } } : {})
           }, 409)
         }
       } else {
@@ -2739,8 +2747,8 @@ async function upsertCustomer(
         const cnt = Number(anyBusy?.cnt ?? 0)
         autoAssignInfo = { activeIds: [], note: "no_active_staff", existingOverlapCount: cnt }
         if(cnt > 0){
-          return c.json({ ok:false, error:"duration_overlap", tenantId, staffId, startAt, endAt,
-            ...(debug ? { _debug: { reason: "single_capacity_full", requestedStaffId, autoAssignInfo } } : {})
+          return c.json({ ok:false, error:"duration_overlap", reason: "single_capacity_full", tenantId, staffId, startAt, endAt,
+            ...(debug ? { _debug: { requestedStaffId, autoAssignInfo } } : {})
           }, 409)
         }
       }
@@ -2763,8 +2771,8 @@ async function upsertCustomer(
 
   if(lockRes.status === 409){
     const j = await lockRes.json().catch(() => ({}))
-    return c.json({ ok:false, error:"slot_locked", ...j,
-      ...(debug ? { _debug: { reason: "do_lock_conflict", tenantId, requestedStaffId, resolvedStaffId: staffId, startAt, endAt, date, lockKey, doName: tenantId+":"+staffId+":"+date, autoAssignInfo } } : {})
+    return c.json({ ok:false, error:"slot_locked", reason: "lock_conflict", ...j,
+      ...(debug ? { _debug: { tenantId, requestedStaffId, resolvedStaffId: staffId, startAt, endAt, date, lockKey, doName: tenantId+":"+staffId+":"+date, autoAssignInfo } } : {})
     }, 409)
   }
   if(!lockRes.ok){
@@ -2801,9 +2809,9 @@ async function upsertCustomer(
       if (conflicts.length > 0) {
         const conflict = conflicts[0] as any
         return c.json({
-          ok: false, error: "duration_overlap", tenantId, staffId, startAt, endAt,
+          ok: false, error: "duration_overlap", reason: "duration_overlap", tenantId, staffId, startAt, endAt,
           conflictWith: { id: conflict.id, startAt: conflict.start_at, endAt: conflict.end_at, staffId: conflict.staff_id },
-          ...(debug ? { _debug: { reason: "duration_overlap_check", requestedStaffId, resolvedStaffId: staffId, autoAssignInfo } } : {})
+          ...(debug ? { _debug: { requestedStaffId, resolvedStaffId: staffId, autoAssignInfo } } : {})
         }, 409)
       }
     }
@@ -2841,8 +2849,8 @@ async function upsertCustomer(
     const msg = String(e?.message ?? e ?? "")
     // SQLite constraint (unique) => treat as duplicate slot
     if (msg.includes("UNIQUE constraint failed")) {
-      return c.json({ ok:false, error:"duplicate_slot", tenantId, staffId, startAt,
-        ...(debug ? { _debug: { reason: "d1_unique_conflict", requestedStaffId, resolvedStaffId: staffId, endAt, date, lockKey, autoAssignInfo, d1Error: msg } } : {})
+      return c.json({ ok:false, error:"duplicate_slot", reason: "unique_violation", tenantId, staffId, startAt,
+        ...(debug ? { _debug: { requestedStaffId, resolvedStaffId: staffId, endAt, date, lockKey, autoAssignInfo, d1Error: msg } } : {})
       }, 409)
     }
     throw e
