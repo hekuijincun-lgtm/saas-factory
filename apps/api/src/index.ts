@@ -148,21 +148,26 @@ app.use('/admin/*', async (c, next) => {
   return next();
 });
 
-function getTenantId(c, body) {
+function getTenantId(c: any, body?: any): string {
   // x-session-tenant-id: injected by Pages proxy after HMAC-verifying line_session cookie.
   // Authoritative for admin routes; overrides URL query param.
-  const sessionTid = c.req.header("x-session-tenant-id");
+  const sessionTid = c.req.header("x-session-tenant-id")?.trim();
   if (sessionTid && sessionTid !== "default") return sessionTid;
   try {
     const url = new URL(c.req.url)
-    return (
-      url.searchParams.get("tenantId")
-      ?? (body?.tenantId ?? null)
-      ?? c.req.header("x-tenant-id")
-      ?? "default"
-    )
+    const qTid = url.searchParams.get("tenantId")?.trim();
+    if (qTid) return qTid;
+    const bTid = typeof body?.tenantId === 'string' ? body.tenantId.trim() : '';
+    if (bTid) return bTid;
+    const hTid = c.req.header("x-tenant-id")?.trim();
+    if (hTid) return hTid;
+    return "default";
   } catch {
-    return (body?.tenantId ?? null) ?? c.req.header("x-tenant-id") ?? "default"
+    const bTid = typeof body?.tenantId === 'string' ? body.tenantId.trim() : '';
+    if (bTid) return bTid;
+    const hTid = c.req.header("x-tenant-id")?.trim();
+    if (hTid) return hTid;
+    return "default";
   }
 }
 
@@ -420,8 +425,9 @@ app.get("/__build", (c) => c.json({ ok: true, stamp: "API_BUILD_V1" }));
   app.get('/slots', async (c) => {
     const debug = c.req.query('debug') === '1'
 
-    const tenantId =
-      (c.req.query('tenantId') || c.req.header('x-tenant-id') || 'default').trim() || 'default'
+    // Use getTenantId() for consistency with /reserve and /admin/* routes.
+    // Previously used inline logic that skipped x-session-tenant-id header.
+    const tenantId = getTenantId(c, null)
     const staffId = (c.req.query('staffId') || 'any').trim() || 'any'
     const date    = (c.req.query('date') || '').trim()
 
@@ -1722,8 +1728,8 @@ app.post("/admin/kpi/backfill-customer-key", async (c) => {
       const newMeta = { ...existingMeta, customerKey: key };
 
       if (!dryRun) {
-        await db.prepare("UPDATE reservations SET meta = ? WHERE id = ?")
-          .bind(JSON.stringify(newMeta), row.id)
+        await db.prepare("UPDATE reservations SET meta = ? WHERE id = ? AND tenant_id = ?")
+          .bind(JSON.stringify(newMeta), row.id, tenantId)
           .run()
           .catch((e: any) => {
             reasons.push(`id=${row.id} err=${String(e?.message ?? e)}`);
@@ -2664,9 +2670,9 @@ async function upsertCustomer(
         const newCount = (existing.visit_count || 0) + 1;
         await db
           .prepare(
-            "UPDATE customers SET name = COALESCE(?, name), visit_count = ?, last_visit_at = ?, updated_at = ? WHERE id = ?"
+            "UPDATE customers SET name = COALESCE(?, name), visit_count = ?, last_visit_at = ?, updated_at = ? WHERE id = ? AND tenant_id = ?"
           )
-          .bind(opts.name, newCount, visitDate, now, existing.id)
+          .bind(opts.name, newCount, visitDate, now, existing.id, opts.tenantId)
           .run();
         return existing.id;
       }
@@ -2866,8 +2872,8 @@ async function upsertCustomer(
   const phone = body.phone ? String(body.phone) : null;
   const customerId = await upsertCustomer(env.DB, { tenantId, name: customerName, phone, visitAt: startAt });
   if (customerId) {
-    await env.DB.prepare("UPDATE reservations SET customer_id = ? WHERE id = ?")
-      .bind(customerId, rid)
+    await env.DB.prepare("UPDATE reservations SET customer_id = ? WHERE id = ? AND tenant_id = ?")
+      .bind(customerId, rid, tenantId)
       .run()
       .catch((e: any) => console.error("[RESERVE_CUSTOMER_LINK] error:", String(e?.message ?? e)));
   }
@@ -2882,8 +2888,8 @@ async function upsertCustomer(
   }
   const finalMeta = { ...bodyMeta, ...(customerKey ? { customerKey } : {}) };
   if (Object.keys(finalMeta).length > 0) {
-    await env.DB.prepare("UPDATE reservations SET meta = ? WHERE id = ?")
-      .bind(JSON.stringify(finalMeta), rid)
+    await env.DB.prepare("UPDATE reservations SET meta = ? WHERE id = ? AND tenant_id = ?")
+      .bind(JSON.stringify(finalMeta), rid, tenantId)
       .run()
       .catch((e: any) => console.error("[RESERVE_META] error:", String(e?.message ?? e)));
   }
