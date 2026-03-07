@@ -11,16 +11,6 @@ function pickTenantId(u: URL, req: Request) {
 export async function GET(req: Request) {
   const inUrl = new URL(req.url);
   
-  if (inUrl.searchParams.get("debug") === "1") {
-    return Response.json({
-      ok: true,
-      seen: {
-        rawUrl: req.url,
-        path: inUrl.pathname,
-        query: Object.fromEntries(inUrl.searchParams.entries()),
-      },
-    });
-  }
 const base = resolveBookingBase();
 
   // upstream = {BOOKING_BASE}/slots + query passthrough
