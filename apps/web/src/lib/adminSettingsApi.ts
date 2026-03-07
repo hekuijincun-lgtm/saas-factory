@@ -81,7 +81,7 @@ export async function updateAdminSettings(input: AdminSettings, tenantId?: strin
  */
 export async function sendTestSlack(webhookUrl?: string): Promise<{ ok: boolean; error?: string }> {
   try {
-    const response = await apiPost<{ ok: boolean; error?: string }>('/admin/settings/test-slack', {
+    const response = await apiPost<{ ok: boolean; error?: string }>('/api/proxy/admin/settings/test-slack', {
       webhookUrl: webhookUrl || undefined,
     });
     return response;

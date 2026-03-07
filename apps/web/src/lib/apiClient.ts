@@ -96,6 +96,16 @@ export async function apiRequest<T>(
     // レスポンスのJSONをパース
     let data: unknown;
     const contentType = response.headers.get('content-type');
+
+    // Guard: detect page-route confusion (HTML instead of JSON)
+    if (contentType && contentType.includes('text/html') && response.ok) {
+      throw new ApiClientError(
+        `Expected JSON but received HTML from ${url} — likely hitting a page route instead of /api/proxy/*`,
+        response.status,
+        response.statusText
+      );
+    }
+
     if (contentType && contentType.includes('application/json')) {
       try {
         data = await response.json();
