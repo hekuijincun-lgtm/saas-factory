@@ -2704,9 +2704,8 @@ async function upsertCustomer(
   if(!env.DB) return c.json({ ok:false, error:"DB_not_bound" }, 500)
   if(!env.SLOT_LOCK) return c.json({ ok:false, error:"SLOT_LOCK_not_bound" }, 500)
 
-  // AUTO-ASSIGN: resolve "any" to an actual available staff member to avoid
-  // UNIQUE(tenant_id, staff_id, start_at) collision when multiple "any" bookings
-  // hit the same time slot.
+  // AUTO-ASSIGN: resolve "any" to an actual available staff member.
+  // If all active staff are busy, reject — matches /slots bookableForMenu logic.
   let autoAssignInfo: any = null
   if(staffId === "any"){
     try{
@@ -2720,11 +2719,30 @@ async function upsertCustomer(
           `SELECT DISTINCT staff_id FROM reservations WHERE tenant_id = ? AND start_at < ? AND end_at > ? AND status != 'cancelled'`
         ).bind(tenantId, endAt, startAt).all()
         const busySet = new Set((busy.results || []).map((r: any) => String(r.staff_id)))
+        // Count unassigned ('any'/NULL) reservations occupying capacity
+        const anyBusyCount = [...busySet].filter(sid => sid === 'any' || sid === 'null' || sid === '').length
         const freeStaff = activeIds.find((sid: string) => !busySet.has(sid))
-        autoAssignInfo = { activeIds, busyIds: [...busySet], freeStaff: freeStaff || null }
-        if(freeStaff) staffId = freeStaff
+        autoAssignInfo = { activeIds, busyIds: [...busySet], anyBusyCount, freeStaff: freeStaff || null }
+        if(freeStaff){
+          staffId = freeStaff
+        } else {
+          // All active staff are busy — reject (matches /slots full logic)
+          return c.json({ ok:false, error:"duration_overlap", tenantId, staffId, startAt, endAt,
+            ...(debug ? { _debug: { reason: "all_staff_busy", requestedStaffId, autoAssignInfo } } : {})
+          }, 409)
+        }
       } else {
-        autoAssignInfo = { activeIds: [], note: "no_active_staff" }
+        // No active staff configured — treat as single-capacity
+        const anyBusy = await env.DB.prepare(
+          `SELECT COUNT(*) as cnt FROM reservations WHERE tenant_id = ? AND start_at < ? AND end_at > ? AND status != 'cancelled'`
+        ).bind(tenantId, endAt, startAt).first() as any
+        const cnt = Number(anyBusy?.cnt ?? 0)
+        autoAssignInfo = { activeIds: [], note: "no_active_staff", existingOverlapCount: cnt }
+        if(cnt > 0){
+          return c.json({ ok:false, error:"duration_overlap", tenantId, staffId, startAt, endAt,
+            ...(debug ? { _debug: { reason: "single_capacity_full", requestedStaffId, autoAssignInfo } } : {})
+          }, 409)
+        }
       }
     }catch(e: any){ autoAssignInfo = { error: String(e?.message ?? e) } }
   }
