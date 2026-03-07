@@ -163,7 +163,9 @@ export default function StepConfirm({ booking, onBack, onDone, consentText, trea
         e?.data?.error === 'duplicate_slot' ||
         e?.message === 'slot_locked' ||
         e?.data?.error === 'slot_locked' ||
-        (e?.status === 409 && (String(e?.message).includes('duplicate') || String(e?.message).includes('slot_locked')));
+        e?.message === 'duration_overlap' ||
+        e?.data?.error === 'duration_overlap' ||
+        (e?.status === 409 && (String(e?.message).includes('duplicate') || String(e?.message).includes('slot_locked') || String(e?.message).includes('duration_overlap')));
       console.log("[StepConfirm] catch", { isSlotConflict, message: e?.message, status: e?.status, dataError: e?.data?.error });
       if (isSlotConflict) {
         console.log("[slot_conflict->back] calling onBack()");

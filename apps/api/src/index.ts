@@ -2764,7 +2764,32 @@ async function upsertCustomer(
     const durationMin = Math.round((endMs - startMs) / 60000)
     const rid = crypto.randomUUID()
 
-    // NOTE: At-least-once safety: add DB uniqueness later (migration) for hard guarantee
+    // ── Duration-based overlap check (same logic as /slots bookableForMenu) ──
+    // Prevents reservations that overlap with existing ones for the same staff,
+    // even when the start_at differs (e.g. 60-min menu starting at 06:00
+    // overlaps with an existing reservation at 06:45).
+    // Also checks unassigned (staff_id='any'/NULL) reservations which consume
+    // capacity regardless of assigned staff.
+    {
+      const overlapRows = await env.DB.prepare(
+        `SELECT id, start_at, end_at, staff_id FROM reservations
+         WHERE tenant_id = ?
+           AND (staff_id = ? OR staff_id = 'any' OR staff_id IS NULL)
+           AND start_at < ? AND end_at > ?
+           AND status != 'cancelled'
+         LIMIT 1`
+      ).bind(tenantId, staffId, endAt, startAt).all()
+      const conflicts = overlapRows.results || []
+      if (conflicts.length > 0) {
+        const conflict = conflicts[0] as any
+        return c.json({
+          ok: false, error: "duration_overlap", tenantId, staffId, startAt, endAt,
+          conflictWith: { id: conflict.id, startAt: conflict.start_at, endAt: conflict.end_at, staffId: conflict.staff_id },
+          ...(debug ? { _debug: { reason: "duration_overlap_check", requestedStaffId, resolvedStaffId: staffId, autoAssignInfo } } : {})
+        }, 409)
+      }
+    }
+
     // Compute followup_at from retention settings (best-effort)
     let followupAt: string | null = null;
     try {
