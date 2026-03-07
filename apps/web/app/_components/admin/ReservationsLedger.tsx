@@ -10,8 +10,6 @@ import Badge from '../ui/Badge';
 import { STAFF } from '../constants/staff';
 import type { StaffShift } from '@/src/types/shift';
 import { isWorkingTime } from '@/src/lib/shiftUtils';
-import { getAdminSettings } from '@/src/lib/adminSettingsApi';
-import type { AdminSettings } from '@/src/types/settings';
 import { useAdminSettings } from '../../admin/_lib/useAdminSettings';
 
 // この定数は削除（APIから取得したstaffListを使用）
@@ -66,7 +64,6 @@ export default function ReservationsLedger() {
   const [staffList, setStaffList] = useState<Staff[]>([]);
   const [assigning, setAssigning] = useState<boolean>(false);
   const [staffShifts, setStaffShifts] = useState<Map<string, StaffShift>>(new Map());
-  const [settings, setSettings] = useState<AdminSettings | null>(null);
 
   // 予約作成モーダル
   const [createModalOpen, setCreateModalOpen] = useState(false);
@@ -91,18 +88,8 @@ export default function ReservationsLedger() {
     [bizSettings],
   );
 
-  // 設定を取得
-  useEffect(() => {
-    const fetchSettings = async () => {
-      try {
-        const data = await getAdminSettings();
-        setSettings(data);
-      } catch (err) {
-        console.warn('Failed to fetch settings:', err);
-      }
-    };
-    fetchSettings();
-  }, []);
+  // NOTE: 設定は useAdminSettings(tenantId) で取得済み（bizSettings）
+  // 旧 getAdminSettings() のデッドfetchは削除済み
 
   // メニュー一覧を取得
   useEffect(() => {
@@ -138,13 +125,15 @@ export default function ReservationsLedger() {
     ...staffList,
   ];
 
-  // 予約を (date, time, staffId) をキーにした Map に変換
+  // 予約を (date, time, staffId) をキーにした Map に変換（同一セル複数予約対応）
   // staffId がない場合は 'any' として扱う
-  const reservationMap = new Map<string, Reservation>();
+  const reservationMap = new Map<string, Reservation[]>();
   reservations.forEach((res) => {
     const staffId = res.staffId || 'any';
     const key = `${res.date}|${res.time}|${staffId}`;
-    reservationMap.set(key, res);
+    const existing = reservationMap.get(key) || [];
+    existing.push(res);
+    reservationMap.set(key, existing);
   });
 
   const fetchReservations = useCallback(async () => {
@@ -291,11 +280,12 @@ export default function ReservationsLedger() {
     }
   }, [availabilityOverrides, tenantId, date]);
 
-  // スタッフ一覧を取得
+  // スタッフ一覧を取得（tenantId 変更時に再取得）
   useEffect(() => {
+    if (!tenantId) return;
     const fetchStaff = async () => {
       try {
-        const staff = await getStaff();
+        const staff = await getStaff(tenantId);
         // 配列チェック
         if (Array.isArray(staff)) {
           setStaffList(staff);
@@ -305,12 +295,11 @@ export default function ReservationsLedger() {
         }
       } catch (err) {
         console.warn('Failed to fetch staff, using empty list:', err);
-        // フォールバック: hardcoded IDs (sakura/kenji/rookie) は実際のstaffIdと合わないため空配列を使用
         setStaffList([]);
       }
     };
     fetchStaff();
-  }, []);
+  }, [tenantId]);
 
   const handleDateChange = (days: number) => {
     const [y, mo, da] = date.split('-').map(Number);
@@ -371,9 +360,9 @@ export default function ReservationsLedger() {
     }
   };
 
-  const getReservationForCell = (time: string, staffId: string) => {
+  const getReservationsForCell = (time: string, staffId: string): Reservation[] => {
     const key = `${date}|${time}|${staffId}`;
-    return reservationMap.get(key);
+    return reservationMap.get(key) || [];
   };
 
   // 予約の現在の staffId を取得（割り当て状態を確認するため）
@@ -545,12 +534,12 @@ export default function ReservationsLedger() {
 
                   {/* スタッフ列 */}
                   {displayStaffList.map((staff) => {
-                      const reservation = getReservationForCell(time, staff.id);
+                      const cellReservations = getReservationsForCell(time, staff.id);
                       // 指名なし('any')の場合は常に有効
-                      const isWorking = staff.id === 'any' 
-                        ? true 
+                      const isWorking = staff.id === 'any'
+                        ? true
                         : isWorkingTime(date, time, staffShifts.get(staff.id) || null);
-                      
+
                       return (
                         <td
                           key={`${time}-${staff.id}`}
@@ -558,27 +547,32 @@ export default function ReservationsLedger() {
                             !isWorking ? 'bg-gray-100 opacity-50' : ''
                           }`}
                         >
-                          {reservation ? (
-                            <div
-                              onClick={() => { if (isWorking) { setSelectedReservation(reservation); } }}
-                              className={`border rounded-xl p-3 transition-all ${
-                                isWorking
-                                  ? 'bg-blue-50 border-blue-200 cursor-pointer hover:shadow-md'
-                                  : 'bg-gray-100 border-gray-200 cursor-not-allowed opacity-50'
-                              }`}
-                            >
-                              <div className="font-medium text-brand-text text-sm mb-1">
-                                {reservation.name}
-                              </div>
-                              <div className="text-xs text-brand-muted mb-2">
-                                {reservation.phone || '-'}
-                              </div>
-                              <div className="flex items-center justify-between">
-                                <Badge variant="reserved">予約済み</Badge>
-                                <span className="text-xs text-brand-muted font-mono">
-                                  {reservation.reservationId.slice(0, 8)}
-                                </span>
-                              </div>
+                          {cellReservations.length > 0 ? (
+                            <div className="space-y-1">
+                              {cellReservations.map((reservation) => (
+                                <div
+                                  key={reservation.reservationId}
+                                  onClick={() => { if (isWorking) { setSelectedReservation(reservation); } }}
+                                  className={`border rounded-xl p-3 transition-all ${
+                                    isWorking
+                                      ? 'bg-blue-50 border-blue-200 cursor-pointer hover:shadow-md'
+                                      : 'bg-gray-100 border-gray-200 cursor-not-allowed opacity-50'
+                                  }`}
+                                >
+                                  <div className="font-medium text-brand-text text-sm mb-1">
+                                    {reservation.name}
+                                  </div>
+                                  <div className="text-xs text-brand-muted mb-2">
+                                    {reservation.phone || '-'}
+                                  </div>
+                                  <div className="flex items-center justify-between">
+                                    <Badge variant="reserved">予約済み</Badge>
+                                    <span className="text-xs text-brand-muted font-mono">
+                                      {reservation.reservationId.slice(0, 8)}
+                                    </span>
+                                  </div>
+                                </div>
+                              ))}
                             </div>
                           ) : (
                             <div className={`h-16 ${!isWorking ? 'bg-gray-50' : ''}`} />
