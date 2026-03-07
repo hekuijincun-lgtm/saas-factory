@@ -126,12 +126,14 @@ export default function StepConfirm({ booking, onBack, onDone, consentText, trea
       if (booking.surveyAnswers && Object.keys(booking.surveyAnswers).length > 0) {
         metaPayload.surveyAnswers = booking.surveyAnswers;
       }
-      // Pre-flight: re-check slot availability to catch stale data before hitting reserve
+      // Pre-flight: re-check slot availability (bookableForMenu) to catch stale data
       try {
         const staffForSlots = booking.staffId && booking.staffId !== 'any' ? booking.staffId : undefined;
         const slotsRes = await getSlots(booking.date!, staffForSlots, booking.menuDurationMin ?? undefined);
         const slot = slotsRes.slots.find((s: any) => s.time === booking.time);
-        if (!slot || !slot.available) {
+        // Use bookableForMenu if available, fallback to available for backward compat
+        const isBookable = slot ? (slot.bookableForMenu ?? slot.available) : false;
+        if (!slot || !isBookable) {
           onBack();
           return;
         }

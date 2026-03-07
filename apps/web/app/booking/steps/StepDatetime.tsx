@@ -67,19 +67,23 @@ export default function StepDatetime({ staffId, durationMin, onSelect, onBack }:
     setSelectedDate(todayStr);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Fetch slots when date or staffId changes
+  // Fetch slots when date, staffId, or durationMin changes
   useEffect(() => {
     if (!selectedDate) return;
     setLoading(true);
     setError(null);
     getSlots(selectedDate, staffId && staffId !== 'any' ? staffId : undefined, durationMin ?? undefined)
       .then(r => {
-        console.log("[StepDatetime] getSlots response", { date: selectedDate, total: r.slots.length, unavailable: r.slots.filter((s: any) => !s.available).length });
+        console.log("[StepDatetime] getSlots response", {
+          date: selectedDate, total: r.slots.length,
+          cellAvailable: r.slots.filter((s: any) => s.cellAvailable ?? s.available).length,
+          bookable: r.slots.filter((s: any) => s.bookableForMenu ?? s.available).length,
+        });
         setSlots(r.slots);
       })
       .catch(e => setError(e.message || 'スロットの取得に失敗しました'))
       .finally(() => setLoading(false));
-  }, [selectedDate, staffId]);
+  }, [selectedDate, staffId, durationMin]);
 
   return (
     <div className="space-y-4">
@@ -172,22 +176,28 @@ export default function StepDatetime({ staffId, durationMin, onSelect, onBack }:
       ) : (
         <div className="grid grid-cols-3 gap-2">
           {slots.map(slot => {
-            const isFew = slot.available && slot.status === 'few';
-            const mark = !slot.available ? '×' : isFew ? '△' : '○';
-            const markColor = !slot.available
+            // bookableForMenu: this menu duration fits. Fallback to available for backward compat.
+            const bookable = slot.bookableForMenu ?? slot.available;
+            // cellAvailable: grid cell has capacity (matches admin ledger)
+            const cellOpen = slot.cellAvailable ?? slot.available;
+
+            // Display: ○ = bookable, △ = cell open but menu doesn't fit, × = cell full
+            const mark = !cellOpen ? '×' : !bookable ? '△' : '○';
+            const markColor = !cellOpen
               ? 'text-red-400'
-              : isFew
+              : !bookable
               ? 'text-amber-500'
               : 'text-green-600';
+
             return (
               <button
                 key={slot.time}
-                onClick={() => slot.available && onSelect(selectedDate, slot.time)}
-                disabled={!slot.available}
+                onClick={() => bookable && onSelect(selectedDate, slot.time)}
+                disabled={!bookable}
                 className={`
                   p-3 rounded-2xl text-sm font-medium flex flex-col items-center gap-1 transition-all
                   ${
-                    slot.available
+                    bookable
                       ? 'bg-white border border-brand-border hover:border-brand-primary hover:shadow-md text-brand-text cursor-pointer'
                       : 'bg-brand-bg text-brand-muted opacity-60 cursor-not-allowed border border-transparent'
                   }

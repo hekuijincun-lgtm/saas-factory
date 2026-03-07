@@ -545,10 +545,13 @@ const parseHHMM = (s: string) => {
     const closeMs = ms(closeIso)
 
     const stepMs = slotIntervalMin * 60 * 1000
-    // Overlap window for availability display uses slot interval (= grid cell width).
-    // Menu duration (durationMin) is validated at /reserve time — not here.
-    // This keeps slots consistent with the admin ledger grid.
-    const overlapMs = stepMs
+    // cellAvailable: slot interval (= grid cell width) — matches admin ledger
+    const cellOverlapMs = stepMs
+    // bookableForMenu: actual menu duration — matches /reserve truth
+    const reqDurMin = Number(c.req.query('durationMin') || 0)
+    const menuDurMs = reqDurMin > 0 ? reqDurMin * 60 * 1000 : cellOverlapMs
+    // Only run the second check when menu duration exceeds slot interval
+    const needMenuCheck = menuDurMs > cellOverlapMs
 
     const dayStart = date + 'T00:00:00+09:00'
     const dayEnd   = date + 'T23:59:59+09:00'
@@ -614,86 +617,79 @@ const parseHHMM = (s: string) => {
     }
 
     type SlotStatus = 'available' | 'few' | 'full'
-    const slots: Array<{time:string, available:boolean, status:SlotStatus}> = []
+    const slots: Array<{time:string, available:boolean, cellAvailable:boolean, bookableForMenu:boolean, status:SlotStatus}> = []
+
+    // Helper: check capacity for a given overlap window (reused for cell + menu checks)
+    const checkCapacity = (t: number, windowMs: number): { avail: boolean; status: SlotStatus } => {
+      const end = t + windowMs
+      if(staffId !== 'any'){
+        // ── Specific staff ──
+        let avail = true
+        for(const r of resAll){
+          if(overlaps(t, end, r.a0, r.a1)){ avail = false; break }
+        }
+        const time = pad2(jstDate(t).getUTCHours()) + ':' + pad2(jstDate(t).getUTCMinutes())
+        const ovr = singleAvail[time]
+        if(avail && ovr === 'closed') avail = false
+        const st: SlotStatus = !avail ? 'full' : ovr === 'half' ? 'few' : 'available'
+        return { avail, status: st }
+      } else {
+        // ── Any staff ──
+        if(activeStaffIds.length === 0){
+          let conflictCount = 0
+          for(const r of resAll){ if(overlaps(t, end, r.a0, r.a1)) conflictCount++ }
+          const avail = conflictCount < 1
+          return { avail, status: avail ? 'available' : 'full' }
+        }
+        let anyConflictCount = 0
+        for(const r of (resByStaff['any'] || [])){ if(overlaps(t, end, r.a0, r.a1)) anyConflictCount++ }
+        const staffStatuses: SlotStatus[] = []
+        for(const sid of activeStaffIds){
+          let ownConflict = false
+          for(const r of (resByStaff[sid] || [])){ if(overlaps(t, end, r.a0, r.a1)){ ownConflict = true; break } }
+          if(ownConflict) continue
+          const time = pad2(jstDate(t).getUTCHours()) + ':' + pad2(jstDate(t).getUTCMinutes())
+          const ovr = (allStaffAvail[sid] || {})[time]
+          if(ovr === 'closed') continue
+          staffStatuses.push(ovr === 'half' ? 'few' : 'available')
+        }
+        const remainingCount = staffStatuses.length - anyConflictCount
+        if(remainingCount <= 0) return { avail: false, status: 'full' }
+        const sorted = staffStatuses.slice().sort((a, b) => a === b ? 0 : a === 'available' ? -1 : 1)
+        const remaining = sorted.slice(anyConflictCount)
+        return { avail: true, status: remaining.some(s => s === 'available') ? 'available' : 'few' }
+      }
+    }
+
     // Loop boundary matches admin grid: slot starts up to and including closeTime
     for(let t = openMs; t <= closeMs; t += stepMs){
-      const end = t + overlapMs
       const dt = jstDate(t)
       const time = pad2(dt.getUTCHours()) + ':' + pad2(dt.getUTCMinutes())
 
-      let available = true
-      let status: SlotStatus = 'available'
+      // 1) cellAvailable: interval-based overlap (matches admin ledger grid)
+      const cell = checkCapacity(t, cellOverlapMs)
 
-      if(staffId !== 'any'){
-        // ── Specific staff ──
-        // 1. D1 conflict (already filtered to this staff in the query above)
-        for(const r of resAll){
-          if(overlaps(t, end, r.a0, r.a1)){ available = false; break }
-        }
-        // 2. Availability override
-        const ovr = singleAvail[time]
-        if(available && ovr === 'closed') available = false
-        // 3. Status
-        if(!available)      status = 'full'
-        else if(ovr === 'half') status = 'few'
-        else                status = 'available'
+      // 2) bookableForMenu: duration-based overlap (matches /reserve truth)
+      //    Only differs when menu duration > slot interval
+      const menu = needMenuCheck ? checkCapacity(t, menuDurMs) : cell
 
-      } else {
-        // ── Any staff ── aggregate across active staff
-        if(activeStaffIds.length === 0){
-          // No active staff list: count overlapping reservations vs capacity (assume 1 staff)
-          let conflictCount = 0
-          for(const r of resAll){ if(overlaps(t, end, r.a0, r.a1)) conflictCount++ }
-          // capacity = 1 (unknown staff count), full only when conflictCount >= 1
-          available = conflictCount < 1
-          status = available ? 'available' : 'full'
-        } else {
-          // ── Count-based aggregation (correct capacity model) ──
-          // 'any' reservations consume ONE staff slot each — not all staff.
-          // 1) Count how many 'any' reservations conflict with this time window
-          let anyConflictCount = 0
-          for(const r of (resByStaff['any'] || [])){ if(overlaps(t, end, r.a0, r.a1)) anyConflictCount++ }
-
-          // 2) Collect status of each staff member (only own D1 + KV, NOT 'any' resv)
-          const staffStatuses: SlotStatus[] = []
-          for(const sid of activeStaffIds){
-            // Own D1 conflict check (excludes 'any' reservations)
-            let ownConflict = false
-            for(const r of (resByStaff[sid] || [])){ if(overlaps(t, end, r.a0, r.a1)){ ownConflict = true; break } }
-            if(ownConflict) continue
-
-            const ovr = (allStaffAvail[sid] || {})[time]
-            if(ovr === 'closed') continue  // admin closed this staff for this time
-
-            staffStatuses.push(ovr === 'half' ? 'few' : 'available')
-          }
-
-          // 3) Deduct 'any' reservations from available capacity
-          const remainingCount = staffStatuses.length - anyConflictCount
-          if(remainingCount <= 0){
-            available = false
-            status = 'full'
-          } else {
-            available = true
-            // Sort best-first (available > few), skip 'any'-consumed slots, take remaining
-            const sorted = staffStatuses.slice().sort((a, b) => a === b ? 0 : a === 'available' ? -1 : 1)
-            const remaining = sorted.slice(anyConflictCount)
-            status = remaining.some(s => s === 'available') ? 'available' : 'few'
-          }
-        }
-      }
-
-      slots.push({ time, available, status })
+      slots.push({
+        time,
+        available: cell.avail,           // backward compat = cellAvailable
+        cellAvailable: cell.avail,
+        bookableForMenu: menu.avail,
+        status: cell.status,             // backward compat for admin grid
+      })
     }
 
     return c.json({
       ok:true, tenantId, staffId, date,
-      settings: debug ? { openTime, closeTime, slotIntervalMin, overlapMin: slotIntervalMin, closedWeekdays, weekday, hitDefaultKey, hitTenantKey } : undefined,
+      settings: debug ? { openTime, closeTime, slotIntervalMin, menuDurMin: reqDurMin || null, closedWeekdays, weekday, hitDefaultKey, hitTenantKey } : undefined,
       _debug: debug ? {
         reservationCount: reservations.length,
         resAllCount: resAll.length,
-        computedUnavailable: slots.filter(s => !s.available).length,
-        computedAvailable: slots.filter(s => s.available).length,
+        cellAvailableCount: slots.filter(s => s.cellAvailable).length,
+        bookableCount: slots.filter(s => s.bookableForMenu).length,
         activeStaffIds,
         reservations: reservations.slice(0, 10),
       } : undefined,

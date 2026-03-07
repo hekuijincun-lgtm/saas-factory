@@ -7,7 +7,12 @@ import { apiGet, apiPost, apiDelete, apiPatch, apiPut, ApiClientError } from './
 
 export interface TimeSlot {
   time: string;
+  /** Grid cell has capacity (interval-based overlap). Used by admin grid. */
   available: boolean;
+  /** Same as available — explicit name for grid cell availability */
+  cellAvailable?: boolean;
+  /** Menu duration fits without conflict. Only differs from available when durationMin > slotIntervalMin. */
+  bookableForMenu?: boolean;
   reason?: 'cutoff' | 'reserved' | 'shift' | 'closed';
   /** Availability status from admin: 'available'=○, 'few'=△, 'full'=× */
   status?: 'available' | 'few' | 'full';
