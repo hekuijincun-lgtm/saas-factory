@@ -34,16 +34,17 @@ export type LineConfigInput = {
 /**
  * GET /admin/settings を実行
  */
-export async function getAdminSettings(): Promise<AdminSettings> {
+export async function getAdminSettings(tenantId?: string): Promise<AdminSettings> {
   try {
-    const response = await apiGet<ApiResponse<AdminSettings>>('/admin/settings');
+    const qs = tenantId ? `?tenantId=${encodeURIComponent(tenantId)}` : '';
+    const response = await apiGet<ApiResponse<AdminSettings>>(`/api/proxy/admin/settings${qs}`);
     if (response.ok && response.data) {
       // 取得したデータをデフォルト値でマージして欠損フィールドを補完
       return mergeDefaults(response.data, DEFAULT_ADMIN_SETTINGS);
-}
+    }
     throw new Error(response.error || 'Failed to fetch settings');
   } catch (error) {
-    // API失敗時はlocalStorageから読み込む（fallback）
+    // API失敗時はlocalStorageから読み込む（emergency fallback）
     console.warn('Failed to fetch settings from API, trying localStorage:', error);
     return getDefaultSettings();
   }
@@ -52,12 +53,13 @@ export async function getAdminSettings(): Promise<AdminSettings> {
 /**
  * PUT /admin/settings を実行
  */
-export async function updateAdminSettings(input: AdminSettings): Promise<AdminSettings> {
+export async function updateAdminSettings(input: AdminSettings, tenantId?: string): Promise<AdminSettings> {
   // 保存前にマージして欠損フィールドを補完
   const merged = mergeDefaults(DEFAULT_ADMIN_SETTINGS, input);
-  
+
   try {
-    const response = await apiPut<ApiResponse<AdminSettings>>('/admin/settings', merged);
+    const qs = tenantId ? `?tenantId=${encodeURIComponent(tenantId)}` : '';
+    const response = await apiPut<ApiResponse<AdminSettings>>(`/api/proxy/admin/settings${qs}`, merged);
     if (response.ok && response.data) {
       // レスポンスもマージして返す
       const result = mergeDefaults(response.data as unknown as Partial<AdminSettings>, DEFAULT_ADMIN_SETTINGS);
