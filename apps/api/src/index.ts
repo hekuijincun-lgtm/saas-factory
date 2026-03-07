@@ -682,6 +682,7 @@ const parseHHMM = (s: string) => {
     return c.json({
       ok:true, tenantId, staffId, date,
       settings: debug ? { openTime, closeTime, slotIntervalMin, slotMinutes, closedWeekdays, weekday, hitDefaultKey, hitTenantKey } : undefined,
+      _debug: debug ? { reservationCount: reservations.length, resAllCount: resAll.length, activeStaffIds, reservations: reservations.slice(0, 10) } : undefined,
       slots,
     })
   })
