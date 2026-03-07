@@ -250,8 +250,14 @@ export async function createReservation(
     const pad = (n: number) => String(n).padStart(2, "0");
     const endAt = `${endDateObj.getFullYear()}-${pad(endDateObj.getMonth() + 1)}-${pad(endDateObj.getDate())}T${pad(endDateObj.getHours())}:${pad(endDateObj.getMinutes())}:00${tz}`;
 
+    // tenantId: URL query param (booking UI) → proxy will also inject session
+    // tenantId via x-session-tenant-id header for admin callers without URL param.
+    const urlTenantId = typeof window !== 'undefined'
+      ? new URLSearchParams(window.location.search).get('tenantId')
+      : null;
+
     const newPayload: any = {
-      tenantId: (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('tenantId')) || "default",
+      ...(urlTenantId ? { tenantId: urlTenantId } : {}),
       staffId,
       startAt,
       endAt,

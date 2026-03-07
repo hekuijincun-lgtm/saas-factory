@@ -126,14 +126,35 @@ export default function ReservationsLedger() {
   ];
 
   // 予約を (date, time, staffId) をキーにした Map に変換（同一セル複数予約対応）
-  // staffId がない場合は 'any' として扱う
+  // duration が grid interval を超える予約は、重なる全セルにマッピングする。
+  // continuationSet: 予約の開始セル以外（continuation）を追跡する。
+  const interval = bizSettings.interval || 60;
   const reservationMap = new Map<string, Reservation[]>();
+  const continuationSet = new Set<string>(); // key = "date|time|staffId|reservationId"
   reservations.forEach((res) => {
     const staffId = res.staffId || 'any';
-    const key = `${res.date}|${res.time}|${staffId}`;
-    const existing = reservationMap.get(key) || [];
-    existing.push(res);
-    reservationMap.set(key, existing);
+    // Parse reservation start time
+    const [rh, rm] = (res.time || '00:00').split(':').map(Number);
+    const startMin = rh * 60 + rm;
+    const durMin = res.durationMin || interval; // fallback to grid interval
+    const endMin = startMin + durMin;
+    // Map reservation to every grid cell it overlaps with
+    for (const slot of timeSlots) {
+      const [sh, sm] = slot.split(':').map(Number);
+      const slotStart = sh * 60 + sm;
+      const slotEnd = slotStart + interval;
+      // Overlap check: reservation [startMin, endMin) ∩ cell [slotStart, slotEnd)
+      if (startMin < slotEnd && endMin > slotStart) {
+        const key = `${res.date}|${slot}|${staffId}`;
+        const existing = reservationMap.get(key) || [];
+        existing.push(res);
+        reservationMap.set(key, existing);
+        // Mark non-start cells as continuations
+        if (slot !== res.time) {
+          continuationSet.add(`${res.date}|${slot}|${staffId}|${res.reservationId}`);
+        }
+      }
+    }
   });
 
   const fetchReservations = useCallback(async () => {
@@ -549,7 +570,27 @@ export default function ReservationsLedger() {
                         >
                           {cellReservations.length > 0 ? (
                             <div className="space-y-1">
-                              {cellReservations.map((reservation) => (
+                              {cellReservations.map((reservation) => {
+                                const isContinuation = continuationSet.has(
+                                  `${date}|${time}|${staff.id}|${reservation.reservationId}`
+                                );
+                                if (isContinuation) {
+                                  // Continuation cell: compact indicator (clickable to open detail)
+                                  return (
+                                    <div
+                                      key={reservation.reservationId}
+                                      onClick={() => { if (isWorking) { setSelectedReservation(reservation); } }}
+                                      className={`border border-dashed rounded-xl px-3 py-2 text-xs transition-all ${
+                                        isWorking
+                                          ? 'bg-blue-50/50 border-blue-200 cursor-pointer hover:shadow-sm text-blue-500'
+                                          : 'bg-gray-50 border-gray-200 cursor-not-allowed opacity-50 text-gray-400'
+                                      }`}
+                                    >
+                                      {reservation.name} ({reservation.durationMin || interval}分)
+                                    </div>
+                                  );
+                                }
+                                return (
                                 <div
                                   key={reservation.reservationId}
                                   onClick={() => { if (isWorking) { setSelectedReservation(reservation); } }}
@@ -572,7 +613,8 @@ export default function ReservationsLedger() {
                                     </span>
                                   </div>
                                 </div>
-                              ))}
+                                );
+                              })}
                             </div>
                           ) : (
                             <div className={`h-16 ${!isWorking ? 'bg-gray-50' : ''}`} />
