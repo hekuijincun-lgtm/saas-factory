@@ -25,6 +25,9 @@ const base = resolveBookingBase();
   const tenantId = pickTenantId(inUrl, req);
   upstream.searchParams.set("tenantId", tenantId);
 
+  // cache-buster: prevent Cloudflare edge cache from serving stale slots
+  upstream.searchParams.set("_t", String(Date.now()));
+
   const res = await fetch(upstream.toString(), {
     method: "GET",
     headers: {
@@ -37,7 +40,11 @@ const base = resolveBookingBase();
   const text = await res.text();
   return new Response(text, {
     status: res.status,
-    headers: { "content-type": res.headers.get("content-type") || "application/json" },
+    headers: {
+      "content-type": res.headers.get("content-type") || "application/json",
+      "cache-control": "no-store, no-cache, must-revalidate",
+      "pragma": "no-cache",
+    },
   });
 }
 

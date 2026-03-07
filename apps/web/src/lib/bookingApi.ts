@@ -174,7 +174,9 @@ export async function getSlots(date: string, staffId?: string, durationMin?: num
     if (durationMin && durationMin > 0) {
       params.append('durationMin', String(durationMin));
     }
-    
+    // cache-buster: ensure fresh slots after conflict/refetch
+    params.append('_t', String(Date.now()));
+
     // Next.js プロキシAPI経由で取得（相対パスで /api/proxy/slots を呼ぶ）
     const response = await fetch(`/api/proxy/slots?${params.toString()}`, {
       method: 'GET',
