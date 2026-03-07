@@ -556,13 +556,13 @@ const parseHHMM = (s: string) => {
     try{
       if(staffId === 'any'){
         const q = await db
-          .prepare(`SELECT start_at, end_at, staff_id FROM reservations WHERE tenant_id = ? AND start_at < ? AND end_at > ? ORDER BY start_at`)
+          .prepare(`SELECT start_at, end_at, staff_id FROM reservations WHERE tenant_id = ? AND start_at < ? AND end_at > ? AND status != 'cancelled' ORDER BY start_at`)
           .bind(tenantId, dayEnd, dayStart)
           .all()
         reservations = (q.results || []) as any
       } else {
         const q = await db
-          .prepare(`SELECT start_at, end_at, staff_id FROM reservations WHERE tenant_id = ? AND staff_id = ? AND start_at < ? AND end_at > ? ORDER BY start_at`)
+          .prepare(`SELECT start_at, end_at, staff_id FROM reservations WHERE tenant_id = ? AND staff_id = ? AND start_at < ? AND end_at > ? AND status != 'cancelled' ORDER BY start_at`)
           .bind(tenantId, staffId, dayEnd, dayStart)
           .all()
         reservations = (q.results || []) as any
