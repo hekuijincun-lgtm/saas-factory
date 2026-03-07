@@ -574,7 +574,7 @@ const parseHHMM = (s: string) => {
     try{
       if(staffId === 'any'){
         const q = await db
-          .prepare(`SELECT start_at, end_at, staff_id FROM reservations WHERE tenant_id = ? AND start_at < ? AND end_at > ? AND status != 'cancelled' ORDER BY start_at`)
+          .prepare(`SELECT start_at, end_at, staff_id FROM reservations WHERE tenant_id = ? AND start_at < ? AND end_at > ? AND ${SQL_ACTIVE_FILTER} ORDER BY start_at`)
           .bind(tenantId, dayEnd, dayStart)
           .all()
         reservations = (q.results || []) as any
@@ -582,7 +582,7 @@ const parseHHMM = (s: string) => {
         // Include both this staff's reservations AND unassigned ('any'/NULL) reservations
         // Unassigned reservations consume capacity and must be counted
         const q = await db
-          .prepare(`SELECT start_at, end_at, staff_id FROM reservations WHERE tenant_id = ? AND (staff_id = ? OR staff_id = 'any' OR staff_id IS NULL) AND start_at < ? AND end_at > ? AND status != 'cancelled' ORDER BY start_at`)
+          .prepare(`SELECT start_at, end_at, staff_id FROM reservations WHERE tenant_id = ? AND (staff_id = ? OR staff_id = 'any' OR staff_id IS NULL) AND start_at < ? AND end_at > ? AND ${SQL_ACTIVE_FILTER} ORDER BY start_at`)
           .bind(tenantId, staffId, dayEnd, dayStart)
           .all()
         reservations = (q.results || []) as any
@@ -933,6 +933,7 @@ function defaultMenu() {
 }
 
 app.get("/admin/menu", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
   try {
     const tenantId = getTenantId(c);
     const kv = c.env.SAAS_FACTORY;
@@ -959,6 +960,7 @@ app.get("/admin/menu", async (c) => {
  * imageUrl: Workers 自身の origin + /media/menu/{imageKey}
  * ========================= */
 app.post("/admin/menu/image", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
   try {
     const tenantId = getTenantId(c);
     const menuId = (c.req.query("menuId") || "new").replace(/[^a-zA-Z0-9_\-]/g, "_");
@@ -1031,6 +1033,7 @@ app.get("/media/reservations/*", async (c) => {
  * imageKey: tenants/{tenantId}/reservations/{id}/{kind}-{ts}-{rand}.{ext}
  * ========================= */
 app.post("/admin/reservations/:id/image", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
   try {
     const tenantId = getTenantId(c);
     const id = c.req.param("id");
@@ -1085,6 +1088,7 @@ app.post("/admin/reservations/:id/image", async (c) => {
 });
 
 app.post("/admin/menu", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
   try {
     const tenantId = getTenantId(c);
     const kv = c.env.SAAS_FACTORY;
@@ -1171,6 +1175,7 @@ app.post("/admin/menu", async (c) => {
 
 /** PATCH /admin/menu/:id — update existing menu item (including eyebrow) */
 app.patch("/admin/menu/:id", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
   try {
     const tenantId = getTenantId(c);
     const itemId = c.req.param("id");
@@ -1335,6 +1340,7 @@ app.on(["PUT","PATCH"], "/admin/menu/:id", async (c) => {
   }
 });
 app.delete("/admin/menu/:id", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
   try {
     const tenantId = getTenantId(c);
     const id = c.req.param("id");
@@ -1357,6 +1363,7 @@ app.delete("/admin/menu/:id", async (c) => {
  * DELETE /admin/reservations/:id  → mark status='cancelled'
  * ========================= */
 app.get("/admin/reservations", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
   try {
     const tenantId = getTenantId(c);
     const date = c.req.query("date");
@@ -1372,7 +1379,7 @@ app.get("/admin/reservations", async (c) => {
       .prepare(`SELECT id, tenant_id, slot_start, start_at, end_at, duration_minutes,
                        customer_name, customer_phone, staff_id, note, created_at, status, meta
                 FROM reservations
-                WHERE tenant_id = ? AND slot_start LIKE ? AND status != 'cancelled'
+                WHERE tenant_id = ? AND slot_start LIKE ? AND ${SQL_ACTIVE_FILTER}
                 ORDER BY slot_start ASC`)
       .bind(tenantId, like)
       .all();
@@ -1415,6 +1422,7 @@ app.get("/admin/reservations", async (c) => {
  * Single reservation by ID (used by customer detail view)
  * ========================= */
 app.get("/admin/reservations/:id", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
   try {
     const tenantId = getTenantId(c);
     const id = c.req.param("id");
@@ -1536,6 +1544,7 @@ app.on(["PUT", "PATCH"], "/admin/reservations/:id", async (c) => {
 });
 
 app.delete("/admin/reservations/:id", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
   try {
     const tenantId = getTenantId(c);
     const id = c.req.param("id");
@@ -1546,9 +1555,9 @@ app.delete("/admin/reservations/:id", async (c) => {
       .prepare("SELECT id, status FROM reservations WHERE id = ? AND tenant_id = ?")
       .bind(id, tenantId).first();
     if (!existing) return c.json({ ok: false, error: "not_found" }, 404);
-    if (existing.status === "cancelled") return c.json({ ok: false, error: "already_cancelled" }, 409);
+    if (existing.status === CANCELLED_STATUS) return c.json({ ok: false, error: "already_cancelled" }, 409);
 
-    await db.prepare("UPDATE reservations SET status = 'cancelled' WHERE id = ? AND tenant_id = ?")
+    await db.prepare(`UPDATE reservations SET status = '${CANCELLED_STATUS}' WHERE id = ? AND tenant_id = ?`)
       .bind(id, tenantId).run();
 
     return c.json({ ok: true, tenantId, id, status: "cancelled" });
@@ -1563,6 +1572,7 @@ app.delete("/admin/reservations/:id", async (c) => {
  * Returns: repeatConversionRate, avgRepeatIntervalDays, staffCounts, totalRevenue
  * ========================= */
 app.get("/admin/kpi", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
   try {
     const tenantId = getTenantId(c);
     const days = Math.min(Math.max(Number(c.req.query("days") || "90"), 7), 365);
@@ -1577,7 +1587,7 @@ app.get("/admin/kpi", async (c) => {
     const staffRes = await db.prepare(
       `SELECT staff_id, COUNT(*) as cnt
        FROM reservations
-       WHERE tenant_id = ? AND slot_start >= ? AND status != 'cancelled'
+       WHERE tenant_id = ? AND slot_start >= ? AND ${SQL_ACTIVE_FILTER}
        GROUP BY staff_id`
     ).bind(tenantId, since + 'T').all();
     const staffCounts: Record<string, number> = {};
@@ -1591,7 +1601,7 @@ app.get("/admin/kpi", async (c) => {
     const custRes = await db.prepare(
       `SELECT json_extract(meta, '$.customerKey') as ckey, COUNT(*) as visits
        FROM reservations
-       WHERE tenant_id = ? AND slot_start >= ? AND status != 'cancelled'
+       WHERE tenant_id = ? AND slot_start >= ? AND ${SQL_ACTIVE_FILTER}
          AND json_extract(meta, '$.customerKey') IS NOT NULL
        GROUP BY ckey`
     ).bind(tenantId, since + 'T').all();
@@ -1603,7 +1613,7 @@ app.get("/admin/kpi", async (c) => {
     // missingCustomerKeyCount: customerKeyが無い予約数（精度低下の目安）
     const missingRes: any = await db.prepare(
       `SELECT COUNT(*) as cnt FROM reservations
-       WHERE tenant_id = ? AND slot_start >= ? AND status != 'cancelled'
+       WHERE tenant_id = ? AND slot_start >= ? AND ${SQL_ACTIVE_FILTER}
          AND (meta IS NULL OR json_extract(meta, '$.customerKey') IS NULL)`
     ).bind(tenantId, since + 'T').first();
     const missingCustomerKeyCount: number = missingRes?.cnt ?? 0;
@@ -1615,7 +1625,7 @@ app.get("/admin/kpi", async (c) => {
               MAX(slot_start) as last_visit,
               COUNT(*) as visits
        FROM reservations
-       WHERE tenant_id = ? AND slot_start >= ? AND status != 'cancelled'
+       WHERE tenant_id = ? AND slot_start >= ? AND ${SQL_ACTIVE_FILTER}
          AND json_extract(meta, '$.customerKey') IS NOT NULL
        GROUP BY ckey
        HAVING visits >= 2`
@@ -1642,7 +1652,7 @@ app.get("/admin/kpi", async (c) => {
          json_extract(meta, '$.customerKey') as ckey,
          COUNT(*) as visits
        FROM reservations
-       WHERE tenant_id = ? AND slot_start >= ? AND status != 'cancelled'
+       WHERE tenant_id = ? AND slot_start >= ? AND ${SQL_ACTIVE_FILTER}
          AND json_extract(meta, '$.customerKey') IS NOT NULL
        GROUP BY metaStyleType, ckey`
     ).bind(tenantId, since + 'T').all();
@@ -1690,6 +1700,7 @@ app.get("/admin/kpi", async (c) => {
  * Processes up to 200 rows per call (safe for Workers CPU limits).
  * ========================= */
 app.post("/admin/kpi/backfill-customer-key", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
   try {
     const tenantId = getTenantId(c);
     const days = Math.min(Math.max(Number(c.req.query("days") || "365"), 1), 730);
@@ -1704,7 +1715,7 @@ app.post("/admin/kpi/backfill-customer-key", async (c) => {
       `SELECT id, line_user_id, customer_phone, meta
        FROM reservations
        WHERE tenant_id = ? AND slot_start >= ?
-         AND status != 'cancelled'
+         AND ${SQL_ACTIVE_FILTER}
          AND (meta IS NULL OR json_extract(meta, '$.customerKey') IS NULL)
        LIMIT 200`
     ).bind(tenantId, since + 'T').all()).results || [];
@@ -1761,6 +1772,7 @@ app.post("/admin/kpi/backfill-customer-key", async (c) => {
  * J1: Onboarding progress card data source.
  * ========================= */
 app.get("/admin/onboarding-status", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
   try {
     const tenantId = getTenantId(c);
     const kv = (c.env as any).SAAS_FACTORY;
@@ -1833,7 +1845,7 @@ app.get("/admin/onboarding-status", async (c) => {
       try {
         const since30 = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
         const row: any = await db.prepare(
-          `SELECT COUNT(*) as cnt FROM reservations WHERE tenant_id = ? AND slot_start >= ? AND status != 'cancelled'`
+          `SELECT COUNT(*) as cnt FROM reservations WHERE tenant_id = ? AND slot_start >= ? AND ${SQL_ACTIVE_FILTER}`
         ).bind(tenantId, since30).first();
         hasTestReservation = (row?.cnt ?? 0) > 0;
       } catch { /* ignore */ }
@@ -1860,6 +1872,7 @@ app.get("/admin/onboarding-status", async (c) => {
  * Fields: customerKey, lineUserId, lastReservationAt, lastMenuSummary, staffId, styleType, recommendedMessage
  * ========================= */
 app.get("/admin/repeat-targets", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
   try {
     const tenantId = getTenantId(c);
     const days = Math.min(Math.max(Number(c.req.query("days") || "28"), 7), 365);
@@ -1954,13 +1967,13 @@ app.get("/admin/repeat-targets", async (c) => {
        INNER JOIN (
          SELECT json_extract(meta, '$.customerKey') as ck, MAX(slot_start) as maxSlot
          FROM reservations
-         WHERE tenant_id = ? AND status != 'cancelled'
+         WHERE tenant_id = ? AND ${SQL_ACTIVE_FILTER}
            AND json_extract(meta, '$.customerKey') IS NOT NULL
          GROUP BY ck
          HAVING maxSlot < ?
        ) latest ON json_extract(r.meta, '$.customerKey') = latest.ck
                 AND r.slot_start = latest.maxSlot
-       WHERE r.tenant_id = ? AND r.status != 'cancelled'
+       WHERE r.tenant_id = ? AND r.${SQL_ACTIVE_FILTER}
        ORDER BY ${orderBy}
        LIMIT ?`
     ).bind(tenantId, cutoff, tenantId, limit).all()).results || [];
@@ -2030,6 +2043,7 @@ app.get("/admin/repeat-targets", async (c) => {
  * I3: logs sends to D1 message_logs on dryRun=false.
  * ========================= */
 app.post("/admin/repeat-send", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
   try {
     const tenantId = getTenantId(c);
     const db = (c.env as any).DB;
@@ -2197,6 +2211,7 @@ app.post("/admin/repeat-send", async (c) => {
  * Uses message_logs (type=repeat) joined with reservations via customerKey.
  * ========================= */
 app.get("/admin/repeat-metrics", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
   try {
     const tenantId = getTenantId(c);
     const db = (c.env as any).DB;
@@ -2237,7 +2252,7 @@ app.get("/admin/repeat-metrics", async (c) => {
         const row: any = await db.prepare(
           `SELECT COUNT(*) as cnt FROM reservations
            WHERE tenant_id = ? AND json_extract(meta, '$.customerKey') = ?
-             AND slot_start >= ? AND slot_start <= ? AND status != 'cancelled'`
+             AND slot_start >= ? AND slot_start <= ? AND ${SQL_ACTIVE_FILTER}`
         ).bind(tenantId, sc.customer_key, sc.first_sent_at, windowEnd).first();
         if ((row?.cnt ?? 0) > 0) {
           convertedCustomers++;
@@ -2266,6 +2281,7 @@ app.get("/admin/repeat-metrics", async (c) => {
  * KV key: availability:${tenantId}:${staffId}:${date}  = JSON {[time]: 'open'|'half'|'closed'}
  * ========================= */
 app.get("/admin/availability", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
   try {
     const tenantId = getTenantId(c);
     const date = c.req.query("date") || new Date().toISOString().slice(0, 10);
@@ -2288,6 +2304,7 @@ app.get("/admin/availability", async (c) => {
 });
 
 app.put("/admin/availability", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
   try {
     const tenantId = getTenantId(c);
     const kv = c.env.SAAS_FACTORY;
@@ -2321,6 +2338,7 @@ app.put("/admin/availability", async (c) => {
  * KV key: admin:staff:shift:${tenantId}:${staffId}
  * ========================= */
 app.get("/admin/staff/:id/shift", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
   const tenantId = getTenantId(c, null);
   const staffId = c.req.param("id");
   const kv = (c.env as any).SAAS_FACTORY;
@@ -2335,6 +2353,7 @@ app.get("/admin/staff/:id/shift", async (c) => {
 });
 
 app.put("/admin/staff/:id/shift", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
   const tenantId = getTenantId(c, null);
   const staffId = c.req.param("id");
   const kv = (c.env as any).SAAS_FACTORY;
@@ -2354,6 +2373,7 @@ app.put("/admin/staff/:id/shift", async (c) => {
  * GET /admin/customers?tenantId=
  * ========================= */
 app.get("/admin/customers", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
   const STAMP = "ADMIN_CUSTOMERS_V1";
   const tenantId = getTenantId(c, null);
   const db = (c.env as any).DB;
@@ -2395,6 +2415,7 @@ app.get("/admin/customers", async (c) => {
  * Reservation history for a customer (by customer UUID or phone fallback)
  * ========================= */
 app.get("/admin/customers/:id/reservations", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
   const STAMP = "CUSTOMER_RESERVATIONS_V1";
   const tenantId = getTenantId(c, null);
   const customerId = c.req.param("id");
@@ -2417,7 +2438,7 @@ app.get("/admin/customers/:id/reservations", async (c) => {
                 customer_name, customer_phone, staff_id, note, created_at, status, meta
          FROM reservations
          WHERE tenant_id = ?
-           AND status != 'cancelled'
+           AND ${SQL_ACTIVE_FILTER}
            AND (customer_id = ? OR (? IS NOT NULL AND customer_phone = ?))
          ORDER BY slot_start DESC
          LIMIT 50`
@@ -2457,6 +2478,7 @@ app.get("/admin/customers/:id/reservations", async (c) => {
  * Returns: kpis, schedule (today's reservations), customers (recent)
  * ========================= */
 app.get("/admin/dashboard", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
   const STAMP = "ADMIN_DASHBOARD_V1";
   const tenantId = getTenantId(c, null);
   const db = (c.env as any).DB;
@@ -2476,7 +2498,7 @@ app.get("/admin/dashboard", async (c) => {
         .prepare(
           `SELECT id, slot_start, start_at, customer_name, customer_phone, staff_id, duration_minutes
            FROM reservations
-           WHERE tenant_id = ? AND slot_start LIKE ? AND status != 'cancelled'
+           WHERE tenant_id = ? AND slot_start LIKE ? AND ${SQL_ACTIVE_FILTER}
            ORDER BY slot_start ASC`
         )
         .bind(tenantId, like)
@@ -2730,7 +2752,7 @@ async function upsertCustomer(
       if(activeIds.length > 0){
         // Find staff with overlapping reservations (not just exact start_at match)
         const busy = await env.DB.prepare(
-          `SELECT DISTINCT staff_id FROM reservations WHERE tenant_id = ? AND start_at < ? AND end_at > ? AND status != 'cancelled'`
+          `SELECT DISTINCT staff_id FROM reservations WHERE tenant_id = ? AND start_at < ? AND end_at > ? AND ${SQL_ACTIVE_FILTER}`
         ).bind(tenantId, endAt, startAt).all()
         const busySet = new Set((busy.results || []).map((r: any) => String(r.staff_id)))
         // Count unassigned ('any'/NULL) reservations occupying capacity
@@ -2748,7 +2770,7 @@ async function upsertCustomer(
       } else {
         // No active staff configured — treat as single-capacity
         const anyBusy = await env.DB.prepare(
-          `SELECT COUNT(*) as cnt FROM reservations WHERE tenant_id = ? AND start_at < ? AND end_at > ? AND status != 'cancelled'`
+          `SELECT COUNT(*) as cnt FROM reservations WHERE tenant_id = ? AND start_at < ? AND end_at > ? AND ${SQL_ACTIVE_FILTER}`
         ).bind(tenantId, endAt, startAt).first() as any
         const cnt = Number(anyBusy?.cnt ?? 0)
         autoAssignInfo = { activeIds: [], note: "no_active_staff", existingOverlapCount: cnt }
@@ -2808,7 +2830,7 @@ async function upsertCustomer(
          WHERE tenant_id = ?
            AND (staff_id = ? OR staff_id = 'any' OR staff_id IS NULL)
            AND start_at < ? AND end_at > ?
-           AND status != 'cancelled'
+           AND ${SQL_ACTIVE_FILTER}
          LIMIT 1`
       ).bind(tenantId, staffId, endAt, startAt).all()
       const conflicts = overlapRows.results || []
@@ -2959,7 +2981,7 @@ app.get("/my/reservations", async (c) => {
        FROM reservations
        WHERE tenant_id = ?
          AND json_extract(meta, '$.customerKey') = ?
-         AND status != 'cancelled'
+         AND ${SQL_ACTIVE_FILTER}
        ORDER BY start_at DESC
        LIMIT 20`
     ).bind(tenantId, customerKey.trim()).all();
@@ -5000,7 +5022,7 @@ async function scheduled(_event: any, env: Env, _ctx: any): Promise<void> {
         `SELECT r.id, r.tenant_id, r.line_user_id, r.customer_name, r.slot_start,
                 r.staff_id, r.meta
          FROM reservations r
-         WHERE r.status != 'cancelled'
+         WHERE r.${SQL_ACTIVE_FILTER}
            AND r.line_user_id IS NOT NULL
            AND r.line_user_id != ''
            AND substr(r.slot_start, 1, 10) = ?

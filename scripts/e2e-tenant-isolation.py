@@ -3,18 +3,19 @@
 E2E Multi-Tenant Isolation Test Suite for SaaS Factory.
 
 Tests:
-  1. Settings isolation (KV)
-  2. Staff isolation (KV)
-  3. Menu isolation (KV)
+  1. Settings isolation (KV) — requires --admin-token
+  2. Staff isolation (KV) — requires --admin-token
+  3. Menu isolation (KV) — requires --admin-token
   4. Reservation isolation (D1)
   5. Cross-tenant same-slot booking
   6. Same-tenant same-slot conflict
   7. /slots and /reserve alignment
   8. Tenant ID propagation via proxy
   9. debug parameter passthrough
+ 10. Default fallback
 
 Usage:
-  python3 scripts/e2e-tenant-isolation.py [--base URL]
+  python3 scripts/e2e-tenant-isolation.py [--base URL] [--admin-token TOKEN]
 
 Defaults to production Workers API.
 """
@@ -27,6 +28,7 @@ import time
 from datetime import datetime, timedelta
 
 BASE = sys.argv[sys.argv.index('--base') + 1] if '--base' in sys.argv else 'https://saas-factory-api.hekuijincun.workers.dev'
+ADMIN_TOKEN = sys.argv[sys.argv.index('--admin-token') + 1] if '--admin-token' in sys.argv else None
 CTX = ssl.create_default_context()
 UA = {'User-Agent': 'Mozilla/5.0 E2E-TenantIsolation/1.0', 'Content-Type': 'application/json'}
 
@@ -55,6 +57,13 @@ def api(method, path, body=None, qs='', headers=None):
             return 0, {'error': str(e)}
     return 0, {'error': 'max_retries'}
 
+def admin_api(method, path, body=None, qs=''):
+    """API call with X-Admin-Token header for admin routes."""
+    hdrs = {}
+    if ADMIN_TOKEN:
+        hdrs['X-Admin-Token'] = ADMIN_TOKEN
+    return api(method, path, body=body, qs=qs, headers=hdrs)
+
 def check(label, cond, detail=''):
     global PASS_COUNT, FAIL_COUNT
     if cond:
@@ -80,6 +89,7 @@ print(f'  SaaS Factory — Multi-Tenant Isolation E2E')
 print(f'  Base: {BASE}')
 print(f'  Date: {DATE}')
 print(f'  Tenants: {TENANT_A}, {TENANT_B}, {TENANT_DEFAULT}')
+print(f'  Admin token: {"set" if ADMIN_TOKEN else "not set (admin tests will SKIP)"}')
 print(f'{"="*70}\n')
 
 # ============================================================
@@ -87,29 +97,34 @@ print(f'{"="*70}\n')
 # ============================================================
 print('--- 1. Settings Isolation ---')
 
-code_a, settings_a = api('GET', '/admin/settings', qs=f'tenantId={TENANT_A}')
-code_b, settings_b = api('GET', '/admin/settings', qs=f'tenantId={TENANT_B}')
-code_d, settings_d = api('GET', '/admin/settings', qs=f'tenantId={TENANT_DEFAULT}')
+code_a, settings_a = admin_api('GET', '/admin/settings', qs=f'tenantId={TENANT_A}')
+code_b, settings_b = admin_api('GET', '/admin/settings', qs=f'tenantId={TENANT_B}')
+code_d, settings_d = admin_api('GET', '/admin/settings', qs=f'tenantId={TENANT_DEFAULT}')
 
 # Note: admin routes need X-Admin-Token; if 401 we know auth is working
 if code_a == 401:
-    skip('T1.1: settings A fetch', 'Admin auth required (expected in production)')
+    skip('T1.1: settings A fetch', 'Admin auth required — pass --admin-token')
     skip('T1.2: settings isolation', 'Skipped due to auth')
 else:
     check('T1.1: settings A fetch', code_a == 200, f'code={code_a}')
-    # Settings should be independent — at minimum, different KV keys
     check('T1.2: settings B fetch independent', code_b == 200, f'code={code_b}')
+    # Settings for different tenants should have different KV keys
+    # At minimum, storeName or some field should differ (or B returns defaults)
+    check('T1.3: settings A != settings B (isolation)',
+          settings_a != settings_b,
+          'settings objects are identical — possible cross-tenant leak')
 
 # ============================================================
 # 2. Staff Isolation (KV)
 # ============================================================
 print('\n--- 2. Staff Isolation ---')
 
-code_a, staff_a = api('GET', '/admin/staff', qs=f'tenantId={TENANT_A}')
-code_b, staff_b = api('GET', '/admin/staff', qs=f'tenantId={TENANT_B}')
+code_a, staff_a = admin_api('GET', '/admin/staff', qs=f'tenantId={TENANT_A}')
+code_b, staff_b = admin_api('GET', '/admin/staff', qs=f'tenantId={TENANT_B}')
 
 if code_a == 401:
-    skip('T2.1: staff isolation', 'Admin auth required')
+    skip('T2.1: staff isolation', 'Admin auth required — pass --admin-token')
+    skip('T2.2: staff B different', 'Skipped due to auth')
 else:
     staff_a_list = staff_a.get('staff', staff_a.get('data', []))
     staff_b_list = staff_b.get('staff', staff_b.get('data', []))
@@ -123,11 +138,12 @@ else:
 # ============================================================
 print('\n--- 3. Menu Isolation ---')
 
-code_a, menu_a = api('GET', '/admin/menu', qs=f'tenantId={TENANT_A}')
-code_b, menu_b = api('GET', '/admin/menu', qs=f'tenantId={TENANT_B}')
+code_a, menu_a = admin_api('GET', '/admin/menu', qs=f'tenantId={TENANT_A}')
+code_b, menu_b = admin_api('GET', '/admin/menu', qs=f'tenantId={TENANT_B}')
 
 if code_a == 401:
-    skip('T3.1: menu isolation', 'Admin auth required')
+    skip('T3.1: menu isolation', 'Admin auth required — pass --admin-token')
+    skip('T3.2: menu B different', 'Skipped due to auth')
 else:
     menu_a_list = menu_a.get('menu', menu_a.get('data', []))
     menu_b_list = menu_b.get('menu', menu_b.get('data', []))
@@ -322,6 +338,25 @@ code, d = api('GET', '/slots', qs=f'tenantId=&date={DATE}&debug=1')
 check('T10.2: empty tenantId falls back to default',
       d.get('tenantId') == 'default',
       f'got tenantId={d.get("tenantId")}')
+
+# ============================================================
+# 11. Admin Tenant Mismatch Guard
+# ============================================================
+print('\n--- 11. Tenant Mismatch Guard ---')
+
+# When ENFORCE_TENANT_MISMATCH=1 is set, requests with both
+# x-session-tenant-id and ?tenantId that differ should get 403.
+# Without the env var, this is a no-op (returns null).
+# We test the guard is wired up by checking it doesn't break normal requests.
+if ADMIN_TOKEN:
+    code, d = admin_api('GET', '/admin/settings', qs=f'tenantId={TENANT_A}')
+    check('T11.1: admin settings with matching tenant ok', code == 200, f'code={code}')
+    code, d = admin_api('GET', '/admin/menu', qs=f'tenantId={TENANT_A}')
+    check('T11.2: admin menu with tenant ok', code == 200, f'code={code}')
+    code, d = admin_api('GET', '/admin/staff', qs=f'tenantId={TENANT_A}')
+    check('T11.3: admin staff with tenant ok', code == 200, f'code={code}')
+else:
+    skip('T11.1-3: mismatch guard', 'Admin auth required — pass --admin-token')
 
 # ============================================================
 # Summary
