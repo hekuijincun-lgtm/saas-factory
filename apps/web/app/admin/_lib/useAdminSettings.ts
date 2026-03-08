@@ -74,6 +74,8 @@ export function useAdminSettings(tenantId: string = 'default') {
   };
 
   useEffect(() => {
+    // Skip fetch for unresolved "default" — wait for useAdminTenantId() to resolve
+    if (tenantId === 'default') return;
     const cached = _cache.get(tenantId);
     if (!cached || (Date.now() - cached.ts >= CACHE_TTL_MS)) {
       load();

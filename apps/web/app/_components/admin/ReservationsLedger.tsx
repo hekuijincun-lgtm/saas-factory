@@ -91,10 +91,11 @@ export default function ReservationsLedger() {
   // NOTE: 設定は useAdminSettings(tenantId) で取得済み（bizSettings）
   // 旧 getAdminSettings() のデッドfetchは削除済み
 
-  // メニュー一覧を取得
+  // メニュー一覧を取得（tenant 確定後のみ）
   useEffect(() => {
+    if (tenantStatus !== 'ready') return;
     getMenu(tenantId).then(setMenuList).catch(() => {});
-  }, [tenantId]);
+  }, [tenantId, tenantStatus]);
 
   // スタッフのシフトを読み込む（localStorageから）
   useEffect(() => {
@@ -301,9 +302,9 @@ export default function ReservationsLedger() {
     }
   }, [availabilityOverrides, tenantId, date]);
 
-  // スタッフ一覧を取得（tenantId 変更時に再取得）
+  // スタッフ一覧を取得（tenant 確定後のみ）
   useEffect(() => {
-    if (!tenantId) return;
+    if (tenantStatus !== 'ready') return;
     const fetchStaff = async () => {
       try {
         const staff = await getStaff(tenantId);
@@ -320,7 +321,7 @@ export default function ReservationsLedger() {
       }
     };
     fetchStaff();
-  }, [tenantId]);
+  }, [tenantId, tenantStatus]);
 
   const handleDateChange = (days: number) => {
     const [y, mo, da] = date.split('-').map(Number);
