@@ -15,8 +15,6 @@ import {
   Bot,
   LayoutDashboard,
   UserCircle,
-  Shield,
-  KeyRound,
 } from "lucide-react";
 import { adminNavItems } from "./nav.config";
 
@@ -34,8 +32,9 @@ const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   "/admin/reservations": Calendar,
   "/admin/customers":    UserCircle,
   "/admin/ai":           Bot,
-  "/admin/admins":       Shield,
-  "/admin/security":     KeyRound,
+  // temporarily hidden — re-enable with nav.config.ts
+  // "/admin/admins":       Shield,
+  // "/admin/security":     KeyRound,
   "/admin/settings":     Settings,
 };
 

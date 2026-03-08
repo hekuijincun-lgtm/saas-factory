@@ -8,7 +8,8 @@ export const adminNavItems = [
   { label: "予約管理",       href: "/admin/reservations" },
   { label: "顧客管理",       href: "/admin/customers" },
   { label: "AI接客設定",     href: "/admin/ai" },
-  { label: "管理者管理",     href: "/admin/admins" },
-  { label: "セキュリティ",   href: "/admin/security" },
+  // temporarily hidden — re-enable when admin management is needed
+  // { label: "管理者管理",     href: "/admin/admins" },
+  // { label: "セキュリティ",   href: "/admin/security" },
   { label: "管理者設定",     href: "/admin/settings" },
 ] as const;

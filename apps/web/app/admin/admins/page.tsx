@@ -1,13 +1,14 @@
-'use client';
+// temporarily hidden — admin management is suspended
+// Original component: AdminMembersManager via AdminMembersPage
+// To restore: uncomment nav.config.ts entries and revert this file
 
-import AdminTopBar from '../../_components/ui/AdminTopBar';
-import AdminMembersManager from '../../_components/admin/AdminMembersManager';
+import { redirect } from 'next/navigation';
 
-export default function AdminMembersPage() {
-  return (
-    <div className="space-y-6">
-      <AdminTopBar title="管理者管理" subtitle="管理者の追加・権限変更・無効化" />
-      <AdminMembersManager />
-    </div>
-  );
+export default async function AdminMembersPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ tenantId?: string }>;
+}) {
+  const { tenantId } = await searchParams;
+  redirect(tenantId ? `/admin?tenantId=${encodeURIComponent(tenantId)}` : '/admin');
 }
