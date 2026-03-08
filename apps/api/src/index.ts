@@ -3341,7 +3341,7 @@ app.put('/admin/members/password', async (c) => {
   const tenantId = getTenantId(c, null);
   const kv = (c.env as any).SAAS_FACTORY as KVNamespace;
   const userId = c.req.header('x-session-user-id') ?? '';
-  if (!userId) return c.json({ ok: false, error: 'missing_user_id' }, 403);
+  if (!userId) return c.json({ ok: false, error: 'missing_user_id', hint: 'Session cookie may be invalid or LINE_SESSION_SECRET not configured' }, 403);
 
   let body: any = {};
   try { body = await c.req.json(); } catch {}
@@ -3351,10 +3351,31 @@ app.put('/admin/members/password', async (c) => {
   }
 
   const raw = await kv.get(`admin:members:${tenantId}`);
-  if (!raw) return c.json({ ok: false, error: 'no_members' }, 404);
-  const store: AdminMembersStore = JSON.parse(raw);
-  const member = store.members.find((m: AdminMember) => m.lineUserId === userId && m.enabled);
-  if (!member) return c.json({ ok: false, error: 'not_a_member' }, 403);
+  let store: AdminMembersStore;
+  let member: AdminMember | undefined;
+
+  if (!raw) {
+    // No members record at all — auto-create for self-service (fresh/legacy tenant).
+    // Only the authenticated session holder becomes owner.
+    store = {
+      version: 1,
+      members: [{
+        lineUserId: userId,
+        role: 'owner' as MemberRole,
+        enabled: true,
+        displayName: userId.startsWith('email:') ? userId.slice(6) : userId,
+        createdAt: new Date().toISOString(),
+        authMethods: [userId.startsWith('email:') ? 'email' : 'line'],
+      }],
+    };
+    member = store.members[0];
+  } else {
+    store = JSON.parse(raw);
+    member = store.members.find((m: AdminMember) => m.lineUserId === userId && m.enabled);
+    if (!member) {
+      return c.json({ ok: false, error: 'not_a_member', hint: 'Your session userId does not match any enabled member in this tenant', userId, tenantId }, 403);
+    }
+  }
 
   member.passwordHash = await hashPassword(password);
   if (!member.authMethods) member.authMethods = [];
@@ -3854,13 +3875,62 @@ app.post('/auth/email/verify', async (c) => {
     await kv.put(`settings:${tenantId}`, JSON.stringify({
       ...settingsRaw, allowedAdminLineUserIds: [identityKey],
     }));
+    // Also create admin:members so password route / RBAC work immediately
+    const existingMembers = await kv.get(`admin:members:${tenantId}`);
+    if (!existingMembers) {
+      const seedStore: AdminMembersStore = {
+        version: 1,
+        members: [{
+          lineUserId: identityKey,
+          role: 'owner' as MemberRole,
+          enabled: true,
+          displayName,
+          createdAt: new Date().toISOString(),
+          authMethods: [identityKey.startsWith('email:') ? 'email' : 'line'],
+        }],
+      };
+      await kv.put(`admin:members:${tenantId}`, JSON.stringify(seedStore));
+    }
     await kv.put(`member:tenant:${identityKey}`, tenantId, { expirationTtl: 7776000 });
     return c.json({ ok: true, identityKey, email, displayName, allowed: true,
                     role: 'owner', membersFound: false, seeded: true, tenantId });
   }
 
   const allowed = allowedList.includes(identityKey);
-  if (allowed) await kv.put(`member:tenant:${identityKey}`, tenantId, { expirationTtl: 7776000 });
+  if (allowed) {
+    await kv.put(`member:tenant:${identityKey}`, tenantId, { expirationTtl: 7776000 });
+    // Ensure admin:members record exists for allowlisted users
+    const existingMembers = await kv.get(`admin:members:${tenantId}`);
+    if (!existingMembers) {
+      const seedStore: AdminMembersStore = {
+        version: 1,
+        members: [{
+          lineUserId: identityKey,
+          role: 'owner' as MemberRole,
+          enabled: true,
+          displayName,
+          createdAt: new Date().toISOString(),
+          authMethods: [identityKey.startsWith('email:') ? 'email' : 'line'],
+        }],
+      };
+      await kv.put(`admin:members:${tenantId}`, JSON.stringify(seedStore));
+    } else {
+      // Add to existing members if not already present
+      const store: AdminMembersStore = JSON.parse(existingMembers);
+      const exists = store.members.some((m: AdminMember) => m.lineUserId === identityKey);
+      if (!exists) {
+        store.members.push({
+          lineUserId: identityKey,
+          role: 'admin' as MemberRole,
+          enabled: true,
+          displayName,
+          createdAt: new Date().toISOString(),
+          authMethods: [identityKey.startsWith('email:') ? 'email' : 'line'],
+        });
+        await kv.put(`admin:members:${tenantId}`, JSON.stringify(store));
+      }
+    }
+  }
   return c.json({ ok: true, identityKey, email, displayName, allowed, membersFound: false, tenantId });
 });
 /* === /EMAIL_AUTH_V1 === */
@@ -4021,13 +4091,61 @@ app.post("/auth/line/exchange", async (c) => {
     await kv.put(`settings:${effectiveTid}`, JSON.stringify({
       ...settingsRaw, allowedAdminLineUserIds: [userId],
     }));
+    // Also create admin:members so password route / RBAC work immediately
+    const existingMembers = await kv.get(`admin:members:${effectiveTid}`);
+    if (!existingMembers) {
+      const seedStore: AdminMembersStore = {
+        version: 1,
+        members: [{
+          lineUserId: userId,
+          role: 'owner' as MemberRole,
+          enabled: true,
+          displayName,
+          createdAt: new Date().toISOString(),
+          authMethods: ['line'],
+        }],
+      };
+      await kv.put(`admin:members:${effectiveTid}`, JSON.stringify(seedStore));
+    }
     await kv.put(`member:tenant:${userId}`, effectiveTid, { expirationTtl: 7776000 });
     return c.json({ ok: true, userId, displayName, allowed: true,
                     role: 'owner', membersFound: false, seeded: true, tenantId: effectiveTid });
   }
 
   const allowed = allowedList.includes(userId);
-  if (allowed) await kv.put(`member:tenant:${userId}`, effectiveTid, { expirationTtl: 7776000 });
+  if (allowed) {
+    await kv.put(`member:tenant:${userId}`, effectiveTid, { expirationTtl: 7776000 });
+    // Ensure admin:members record exists for allowlisted users
+    const existingMembers = await kv.get(`admin:members:${effectiveTid}`);
+    if (!existingMembers) {
+      const seedStore: AdminMembersStore = {
+        version: 1,
+        members: [{
+          lineUserId: userId,
+          role: 'owner' as MemberRole,
+          enabled: true,
+          displayName,
+          createdAt: new Date().toISOString(),
+          authMethods: ['line'],
+        }],
+      };
+      await kv.put(`admin:members:${effectiveTid}`, JSON.stringify(seedStore));
+    } else {
+      const store: AdminMembersStore = JSON.parse(existingMembers);
+      const exists = store.members.some((m: AdminMember) => m.lineUserId === userId);
+      if (!exists) {
+        store.members.push({
+          lineUserId: userId,
+          role: 'admin' as MemberRole,
+          enabled: true,
+          displayName,
+          createdAt: new Date().toISOString(),
+          authMethods: ['line'],
+        });
+        await kv.put(`admin:members:${effectiveTid}`, JSON.stringify(store));
+      }
+    }
+  }
   return c.json({ ok: true, userId, displayName, allowed, membersFound: false, tenantId: effectiveTid });
 });
 /* === /LINE_AUTH_EXCHANGE_V1 === */

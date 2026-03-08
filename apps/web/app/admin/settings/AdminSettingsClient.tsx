@@ -581,7 +581,18 @@ export default function AdminSettingsClient() {
         setPasswordConfirm('');
         setHasPassword(true);
       } else {
-        setPasswordMsg({ type: 'error', text: data?.error ?? '保存に失敗しました' });
+        const err = String(data?.error ?? '');
+        const msg =
+          err === 'missing_user_id'
+            ? 'セッションが無効です。再ログインしてください。'
+            : err === 'not_a_member'
+            ? 'このテナントのメンバーとして登録されていません。再ログインをお試しください。'
+            : err === 'forbidden_tenant_mismatch'
+            ? 'テナントが一致しません。正しいテナントでログインしてください。'
+            : err === 'password_length'
+            ? 'パスワードは8〜128文字で入力してください。'
+            : err || '保存に失敗しました';
+        setPasswordMsg({ type: 'error', text: msg });
       }
     } catch {
       setPasswordMsg({ type: 'error', text: 'ネットワークエラー' });
