@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { Scissors } from 'lucide-react';
+import { compressImage, MAX_UPLOAD_BYTES } from '@/src/lib/compressImage';
 import type { Reservation, ReservationMeta, Staff } from '@/src/lib/bookingApi';
 
 type DetailTab = 'basic' | 'karte' | 'consent' | 'image' | 'survey';
@@ -117,14 +118,20 @@ export default function ReservationDetailPanel({
     kind === 'before' ? setBeforeUploading(true) : setAfterUploading(true);
     setMetaError(null);
     try {
+      const compressed = await compressImage(file);
       const fd = new FormData();
-      fd.append('file', file);
+      fd.append('file', compressed);
       const res = await fetch(
         `/api/proxy/admin/reservations/${reservation.reservationId}/image?tenantId=${encodeURIComponent(tenantId)}&kind=${kind}`,
         { method: 'POST', body: fd }
       );
       const json = await res.json() as any;
-      if (!json.ok) throw new Error(json.error || 'アップロードに失敗しました');
+      if (!json.ok) {
+        const msg = json.error === 'file_too_large'
+          ? `画像サイズが上限（${Math.round(MAX_UPLOAD_BYTES / 1024 / 1024)}MB）を超えています`
+          : (json.error || 'アップロードに失敗しました');
+        throw new Error(msg);
+      }
       const urlKey = kind === 'before' ? 'beforeUrl' : 'afterUrl';
       setMetaForm(m => ({ ...m, [urlKey]: json.imageUrl }));
       onRefresh();

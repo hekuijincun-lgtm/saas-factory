@@ -4,19 +4,11 @@ import { useState, useEffect, useRef } from 'react';
 import { getMenu, deleteMenuItem, type MenuItem, type MenuItemEyebrow } from '@/src/lib/bookingApi';
 import { useAdminTenantId } from '@/src/lib/useAdminTenantId';
 import { ApiClientError } from '@/src/lib/apiClient';
+import { compressImage, MAX_UPLOAD_BYTES } from '@/src/lib/compressImage';
 import Card from '../ui/Card';
 import DataTable from '../ui/DataTable';
 import Badge from '../ui/Badge';
 import { Plus, Edit2, Trash2, Scissors, ImageIcon, X } from 'lucide-react';
-
-function fileToDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const r = new FileReader();
-    r.onload = () => resolve(r.result as string);
-    r.onerror = reject;
-    r.readAsDataURL(file);
-  });
-}
 
 export default function MenuManager({ tenantId: tenantIdProp }: { tenantId?: string }) {
   const { tenantId: sessionTenantId } = useAdminTenantId();
@@ -156,16 +148,22 @@ export default function MenuManager({ tenantId: tenantIdProp }: { tenantId?: str
     try {
       let imageUrl = formData.imageUrl;
 
-      // 新しいファイルが選択されていれば R2 にアップロードして imageUrl を取得
+      // 新しいファイルが選択されていれば圧縮してから R2 にアップロード
       if (imageFile) {
+        const compressed = await compressImage(imageFile);
         const fd = new FormData();
-        fd.append('file', imageFile);
+        fd.append('file', compressed);
         const upRes = await fetch(
           `/api/proxy/admin/menu/image?tenantId=${encodeURIComponent(tenantId)}&menuId=${encodeURIComponent(editingItem?.id ?? 'new')}`,
           { method: 'POST', body: fd }
         );
         const upData = await upRes.json().catch(() => ({})) as any;
-        if (!upRes.ok || !upData.imageUrl) throw new Error(upData.error || '画像アップロードに失敗しました');
+        if (!upRes.ok || !upData.imageUrl) {
+          const msg = upData.error === 'file_too_large'
+            ? `画像サイズが上限（${Math.round(MAX_UPLOAD_BYTES / 1024 / 1024)}MB）を超えています`
+            : (upData.error || '画像アップロードに失敗しました');
+          throw new Error(msg);
+        }
         imageUrl = upData.imageUrl;
       }
 
@@ -404,7 +402,7 @@ export default function MenuManager({ tenantId: tenantIdProp }: { tenantId?: str
               <div className="flex items-center gap-2 mb-3">
                 <ImageIcon className="w-4 h-4 text-blue-500" />
                 <span className="text-sm font-medium text-gray-700">メニュー画像</span>
-                <span className="text-xs text-gray-400">（3MB以内、任意）</span>
+                <span className="text-xs text-gray-400">（自動圧縮、任意）</span>
               </div>
 
               {/* プレビュー */}
