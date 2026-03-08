@@ -3392,6 +3392,87 @@ app.get('/admin/members/me', async (c) => {
 });
 /* === /ADMIN_MEMBERS_PASSWORD_V1 === */
 
+/* === AUTH_PASSWORD_LOGIN_V1 ===
+   POST /auth/password/login
+   Body: { email, password, tenantId? }
+   Authenticates with email+password against admin:members KV.
+   Returns identity, tenant, role, and onboarding state for session creation.
+   No session/cookie issued here — Pages route handler signs the session.
+=== */
+app.post('/auth/password/login', async (c) => {
+  const kv = (c.env as any).SAAS_FACTORY as KVNamespace;
+
+  let body: any = {};
+  try { body = await c.req.json(); } catch {}
+
+  const rawEmail = String(body.email ?? '').trim().toLowerCase();
+  const password = String(body.password ?? '');
+
+  if (!rawEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(rawEmail)) {
+    return c.json({ ok: false, error: 'invalid_email' }, 400);
+  }
+  if (!password) {
+    return c.json({ ok: false, error: 'missing_password' }, 400);
+  }
+
+  const identityKey = `email:${rawEmail}`;
+
+  // Resolve tenantId: client-provided or reverse lookup
+  let tenantId = String(body.tenantId ?? 'default');
+  if (tenantId === 'default') {
+    const reverseTid = await kv.get(`member:tenant:${identityKey}`);
+    if (reverseTid) tenantId = reverseTid;
+  }
+
+  if (tenantId === 'default') {
+    return c.json({ ok: false, error: 'tenant_not_found',
+      hint: 'No tenant found for this email. Please use the signup link or magic link login.' }, 401);
+  }
+
+  // Load members
+  const raw = await kv.get(`admin:members:${tenantId}`);
+  if (!raw) {
+    return c.json({ ok: false, error: 'no_members' }, 401);
+  }
+  const store: AdminMembersStore = JSON.parse(raw);
+  const member = store.members.find((m: AdminMember) => m.lineUserId === identityKey && m.enabled);
+  if (!member) {
+    return c.json({ ok: false, error: 'invalid_credentials' }, 401);
+  }
+
+  // Check password
+  if (!member.passwordHash) {
+    return c.json({ ok: false, error: 'password_not_set',
+      hint: 'Use magic link login or set a password from admin settings.' }, 401);
+  }
+
+  const valid = await verifyPassword(password, member.passwordHash);
+  if (!valid) {
+    return c.json({ ok: false, error: 'invalid_credentials' }, 401);
+  }
+
+  // Check onboarding state
+  let onboardingCompleted: boolean | undefined;
+  try {
+    const settingsRaw = await kv.get(`settings:${tenantId}`, 'json') as any;
+    onboardingCompleted = settingsRaw?.onboarding?.onboardingCompleted;
+  } catch {}
+
+  // Refresh reverse lookup
+  await kv.put(`member:tenant:${identityKey}`, tenantId, { expirationTtl: 7776000 });
+
+  return c.json({
+    ok: true,
+    identityKey,
+    email: rawEmail,
+    displayName: member.displayName ?? rawEmail,
+    role: member.role,
+    tenantId,
+    onboardingCompleted: onboardingCompleted ?? null,
+  });
+});
+/* === /AUTH_PASSWORD_LOGIN_V1 === */
+
 /* === BOOTSTRAP_KEY_V1 ===
    POST /admin/bootstrap-key?tenantId=
    Body: { callerLineUserId? }
