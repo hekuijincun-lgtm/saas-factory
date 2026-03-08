@@ -201,10 +201,18 @@ export default function AdminShell({
         }
 
         // onboardingCompleted===false (signup ユーザーのみ) → /admin/onboarding へ redirect
+        // Exclude: onboarding itself + pages reachable from onboarding checklist
         const oc =
           data?.data?.onboarding?.onboardingCompleted ??
           data?.onboarding?.onboardingCompleted;
-        if (oc === false && !pathname?.startsWith("/admin/onboarding")) {
+        const onboardingExempt =
+          pathname?.startsWith("/admin/onboarding") ||
+          pathname?.startsWith("/admin/line-setup") ||
+          pathname?.startsWith("/admin/menu") ||
+          pathname?.startsWith("/admin/staff") ||
+          pathname?.startsWith("/admin/dashboard") ||
+          pathname?.startsWith("/admin/settings");
+        if (oc === false && !onboardingExempt) {
           router.push(`/admin/onboarding?tenantId=${encodeURIComponent(sessionTenantId)}`);
         }
       })

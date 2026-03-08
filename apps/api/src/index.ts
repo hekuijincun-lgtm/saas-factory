@@ -3510,7 +3510,7 @@ app.post('/auth/email/start', async (c) => {
     const baseSlug = storeName.toLowerCase()
       .replace(/[^\w]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 20) || 'store';
     tenantId = baseSlug + '-' + crypto.randomUUID().slice(0, 4);
-    safeReturnTo = `/admin?tenantId=${encodeURIComponent(tenantId)}`;
+    safeReturnTo = `/admin/onboarding?tenantId=${encodeURIComponent(tenantId)}`;
     await kv.put(`signup:init:${tenantId}`, JSON.stringify({ storeName, ownerEmail: rawEmail }),
                  { expirationTtl: 900 }); // 15 min
   } else {

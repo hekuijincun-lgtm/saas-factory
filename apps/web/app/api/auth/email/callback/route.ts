@@ -119,6 +119,7 @@ export async function GET(req: Request) {
     bootstrapped,
     bootstrapError,
     tenantId: verifiedTenantId,
+    signedUp,
   } = data as {
     identityKey: string;
     email: string;
@@ -129,6 +130,7 @@ export async function GET(req: Request) {
     bootstrapped?: boolean;
     bootstrapError?: string;
     tenantId?: string;
+    signedUp?: boolean;
   };
 
   // Override tenantId with the one resolved by Workers (reverse lookup)
@@ -191,12 +193,18 @@ export async function GET(req: Request) {
   // 14-day expiry (same as magic link session lifetime).
   const SESSION_MAX_AGE = 14 * 24 * 60 * 60; // 1209600 seconds
 
+  // Fresh signup: force redirect to onboarding (even if D1 returnTo says /admin)
+  let effectiveReturnTo = returnTo;
+  if (signedUp && tenantId && tenantId !== "default") {
+    effectiveReturnTo = `/admin/onboarding?tenantId=${encodeURIComponent(tenantId)}`;
+  }
+
   // Ensure tenantId is present in the redirect URL so the admin UI lands
   // on the correct tenant instead of falling back to "default".
-  let finalRedirect = returnTo;
-  if (tenantId && tenantId !== "default" && !returnTo.includes("tenantId=")) {
-    const sep = returnTo.includes("?") ? "&" : "?";
-    finalRedirect = `${returnTo}${sep}tenantId=${encodeURIComponent(tenantId)}`;
+  let finalRedirect = effectiveReturnTo;
+  if (tenantId && tenantId !== "default" && !effectiveReturnTo.includes("tenantId=")) {
+    const sep = effectiveReturnTo.includes("?") ? "&" : "?";
+    finalRedirect = `${effectiveReturnTo}${sep}tenantId=${encodeURIComponent(tenantId)}`;
   }
 
   const res = NextResponse.redirect(new URL(finalRedirect, url.origin));
