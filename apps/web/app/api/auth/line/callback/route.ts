@@ -247,7 +247,7 @@ export async function GET(req: Request) {
     }
 
     const sessionTenantId = signupTenantId ?? tenantId;
-    const token = await signSession({ userId, tenantId: sessionTenantId, displayName, role: role ?? null, ts: Date.now() }, secret);
+    const token = await signSession({ userId, tenantId: sessionTenantId, displayName, ts: Date.now() }, secret);
 
     // ── STEP: set_cookie / redirect ────────────────────────────────────────
     step = "set_cookie";

@@ -169,7 +169,7 @@ export async function GET(req: Request) {
   }
 
   const sessionToken = await signSession(
-    { userId: identityKey, tenantId, displayName, role: role ?? null, ts: Date.now() },
+    { userId: identityKey, tenantId, displayName, ts: Date.now() },
     secret
   );
 

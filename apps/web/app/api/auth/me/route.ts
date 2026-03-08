@@ -24,7 +24,7 @@ async function hmacSha256B64url(message: string, secret: string) {
 async function verifyAndParseSession(
   token: string,
   secret: string
-): Promise<{ userId: string; tenantId: string; displayName: string; role: string | null } | null> {
+): Promise<{ userId: string; tenantId: string; displayName: string; role?: string | null } | null> {
   const dotIdx = token.lastIndexOf(".");
   if (dotIdx < 1) return null;
   const bodyB64u = token.slice(0, dotIdx);
@@ -126,11 +126,10 @@ export async function GET(req: Request) {
   }
 
   // Always resolve role from Workers KV (live source of truth).
-  // Fall back to session cookie role only when Workers lookup fails.
-  let role = parsed.role ?? null;
+  // No cookie fallback — role is live-only.
+  let role: string | null = null;
   if (parsed.tenantId) {
-    const freshRole = await fetchFreshRole(parsed.userId, parsed.tenantId);
-    if (freshRole !== null) role = freshRole;
+    role = await fetchFreshRole(parsed.userId, parsed.tenantId);
   }
 
   return NextResponse.json({

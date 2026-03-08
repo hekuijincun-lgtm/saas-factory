@@ -639,14 +639,15 @@ export async function POST(req: Request) {
 
   // ── AI intent: persist userId + waitUntil(AI+push) → 即時 200 ────────────
 
-  // Best-effort: persist lineUserId to Workers KV
+  // Best-effort: persist lineUserId to Workers KV via internal endpoint
+  // Uses /internal/ path (LINE_INTERNAL_TOKEN) to avoid RBAC requireRole() check
   if (lineUserId) {
-    const _adminToken = process.env.ADMIN_TOKEN ?? "";
+    const _internalToken = process.env.LINE_INTERNAL_TOKEN ?? "";
     if (apiBase) {
       const _h: Record<string, string> = { "Content-Type": "application/json" };
-      if (_adminToken) _h["X-Admin-Token"] = _adminToken;
+      if (_internalToken) _h["x-internal-token"] = _internalToken;
       fetch(
-        `${apiBase}/admin/integrations/line/last-user?tenantId=${encodeURIComponent(tenantId)}`,
+        `${apiBase}/internal/line/last-user?tenantId=${encodeURIComponent(tenantId)}`,
         { method: "POST", headers: _h, body: JSON.stringify({ userId: lineUserId }) }
       ).catch(() => null);
     }

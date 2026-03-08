@@ -1,6 +1,6 @@
 /* LITERAL_OK_20260221_144234 */
 export const runtime = "edge";
-import { isAdminPathname, readAdminToken, injectAdminToken, makeDebugStamp, applyDebugHeaders, readSessionTenantId } from '../_lib/proxy';
+import { isAdminPathname, readAdminToken, injectAdminToken, makeDebugStamp, applyDebugHeaders, readSessionPayload } from '../_lib/proxy';
 
 type Ctx = { params: any };
 
@@ -75,13 +75,16 @@ async function proxy(req: Request, ctx: Ctx): Promise<Response> {
   const isTokenConfigured = isAdminRoute && !!readAdminToken();
   const adminTokenInjected = injectAdminToken(headers, upstream.pathname);
 
-  // クライアントからの x-session-tenant-id を必ず strip（偽装防止）
+  // クライアントからの session headers を必ず strip（偽装防止）
   headers.delete('x-session-tenant-id');
-  // セッション tenantId を注入（HMAC 検証済み → Workers が信頼できる）
+  headers.delete('x-session-user-id');
+  // セッション tenantId + userId を注入（HMAC 検証済み → Workers が信頼できる）
   let resolvedSessionTenantId: string | null = null;
   if (isAdminRoute) {
-    resolvedSessionTenantId = await readSessionTenantId(req);
-    if (resolvedSessionTenantId) headers.set('x-session-tenant-id', resolvedSessionTenantId);
+    const session = await readSessionPayload(req);
+    resolvedSessionTenantId = session.tenantId;
+    if (session.tenantId) headers.set('x-session-tenant-id', session.tenantId);
+    if (session.userId) headers.set('x-session-user-id', session.userId);
   }
 
   let method = (req.method === "PATCH" ? "PUT" : req.method).toUpperCase();

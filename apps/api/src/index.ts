@@ -188,6 +188,83 @@ function checkTenantMismatch(c: any): Response | null {
   return null;
 }
 
+// =============================================================================
+// Phase RBAC: live KV-based role check for admin write routes.
+// Gate: ENFORCE_RBAC env var must be '1' to activate.
+// Follows the same call pattern as checkTenantMismatch():
+//   const rbac = await requireRole(c, 'admin'); if (rbac) return rbac;
+// =============================================================================
+type AdminRole = 'owner' | 'admin' | 'viewer';
+const ROLE_LEVEL: Record<AdminRole, number> = { owner: 3, admin: 2, viewer: 1 };
+
+async function requireRole(c: any, minRole: AdminRole): Promise<Response | null> {
+  const env = c.env as any;
+  if (env?.ENFORCE_RBAC !== '1') return null; // phase gate — disabled by default
+
+  const route = c.req.method + ' ' + c.req.path;
+  const userId = c.req.header('x-session-user-id')?.trim();
+  if (!userId) {
+    console.warn(`[rbac:deny] missing_user_id route=${route}`);
+    return c.json({ ok: false, error: 'missing_user_id' }, 403);
+  }
+
+  const tenantId = getTenantId(c);
+  const kv = env.SAAS_FACTORY as KVNamespace | undefined;
+  if (!kv) {
+    console.error(`[rbac:deny] kv_binding_missing route=${route} tenant=${tenantId}`);
+    return c.json({ ok: false, error: 'kv_binding_missing_rbac' }, 503);
+  }
+
+  let membersRaw: string | null = null;
+  try {
+    membersRaw = await kv.get(`admin:members:${tenantId}`);
+  } catch (e: any) {
+    console.error(`[rbac:deny] kv_read_error route=${route} tenant=${tenantId} err=${e?.message}`);
+    return c.json({ ok: false, error: 'kv_read_error_rbac' }, 503);
+  }
+
+  // No members record → legacy tenant, allow through (backward compat)
+  if (!membersRaw) {
+    console.warn(`[rbac:passthrough] no_members_record route=${route} tenant=${tenantId} user=${userId}`);
+    c.header('x-rbac-passthrough', '1');
+    return null;
+  }
+
+  let store: { members: Array<{ lineUserId: string; role: string; enabled: boolean }> };
+  try {
+    store = JSON.parse(membersRaw);
+  } catch {
+    console.warn(`[rbac:passthrough] malformed_members route=${route} tenant=${tenantId}`);
+    c.header('x-rbac-passthrough', '1');
+    return null;
+  }
+
+  if (!Array.isArray(store.members) || store.members.length === 0) {
+    console.warn(`[rbac:passthrough] empty_members route=${route} tenant=${tenantId}`);
+    c.header('x-rbac-passthrough', '1');
+    return null;
+  }
+
+  const member = store.members.find(
+    (m) => m.lineUserId === userId && m.enabled !== false
+  );
+  if (!member) {
+    console.warn(`[rbac:deny] not_a_member route=${route} tenant=${tenantId} user=${userId}`);
+    return c.json({ ok: false, error: 'not_a_member' }, 403);
+  }
+
+  const memberLevel = ROLE_LEVEL[member.role as AdminRole] ?? 0;
+  const requiredLevel = ROLE_LEVEL[minRole];
+  if (memberLevel < requiredLevel) {
+    console.warn(`[rbac:deny] insufficient_role route=${route} tenant=${tenantId} user=${userId} role=${member.role} required=${minRole}`);
+    return c.json({ ok: false, error: 'insufficient_role', role: member.role, required: minRole }, 403);
+  }
+
+  // Success — attach role header for observability
+  c.header('x-rbac-role', member.role);
+  return null;
+}
+
 /**
  * Debug helper: sets response headers when ?debug=1 to expose tenant resolution.
  */
@@ -201,6 +278,61 @@ function setTenantDebugHeaders(c: any, tenantId: string, keyExample?: string): v
 
 app.get("/__build", (c) => c.json({ ok: true, stamp: "API_BUILD_V1" }));
 
+
+// ── GET /admin/rbac/audit ──────────────────────────────────────────────────
+// Diagnostic: check members status for a tenant (or multiple via ?tenantIds=a,b,c).
+// Returns member counts, roles, and ENFORCE_RBAC status for pre-rollout verification.
+app.get('/admin/rbac/audit', async (c) => {
+  const env = c.env as any;
+  const kv = env.SAAS_FACTORY;
+  if (!kv) return c.json({ ok: false, error: 'kv_missing' }, 500);
+
+  const enforceRbac = env?.ENFORCE_RBAC === '1';
+  const enforceTenantMismatch = env?.ENFORCE_TENANT_MISMATCH === '1';
+
+  // Accept single tenantId or comma-separated list
+  const rawIds = (c.req.query('tenantIds') ?? c.req.query('tenantId') ?? 'default').trim();
+  const tenantIds = rawIds.split(',').map((s: string) => s.trim()).filter(Boolean);
+
+  const results: any[] = [];
+  for (const tid of tenantIds.slice(0, 20)) { // cap at 20 to avoid abuse
+    try {
+      const membersRaw = await kv.get(`admin:members:${tid}`);
+      if (!membersRaw) {
+        results.push({ tenantId: tid, status: 'no_members_record', legacyPassthrough: true });
+        continue;
+      }
+      const store = JSON.parse(membersRaw);
+      const members = Array.isArray(store?.members) ? store.members : [];
+      const summary = members.map((m: any) => ({
+        userId: m.lineUserId ? m.lineUserId.slice(0, 8) + '...' : '(empty)',
+        role: m.role,
+        enabled: m.enabled,
+      }));
+      const ownerCount = members.filter((m: any) => m.role === 'owner' && m.enabled !== false).length;
+      const adminCount = members.filter((m: any) => m.role === 'admin' && m.enabled !== false).length;
+      results.push({
+        tenantId: tid,
+        status: 'members_found',
+        legacyPassthrough: false,
+        totalMembers: members.length,
+        enabledOwners: ownerCount,
+        enabledAdmins: adminCount,
+        members: summary,
+      });
+    } catch (e: any) {
+      results.push({ tenantId: tid, status: 'error', error: String(e?.message ?? e) });
+    }
+  }
+
+  return c.json({
+    ok: true,
+    enforceRbac,
+    enforceTenantMismatch,
+    sessionUserId: c.req.header('x-session-user-id') ?? '(none)',
+    tenants: results,
+  });
+});
 
 // --- slots (DUMMY V1) ---
     // === ADMIN_SETTINGS_V1 ===
@@ -282,6 +414,7 @@ app.get("/__build", (c) => c.json({ ok: true, stamp: "API_BUILD_V1" }));
 
   app.put('/admin/settings', async (c) => {
     const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
+    const rbac = await requireRole(c, 'admin'); if (rbac) return rbac;
     const tenantId = getTenantId(c)
 
     const envAny: any = (c as any).env || (c as any)
@@ -961,6 +1094,7 @@ app.get("/admin/menu", async (c) => {
  * ========================= */
 app.post("/admin/menu/image", async (c) => {
   const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
+  const rbac = await requireRole(c, 'admin'); if (rbac) return rbac;
   try {
     const tenantId = getTenantId(c);
     const menuId = (c.req.query("menuId") || "new").replace(/[^a-zA-Z0-9_\-]/g, "_");
@@ -1034,6 +1168,7 @@ app.get("/media/reservations/*", async (c) => {
  * ========================= */
 app.post("/admin/reservations/:id/image", async (c) => {
   const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
+  const rbac = await requireRole(c, 'admin'); if (rbac) return rbac;
   try {
     const tenantId = getTenantId(c);
     const id = c.req.param("id");
@@ -1089,6 +1224,7 @@ app.post("/admin/reservations/:id/image", async (c) => {
 
 app.post("/admin/menu", async (c) => {
   const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
+  const rbac = await requireRole(c, 'admin'); if (rbac) return rbac;
   try {
     const tenantId = getTenantId(c);
     const kv = c.env.SAAS_FACTORY;
@@ -1176,6 +1312,7 @@ app.post("/admin/menu", async (c) => {
 /** PATCH /admin/menu/:id — update existing menu item (including eyebrow) */
 app.patch("/admin/menu/:id", async (c) => {
   const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
+  const rbac = await requireRole(c, 'admin'); if (rbac) return rbac;
   try {
     const tenantId = getTenantId(c);
     const itemId = c.req.param("id");
@@ -1239,6 +1376,7 @@ app.get("/admin/staff", async (c) => {
 
 app.post("/admin/staff", async (c) => {
   const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
+  const rbac = await requireRole(c, 'admin'); if (rbac) return rbac;
   const tenantId = getTenantId(c)
   const key = `admin:staff:list:${tenantId}`
 
@@ -1341,6 +1479,7 @@ app.on(["PUT","PATCH"], "/admin/menu/:id", async (c) => {
 });
 app.delete("/admin/menu/:id", async (c) => {
   const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
+  const rbac = await requireRole(c, 'admin'); if (rbac) return rbac;
   try {
     const tenantId = getTenantId(c);
     const id = c.req.param("id");
@@ -1469,6 +1608,8 @@ app.get("/admin/reservations/:id", async (c) => {
 
 app.on(["PUT", "PATCH"], "/admin/reservations/:id", async (c) => {
   try {
+    const mismatch = checkTenantMismatch(c);
+    if (mismatch) return mismatch;
     const tenantId = getTenantId(c);
     const id = c.req.param("id");
     const db = (c.env as any).DB;
@@ -1545,6 +1686,7 @@ app.on(["PUT", "PATCH"], "/admin/reservations/:id", async (c) => {
 
 app.delete("/admin/reservations/:id", async (c) => {
   const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
+  const rbac = await requireRole(c, 'admin'); if (rbac) return rbac;
   try {
     const tenantId = getTenantId(c);
     const id = c.req.param("id");
@@ -1701,6 +1843,7 @@ app.get("/admin/kpi", async (c) => {
  * ========================= */
 app.post("/admin/kpi/backfill-customer-key", async (c) => {
   const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
+  const rbac = await requireRole(c, 'owner'); if (rbac) return rbac;
   try {
     const tenantId = getTenantId(c);
     const days = Math.min(Math.max(Number(c.req.query("days") || "365"), 1), 730);
@@ -2044,6 +2187,7 @@ app.get("/admin/repeat-targets", async (c) => {
  * ========================= */
 app.post("/admin/repeat-send", async (c) => {
   const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
+  const rbac = await requireRole(c, 'admin'); if (rbac) return rbac;
   try {
     const tenantId = getTenantId(c);
     const db = (c.env as any).DB;
@@ -2305,6 +2449,7 @@ app.get("/admin/availability", async (c) => {
 
 app.put("/admin/availability", async (c) => {
   const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
+  const rbac = await requireRole(c, 'admin'); if (rbac) return rbac;
   try {
     const tenantId = getTenantId(c);
     const kv = c.env.SAAS_FACTORY;
@@ -2354,6 +2499,7 @@ app.get("/admin/staff/:id/shift", async (c) => {
 
 app.put("/admin/staff/:id/shift", async (c) => {
   const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
+  const rbac = await requireRole(c, 'admin'); if (rbac) return rbac;
   const tenantId = getTenantId(c, null);
   const staffId = c.req.param("id");
   const kv = (c.env as any).SAAS_FACTORY;
@@ -3114,30 +3260,20 @@ app.get('/admin/members', async (c) => {
 });
 
 app.put('/admin/members', async (c) => {
+  const mismatch = checkTenantMismatch(c);
+  if (mismatch) return mismatch;
+  const rbac = await requireRole(c, 'owner'); if (rbac) return rbac;
   const tenantId = getTenantId(c, null);
   const kv = (c.env as any).SAAS_FACTORY as KVNamespace;
   let body: any = {};
   try { body = await c.req.json(); } catch {}
-  const { callerLineUserId, members } = body as {
-    callerLineUserId?: string;
+  const { members } = body as {
     members?: AdminMember[];
   };
   if (!Array.isArray(members)) {
     return c.json({ ok: false, error: 'members array required' }, 400);
   }
-  // 呼び出し元の役割を検証（既存 members がある場合は caller が owner か確認）
-  const rawCurrent = await kv.get(`admin:members:${tenantId}`);
-  const current: AdminMembersStore = rawCurrent
-    ? JSON.parse(rawCurrent)
-    : { version: 1, members: [] };
-  if (current.members.length > 0) {
-    const caller = current.members.find(
-      (m: AdminMember) => m.lineUserId === callerLineUserId && m.enabled && m.role === 'owner'
-    );
-    if (!caller) {
-      return c.json({ ok: false, error: 'forbidden', reason: 'owner_required' }, 403);
-    }
-  }
+  // Owner check is now handled by requireRole(c, 'owner') above.
   // 少なくとも 1 人の enabled owner が残ることを保証
   const enabledOwners = members.filter((m: AdminMember) => m.role === 'owner' && m.enabled);
   if (enabledOwners.length === 0) {
@@ -3166,34 +3302,12 @@ interface AdminBootstrapStore {
 }
 
 app.post('/admin/bootstrap-key', async (c) => {
+  const mismatch = checkTenantMismatch(c);
+  if (mismatch) return mismatch;
+  const rbac = await requireRole(c, 'owner'); if (rbac) return rbac;
   const tenantId = getTenantId(c, null);
   const kv = (c.env as any).SAAS_FACTORY as KVNamespace;
-  let body: any = {};
-  try { body = await c.req.json(); } catch {}
-  const { callerLineUserId } = body as { callerLineUserId?: string };
-
-  // 権限チェック
-  const membersRaw = await kv.get(`admin:members:${tenantId}`);
-  if (membersRaw) {
-    const store: AdminMembersStore = JSON.parse(membersRaw);
-    if (store.members.length > 0) {
-      const caller = store.members.find(
-        (m: AdminMember) => m.lineUserId === callerLineUserId && m.enabled && m.role === 'owner'
-      );
-      if (!caller) {
-        return c.json({ ok: false, error: 'forbidden', reason: 'owner_required' }, 403);
-      }
-    }
-  } else {
-    // members 未存在 → legacy allowlist チェック（移行期間）
-    const settingsRaw = (await kv.get(`settings:${tenantId}`, 'json') as any) ?? {};
-    const allowedList: string[] = Array.isArray(settingsRaw.allowedAdminLineUserIds)
-      ? settingsRaw.allowedAdminLineUserIds : [];
-    if (allowedList.length > 0 && callerLineUserId && !allowedList.includes(callerLineUserId)) {
-      return c.json({ ok: false, error: 'forbidden', reason: 'not_in_allowlist' }, 403);
-    }
-    // allowList が空 = ブランニューテナント → 允可
-  }
+  // Owner check is now handled by requireRole(c, 'owner') above.
 
   // 鍵生成
   const plainKey = crypto.randomUUID() + '-' + crypto.randomUUID().slice(0, 8);
@@ -3807,6 +3921,7 @@ app.get("/admin/integrations/line/messaging/status", async (c) => {
 
 // ── POST /admin/integrations/line/messaging/save ────────────────────────────
 app.post("/admin/integrations/line/messaging/save", async (c) => {
+  const rbac = await requireRole(c, 'owner'); if (rbac) return rbac;
   const STAMP = "LINE_MSG_SAVE_V1_20260225";
   const tenantId = getTenantId(c, null);
   try {
@@ -3884,6 +3999,7 @@ app.post("/admin/integrations/line/messaging/save", async (c) => {
 
 // ── DELETE /admin/integrations/line/messaging ────────────────────────────────
 app.delete("/admin/integrations/line/messaging", async (c) => {
+  const rbac = await requireRole(c, 'owner'); if (rbac) return rbac;
   const STAMP = "LINE_MSG_DELETE_V1_20260225";
   const tenantId = getTenantId(c, null);
   try {
@@ -3932,6 +4048,7 @@ app.delete("/admin/integrations/line/messaging", async (c) => {
 // Re-generates destination-to-tenant + tenant2dest KV mappings from existing LINE settings.
 // Cleans up stale mappings if botUserId changed. Returns 409 if destination already mapped to another tenant.
 app.post("/admin/integrations/line/remap", async (c) => {
+  const rbac = await requireRole(c, 'owner'); if (rbac) return rbac;
   const STAMP = "LINE_REMAP_V1_20260305";
   const tenantId = getTenantId(c, null);
   try {
@@ -4029,6 +4146,7 @@ app.get("/admin/integrations/line/mapping-status", async (c) => {
 // KV key: line:last_webhook:{tenantId}  TTL: 7 days
 // NOTE: This is admin-protected. Pages webhook uses /internal/line/last-webhook instead.
 app.post("/admin/integrations/line/last-webhook", async (c) => {
+  const rbac = await requireRole(c, 'admin'); if (rbac) return rbac;
   const tenantId = getTenantId(c, null);
   try {
     const kv = (c.env as any).SAAS_FACTORY;
@@ -4060,6 +4178,31 @@ app.post("/internal/line/last-webhook", async (c) => {
     const log = body?.log ?? body;
     await kv.put(`line:last_webhook:${tenantId}`, JSON.stringify(log), { expirationTtl: 604800 });
     return c.json({ ok: true });
+  } catch { return c.json({ ok: false }, 500); }
+});
+
+// ── POST /internal/line/last-user ────────────────────────────────────────────
+// Internal endpoint for Pages webhook to save last-seen LINE userId.
+// Protected by shared secret (LINE_INTERNAL_TOKEN) — no RBAC needed.
+app.post("/internal/line/last-user", async (c) => {
+  const env = c.env as any;
+  const expected = String(env?.LINE_INTERNAL_TOKEN ?? "").trim();
+  const provided = String(c.req.header("x-internal-token") ?? "").trim();
+  if (!expected || !provided || provided !== expected) {
+    return c.json({ ok: false, error: "unauthorized" }, 401);
+  }
+  const tenantId = (c.req.query("tenantId") ?? "").trim();
+  if (!tenantId) return c.json({ ok: false, error: "missing_tenantId" }, 400);
+  try {
+    const kv = env.SAAS_FACTORY;
+    if (!kv) return c.json({ ok: false, error: "kv_missing" }, 500);
+    const body = await c.req.json().catch(() => ({} as any));
+    const userId = String(body?.userId ?? "").trim();
+    if (!userId || !userId.startsWith("U")) {
+      return c.json({ ok: false, error: "invalid_userId" }, 400);
+    }
+    await kv.put(`line:lastUser:${tenantId}`, userId, { expirationTtl: 86400 });
+    return c.json({ ok: true, tenantId, userId });
   } catch { return c.json({ ok: false }, 500); }
 });
 
@@ -4096,6 +4239,7 @@ app.get("/line/destination-to-tenant", async (c) => {
 // KV key: line:lastUser:${tenantId}  TTL: 24 h
 // stamp: LINE_LAST_USER_V1_20260225
 app.post("/admin/integrations/line/last-user", async (c) => {
+  const rbac = await requireRole(c, 'admin'); if (rbac) return rbac;
   const STAMP = "LINE_LAST_USER_POST_V1_20260225";
   const tenantId = getTenantId(c, null);
   try {
@@ -4258,6 +4402,7 @@ app.get("/admin/ai", async (c) => {
 
 // PUT /admin/ai — save settings/policy/retention (partial merge)
 app.put("/admin/ai", async (c) => {
+  const rbac = await requireRole(c, 'admin'); if (rbac) return rbac;
   const STAMP = "AI_PUT_V1";
   const tenantId = getTenantId(c, null);
   try {
@@ -4307,6 +4452,7 @@ app.get("/admin/ai/faq", async (c) => {
 
 // POST /admin/ai/faq
 app.post("/admin/ai/faq", async (c) => {
+  const rbac = await requireRole(c, 'admin'); if (rbac) return rbac;
   const STAMP = "AI_FAQ_POST_V1";
   const tenantId = getTenantId(c, null);
   try {
@@ -4337,6 +4483,7 @@ app.post("/admin/ai/faq", async (c) => {
 
 // DELETE /admin/ai/faq/:id
 app.delete("/admin/ai/faq/:id", async (c) => {
+  const rbac = await requireRole(c, 'admin'); if (rbac) return rbac;
   const STAMP = "AI_FAQ_DELETE_V1";
   const tenantId = getTenantId(c, null);
   const id = c.req.param("id");
@@ -4371,6 +4518,7 @@ app.get("/admin/ai/policy", async (c) => {
 
 // PUT /admin/ai/policy
 app.put("/admin/ai/policy", async (c) => {
+  const rbac = await requireRole(c, 'admin'); if (rbac) return rbac;
   const STAMP = "AI_POLICY_PUT_V1";
   const tenantId = getTenantId(c, null);
   try {
@@ -4408,6 +4556,7 @@ app.get("/admin/ai/retention", async (c) => {
 
 // PUT /admin/ai/retention
 app.put("/admin/ai/retention", async (c) => {
+  const rbac = await requireRole(c, 'admin'); if (rbac) return rbac;
   const STAMP = "AI_RETENTION_PUT_V1";
   const tenantId = getTenantId(c, null);
   try {
@@ -4694,6 +4843,7 @@ app.get("/admin/ai/upsell", async (c) => {
 
 // PUT /admin/ai/upsell
 app.put("/admin/ai/upsell", async (c) => {
+  const rbac = await requireRole(c, 'admin'); if (rbac) return rbac;
   const STAMP = "AI_UPSELL_PUT_V1";
   const tenantId = getTenantId(c, null);
   try {

@@ -79,7 +79,7 @@ function copyHeaders(src: Headers, extra?: Dict): Headers {
 
   src.forEach((v, k) => {
     const key = k.toLowerCase();
-    if (key === 'x-session-tenant-id') return; // strip client-supplied (spoofing prevention)
+    if (key === 'x-session-tenant-id' || key === 'x-session-user-id') return; // strip client-supplied (spoofing prevention)
     if (allow.has(key)) h.set(k, v);
   });
 
@@ -148,14 +148,20 @@ export function applyDebugHeaders(
 
 // ── Session tenant injection ───────────────────────────────────────────────
 
+interface SessionPayload {
+  tenantId: string | null;
+  userId: string | null;
+}
+
 /**
- * Read + HMAC-verify line_session cookie; return tenantId from payload or null.
- * Used by catch-all proxy to inject x-session-tenant-id into upstream requests.
+ * Read + HMAC-verify line_session cookie; return tenantId and userId from payload.
+ * Used by proxy to inject x-session-tenant-id and x-session-user-id into upstream requests.
  */
-export async function readSessionTenantId(req: Request): Promise<string | null> {
+export async function readSessionPayload(req: Request): Promise<SessionPayload> {
+  const empty: SessionPayload = { tenantId: null, userId: null };
   const cookie = req.headers.get('cookie') ?? '';
   const m = cookie.match(/(?:^|;\s*)line_session=([^;]+)/);
-  if (!m) return null;
+  if (!m) return empty;
   const token = decodeURIComponent(m[1]);
 
   let secret: string | undefined;
@@ -168,10 +174,10 @@ export async function readSessionTenantId(req: Request): Promise<string | null> 
     const v2 = (process.env as any)?.LINE_SESSION_SECRET;
     secret = typeof v2 === 'string' && v2.trim() ? v2.trim() : undefined;
   }
-  if (!secret) return null;
+  if (!secret) return empty;
 
   const dotIdx = token.lastIndexOf('.');
-  if (dotIdx < 1) return null;
+  if (dotIdx < 1) return empty;
   const bodyB64u = token.slice(0, dotIdx);
   const sigB64u = token.slice(dotIdx + 1);
 
@@ -185,15 +191,24 @@ export async function readSessionTenantId(req: Request): Promise<string | null> 
     let sigStr = '';
     for (let i = 0; i < sigBytes.length; i++) sigStr += String.fromCharCode(sigBytes[i]);
     const expectedSig = btoa(sigStr).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
-    if (expectedSig !== sigB64u) return null;
+    if (expectedSig !== sigB64u) return empty;
 
     const bodyJson = atob(bodyB64u.replace(/-/g, '+').replace(/_/g, '/'));
     const payload = JSON.parse(bodyJson);
     const tid = payload.tenantId;
-    return typeof tid === 'string' && tid && tid !== 'default' ? tid : null;
+    const uid = payload.userId;
+    return {
+      tenantId: typeof tid === 'string' && tid && tid !== 'default' ? tid : null,
+      userId: typeof uid === 'string' && uid ? uid : null,
+    };
   } catch {
-    return null;
+    return empty;
   }
+}
+
+/** Backward-compatible wrapper — returns tenantId only. */
+export async function readSessionTenantId(req: Request): Promise<string | null> {
+  return (await readSessionPayload(req)).tenantId;
 }
 
 export async function proxyFetch(
@@ -231,10 +246,11 @@ export async function proxyFetch(
   const isTokenConfigured = isAdminRoute && !!readAdminToken();
   const adminTokenInjected = injectAdminToken(headers, upstreamPathname);
 
-  // セッション tenantId を注入（admin route のみ）
+  // セッション tenantId + userId を注入（admin route のみ）
   if (isAdminRoute) {
-    const sessionTenantId = await readSessionTenantId(req);
-    if (sessionTenantId) headers.set('x-session-tenant-id', sessionTenantId);
+    const session = await readSessionPayload(req);
+    if (session.tenantId) headers.set('x-session-tenant-id', session.tenantId);
+    if (session.userId) headers.set('x-session-user-id', session.userId);
   }
 
   // If we send body, ensure content-type exists (caller may override)
@@ -319,8 +335,9 @@ export const getBookingApiBase = resolveBookingBase;
 export async function forwardJson(req: Request, url: string, init: RequestInit = {}) {
   const h = new Headers(req.headers);
 
-  // クライアントからの x-session-tenant-id を strip（偽装防止）
+  // クライアントからの session headers を strip（偽装防止）
   h.delete('x-session-tenant-id');
+  h.delete('x-session-user-id');
 
   let isDebug = false;
   let dbgStamp = "";
@@ -348,10 +365,11 @@ export async function forwardJson(req: Request, url: string, init: RequestInit =
     adminTokenInjected = injectAdminToken(h, pathname);
   } catch { /* 無効 URL は無視 */ }
 
-  // セッション tenantId を注入（admin route のみ）
+  // セッション tenantId + userId を注入（admin route のみ）
   if (isAdminRoute) {
-    const sessionTenantId = await readSessionTenantId(req);
-    if (sessionTenantId) h.set('x-session-tenant-id', sessionTenantId);
+    const session = await readSessionPayload(req);
+    if (session.tenantId) h.set('x-session-tenant-id', session.tenantId);
+    if (session.userId) h.set('x-session-user-id', session.userId);
   }
 
   // body: keep streaming where possible
