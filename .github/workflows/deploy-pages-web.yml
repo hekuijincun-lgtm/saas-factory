@@ -37,5 +37,5 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
         working-directory: apps/web
-        run: pnpm dlx wrangler pages deploy .vercel/output/static --project-name "saas-factory-web-v2" --branch main
+        run: pnpm dlx wrangler pages deploy .vercel/output/static --project-name "saas-factory-web-v2" --branch main --commit-message "deploy from CI"
 
