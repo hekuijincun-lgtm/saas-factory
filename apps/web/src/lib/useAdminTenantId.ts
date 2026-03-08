@@ -21,13 +21,12 @@ export function clearMeCache() {
 }
 
 /**
- * Force a fresh /api/auth/me fetch that queries Workers for live role.
+ * Force a fresh /api/auth/me fetch (bypasses module cache).
  * Returns the fresh MeResult. Useful after membership changes.
  */
 export async function refreshMe(): Promise<MeResult> {
   clearMeCache();
-  // Use ?fresh=1 to bypass session cookie role and get live role from KV
-  const res = await fetch("/api/auth/me?fresh=1", { credentials: "same-origin", cache: "no-store" });
+  const res = await fetch("/api/auth/me", { credentials: "same-origin", cache: "no-store" });
   const d = await res.json() as any;
   const result: MeResult = {
     tenantId: d?.tenantId ?? "default",

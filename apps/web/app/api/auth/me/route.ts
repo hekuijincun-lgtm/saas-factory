@@ -100,9 +100,6 @@ async function fetchFreshRole(
 }
 
 export async function GET(req: Request) {
-  const url = new URL(req.url);
-  const wantFresh = url.searchParams.get("fresh") === "1";
-
   const cookie = req.headers.get("cookie") ?? "";
   const m = cookie.match(/(?:^|;\s*)line_session=([^;]+)/);
   if (!m) {
@@ -128,9 +125,10 @@ export async function GET(req: Request) {
     return NextResponse.json({ ok: false, error: "invalid_session" }, { status: 401 });
   }
 
-  // ?fresh=1: query Workers for live role instead of using stale session cookie
+  // Always resolve role from Workers KV (live source of truth).
+  // Fall back to session cookie role only when Workers lookup fails.
   let role = parsed.role ?? null;
-  if (wantFresh && parsed.tenantId) {
+  if (parsed.tenantId) {
     const freshRole = await fetchFreshRole(parsed.userId, parsed.tenantId);
     if (freshRole !== null) role = freshRole;
   }
