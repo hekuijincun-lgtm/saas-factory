@@ -125,17 +125,24 @@ export async function GET(req: Request) {
     return NextResponse.json({ ok: false, error: "invalid_session" }, { status: 401 });
   }
 
+  // Recover tenantId from last_tenant_id cookie when session has "default"
+  let effectiveTenantId = parsed.tenantId;
+  if (!effectiveTenantId || effectiveTenantId === "default") {
+    const ltMatch = cookie.match(/(?:^|;\s*)last_tenant_id=([^;]+)/);
+    if (ltMatch) effectiveTenantId = decodeURIComponent(ltMatch[1]);
+  }
+
   // Always resolve role from Workers KV (live source of truth).
   // No cookie fallback — role is live-only.
   let role: string | null = null;
-  if (parsed.tenantId) {
-    role = await fetchFreshRole(parsed.userId, parsed.tenantId);
+  if (effectiveTenantId) {
+    role = await fetchFreshRole(parsed.userId, effectiveTenantId);
   }
 
   return NextResponse.json({
     ok: true,
     userId: parsed.userId,
-    tenantId: parsed.tenantId,
+    tenantId: effectiveTenantId,
     displayName: parsed.displayName,
     role,
   });

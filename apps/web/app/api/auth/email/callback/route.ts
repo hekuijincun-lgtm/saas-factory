@@ -118,6 +118,7 @@ export async function GET(req: Request) {
     membersFound,
     bootstrapped,
     bootstrapError,
+    tenantId: verifiedTenantId,
   } = data as {
     identityKey: string;
     email: string;
@@ -127,7 +128,13 @@ export async function GET(req: Request) {
     membersFound?: boolean;
     bootstrapped?: boolean;
     bootstrapError?: string;
+    tenantId?: string;
   };
+
+  // Override tenantId with the one resolved by Workers (reverse lookup)
+  if (verifiedTenantId && verifiedTenantId !== "default") {
+    tenantId = verifiedTenantId;
+  }
 
   // ── admin guard disabled ─────────────────────────────────────────────────
   // RBAC is enforced at Workers API layer (requireRole). Callback allows all

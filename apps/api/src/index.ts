@@ -3288,6 +3288,12 @@ app.put('/admin/members', async (c) => {
   }
   const next: AdminMembersStore = { version: 1, members };
   await kv.put(`admin:members:${tenantId}`, JSON.stringify(next));
+  // Write reverse lookup for each enabled member (tenant recovery on re-login)
+  for (const m of members) {
+    if (m.enabled) {
+      await kv.put(`member:tenant:${m.lineUserId}`, tenantId!, { expirationTtl: 7776000 });
+    }
+  }
   return c.json({ ok: true, tenantId, data: next });
 });
 /* === /ADMIN_MEMBERS_V1 === */
@@ -3560,7 +3566,12 @@ app.post('/auth/email/verify', async (c) => {
   ).bind(now, tokenHash).run();
 
   const identityKey: string = row.identity_key;
-  const tenantId: string = bodyTenantId ?? row.tenant_id ?? 'default';
+  let tenantId: string = bodyTenantId ?? row.tenant_id ?? 'default';
+  // Reverse lookup: recover tenant from KV when all context is lost
+  if (tenantId === 'default') {
+    const reverseTid = await kv.get(`member:tenant:${identityKey}`);
+    if (reverseTid) tenantId = reverseTid;
+  }
   // bootstrap_key in D1 is SHA-256 hash (set by /start); plaintext never stored
   const bsKeyHash: string | null = row.bootstrap_key ?? null;
   const email: string = identityKey.startsWith('email:') ? identityKey.slice(6) : identityKey;
@@ -3598,8 +3609,9 @@ app.post('/auth/email/verify', async (c) => {
       await kv.put('admin:settings:' + tenantId, JSON.stringify({ storeName: storedName }));
     }
     await kv.delete(`signup:init:${tenantId}`);
+    await kv.put(`member:tenant:${identityKey}`, tenantId, { expirationTtl: 7776000 });
     return c.json({ ok: true, identityKey, email, displayName, allowed: true,
-                    role: 'owner', membersFound: false, signedUp: true });
+                    role: 'owner', membersFound: false, signedUp: true, tenantId });
   }
 
   // --- Step 1: RBAC members check (admin:members:{tenantId}) ---
@@ -3614,11 +3626,12 @@ app.post('/auth/email/verify', async (c) => {
         member.displayName = displayName;
         await kv.put(`admin:members:${tenantId}`, JSON.stringify(membersStore));
       }
+      await kv.put(`member:tenant:${identityKey}`, tenantId, { expirationTtl: 7776000 });
       return c.json({ ok: true, identityKey, email, displayName, allowed: true,
-                      role: member.role, membersFound: true });
+                      role: member.role, membersFound: true, tenantId });
     }
     return c.json({ ok: true, identityKey, email, displayName, allowed: false,
-                    membersFound: true });
+                    membersFound: true, tenantId });
   }
 
   // --- Step 2: Bootstrap key check (hash comparison — plaintext never leaves D1) ---
@@ -3645,12 +3658,13 @@ app.post('/auth/email/verify', async (c) => {
         bs.usedAt = new Date().toISOString();
         bs.usedBy = identityKey;
         await kv.put(`admin:bootstrap:${tenantId}`, JSON.stringify(bs));
+        await kv.put(`member:tenant:${identityKey}`, tenantId, { expirationTtl: 7776000 });
         return c.json({ ok: true, identityKey, email, displayName, allowed: true, role: 'owner',
-                        membersFound: false, bootstrapped: true });
+                        membersFound: false, bootstrapped: true, tenantId });
       }
     }
     return c.json({ ok: true, identityKey, email, displayName, allowed: false,
-                    membersFound: false, bootstrapError: 'invalid_or_used' });
+                    membersFound: false, bootstrapError: 'invalid_or_used', tenantId });
   }
 
   // --- Step 3: Legacy fallback (allowedAdminLineUserIds) ---
@@ -3663,12 +3677,14 @@ app.post('/auth/email/verify', async (c) => {
     await kv.put(`settings:${tenantId}`, JSON.stringify({
       ...settingsRaw, allowedAdminLineUserIds: [identityKey],
     }));
+    await kv.put(`member:tenant:${identityKey}`, tenantId, { expirationTtl: 7776000 });
     return c.json({ ok: true, identityKey, email, displayName, allowed: true,
-                    role: 'owner', membersFound: false, seeded: true });
+                    role: 'owner', membersFound: false, seeded: true, tenantId });
   }
 
   const allowed = allowedList.includes(identityKey);
-  return c.json({ ok: true, identityKey, email, displayName, allowed, membersFound: false });
+  if (allowed) await kv.put(`member:tenant:${identityKey}`, tenantId, { expirationTtl: 7776000 });
+  return c.json({ ok: true, identityKey, email, displayName, allowed, membersFound: false, tenantId });
 });
 /* === /EMAIL_AUTH_V1 === */
 
@@ -3752,9 +3768,16 @@ app.post("/auth/line/exchange", async (c) => {
     return c.json({ ok: true, userId, displayName, allowed: true });
   }
 
-  // --- Step 1: RBAC members check (admin:members:{tenantId}) ---
+  // --- Step 0: Reverse lookup when tenant context is lost ---
   const kv: KVNamespace = env.SAAS_FACTORY;
-  const membersRaw = await kv.get(`admin:members:${tenantId}`);
+  let effectiveTid = tenantId;
+  if (effectiveTid === 'default') {
+    const reverseTid = await kv.get(`member:tenant:${userId}`);
+    if (reverseTid) effectiveTid = reverseTid;
+  }
+
+  // --- Step 1: RBAC members check (admin:members:{tenantId}) ---
+  const membersRaw = await kv.get(`admin:members:${effectiveTid}`);
   const membersStore: AdminMembersStore | null = membersRaw ? JSON.parse(membersRaw) : null;
 
   if (membersStore && membersStore.members.length > 0) {
@@ -3764,18 +3787,19 @@ app.post("/auth/line/exchange", async (c) => {
       // displayName を更新（ログインのたびに最新を保存）
       if (member.displayName !== displayName) {
         member.displayName = displayName;
-        await kv.put(`admin:members:${tenantId}`, JSON.stringify(membersStore));
+        await kv.put(`admin:members:${effectiveTid}`, JSON.stringify(membersStore));
       }
+      await kv.put(`member:tenant:${userId}`, effectiveTid, { expirationTtl: 7776000 });
       return c.json({ ok: true, userId, displayName, allowed: true,
-                      role: member.role, membersFound: true });
+                      role: member.role, membersFound: true, tenantId: effectiveTid });
     }
     return c.json({ ok: true, userId, displayName, allowed: false,
-                    membersFound: true });
+                    membersFound: true, tenantId: effectiveTid });
   }
 
   // --- Step 2: Bootstrap key 検証 ---
   if (bootstrapKey) {
-    const bsRaw = await kv.get(`admin:bootstrap:${tenantId}`);
+    const bsRaw = await kv.get(`admin:bootstrap:${effectiveTid}`);
     const bootstrapInfo: { present: boolean; valid: boolean; used: boolean; expired: boolean } =
       { present: !!bsRaw, valid: false, used: false, expired: false };
     if (bsRaw) {
@@ -3795,36 +3819,39 @@ app.post("/auth/line/exchange", async (c) => {
             createdAt: new Date().toISOString(),
           }],
         };
-        await kv.put(`admin:members:${tenantId}`, JSON.stringify(bootstrapped));
+        await kv.put(`admin:members:${effectiveTid}`, JSON.stringify(bootstrapped));
         bs.usedAt = new Date().toISOString();
         bs.usedBy = userId;
-        await kv.put(`admin:bootstrap:${tenantId}`, JSON.stringify(bs));
+        await kv.put(`admin:bootstrap:${effectiveTid}`, JSON.stringify(bs));
+        await kv.put(`member:tenant:${userId}`, effectiveTid, { expirationTtl: 7776000 });
         return c.json({ ok: true, userId, displayName, allowed: true, role: 'owner',
-                        membersFound: false, bootstrapped: true, bootstrapInfo });
+                        membersFound: false, bootstrapped: true, bootstrapInfo, tenantId: effectiveTid });
       }
       return c.json({ ok: true, userId, displayName, allowed: false,
-                      membersFound: false, bootstrapInfo });
+                      membersFound: false, bootstrapInfo, tenantId: effectiveTid });
     }
     return c.json({ ok: true, userId, displayName, allowed: false,
-                    membersFound: false, bootstrapInfo: { present: false, valid: false, used: false, expired: false } });
+                    membersFound: false, bootstrapInfo: { present: false, valid: false, used: false, expired: false }, tenantId: effectiveTid });
   }
 
   // --- Step 3: Legacy fallback (allowedAdminLineUserIds) ---
-  const settingsRaw = (await kv.get(`settings:${tenantId}`, 'json') as any) ?? {};
+  const settingsRaw = (await kv.get(`settings:${effectiveTid}`, 'json') as any) ?? {};
   const allowedList: string[] = Array.isArray(settingsRaw.allowedAdminLineUserIds)
     ? settingsRaw.allowedAdminLineUserIds : [];
 
   if (allowedList.length === 0) {
     // 従来の self-seed
-    await kv.put(`settings:${tenantId}`, JSON.stringify({
+    await kv.put(`settings:${effectiveTid}`, JSON.stringify({
       ...settingsRaw, allowedAdminLineUserIds: [userId],
     }));
+    await kv.put(`member:tenant:${userId}`, effectiveTid, { expirationTtl: 7776000 });
     return c.json({ ok: true, userId, displayName, allowed: true,
-                    role: 'owner', membersFound: false, seeded: true });
+                    role: 'owner', membersFound: false, seeded: true, tenantId: effectiveTid });
   }
 
   const allowed = allowedList.includes(userId);
-  return c.json({ ok: true, userId, displayName, allowed, membersFound: false });
+  if (allowed) await kv.put(`member:tenant:${userId}`, effectiveTid, { expirationTtl: 7776000 });
+  return c.json({ ok: true, userId, displayName, allowed, membersFound: false, tenantId: effectiveTid });
 });
 /* === /LINE_AUTH_EXCHANGE_V1 === */
 

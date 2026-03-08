@@ -184,11 +184,17 @@ export async function GET(req: Request) {
       );
     }
 
-    const { userId, displayName, allowed, role, membersFound, bootstrapped, bootstrapInfo } = exchangeData as {
+    const { userId, displayName, allowed, role, membersFound, bootstrapped, bootstrapInfo, tenantId: exchangeTenantId } = exchangeData as {
       userId: string; displayName: string; allowed: boolean;
       role?: string; membersFound?: boolean; bootstrapped?: boolean;
       bootstrapInfo?: { present: boolean; valid: boolean; used: boolean; expired: boolean };
+      tenantId?: string;
     };
+
+    // Override tenantId with the one resolved by Workers (reverse lookup)
+    if (exchangeTenantId && exchangeTenantId !== "default") {
+      tenantId = exchangeTenantId;
+    }
 
     ctx.displayName = displayName;
     ctx.allowed = allowed;
