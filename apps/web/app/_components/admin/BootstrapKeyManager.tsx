@@ -1,13 +1,13 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useAdminTenantId } from '@/src/lib/useAdminTenantId';
 import { createBootstrapKey } from '../../lib/adminApi';
 import type { BootstrapKeyResponse } from '../../lib/adminApi';
 
 export default function BootstrapKeyManager() {
-  const searchParams = useSearchParams();
-  const tenantId = searchParams.get('tenantId') ?? undefined;
+  const { status: tenantStatus, tenantId: resolvedTenantId } = useAdminTenantId();
+  const tenantId = resolvedTenantId === 'default' ? undefined : resolvedTenantId;
 
   const [myUserId, setMyUserId] = useState<string | null>(null);
   const [myRole, setMyRole] = useState<string | null>(null);
@@ -20,6 +20,7 @@ export default function BootstrapKeyManager() {
   const [urlCopied, setUrlCopied] = useState(false);
 
   useEffect(() => {
+    if (tenantStatus === 'loading') return;
     const qs = tenantId ? `?tenantId=${encodeURIComponent(tenantId)}` : '';
     Promise.all([
       fetch(`/api/auth/me`, { cache: 'no-store' }).then(r => r.json() as Promise<Record<string, unknown>>).catch(() => ({} as Record<string, unknown>)),
@@ -31,7 +32,7 @@ export default function BootstrapKeyManager() {
       const members = Array.isArray(data?.members) ? data.members : [];
       setMembersExist(members.length > 0);
     }).finally(() => setLoading(false));
-  }, [tenantId]);
+  }, [tenantId, tenantStatus]);
 
   const canIssue = !membersExist || myRole === 'owner';
 

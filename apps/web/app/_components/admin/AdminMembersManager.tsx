@@ -1,10 +1,9 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useSearchParams } from 'next/navigation';
 import { fetchAdminMembers, saveAdminMembers } from '../../lib/adminApi';
 import type { AdminMember, AdminMembersStore, MemberRole } from '../../lib/adminApi';
-import { refreshMe } from '@/src/lib/useAdminTenantId';
+import { useAdminTenantId, refreshMe } from '@/src/lib/useAdminTenantId';
 
 const ROLE_LABELS: Record<MemberRole, string> = {
   owner: 'オーナー',
@@ -15,8 +14,8 @@ const ROLE_LABELS: Record<MemberRole, string> = {
 const ROLE_OPTIONS: MemberRole[] = ['owner', 'admin', 'viewer'];
 
 export default function AdminMembersManager() {
-  const searchParams = useSearchParams();
-  const tenantId = searchParams.get('tenantId') ?? undefined;
+  const { status: tenantStatus, tenantId: resolvedTenantId } = useAdminTenantId();
+  const tenantId = resolvedTenantId === 'default' ? undefined : resolvedTenantId;
 
   const [store, setStore] = useState<AdminMembersStore>({ version: 1, members: [] });
   const [myUserId, setMyUserId] = useState<string | null>(null);
@@ -31,6 +30,7 @@ export default function AdminMembersManager() {
   const [newRole, setNewRole] = useState<MemberRole>('admin');
 
   useEffect(() => {
+    if (tenantStatus === 'loading') return;
     let cancelled = false;
     setLoading(true);
     Promise.all([
@@ -52,7 +52,7 @@ export default function AdminMembersManager() {
         if (!cancelled) setLoading(false);
       });
     return () => { cancelled = true; };
-  }, [tenantId]);
+  }, [tenantId, tenantStatus]);
 
   const isOwner = myRole === 'owner';
 
