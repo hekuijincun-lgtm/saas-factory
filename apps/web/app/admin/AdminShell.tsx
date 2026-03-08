@@ -15,6 +15,7 @@ import {
   Bot,
   LayoutDashboard,
   UserCircle,
+  LogOut,
 } from "lucide-react";
 import { adminNavItems } from "./nav.config";
 
@@ -134,10 +135,14 @@ function Sidebar({
         </nav>
 
         {/* フッタ */}
-        <div className="p-3 border-t border-gray-800">
-          <div className="px-4 py-2 text-[10px] text-gray-600 font-mono">
-            api: /api/proxy
-          </div>
+        <div className="p-3 border-t border-gray-800 space-y-1">
+          <a
+            href={`/api/auth/logout${tenantId && tenantId !== "default" ? `?tenantId=${encodeURIComponent(tenantId)}` : ""}`}
+            className="flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium text-gray-400 hover:bg-gray-800 hover:text-white transition-all duration-150"
+          >
+            <LogOut className="w-4 h-4 shrink-0" />
+            <span className="truncate">ログアウト</span>
+          </a>
         </div>
       </aside>
     </>
