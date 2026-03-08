@@ -183,7 +183,10 @@ function checkTenantMismatch(c: any): Response | null {
   const route = c.req.method + ' ' + c.req.path;
   const sessionTid = c.req.header('x-session-tenant-id')?.trim();
   const queryTid = c.req.query('tenantId')?.trim();
-  if (sessionTid && queryTid && sessionTid !== queryTid) {
+  // Session "default" acts as wildcard — user may have logged in before tenant
+  // was assigned (e.g. bookmark /admin without tenantId).  RBAC (requireRole)
+  // still gates write access per-tenant.
+  if (sessionTid && sessionTid !== 'default' && queryTid && sessionTid !== queryTid) {
     console.warn(`[tenant-mismatch:deny] route=${route} session=${sessionTid} query=${queryTid}`);
     return c.json({ ok: false, error: 'forbidden_tenant_mismatch', sessionTenant: sessionTid, queryTenant: queryTid }, 403);
   }

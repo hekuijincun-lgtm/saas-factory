@@ -297,6 +297,13 @@ export async function GET(req: Request) {
         `line_tenant=${signupTenantId}; Path=/; Secure; SameSite=Lax; Max-Age=604800`
       );
     }
+    // Persist tenantId for post-login recovery (survives session expiry / bookmark /admin)
+    if (effectiveTenantId && effectiveTenantId !== "default") {
+      res.headers.append(
+        "Set-Cookie",
+        `last_tenant_id=${encodeURIComponent(effectiveTenantId)}; Path=/; Secure; SameSite=Lax; Max-Age=1209600`
+      );
+    }
     return applyDiag(res, "ok:done", step);
 
   } catch (e: any) {

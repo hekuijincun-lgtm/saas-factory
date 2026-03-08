@@ -197,5 +197,12 @@ export async function GET(req: Request) {
     "Set-Cookie",
     `line_session=${sessionToken}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${SESSION_MAX_AGE}`
   );
+  // Persist tenantId for post-login recovery (survives session expiry / bookmark /admin)
+  if (tenantId && tenantId !== "default") {
+    res.headers.append(
+      "Set-Cookie",
+      `last_tenant_id=${encodeURIComponent(tenantId)}; Path=/; Secure; SameSite=Lax; Max-Age=${SESSION_MAX_AGE}`
+    );
+  }
   return res;
 }

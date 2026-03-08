@@ -95,11 +95,22 @@ export async function middleware(req: NextRequest) {
     const sessionMatch = cookie.match(/(?:^|;\s*)line_session=([^;]+)/);
     const sessionToken = sessionMatch ? sessionMatch[1] : null;
 
-    // Helper: build /login redirect URL preserving tenantId as a direct param
+    // Helper: build /login redirect URL preserving tenantId as a direct param.
+    // Falls back to last_tenant_id cookie when URL has no tenantId (e.g. bookmark /admin).
     const buildLoginRedirect = (reason: string) => {
       const fullPath = pathname + (req.nextUrl.search || "");
-      const tidParam = req.nextUrl.searchParams.get("tenantId");
-      let loginUrl = `/login?reason=${reason}&returnTo=${encodeURIComponent(fullPath)}`;
+      let tidParam = req.nextUrl.searchParams.get("tenantId");
+      if (!tidParam) {
+        const ltMatch = cookie.match(/(?:^|;\s*)last_tenant_id=([^;]+)/);
+        tidParam = ltMatch ? decodeURIComponent(ltMatch[1]) : null;
+      }
+      // If we recovered a tenantId and returnTo doesn't already have it, inject it
+      let returnToPath = fullPath;
+      if (tidParam && !fullPath.includes("tenantId=")) {
+        const sep = fullPath.includes("?") ? "&" : "?";
+        returnToPath = `${fullPath}${sep}tenantId=${encodeURIComponent(tidParam)}`;
+      }
+      let loginUrl = `/login?reason=${reason}&returnTo=${encodeURIComponent(returnToPath)}`;
       if (tidParam) loginUrl += `&tenantId=${encodeURIComponent(tidParam)}`;
       return new URL(loginUrl, req.nextUrl.origin);
     };

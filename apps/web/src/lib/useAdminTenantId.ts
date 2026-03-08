@@ -1,5 +1,6 @@
 "use client";
 // Hook: resolve tenantId from authenticated session (/api/auth/me).
+// Priority: URL query > session (non-default) > last_tenant_id cookie > default.
 // Module-level cache so multiple components share one network request.
 import { useState, useEffect } from "react";
 
@@ -28,8 +29,20 @@ export async function refreshMe(): Promise<MeResult> {
   clearMeCache();
   const res = await fetch("/api/auth/me", { credentials: "same-origin", cache: "no-store" });
   const d = await res.json() as any;
+  const urlTid = typeof window !== "undefined"
+    ? new URLSearchParams(window.location.search).get("tenantId")
+    : null;
+  let tenantId: string;
+  if (urlTid) {
+    tenantId = urlTid;
+  } else if (d?.tenantId && d.tenantId !== "default") {
+    tenantId = d.tenantId;
+  } else {
+    tenantId = readLastTenantCookie() ?? d?.tenantId ?? "default";
+  }
+  writeLastTenantCookie(tenantId);
   const result: MeResult = {
-    tenantId: d?.tenantId ?? "default",
+    tenantId,
     userId: d?.userId ?? "",
     displayName: d?.displayName ?? "",
     role: d?.role ?? null,
@@ -38,6 +51,19 @@ export async function refreshMe(): Promise<MeResult> {
   _promise = Promise.resolve(result);
   _resolvedAt = Date.now();
   return result;
+}
+
+/** Read last_tenant_id cookie (not HttpOnly — readable from JS). */
+function readLastTenantCookie(): string | null {
+  if (typeof document === "undefined") return null;
+  const m = document.cookie.match(/(?:^|;\s*)last_tenant_id=([^;]+)/);
+  return m ? decodeURIComponent(m[1]) : null;
+}
+
+/** Persist tenantId in a non-HttpOnly cookie (14 days). */
+function writeLastTenantCookie(tid: string) {
+  if (typeof document === "undefined" || !tid || tid === "default") return;
+  document.cookie = `last_tenant_id=${encodeURIComponent(tid)}; path=/; max-age=1209600; secure; samesite=lax`;
 }
 
 function fetchMe(): Promise<MeResult> {
@@ -50,9 +76,29 @@ function fetchMe(): Promise<MeResult> {
       .then((r) => r.json())
       .then((d: any) => {
         _resolvedAt = Date.now();
-        if (d?.ok && d.tenantId && d.tenantId !== "default") {
+        // Priority: URL query > session > last_tenant_id cookie > default
+        const urlTid = typeof window !== "undefined"
+          ? new URLSearchParams(window.location.search).get("tenantId")
+          : null;
+
+        let tenantId: string;
+        if (urlTid) {
+          // URL query has highest priority
+          tenantId = urlTid;
+        } else if (d?.ok && d.tenantId && d.tenantId !== "default") {
+          // Session has a non-default tenantId
+          tenantId = d.tenantId;
+        } else {
+          // Fall back to cookie, then default
+          tenantId = readLastTenantCookie() ?? "default";
+        }
+
+        // Persist for future recovery (bookmark /admin without tenantId)
+        writeLastTenantCookie(tenantId);
+
+        if (d?.ok) {
           return {
-            tenantId: d.tenantId,
+            tenantId,
             userId: d.userId ?? "",
             displayName: d.displayName ?? "",
             role: d.role ?? null,
@@ -63,11 +109,10 @@ function fetchMe(): Promise<MeResult> {
       .catch(() => {
         _promise = null; // allow retry on next call
         _resolvedAt = 0;
-        const tid =
-          typeof window !== "undefined"
-            ? new URLSearchParams(window.location.search).get("tenantId") ??
-              "default"
-            : "default";
+        const urlTid = typeof window !== "undefined"
+          ? new URLSearchParams(window.location.search).get("tenantId")
+          : null;
+        const tid = urlTid ?? readLastTenantCookie() ?? "default";
         return { tenantId: tid, userId: "", displayName: "", role: null };
       });
   }
