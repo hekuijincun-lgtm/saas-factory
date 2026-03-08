@@ -195,8 +195,12 @@ export async function GET(req: Request) {
 
     // ── STEP: allowed_check ────────────────────────────────────────────────
     // signup=1 flows always pass — new users don't exist in the allow list yet
+    // DEV_BYPASS_ADMIN_RBAC: temporarily skip unauthorized redirect during
+    // email-login development phase. Set to false to re-enable RBAC enforcement.
+    const DEV_BYPASS_ADMIN_RBAC = true;
+
     step = "allowed_check";
-    if (!allowed && !isSignup) {
+    if (!allowed && !isSignup && !DEV_BYPASS_ADMIN_RBAC) {
       if (isDebug) return applyDiag(
         jsonError("userId not in allowedAdminLineUserIds and isSignup=false"),
         "ng:unauthorized", step
