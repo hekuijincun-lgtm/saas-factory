@@ -528,8 +528,26 @@ export default function AdminSettingsClient() {
       clearAdminSettingsCache(tenantId);
       showToast('設定を保存しました', 'success');
     } catch (error) {
-      const msg = error instanceof ApiClientError ? error.message
-        : error instanceof Error ? error.message : '設定の保存に失敗しました';
+      let msg: string;
+      if (error instanceof ApiClientError) {
+        const errData = error.data as any;
+        const errCode = errData?.error ?? '';
+        if (error.status === 403 && errCode === 'not_a_member') {
+          msg = 'このテナントの管理権限がありません。再ログイン後に再試行してください。';
+        } else if (error.status === 403 && errCode === 'missing_user_id') {
+          msg = 'セッションが無効です。再ログインしてください。';
+        } else if (error.status === 403 && errCode === 'forbidden_tenant_mismatch') {
+          msg = 'テナントが一致しません。正しいテナントでログインしてください。';
+        } else if (error.status === 403 && errCode === 'insufficient_role') {
+          msg = `権限不足です（現在: ${errData?.role ?? '不明'}, 必要: ${errData?.required ?? 'admin'}）`;
+        } else if (error.status === 401) {
+          msg = '認証エラーです。再ログインしてください。';
+        } else {
+          msg = error.message;
+        }
+      } else {
+        msg = error instanceof Error ? error.message : '設定の保存に失敗しました';
+      }
       showToast(`保存失敗: ${msg}`, 'error');
     } finally {
       setIsSaving(false);

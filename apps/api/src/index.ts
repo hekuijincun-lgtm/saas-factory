@@ -250,12 +250,69 @@ async function requireRole(c: any, minRole: AdminRole): Promise<Response | null>
     return null;
   }
 
-  const member = store.members.find(
+  let member = store.members.find(
     (m) => m.lineUserId === userId && m.enabled !== false
   );
+
+  // ── Self-heal: user not in admin:members but may be a legitimate owner/admin ──
+  // Check settings allowlist and reverse tenant lookup as fallback.
+  // This bridges the gap where ENFORCE_RBAC was enabled before all tenants
+  // had complete admin:members records.
   if (!member) {
-    console.warn(`[rbac:deny] not_a_member route=${route} tenant=${tenantId} user=${userId}`);
-    return c.json({ ok: false, error: 'not_a_member' }, 403);
+    let healed = false;
+    try {
+      // Check 1: user is in allowedAdminLineUserIds (legacy allowlist)
+      const settingsRaw = await kv.get(`settings:${tenantId}`, 'json') as any;
+      const allowedList: string[] = Array.isArray(settingsRaw?.allowedAdminLineUserIds)
+        ? settingsRaw.allowedAdminLineUserIds : [];
+
+      if (allowedList.includes(userId)) {
+        // User is in the allowlist → add to admin:members as admin
+        const newMember = {
+          lineUserId: userId,
+          role: 'admin' as const,
+          enabled: true,
+          displayName: userId.startsWith('email:') ? userId.slice(6) : userId,
+          createdAt: new Date().toISOString(),
+          authMethods: [userId.startsWith('email:') ? 'email' : 'line'],
+        };
+        store.members.push(newMember);
+        await kv.put(`admin:members:${tenantId}`, JSON.stringify({ version: 1, members: store.members }));
+        member = newMember;
+        healed = true;
+        console.warn(`[rbac:self-heal] allowlist_match route=${route} tenant=${tenantId} user=${userId} role=admin`);
+      }
+
+      // Check 2: user has reverse tenant lookup (member:tenant:{userId} → tenantId)
+      // This means the user previously logged in for this tenant. Grant owner if no other owner exists.
+      if (!healed) {
+        const reverseTid = await kv.get(`member:tenant:${userId}`);
+        if (reverseTid === tenantId) {
+          const hasOwner = store.members.some((m) => m.role === 'owner' && m.enabled !== false);
+          const newRole = hasOwner ? 'admin' : 'owner';
+          const newMember = {
+            lineUserId: userId,
+            role: newRole as 'owner' | 'admin',
+            enabled: true,
+            displayName: userId.startsWith('email:') ? userId.slice(6) : userId,
+            createdAt: new Date().toISOString(),
+            authMethods: [userId.startsWith('email:') ? 'email' : 'line'],
+          };
+          store.members.push(newMember);
+          await kv.put(`admin:members:${tenantId}`, JSON.stringify({ version: 1, members: store.members }));
+          member = newMember;
+          healed = true;
+          console.warn(`[rbac:self-heal] reverse_lookup route=${route} tenant=${tenantId} user=${userId} role=${newRole}`);
+        }
+      }
+    } catch (e: any) {
+      console.warn(`[rbac:self-heal-error] route=${route} tenant=${tenantId} user=${userId} err=${e?.message}`);
+    }
+
+    if (!member) {
+      console.warn(`[rbac:deny] not_a_member route=${route} tenant=${tenantId} user=${userId}`);
+      return c.json({ ok: false, error: 'not_a_member' }, 403);
+    }
   }
 
   const memberLevel = ROLE_LEVEL[member.role as AdminRole] ?? 0;
