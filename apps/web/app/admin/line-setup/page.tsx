@@ -3,6 +3,7 @@
 import * as React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { saveAdminSettings } from "../../lib/adminApi";
+import { useAdminTenantId } from "@/src/lib/useAdminTenantId";
 
 // ─── Shell ───────────────────────────────────────────────────────────────────
 function BookingLikeShell({
@@ -411,7 +412,7 @@ function MappingDiagnosticCard({
 export default function LineSetupPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const tenantId = searchParams.get("tenantId") ?? "default";
+  const { tenantId } = useAdminTenantId();
 
   // Webhook URL to display — includes tenantId so LINE knows which tenant
   const [webhookUrl, setWebhookUrl] = React.useState("");

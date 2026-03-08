@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import AdminTopBar from "../../_components/ui/AdminTopBar";
 import { Bot, Plus, Trash2, Save, RefreshCw, ChevronDown, ChevronUp, MessageSquare, TrendingUp, Clock } from "lucide-react";
+import { useAdminTenantId } from "@/src/lib/useAdminTenantId";
 
 // ─── Defaults ─────────────────────────────────────────────────────────────
 const DEFAULT_HARD_RULES =
@@ -63,12 +64,6 @@ interface FollowupEntry {
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
-
-function getTenantId(): string {
-  if (typeof window === "undefined") return "default";
-  const p = new URLSearchParams(window.location.search);
-  return (p.get("tenantId") || "default").trim() || "default";
-}
 
 function apiBase(path: string, tenantId: string): string {
   return `/api/proxy/${path}?tenantId=${encodeURIComponent(tenantId)}`;
@@ -187,7 +182,7 @@ function StatusBadge({ status }: { status: string | null }) {
 // ─── Main Component ────────────────────────────────────────────────────────
 
 export default function AdminAIClient() {
-  const [tenantId, setTenantId] = useState("default");
+  const { status: tenantStatus, tenantId } = useAdminTenantId();
 
   // --- data state ---
   const [settings, setSettings] = useState<AISettings>({
@@ -279,10 +274,9 @@ export default function AdminAIClient() {
   }, []);
 
   useEffect(() => {
-    const tid = getTenantId();
-    setTenantId(tid);
-    loadAll(tid);
-  }, [loadAll]);
+    if (tenantStatus === "loading") return;
+    loadAll(tenantId);
+  }, [loadAll, tenantId, tenantStatus]);
 
   const flash = (msg: string, kind: "success" | "error") => {
     setBanner({ msg, kind });

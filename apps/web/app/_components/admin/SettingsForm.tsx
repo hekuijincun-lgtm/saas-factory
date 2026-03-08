@@ -1063,7 +1063,7 @@ export default function SettingsForm() {
                           setLineConnecting(true);
                           setLineBusyWithRef(true);
                           try {
-                            const tenantId = new URLSearchParams(window.location.search).get('tenantId') || 'default';
+                            const tenantId = new URLSearchParams(window.location.search).get('tenantId') ?? '';
                             const params = new URLSearchParams({ tenantId });
                             const res = await fetch(`/api/proxy/admin/integrations/line/auth-url?${params.toString()}`, {
                               method: 'GET',

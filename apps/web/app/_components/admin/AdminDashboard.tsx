@@ -1,9 +1,9 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useSearchParams } from 'next/navigation';
 import Card from '../ui/Card';
 import { Scissors } from 'lucide-react';
+import { useAdminTenantId } from '@/src/lib/useAdminTenantId';
 
 interface ScheduleItem {
   time: string;
@@ -72,8 +72,7 @@ interface RepeatMetrics {
 }
 
 export default function AdminDashboard() {
-  const searchParams = useSearchParams();
-  const tenantId = searchParams?.get('tenantId') || 'default';
+  const { status: tenantStatus, tenantId } = useAdminTenantId();
 
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -87,6 +86,7 @@ export default function AdminDashboard() {
   const [metricsLoading, setMetricsLoading] = useState(false);
 
   useEffect(() => {
+    if (tenantStatus === 'loading') return;
     const d = new Date();
     const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
@@ -126,7 +126,7 @@ export default function AdminDashboard() {
       .then((json: any) => { if (json?.ok) setRepeatMetrics(json.metrics); })
       .catch(() => {})
       .finally(() => setMetricsLoading(false));
-  }, [tenantId]);
+  }, [tenantId, tenantStatus]);
 
   if (loading) {
     return <div className="px-6 py-12 text-center text-sm text-gray-400">読み込み中...</div>;

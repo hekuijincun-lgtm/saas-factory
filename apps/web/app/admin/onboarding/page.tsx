@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import AdminTopBar from '../../_components/ui/AdminTopBar';
 import { saveAdminSettings } from '../../lib/adminApi';
-import { withTenant } from '@/src/lib/useAdminTenantId';
+import { useAdminTenantId, withTenant } from '@/src/lib/useAdminTenantId';
 
 interface CheckItem {
   id: string;
@@ -64,7 +64,7 @@ async function checkSlotsAvailable(tenantId: string): Promise<boolean> {
 
 export default function OnboardingPage() {
   const router = useRouter();
-  const [tenantId, setTenantId] = useState('default');
+  const { status: tenantStatus, tenantId } = useAdminTenantId();
   const [completing, setCompleting] = useState(false);
   const [items, setItems] = useState<CheckItem[]>([
     { id: 'line', label: 'LINE Messaging API を設定', description: 'チャンネルIDとアクセストークンを登録してください', href: '/admin/line-setup', done: false, loading: true },
@@ -74,19 +74,19 @@ export default function OnboardingPage() {
   ]);
 
   useEffect(() => {
+    if (tenantStatus === 'loading') return;
+
     const params = new URLSearchParams(window.location.search);
-    const tid = params.get('tenantId') || 'default';
     const isSignup = params.get('signup') === '1';
-    setTenantId(tid);
 
     // signup 経由の初回訪問: onboardingCompleted=false をセット（AdminShell redirect 用）
     if (isSignup) {
-      fetch(`/api/proxy/admin/settings?tenantId=${encodeURIComponent(tid)}`, { cache: 'no-store' })
+      fetch(`/api/proxy/admin/settings?tenantId=${encodeURIComponent(tenantId)}`, { cache: 'no-store' })
         .then(r => r.json())
         .then((json: any) => {
           const s = json?.data ?? json;
           if ((s?.onboarding as any)?.onboardingCompleted === undefined) {
-            saveAdminSettings({ onboarding: { onboardingCompleted: false } as any }, tid)
+            saveAdminSettings({ onboarding: { onboardingCompleted: false } as any }, tenantId)
               .catch(() => {});
           }
         })
@@ -94,10 +94,10 @@ export default function OnboardingPage() {
     }
 
     Promise.all([
-      checkLineConnected(tid),
-      checkMenuExists(tid),
-      checkStaffExists(tid),
-      checkSlotsAvailable(tid),
+      checkLineConnected(tenantId),
+      checkMenuExists(tenantId),
+      checkStaffExists(tenantId),
+      checkSlotsAvailable(tenantId),
     ]).then(([line, menu, staff, slots]) => {
       setItems(prev => prev.map(item => {
         if (item.id === 'line') return { ...item, done: line, loading: false };
@@ -107,7 +107,7 @@ export default function OnboardingPage() {
         return item;
       }));
     });
-  }, []);
+  }, [tenantId, tenantStatus]);
 
   async function handleComplete() {
     setCompleting(true);

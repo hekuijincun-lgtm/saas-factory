@@ -6,7 +6,7 @@ type Ctx = { params: Promise<{ id: string }> };
 
 async function forward(req: NextRequest, method: "PATCH" | "DELETE", id: string) {
   const url = new URL(req.url);
-  const tenantId = url.searchParams.get("tenantId") ?? "default";
+  const tenantId = url.searchParams.get("tenantId") ?? "";
 
   // Forward to existing proxy route (which hits Worker)
   const upstream = new URL(`/api/proxy/admin/staff/${encodeURIComponent(id)}`, url.origin);

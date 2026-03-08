@@ -2,8 +2,8 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { useSearchParams } from 'next/navigation';
 import AdminTopBar from '../../_components/ui/AdminTopBar';
+import { useAdminTenantId } from '@/src/lib/useAdminTenantId';
 import ReservationDetailPanel from '../../_components/admin/ReservationDetailPanel';
 import type { Reservation, Staff } from '@/src/lib/bookingApi';
 
@@ -187,11 +187,19 @@ function CustomerDetailModal({ customer, tenantId, staffList, mounted, onClose }
 
 // ── Main page ──────────────────────────────────────────────────────────────────
 export default function CustomersPage() {
-  const searchParams = useSearchParams();
-  const tenantId = searchParams?.get('tenantId') || 'default';
+  const { status: tenantStatus, tenantId } = useAdminTenantId();
 
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
+
+  if (tenantStatus === 'loading') {
+    return (
+      <>
+        <AdminTopBar title="顧客管理" subtitle="来店顧客の一覧です。行をクリックすると詳細が開きます。" />
+        <div className="px-6 py-12 text-center text-sm text-gray-400">読み込み中...</div>
+      </>
+    );
+  }
 
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
