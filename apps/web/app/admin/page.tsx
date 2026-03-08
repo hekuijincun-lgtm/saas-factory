@@ -8,10 +8,11 @@ import AdminDashboard from '../_components/admin/AdminDashboard';
 import { useAdminTenantId, withTenant } from '@/src/lib/useAdminTenantId';
 
 function OnboardingBanner() {
-  const { tenantId } = useAdminTenantId();
+  const { tenantId, status: tenantStatus } = useAdminTenantId();
   const [show, setShow] = useState(false);
 
   useEffect(() => {
+    if (tenantStatus !== 'ready') return;
     fetch(`/api/proxy/admin/settings?tenantId=${encodeURIComponent(tenantId)}`, { cache: 'no-store' })
       .then(r => r.ok ? r.json() : null)
       .then((json: any) => {
@@ -20,9 +21,7 @@ function OnboardingBanner() {
         if (!lineConnected) setShow(true);
       })
       .catch(() => {});
-  // tenantId が確定してから fetch する
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tenantId]);
+  }, [tenantId, tenantStatus]);
 
   if (!show) return null;
 

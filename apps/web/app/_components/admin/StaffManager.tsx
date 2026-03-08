@@ -47,12 +47,13 @@ export default function StaffManager() {
 
   // staffSelectionEnabled の読み込み
   useEffect(() => {
+    if (tenantStatus !== "ready") return;
     fetchAdminSettings(tenantId).then(s => {
       const raw = s as any;
       setStaffSelectionEnabled(raw.staffSelectionEnabled !== false);
     }).catch(() => { /* fallback: true のまま */ });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tenantId]);
+  }, [tenantId, tenantStatus]);
 
   const handleStaffSelectionToggle = async (enabled: boolean) => {
     setStaffSelectionSaving(true);

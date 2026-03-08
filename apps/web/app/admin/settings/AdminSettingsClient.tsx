@@ -44,7 +44,7 @@ const FALLBACK_STORE_NAME = 'Lumiere 表参道';
 // ============================================================
 
 export default function AdminSettingsClient() {
-  const { tenantId } = useAdminTenantId();
+  const { tenantId, status: tenantStatus } = useAdminTenantId();
 
   // --- localStorageベースのテナント設定（営業日・予約窓 等） ---
   const [localTenant, setLocalTenant] = useState<LocalTenant>(INITIAL_LOCAL_TENANT);
@@ -427,8 +427,11 @@ export default function AdminSettingsClient() {
   // Mount 時初期化
   // ============================================================
 
+  useEffect(() => { setIsMounted(true); }, []);
+
+  // tenantId 確定後にデータ取得（hook 解決前の premature fetch を防止）
   useEffect(() => {
-    setIsMounted(true);
+    if (tenantStatus !== 'ready') return;
 
     // localStorage からローカル設定を読み込む（営業日等）
     try {
@@ -449,7 +452,7 @@ export default function AdminSettingsClient() {
       .then((data: any) => { if (data?.ok && data.userId) setCurrentAdminUserId(data.userId); })
       .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [tenantId, tenantStatus]);
 
   // ============================================================
   // 保存処理
