@@ -473,6 +473,8 @@ export default function AdminSettingsClient() {
   const handleSave = async () => {
     setIsSaving(true);
     try {
+      // Sync session cookie tenant before PUT to prevent forbidden_tenant_mismatch
+      await fetch(`/api/auth/me?tenantId=${encodeURIComponent(tenantId)}`, { credentials: 'include', cache: 'no-store' });
       // API に storeName + 営業時間設定 + 住所 + 同意文 + 眉毛設定を保存
       await saveAdminSettings({
         storeName: storeNameInput,
