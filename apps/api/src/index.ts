@@ -305,6 +305,32 @@ async function requireRole(c: any, minRole: AdminRole): Promise<Response | null>
           console.warn(`[rbac:self-heal] reverse_lookup route=${route} tenant=${tenantId} user=${userId} role=${newRole}`);
         }
       }
+
+      // Check 3: user has a valid HMAC-verified session for this exact tenant.
+      // The session cookie is signed by Pages with LINE_SESSION_SECRET and cannot
+      // be forged. If x-session-tenant-id matches the target tenant, the user was
+      // previously authenticated for this tenant (via signup, magic link, or
+      // password login). Safe to bootstrap them into admin:members.
+      if (!healed) {
+        const sessionTid = c.req.header('x-session-tenant-id')?.trim();
+        if (sessionTid && sessionTid !== 'default' && sessionTid === tenantId) {
+          const hasOwner = store.members.some((m) => m.role === 'owner' && m.enabled !== false);
+          const newRole = hasOwner ? 'admin' : 'owner';
+          const newMember = {
+            lineUserId: userId,
+            role: newRole as 'owner' | 'admin',
+            enabled: true,
+            displayName: userId.startsWith('email:') ? userId.slice(6) : userId,
+            createdAt: new Date().toISOString(),
+            authMethods: [userId.startsWith('email:') ? 'email' : 'line'],
+          };
+          store.members.push(newMember);
+          await kv.put(`admin:members:${tenantId}`, JSON.stringify({ version: 1, members: store.members }));
+          member = newMember;
+          healed = true;
+          console.warn(`[rbac:self-heal] session_tenant_match route=${route} tenant=${tenantId} user=${userId} role=${newRole}`);
+        }
+      }
     } catch (e: any) {
       console.warn(`[rbac:self-heal-error] route=${route} tenant=${tenantId} user=${userId} err=${e?.message}`);
     }
@@ -3906,7 +3932,7 @@ app.post('/auth/email/verify', async (c) => {
     await kv.delete(`signup:init:${tenantId}`);
     await kv.put(`member:tenant:${identityKey}`, tenantId, { expirationTtl: 7776000 });
     return c.json({ ok: true, identityKey, email, displayName, allowed: true,
-                    role: 'owner', membersFound: false, signedUp: true, tenantId });
+                    role: 'owner', membersFound: false, signedUp: true, hasPassword: false, tenantId });
   }
 
   // --- Step 1: RBAC members check (admin:members:{tenantId}) ---
@@ -3923,7 +3949,7 @@ app.post('/auth/email/verify', async (c) => {
       }
       await kv.put(`member:tenant:${identityKey}`, tenantId, { expirationTtl: 7776000 });
       return c.json({ ok: true, identityKey, email, displayName, allowed: true,
-                      role: member.role, membersFound: true, tenantId });
+                      role: member.role, membersFound: true, hasPassword: !!member.passwordHash, tenantId });
     }
     return c.json({ ok: true, identityKey, email, displayName, allowed: false,
                     membersFound: true, tenantId });

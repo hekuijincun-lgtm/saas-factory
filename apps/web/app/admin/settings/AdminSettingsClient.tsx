@@ -32,7 +32,7 @@ interface LocalTenant {
 
 const INITIAL_LOCAL_TENANT: LocalTenant = {
   id: 'tenant-001',
-  contactEmail: 'info@lumiere.demo',
+  contactEmail: '',
   workDays: [0, 1, 3, 4, 5, 6],
   bookingWindow: 14,
 };
@@ -53,7 +53,8 @@ export default function AdminSettingsClient() {
   // --- API由来の storeName ---
   const [storeName, setStoreName] = useState(FALLBACK_STORE_NAME);
   const [storeNameInput, setStoreNameInput] = useState(FALLBACK_STORE_NAME);
-  const [contactEmail, setContactEmail] = useState('info@lumiere.demo');
+  const [contactEmail, setContactEmail] = useState('');
+  const [savedContactEmail, setSavedContactEmail] = useState('');
   // storeAddress: storeName と同階層のフラットフィールドとして保存（Workers deepMerge で透過保存）
   const [storeAddress, setStoreAddress] = useState('');
   const [savedStoreAddress, setSavedStoreAddress] = useState('');
@@ -294,6 +295,10 @@ export default function AdminSettingsClient() {
         setStoreName(settings.storeName);
         setStoreNameInput(settings.storeName);
       }
+      // contactEmail を API の tenant.email から反映
+      const tenantEmail = (settings as any).tenant?.email || '';
+      setContactEmail(tenantEmail);
+      setSavedContactEmail(tenantEmail);
       // 営業時間設定を API から反映（API は flat 構造: openTime, closeTime, slotIntervalMin）
       const raw = settings as any;
       const ot = raw.openTime || '10:00';
@@ -478,6 +483,7 @@ export default function AdminSettingsClient() {
       // API に storeName + 営業時間設定 + 住所 + 同意文 + 眉毛設定を保存
       await saveAdminSettings({
         storeName: storeNameInput,
+        tenant: { email: contactEmail },
         openTime,
         closeTime,
         slotIntervalMin,
@@ -504,6 +510,7 @@ export default function AdminSettingsClient() {
         },
       } as any, tenantId);
       setStoreName(storeNameInput);
+      setSavedContactEmail(contactEmail);
       setSavedOpenTime(openTime);
       setSavedCloseTime(closeTime);
       setSavedSlotIntervalMin(slotIntervalMin);

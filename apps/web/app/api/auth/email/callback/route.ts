@@ -120,6 +120,7 @@ export async function GET(req: Request) {
     bootstrapError,
     tenantId: verifiedTenantId,
     signedUp,
+    hasPassword,
   } = data as {
     identityKey: string;
     email: string;
@@ -131,6 +132,7 @@ export async function GET(req: Request) {
     bootstrapError?: string;
     tenantId?: string;
     signedUp?: boolean;
+    hasPassword?: boolean;
   };
 
   // Override tenantId with the one resolved by Workers (reverse lookup)
@@ -193,10 +195,15 @@ export async function GET(req: Request) {
   // 14-day expiry (same as magic link session lifetime).
   const SESSION_MAX_AGE = 14 * 24 * 60 * 60; // 1209600 seconds
 
-  // Fresh signup: force redirect to onboarding (even if D1 returnTo says /admin)
+  // Fresh signup: if password not yet set, redirect to setup-password first
+  // After password setup, user will be redirected to onboarding.
   let effectiveReturnTo = returnTo;
   if (signedUp && tenantId && tenantId !== "default") {
-    effectiveReturnTo = `/admin/onboarding?tenantId=${encodeURIComponent(tenantId)}`;
+    if (!hasPassword) {
+      effectiveReturnTo = `/auth/setup-password?tenantId=${encodeURIComponent(tenantId)}`;
+    } else {
+      effectiveReturnTo = `/admin/onboarding?tenantId=${encodeURIComponent(tenantId)}`;
+    }
   }
 
   // Ensure tenantId is present in the redirect URL so the admin UI lands
