@@ -192,15 +192,6 @@ export default function CustomersPage() {
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
 
-  if (tenantStatus === 'loading') {
-    return (
-      <>
-        <AdminTopBar title="顧客管理" subtitle="来店顧客の一覧です。行をクリックすると詳細が開きます。" />
-        <div className="px-6 py-12 text-center text-sm text-gray-400">読み込み中...</div>
-      </>
-    );
-  }
-
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -209,14 +200,16 @@ export default function CustomersPage() {
 
   // Fetch staff list for ReservationDetailPanel
   useEffect(() => {
+    if (tenantStatus === 'loading') return;
     fetch(`/api/proxy/admin/staff?tenantId=${encodeURIComponent(tenantId)}`, { cache: 'no-store' })
       .then((r) => r.ok ? r.json() : Promise.reject())
       .then((json: any) => { if (json?.ok) setStaffList(json.staff ?? []); })
       .catch(() => {});
-  }, [tenantId]);
+  }, [tenantId, tenantStatus]);
 
   // Fetch customer list
   const fetchCustomers = useCallback(() => {
+    if (tenantStatus === 'loading') return;
     setLoading(true);
     setError(null);
     fetch(`/api/proxy/admin/customers?tenantId=${encodeURIComponent(tenantId)}`, { cache: 'no-store' })
@@ -230,9 +223,18 @@ export default function CustomersPage() {
       })
       .catch(() => setError('顧客データの取得に失敗しました'))
       .finally(() => setLoading(false));
-  }, [tenantId]);
+  }, [tenantId, tenantStatus]);
 
   useEffect(() => { fetchCustomers(); }, [fetchCustomers]);
+
+  if (tenantStatus === 'loading') {
+    return (
+      <>
+        <AdminTopBar title="顧客管理" subtitle="来店顧客の一覧です。行をクリックすると詳細が開きます。" />
+        <div className="px-6 py-12 text-center text-sm text-gray-400">読み込み中...</div>
+      </>
+    );
+  }
 
   return (
     <>
