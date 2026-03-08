@@ -23,15 +23,12 @@ export default function SetupPasswordPage() {
     setErrorMsg("");
 
     try {
-      const res = await fetch(
-        `/api/proxy/admin/members/password?tenantId=${encodeURIComponent(tenantId)}`,
-        {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          credentials: "include",
-          body: JSON.stringify({ password }),
-        }
-      );
+      const res = await fetch("/api/auth/setup-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ password, tenantId }),
+      });
 
       const data = (await res.json()) as any;
 
