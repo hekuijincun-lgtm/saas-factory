@@ -486,6 +486,28 @@ app.get('/admin/rbac/audit', async (c) => {
       return c.json({ ok:false, error:'kv_binding_missing', tenantId, seen:Object.keys(envAny||{}) }, 500)
     }
 
+    // Self-heal: if admin:members does not exist yet, create it with current user as owner.
+    // This covers legacy tenants that passed requireRole via no_members_record passthrough.
+    const userId = c.req.header('x-session-user-id')?.trim();
+    if (userId) {
+      const membersRaw = await kv.get(`admin:members:${tenantId}`);
+      if (!membersRaw) {
+        const seedStore: AdminMembersStore = {
+          version: 1,
+          members: [{
+            lineUserId: userId,
+            role: 'owner' as MemberRole,
+            enabled: true,
+            displayName: userId.startsWith('email:') ? userId.slice(6) : userId,
+            createdAt: new Date().toISOString(),
+            authMethods: [userId.startsWith('email:') ? 'email' : 'line'],
+          }],
+        };
+        await kv.put(`admin:members:${tenantId}`, JSON.stringify(seedStore));
+        console.warn(`[settings:self-heal] created admin:members tenant=${tenantId} user=${userId}`);
+      }
+    }
+
     let body: any = null
     try{
       body = await c.req.json()
@@ -3847,10 +3869,28 @@ app.post('/auth/email/verify', async (c) => {
       }],
     };
     await kv.put('tenant:exists:' + tenantId, '1');
-    // Idempotency: only write admin:members if not already set (re-click guard)
+    // Ensure the signup user is always present as owner in admin:members.
+    // If the record already exists (e.g. from a previous test), append the
+    // signup user instead of silently skipping.
     const existingMembers = await kv.get(`admin:members:${tenantId}`);
     if (!existingMembers) {
       await kv.put(`admin:members:${tenantId}`, JSON.stringify(ownerStore));
+    } else {
+      const existing: AdminMembersStore = JSON.parse(existingMembers);
+      const alreadyPresent = existing.members.some(
+        (m: AdminMember) => m.lineUserId === identityKey
+      );
+      if (!alreadyPresent) {
+        existing.members.push({
+          lineUserId: identityKey,
+          role: 'owner',
+          enabled: true,
+          displayName,
+          createdAt: new Date().toISOString(),
+          authMethods: ['email'],
+        });
+        await kv.put(`admin:members:${tenantId}`, JSON.stringify(existing));
+      }
     }
     const seedSettings = mergeSettings(DEFAULT_ADMIN_SETTINGS, {
       storeName: storedName,
