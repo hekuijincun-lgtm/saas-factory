@@ -1,5 +1,5 @@
 export const runtime = "edge";
-import { readAdminToken, injectAdminToken } from "../../../_lib/proxy";
+import { readAdminToken, injectAdminToken, readSessionPayload } from "../../../_lib/proxy";
 
 function apiBase(): string {
   const v = process.env.API_BASE || process.env.BOOKING_API_BASE || process.env.NEXT_PUBLIC_API_BASE;
@@ -22,6 +22,11 @@ async function forward(req: Request, method: string): Promise<Response> {
   const ct = req.headers.get("content-type");
   if (ct) reqHeaders.set("content-type", ct);
   injectAdminToken(reqHeaders, upstream.pathname);
+
+  // Inject HMAC-verified session headers so Workers can perform RBAC
+  const session = await readSessionPayload(req);
+  if (session.tenantId) reqHeaders.set("x-session-tenant-id", session.tenantId);
+  if (session.userId) reqHeaders.set("x-session-user-id", session.userId);
 
   let body: ArrayBuffer | undefined;
   if (forwardMethod !== "GET" && forwardMethod !== "HEAD" && forwardMethod !== "DELETE") {
