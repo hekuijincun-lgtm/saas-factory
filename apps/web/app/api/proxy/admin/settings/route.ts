@@ -1,5 +1,5 @@
 export const runtime = "edge";
-import { readAdminToken, injectAdminToken, readSessionTenantId, makeDebugStamp, applyDebugHeaders } from '../../_lib/proxy';
+import { readAdminToken, injectAdminToken, readSessionTenantId, readSessionPayload, makeDebugStamp, applyDebugHeaders } from '../../_lib/proxy';
 
 function apiBase() {
   const v = process.env.API_BASE || process.env.BOOKING_API_BASE || process.env.NEXT_PUBLIC_API_BASE;
@@ -52,6 +52,12 @@ async function buildUpstream(req: Request) {
     "x-tenant-id": tenantId,
   });
   const tokenInjected = injectAdminToken(reqHeaders, upstream.pathname);
+
+  // Inject session headers (x-session-tenant-id + x-session-user-id)
+  // so Workers requireRole() can identify the user on PUT.
+  const session = await readSessionPayload(req);
+  if (session.tenantId) reqHeaders.set('x-session-tenant-id', session.tenantId);
+  if (session.userId) reqHeaders.set('x-session-user-id', session.userId);
 
   return { upstream, reqHeaders, tenantId, isDebug, tokenConfigured, tokenInjected };
 }
