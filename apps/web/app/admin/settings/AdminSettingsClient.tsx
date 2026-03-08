@@ -103,6 +103,13 @@ export default function AdminSettingsClient() {
   const [savedAllowedAdminLineUserIds, setSavedAllowedAdminLineUserIds] = useState<string[]>([]);
   const [currentAdminUserId, setCurrentAdminUserId] = useState<string | null>(null);
 
+  // --- パスワード設定 ---
+  const [passwordInput, setPasswordInput] = useState('');
+  const [passwordConfirm, setPasswordConfirm] = useState('');
+  const [passwordSaving, setPasswordSaving] = useState(false);
+  const [passwordMsg, setPasswordMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [hasPassword, setHasPassword] = useState(false);
+
   // --- Messaging API ---
   const [messagingStatus, setMessagingStatus] = useState<MessagingStatusResponse | null>(null);
   const [messagingLoading, setMessagingLoading] = useState(false);
@@ -451,6 +458,11 @@ export default function AdminSettingsClient() {
       .then(r => r.json())
       .then((data: any) => { if (data?.ok && data.userId) setCurrentAdminUserId(data.userId); })
       .catch(() => {});
+    // Fetch password status
+    fetch(`/api/proxy/admin/members/me?tenantId=${encodeURIComponent(tenantId)}`, { cache: 'no-store' })
+      .then(r => r.json())
+      .then((data: any) => { if (data?.ok && data.data) setHasPassword(!!data.data.hasPassword); })
+      .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId, tenantStatus]);
 
@@ -543,6 +555,39 @@ export default function AdminSettingsClient() {
     setReminderEnabled(savedReminderEnabled);
     setReminderSendAtHour(savedReminderSendAtHour);
     setReminderTemplate(savedReminderTemplate);
+  };
+
+  const handlePasswordSave = async () => {
+    setPasswordMsg(null);
+    if (passwordInput.length < 8) {
+      setPasswordMsg({ type: 'error', text: 'パスワードは8文字以上で入力してください' });
+      return;
+    }
+    if (passwordInput !== passwordConfirm) {
+      setPasswordMsg({ type: 'error', text: 'パスワードが一致しません' });
+      return;
+    }
+    setPasswordSaving(true);
+    try {
+      const res = await fetch(`/api/proxy/admin/members/password?tenantId=${encodeURIComponent(tenantId)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: passwordInput }),
+      });
+      const data = await res.json() as any;
+      if (data?.ok) {
+        setPasswordMsg({ type: 'success', text: 'パスワードを設定しました' });
+        setPasswordInput('');
+        setPasswordConfirm('');
+        setHasPassword(true);
+      } else {
+        setPasswordMsg({ type: 'error', text: data?.error ?? '保存に失敗しました' });
+      }
+    } catch {
+      setPasswordMsg({ type: 'error', text: 'ネットワークエラー' });
+    } finally {
+      setPasswordSaving(false);
+    }
   };
 
   const toggleDay = (dayIndex: number) => {
@@ -1681,6 +1726,59 @@ export default function AdminSettingsClient() {
                 ? '現在のリストは空です。初回ログイン時のアカウントが自動で追加されます。'
                 : `${allowedAdminLineUserIds.length}件のuserIdが許可されています`}
             </p>
+          </div>
+        </div>
+
+        {/* ============================================================
+            パスワード設定
+        ============================================================ */}
+        <div id="password" className="bg-white rounded-2xl border border-gray-200 p-6 space-y-4">
+          <div className="flex items-center gap-2">
+            <span className="text-lg">🔑</span>
+            <h2 className="text-base font-semibold text-gray-800">パスワード設定</h2>
+          </div>
+          <p className="text-xs text-gray-500 leading-relaxed">
+            メールリンク以外のログイン方法として、パスワードを設定できます。（任意）
+            {hasPassword && <span className="ml-1 text-emerald-600 font-medium">設定済み</span>}
+          </p>
+
+          <div className="space-y-3">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">新しいパスワード（8文字以上）</label>
+              <input
+                type="password"
+                value={passwordInput}
+                onChange={e => setPasswordInput(e.target.value)}
+                placeholder="********"
+                autoComplete="new-password"
+                className="w-full px-3 py-2 text-sm border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">パスワード確認</label>
+              <input
+                type="password"
+                value={passwordConfirm}
+                onChange={e => setPasswordConfirm(e.target.value)}
+                placeholder="********"
+                autoComplete="new-password"
+                className="w-full px-3 py-2 text-sm border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+              />
+            </div>
+            {passwordMsg && (
+              <div className={`rounded-xl px-3 py-2 text-sm ${
+                passwordMsg.type === 'success' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-red-50 text-red-600 border border-red-200'
+              }`}>
+                {passwordMsg.text}
+              </div>
+            )}
+            <button
+              onClick={handlePasswordSave}
+              disabled={passwordSaving || !passwordInput}
+              className="inline-flex items-center gap-1.5 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm transition-all"
+            >
+              {passwordSaving ? '保存中...' : hasPassword ? 'パスワードを変更' : 'パスワードを設定'}
+            </button>
           </div>
         </div>
 

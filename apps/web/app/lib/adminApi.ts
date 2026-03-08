@@ -215,6 +215,8 @@ export interface AdminMember {
   enabled: boolean;
   displayName?: string;
   createdAt: string;
+  passwordHash?: string;
+  authMethods?: string[];
 }
 
 export interface AdminMembersStore {

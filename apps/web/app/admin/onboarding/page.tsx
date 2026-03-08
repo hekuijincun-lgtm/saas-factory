@@ -63,10 +63,20 @@ async function checkSlotsAvailable(tenantId: string): Promise<boolean> {
   } catch { return false; }
 }
 
+interface MemberMe {
+  displayName?: string;
+  role?: string;
+  authMethods?: string[];
+  hasPassword?: boolean;
+}
+
 export default function OnboardingPage() {
   const router = useRouter();
   const { status: tenantStatus, tenantId } = useAdminTenantId();
   const [completing, setCompleting] = useState(false);
+  const [storeName, setStoreName] = useState('');
+  const [ownerEmail, setOwnerEmail] = useState('');
+  const [memberMe, setMemberMe] = useState<MemberMe | null>(null);
   const [items, setItems] = useState<CheckItem[]>([
     { id: 'line', label: 'LINE Messaging API を設定', description: 'チャンネルIDとアクセストークンを登録してください', href: '/admin/line-setup', done: false, loading: true },
     { id: 'menu', label: 'メニュー（施術）を追加', description: '少なくとも1件のメニューを登録してください', href: '/admin/menu', done: false, loading: true },
@@ -77,22 +87,23 @@ export default function OnboardingPage() {
   useEffect(() => {
     if (tenantStatus === 'loading') return;
 
-    const params = new URLSearchParams(window.location.search);
-    const isSignup = params.get('signup') === '1';
+    // Fetch settings for storeName + owner email
+    fetch(`/api/proxy/admin/settings?tenantId=${encodeURIComponent(tenantId)}`, { cache: 'no-store' })
+      .then(r => r.json())
+      .then((json: any) => {
+        const s = json?.data ?? json;
+        if (s?.storeName) setStoreName(s.storeName);
+        if (s?.tenant?.email) setOwnerEmail(s.tenant.email);
+      })
+      .catch(() => {});
 
-    // signup 経由の初回訪問: onboardingCompleted=false をセット（AdminShell redirect 用）
-    if (isSignup) {
-      fetch(`/api/proxy/admin/settings?tenantId=${encodeURIComponent(tenantId)}`, { cache: 'no-store' })
-        .then(r => r.json())
-        .then((json: any) => {
-          const s = json?.data ?? json;
-          if ((s?.onboarding as any)?.onboardingCompleted === undefined) {
-            saveAdminSettings({ onboarding: { onboardingCompleted: false } as any }, tenantId)
-              .catch(() => {});
-          }
-        })
-        .catch(() => {});
-    }
+    // Fetch current member info (auth methods, password status)
+    fetch(`/api/proxy/admin/members/me?tenantId=${encodeURIComponent(tenantId)}`, { cache: 'no-store' })
+      .then(r => r.json())
+      .then((json: any) => {
+        if (json?.ok && json.data) setMemberMe(json.data);
+      })
+      .catch(() => {});
 
     Promise.all([
       checkLineConnected(tenantId),
@@ -128,6 +139,42 @@ export default function OnboardingPage() {
     <>
       <AdminTopBar title="初期設定チェックリスト" subtitle="開始前に以下の項目を完了してください。" />
       <div className="p-6 max-w-2xl mx-auto space-y-6">
+        {/* Welcome header */}
+        {(storeName || ownerEmail) && (
+          <div className="bg-indigo-50 rounded-2xl border border-indigo-100 p-5 shadow-sm">
+            <h2 className="text-base font-semibold text-indigo-900">
+              {storeName ? `${storeName} へようこそ` : 'ようこそ'}
+            </h2>
+            {ownerEmail && (
+              <p className="text-sm text-indigo-700 mt-1">
+                管理者: {ownerEmail}
+              </p>
+            )}
+            <p className="text-xs text-indigo-500 mt-2">
+              以下のチェックリストを完了して、予約受付を開始しましょう。
+            </p>
+          </div>
+        )}
+
+        {/* Password setup CTA */}
+        {memberMe && !memberMe.hasPassword && (
+          <div className="bg-amber-50 rounded-2xl border border-amber-200 p-4 shadow-sm flex items-start gap-3">
+            <div className="mt-0.5 flex-shrink-0 h-6 w-6 rounded-full bg-amber-100 flex items-center justify-center text-xs font-bold text-amber-700">!</div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-amber-800">パスワードを設定しましょう</p>
+              <p className="text-xs text-amber-600 mt-0.5">
+                メールリンク以外のログイン方法として、パスワードを設定できます。（任意）
+              </p>
+            </div>
+            <Link
+              href={withTenant('/admin/settings', tenantId) + '#password'}
+              className="flex-shrink-0 rounded-xl border border-amber-300 bg-amber-100 px-3 py-1.5 text-xs font-semibold text-amber-800 hover:bg-amber-200 transition-colors"
+            >
+              設定する
+            </Link>
+          </div>
+        )}
+
         {/* Progress */}
         <div className="bg-white rounded-2xl border p-5 shadow-sm">
           <div className="flex items-center justify-between mb-3">
@@ -164,7 +211,7 @@ export default function OnboardingPage() {
                   ? 'bg-emerald-100 text-emerald-700'
                   : 'bg-slate-100 text-slate-400'
               }`}>
-                {item.loading ? '…' : item.done ? '✓' : '○'}
+                {item.loading ? '...' : item.done ? 'v' : 'o'}
               </div>
 
               {/* Text */}
@@ -175,7 +222,7 @@ export default function OnboardingPage() {
                 <p className="text-xs text-slate-500 mt-0.5">{item.description}</p>
               </div>
 
-              {/* Action link — tenantId を維持して遷移 */}
+              {/* Action link */}
               {!item.done && (
                 <Link
                   href={withTenant(item.href, tenantId)}

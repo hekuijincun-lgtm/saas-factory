@@ -3239,6 +3239,36 @@ async function sha256Hex(input: string): Promise<string> {
   return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
+// PBKDF2 password hashing (Web Crypto API — available in Workers runtime)
+async function hashPassword(password: string): Promise<string> {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveBits']);
+  const bits = await crypto.subtle.deriveBits(
+    { name: 'PBKDF2', salt, iterations: 100_000, hash: 'SHA-256' },
+    key, 256
+  );
+  const hashB64 = btoa(String.fromCharCode(...new Uint8Array(bits)));
+  const saltB64 = btoa(String.fromCharCode(...salt));
+  return `pbkdf2:100000:${saltB64}:${hashB64}`;
+}
+
+async function verifyPassword(password: string, stored: string): Promise<boolean> {
+  const parts = stored.split(':');
+  if (parts[0] !== 'pbkdf2' || parts.length !== 4) return false;
+  const iterations = parseInt(parts[1], 10);
+  const salt = Uint8Array.from(atob(parts[2]), c => c.charCodeAt(0));
+  const expectedHash = parts[3];
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveBits']);
+  const bits = await crypto.subtle.deriveBits(
+    { name: 'PBKDF2', salt, iterations, hash: 'SHA-256' },
+    key, 256
+  );
+  const actualHash = btoa(String.fromCharCode(...new Uint8Array(bits)));
+  return actualHash === expectedHash;
+}
+
 /* === ADMIN_MEMBERS_V1 ===
    GET  /admin/members?tenantId=  → { ok, tenantId, data: AdminMembersStore }
    PUT  /admin/members            → body: { callerLineUserId, members[] }
@@ -3252,6 +3282,8 @@ interface AdminMember {
   enabled: boolean;
   displayName?: string;
   createdAt: string;
+  passwordHash?: string;
+  authMethods?: string[];  // e.g. ['email'], ['email','password'], ['line']
 }
 interface AdminMembersStore { version: 1; members: AdminMember[]; }
 
@@ -3297,6 +3329,68 @@ app.put('/admin/members', async (c) => {
   return c.json({ ok: true, tenantId, data: next });
 });
 /* === /ADMIN_MEMBERS_V1 === */
+
+/* === ADMIN_MEMBERS_PASSWORD_V1 ===
+   PUT /admin/members/password?tenantId=
+   Body: { password: string }
+   Sets password for the calling user (identified by x-session-user-id).
+   Requires authentication (any role). Password is PBKDF2-hashed, never stored in plaintext.
+=== */
+app.put('/admin/members/password', async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
+  const tenantId = getTenantId(c, null);
+  const kv = (c.env as any).SAAS_FACTORY as KVNamespace;
+  const userId = c.req.header('x-session-user-id') ?? '';
+  if (!userId) return c.json({ ok: false, error: 'missing_user_id' }, 403);
+
+  let body: any = {};
+  try { body = await c.req.json(); } catch {}
+  const password = String(body.password ?? '');
+  if (password.length < 8 || password.length > 128) {
+    return c.json({ ok: false, error: 'password_length', hint: '8-128 characters required' }, 400);
+  }
+
+  const raw = await kv.get(`admin:members:${tenantId}`);
+  if (!raw) return c.json({ ok: false, error: 'no_members' }, 404);
+  const store: AdminMembersStore = JSON.parse(raw);
+  const member = store.members.find((m: AdminMember) => m.lineUserId === userId && m.enabled);
+  if (!member) return c.json({ ok: false, error: 'not_a_member' }, 403);
+
+  member.passwordHash = await hashPassword(password);
+  if (!member.authMethods) member.authMethods = [];
+  if (!member.authMethods.includes('password')) member.authMethods.push('password');
+  if (!member.authMethods.includes('email')) member.authMethods.push('email');
+
+  await kv.put(`admin:members:${tenantId}`, JSON.stringify(store));
+  return c.json({ ok: true, tenantId, authMethods: member.authMethods });
+});
+
+/* === GET /admin/members/me — returns current member info (auth methods, role) === */
+app.get('/admin/members/me', async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
+  const tenantId = getTenantId(c, null);
+  const kv = (c.env as any).SAAS_FACTORY as KVNamespace;
+  const userId = c.req.header('x-session-user-id') ?? '';
+  if (!userId) return c.json({ ok: false, error: 'missing_user_id' }, 403);
+
+  const raw = await kv.get(`admin:members:${tenantId}`);
+  if (!raw) return c.json({ ok: true, tenantId, data: null });
+  const store: AdminMembersStore = JSON.parse(raw);
+  const member = store.members.find((m: AdminMember) => m.lineUserId === userId && m.enabled);
+  if (!member) return c.json({ ok: true, tenantId, data: null });
+
+  return c.json({
+    ok: true, tenantId,
+    data: {
+      lineUserId: member.lineUserId,
+      role: member.role,
+      displayName: member.displayName,
+      authMethods: member.authMethods ?? (member.lineUserId.startsWith('email:') ? ['email'] : ['line']),
+      hasPassword: !!member.passwordHash,
+    },
+  });
+});
+/* === /ADMIN_MEMBERS_PASSWORD_V1 === */
 
 /* === BOOTSTRAP_KEY_V1 ===
    POST /admin/bootstrap-key?tenantId=
@@ -3590,6 +3684,7 @@ app.post('/auth/email/verify', async (c) => {
         enabled: true,
         displayName,
         createdAt: new Date().toISOString(),
+        authMethods: ['email'],
       }],
     };
     await kv.put('tenant:exists:' + tenantId, '1');
@@ -3601,6 +3696,7 @@ app.post('/auth/email/verify', async (c) => {
     const seedSettings = mergeSettings(DEFAULT_ADMIN_SETTINGS, {
       storeName: storedName,
       tenant: { name: storedName, email },
+      onboarding: { onboardingCompleted: false },
     });
     await kv.put('settings:' + tenantId, JSON.stringify(seedSettings));
     // admin:settings: key for tenant listing/lookup (simple format)
