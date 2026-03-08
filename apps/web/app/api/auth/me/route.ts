@@ -48,7 +48,61 @@ async function verifyAndParseSession(
   }
 }
 
+function resolveApiBase(): string {
+  const env = (globalThis as any)?.process?.env ?? {};
+  const base =
+    env.NEXT_PUBLIC_API_BASE ??
+    env.API_BASE ??
+    env.BOOKING_API_BASE ??
+    "http://127.0.0.1:8787";
+  return (base as string).replace(/\/+$/, "");
+}
+
+function readAdminToken(): string | undefined {
+  try {
+    const v = ((process as any).env ?? {}).ADMIN_TOKEN;
+    if (typeof v === "string" && v.length) return v;
+  } catch {}
+  const v2 = (process.env as any)?.ADMIN_TOKEN;
+  return typeof v2 === "string" && v2.length ? v2 : undefined;
+}
+
+/**
+ * Fetch current role from Workers /admin/members KV (bypasses stale session cookie).
+ * Returns the role string or null if not found / error.
+ */
+async function fetchFreshRole(
+  userId: string,
+  tenantId: string
+): Promise<string | null> {
+  try {
+    const base = resolveApiBase();
+    const token = readAdminToken();
+    const headers: Record<string, string> = {
+      "cache-control": "no-store",
+    };
+    if (token) headers["X-Admin-Token"] = token;
+
+    const res = await fetch(
+      `${base}/admin/members?tenantId=${encodeURIComponent(tenantId)}`,
+      { headers, signal: AbortSignal.timeout(5000) }
+    );
+    if (!res.ok) return null;
+    const json = (await res.json()) as any;
+    const members: any[] = json?.data?.members ?? [];
+    const me = members.find(
+      (m: any) => m.lineUserId === userId && m.enabled !== false
+    );
+    return me?.role ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export async function GET(req: Request) {
+  const url = new URL(req.url);
+  const wantFresh = url.searchParams.get("fresh") === "1";
+
   const cookie = req.headers.get("cookie") ?? "";
   const m = cookie.match(/(?:^|;\s*)line_session=([^;]+)/);
   if (!m) {
@@ -74,11 +128,18 @@ export async function GET(req: Request) {
     return NextResponse.json({ ok: false, error: "invalid_session" }, { status: 401 });
   }
 
+  // ?fresh=1: query Workers for live role instead of using stale session cookie
+  let role = parsed.role ?? null;
+  if (wantFresh && parsed.tenantId) {
+    const freshRole = await fetchFreshRole(parsed.userId, parsed.tenantId);
+    if (freshRole !== null) role = freshRole;
+  }
+
   return NextResponse.json({
     ok: true,
     userId: parsed.userId,
     tenantId: parsed.tenantId,
     displayName: parsed.displayName,
-    role: parsed.role ?? null,
+    role,
   });
 }

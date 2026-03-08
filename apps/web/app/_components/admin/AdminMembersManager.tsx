@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { fetchAdminMembers, saveAdminMembers } from '../../lib/adminApi';
 import type { AdminMember, AdminMembersStore, MemberRole } from '../../lib/adminApi';
-import { clearMeCache } from '@/src/lib/useAdminTenantId';
+import { refreshMe } from '@/src/lib/useAdminTenantId';
 
 const ROLE_LABELS: Record<MemberRole, string> = {
   owner: 'オーナー',
@@ -113,13 +113,22 @@ export default function AdminMembersManager() {
       setError('少なくとも 1 人の有効なオーナーが必要です');
       return;
     }
+    // Self-demotion warning: current user losing owner role
+    const myEntry = store.members.find((m) => m.lineUserId === myUserId);
+    if (myEntry && myRole === 'owner' && myEntry.role !== 'owner') {
+      if (!confirm('自分のオーナー権限を削除すると、管理者一覧の編集ができなくなります。続行しますか？')) {
+        return;
+      }
+    }
     setSaving(true);
     setError(null);
     setSuccess(false);
     try {
       const updated = await saveAdminMembers(store, myUserId, tenantId);
       setStore(updated);
-      clearMeCache(); // role changes may affect current session
+      // Refresh role from Workers KV (bypasses stale session cookie)
+      const freshMe = await refreshMe();
+      setMyRole(freshMe.role);
       setSuccess(true);
       setTimeout(() => setSuccess(false), 3000);
     } catch (e: any) {
