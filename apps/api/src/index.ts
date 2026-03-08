@@ -5073,23 +5073,29 @@ app.post("/ai/chat", async (c) => {
     // 3. モデル選択（env.OPENAI_MODEL → "gpt-4o"）
     const model = String(env?.OPENAI_MODEL || "gpt-4o").trim() || "gpt-4o";
 
-    // 4. テナントの AI 設定・ポリシー・FAQ・upsell を KV から取得
+    // 4. テナントの AI 設定・ポリシー・FAQ・upsell・店舗設定・メニュー を KV から取得
     const kv = env?.SAAS_FACTORY;
     let aiSettings: any = { voice: "friendly", character: "", answerLength: "normal" };
     let aiPolicy: any = { prohibitedTopics: [] as string[], hardRules: [] as string[] };
     let aiFaq: any[] = [];
     let aiUpsell: any = { ...AI_DEFAULT_UPSELL };
+    let storeSettings: any = null;
+    let menuList: any[] = [];
     if (kv) {
-      const [s, p, f, u] = await Promise.all([
+      const [s, p, f, u, ss, ml] = await Promise.all([
         aiGetJson(kv, `ai:settings:${tenantId}`),
         aiGetJson(kv, `ai:policy:${tenantId}`),
         aiGetJson(kv, `ai:faq:${tenantId}`),
         aiGetJson(kv, `ai:upsell:${tenantId}`),
+        aiGetJson(kv, `settings:${tenantId}`),
+        aiGetJson(kv, `admin:menu:list:${tenantId}`),
       ]);
       if (s && typeof s === "object") aiSettings = { ...aiSettings, ...s };
       if (p && typeof p === "object") aiPolicy = { ...aiPolicy, ...p };
       if (Array.isArray(f)) aiFaq = f.filter((x: any) => x.enabled !== false);
       if (u && typeof u === "object") aiUpsell = { ...AI_DEFAULT_UPSELL, ...u };
+      if (ss && typeof ss === "object") storeSettings = ss;
+      if (Array.isArray(ml)) menuList = ml.filter((m: any) => m.active !== false);
     }
 
     // 4.4 AI 有効判定（管理画面の「AI接客を有効化」トグルを反映）
@@ -5130,7 +5136,46 @@ app.post("/ai/chat", async (c) => {
       }
     }
 
-    // 5. system プロンプト構築
+    // 5. 店舗情報コンテキスト構築（未設定項目は安全に省略）
+    const storeContextLines: string[] = [];
+    if (storeSettings) {
+      const WEEKDAY_NAMES = ["日", "月", "火", "水", "木", "金", "土"];
+      const sn = storeSettings.storeName;
+      if (sn) storeContextLines.push(`店舗名: ${sn}`);
+      const addr = storeSettings.storeAddress;
+      if (addr) storeContextLines.push(`住所: ${addr}`);
+      const bh = storeSettings.businessHours;
+      if (bh?.openTime && bh?.closeTime) storeContextLines.push(`営業時間: ${bh.openTime}〜${bh.closeTime}`);
+      const cw: number[] = storeSettings.closedWeekdays;
+      if (Array.isArray(cw) && cw.length > 0) {
+        storeContextLines.push(`定休日: ${cw.map((d: number) => WEEKDAY_NAMES[d] ?? String(d)).join("・")}曜日`);
+      }
+      const bookingUrl = storeSettings.integrations?.line?.bookingUrl
+        || (env?.WEB_BASE ? `${env.WEB_BASE}/booking?tenantId=${tenantId}` : "");
+      if (bookingUrl) storeContextLines.push(`予約ページURL: ${bookingUrl}`);
+      const cancel = storeSettings.rules?.cancelMinutes;
+      if (typeof cancel === "number" && cancel > 0) {
+        const h = Math.floor(cancel / 60);
+        const m = cancel % 60;
+        const txt = h > 0 ? (m > 0 ? `${h}時間${m}分前` : `${h}時間前`) : `${m}分前`;
+        storeContextLines.push(`キャンセル期限: 予約の${txt}まで`);
+      }
+    }
+    // メニュー要約（上位10件、名前・価格・所要時間のみ）
+    if (menuList.length > 0) {
+      const menuSummary = menuList.slice(0, 10).map((m: any) => {
+        const parts = [m.name];
+        if (typeof m.price === "number") parts.push(`¥${m.price.toLocaleString()}`);
+        if (typeof m.durationMin === "number") parts.push(`${m.durationMin}分`);
+        return parts.join(" / ");
+      }).join("\n");
+      storeContextLines.push(`\nメニュー一覧:\n${menuSummary}`);
+    }
+    const storeBlock = storeContextLines.length > 0
+      ? "\n\n## 店舗情報（この情報に基づいて正確に案内してください）\n" + storeContextLines.join("\n")
+      : "";
+
+    // 5.1 FAQ / ポリシーブロック
     const faqBlock = aiFaq.length > 0
       ? "\n\n## FAQ（よくある質問と回答）\n" +
         aiFaq.slice(0, 20).map((f: any) => `Q: ${f.question}\nA: ${f.answer}`).join("\n\n")
@@ -5143,15 +5188,20 @@ app.post("/ai/chat", async (c) => {
       : "";
 
     const systemContent = [
-      "あなたはお店のAIアシスタントです。",
+      storeSettings?.storeName
+        ? `あなたは「${storeSettings.storeName}」のAIアシスタントです。`
+        : "あなたはお店のAIアシスタントです。",
       aiSettings.character ? `キャラクター設定: ${aiSettings.character}` : "",
       `口調: ${aiSettings.voice}`,
       `回答の長さ: ${aiSettings.answerLength}`,
+      storeBlock,
       "",
       "## 絶対に守るルール",
       "- 予約はフォームでのみ確定します。あなたは予約を作ったり確約したりしません。",
-      "- 料金・空き枠・規約など不確実な情報は断定しません。",
-      "- 予約に関する質問には「予約フォームからご確認ください」と案内してください。",
+      "- 店舗情報セクションに記載された情報はそのまま案内してください。",
+      "- 店舗情報セクションに無い情報は「お問い合わせください」と案内してください。",
+      "- 料金は店舗情報のメニュー一覧に記載がある場合のみ案内し、空き枠は断定しません。",
+      "- 予約に関する質問には予約ページURLを案内してください。",
       "- 医療・法律・政治・宗教などのアドバイスはしません。",
       "- booking created や reservation confirmed などの行動を起こしたとは絶対に言いません。",
       faqBlock,
