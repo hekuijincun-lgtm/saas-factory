@@ -4,6 +4,7 @@ import * as React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { saveAdminSettings } from "../../lib/adminApi";
 import { useAdminTenantId } from "@/src/lib/useAdminTenantId";
+import { clearAdminSettingsCache } from "../_lib/useAdminSettings";
 
 // ─── Shell ───────────────────────────────────────────────────────────────────
 function BookingLikeShell({
@@ -570,6 +571,7 @@ export default function LineSetupPage() {
         // best-effort — don't block the save
       }
 
+      clearAdminSettingsCache(tenantId);
       setMessage(`保存しました ✅${mappingInfo}`);
       setInitialCreds(payload);
       // Refresh mapping status after save

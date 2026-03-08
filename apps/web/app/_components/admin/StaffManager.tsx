@@ -11,7 +11,7 @@ import { Plus, Edit2, X, Calendar, Scissors } from 'lucide-react';
 import StaffShiftEditor from './StaffShiftEditor';
 import type { StaffShift, TimeStr } from '@/src/types/shift';
 import { generateTimeOptions } from '@/src/lib/shiftUtils';
-import { useAdminSettings } from '../../admin/_lib/useAdminSettings';
+import { useAdminSettings, clearAdminSettingsCache } from '../../admin/_lib/useAdminSettings';
 import { fetchAdminSettings, saveAdminSettings } from '../../lib/adminApi';
 
 export default function StaffManager() {
@@ -59,6 +59,7 @@ export default function StaffManager() {
     try {
       await saveAdminSettings({ staffSelectionEnabled: enabled } as any, tenantId);
       setStaffSelectionEnabled(enabled);
+      clearAdminSettingsCache(tenantId);
     } catch { /* ignore */ } finally {
       setStaffSelectionSaving(false);
     }

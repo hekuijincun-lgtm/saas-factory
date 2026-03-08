@@ -16,6 +16,7 @@ import {
   type MessagingStatusResponse
 } from '../../lib/adminApi';
 import { ApiClientError } from '../../lib/apiClient';
+import { clearAdminSettingsCache } from '../_lib/useAdminSettings';
 
 // ============================================================
 // Types
@@ -381,6 +382,7 @@ export default function AdminSettingsClient() {
       setMessagingStatus(status);
       setIsMessagingFormOpen(false);
       setMessagingFormData({ channelAccessToken: '', channelSecret: '', webhookUrl: '' });
+      clearAdminSettingsCache(tenantId);
       showToast('Messaging API 連携を保存しました', 'success');
     } catch (error) {
       const msg = error instanceof ApiClientError ? error.message
@@ -400,6 +402,7 @@ export default function AdminSettingsClient() {
       setMessagingStatus(status);
       setIsMessagingFormOpen(false);
       setMessagingFormData({ channelAccessToken: '', channelSecret: '', webhookUrl: '' });
+      clearAdminSettingsCache(tenantId);
       showToast('Messaging API 連携を解除しました', 'success');
     } catch (error) {
       const msg = error instanceof ApiClientError ? error.message
@@ -507,6 +510,7 @@ export default function AdminSettingsClient() {
         setSavedLocalTenant(localTenant);
       } catch { /* ignore */ }
 
+      clearAdminSettingsCache(tenantId);
       showToast('設定を保存しました', 'success');
     } catch (error) {
       const msg = error instanceof ApiClientError ? error.message

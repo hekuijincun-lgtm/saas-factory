@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { fetchAdminMembers, saveAdminMembers } from '../../lib/adminApi';
 import type { AdminMember, AdminMembersStore, MemberRole } from '../../lib/adminApi';
+import { clearMeCache } from '@/src/lib/useAdminTenantId';
 
 const ROLE_LABELS: Record<MemberRole, string> = {
   owner: 'オーナー',
@@ -118,6 +119,7 @@ export default function AdminMembersManager() {
     try {
       const updated = await saveAdminMembers(store, myUserId, tenantId);
       setStore(updated);
+      clearMeCache(); // role changes may affect current session
       setSuccess(true);
       setTimeout(() => setSuccess(false), 3000);
     } catch (e: any) {

@@ -7,6 +7,7 @@ import Link from 'next/link';
 import AdminTopBar from '../../_components/ui/AdminTopBar';
 import { saveAdminSettings } from '../../lib/adminApi';
 import { useAdminTenantId, withTenant } from '@/src/lib/useAdminTenantId';
+import { clearAdminSettingsCache } from '../_lib/useAdminSettings';
 
 interface CheckItem {
   id: string;
@@ -113,6 +114,7 @@ export default function OnboardingPage() {
     setCompleting(true);
     try {
       await saveAdminSettings({ onboarding: { onboardingCompleted: true } as any }, tenantId);
+      clearAdminSettingsCache(tenantId);
       router.push('/admin?tenantId=' + encodeURIComponent(tenantId));
     } catch {
       setCompleting(false);
