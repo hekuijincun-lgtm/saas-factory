@@ -21,6 +21,13 @@ async function hmacSha256B64url(message: string, secret: string) {
   return b64urlFromBytes(new Uint8Array(sig));
 }
 
+async function signSession(payload: object, secret: string) {
+  const body = JSON.stringify(payload);
+  const bodyB64u = b64urlFromBytes(new TextEncoder().encode(body));
+  const sigB64u = await hmacSha256B64url(bodyB64u, secret);
+  return `${bodyB64u}.${sigB64u}`;
+}
+
 async function verifyAndParseSession(
   token: string,
   secret: string
@@ -132,18 +139,50 @@ export async function GET(req: Request) {
     if (ltMatch) effectiveTenantId = decodeURIComponent(ltMatch[1]);
   }
 
-  // Always resolve role from Workers KV (live source of truth).
-  // No cookie fallback — role is live-only.
+  // Tenant switch: caller requests a specific tenant via ?tenantId=
+  // If it differs from the session cookie's tenant, verify membership and re-sign.
+  const url = new URL(req.url);
+  const desiredTid = url.searchParams.get("tenantId")?.trim();
+  let needsReSign = false;
   let role: string | null = null;
-  if (effectiveTenantId) {
+  if (desiredTid && desiredTid !== "default" && desiredTid !== parsed.tenantId) {
+    const freshRole = await fetchFreshRole(parsed.userId, desiredTid);
+    if (freshRole) {
+      effectiveTenantId = desiredTid;
+      needsReSign = true;
+      role = freshRole;
+    }
+  }
+
+  // Always resolve role from Workers KV (live source of truth).
+  if (role === null && effectiveTenantId) {
     role = await fetchFreshRole(parsed.userId, effectiveTenantId);
   }
 
-  return NextResponse.json({
+  const res = NextResponse.json({
     ok: true,
     userId: parsed.userId,
     tenantId: effectiveTenantId,
     displayName: parsed.displayName,
     role,
   });
+
+  // Re-sign session cookie so subsequent proxy requests carry the correct tenantId
+  if (needsReSign) {
+    const SESSION_MAX_AGE = 14 * 24 * 60 * 60;
+    const sessionToken = await signSession(
+      { userId: parsed.userId, tenantId: effectiveTenantId, displayName: parsed.displayName, ts: Date.now() },
+      secret
+    );
+    res.headers.append(
+      "Set-Cookie",
+      `line_session=${sessionToken}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${SESSION_MAX_AGE}`
+    );
+    res.headers.append(
+      "Set-Cookie",
+      `last_tenant_id=${encodeURIComponent(effectiveTenantId)}; Path=/; Secure; SameSite=Lax; Max-Age=${SESSION_MAX_AGE}`
+    );
+  }
+
+  return res;
 }

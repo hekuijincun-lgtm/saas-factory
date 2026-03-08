@@ -27,7 +27,13 @@ export function clearMeCache() {
  */
 export async function refreshMe(): Promise<MeResult> {
   clearMeCache();
-  const res = await fetch("/api/auth/me", { credentials: "same-origin", cache: "no-store" });
+  const urlTidForMe = typeof window !== "undefined"
+    ? new URLSearchParams(window.location.search).get("tenantId")
+    : null;
+  const refreshUrl = urlTidForMe
+    ? `/api/auth/me?tenantId=${encodeURIComponent(urlTidForMe)}`
+    : "/api/auth/me";
+  const res = await fetch(refreshUrl, { credentials: "same-origin", cache: "no-store" });
   const d = await res.json() as any;
   const urlTid = typeof window !== "undefined"
     ? new URLSearchParams(window.location.search).get("tenantId")
@@ -72,7 +78,15 @@ function fetchMe(): Promise<MeResult> {
     _promise = null;
   }
   if (!_promise) {
-    _promise = fetch("/api/auth/me", { credentials: "same-origin", cache: "no-store" })
+    // Pass URL tenantId so /api/auth/me can re-sign the session cookie
+    // when the user navigates to a different tenant.
+    const _urlTid = typeof window !== "undefined"
+      ? new URLSearchParams(window.location.search).get("tenantId")
+      : null;
+    const meUrl = _urlTid
+      ? `/api/auth/me?tenantId=${encodeURIComponent(_urlTid)}`
+      : "/api/auth/me";
+    _promise = fetch(meUrl, { credentials: "same-origin", cache: "no-store" })
       .then((r) => r.json())
       .then((d: any) => {
         _resolvedAt = Date.now();
