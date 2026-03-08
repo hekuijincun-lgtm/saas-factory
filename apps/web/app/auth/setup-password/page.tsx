@@ -45,10 +45,14 @@ export default function SetupPasswordPage() {
         return;
       }
 
-      // Success — redirect to onboarding or admin
-      const dest = tenantId
-        ? `/admin/onboarding?tenantId=${encodeURIComponent(tenantId)}`
-        : "/admin";
+      // Success — redirect to returnTo (from signup callback) or default admin
+      const params = new URLSearchParams(window.location.search);
+      const returnTo = params.get("returnTo");
+      const dest = returnTo && returnTo.startsWith("/") && !returnTo.startsWith("//")
+        ? returnTo
+        : tenantId
+          ? `/admin/line-setup?tenantId=${encodeURIComponent(tenantId)}`
+          : "/admin";
       window.location.href = dest;
     } catch {
       setErrorMsg("ネットワークエラーが発生しました。");

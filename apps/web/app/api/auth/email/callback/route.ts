@@ -200,7 +200,7 @@ export async function GET(req: Request) {
   let effectiveReturnTo = returnTo;
   if (signedUp && tenantId && tenantId !== "default") {
     if (!hasPassword) {
-      effectiveReturnTo = `/auth/setup-password?tenantId=${encodeURIComponent(tenantId)}`;
+      effectiveReturnTo = `/auth/setup-password?tenantId=${encodeURIComponent(tenantId)}&returnTo=${encodeURIComponent(`/admin/line-setup?tenantId=${tenantId}`)}`;
     } else {
       effectiveReturnTo = `/admin/onboarding?tenantId=${encodeURIComponent(tenantId)}`;
     }
