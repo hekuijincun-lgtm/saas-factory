@@ -132,6 +132,7 @@ export default function AdminSettingsClient() {
   const [bfError, setBfError] = useState<string | null>(null);
   const [bfConfirmed, setBfConfirmed] = useState(false);
   const [urlCopied, setUrlCopied] = useState(false);
+  const [webhookUrlCopied, setWebhookUrlCopied] = useState(false);
 
   // --- LINE リマインド設定 ---
   const DEFAULT_REMINDER_TEMPLATE = '【{storeName}】明日 {date} {time} のご予約があります。\n\nメニュー: {menuName}\nスタッフ: {staffName}\n\n{address}\n\n当日お会いできるのを楽しみにしております！\n\n予約管理: {manageUrl}';
@@ -1022,6 +1023,36 @@ export default function AdminSettingsClient() {
                   </div>
                 )}
               </div>
+            </div>
+            {/* ---- Webhook URL ---- */}
+            <div className="p-4 bg-indigo-50 rounded-lg border border-indigo-200">
+              <div className="flex items-center gap-2 mb-2">
+                <div className="w-2.5 h-2.5 rounded-full bg-indigo-500 shrink-0" />
+                <div className="font-semibold text-sm text-gray-900">Webhook URL</div>
+              </div>
+              <p className="text-xs text-gray-500 mb-3">
+                この URL を LINE Developers コンソールの「Webhook URL」に設定してください。<br />
+                テナントごとに異なる URL が自動生成されます。
+              </p>
+              {isMounted && (
+                <div className="flex items-center gap-2">
+                  <code className="flex-1 text-xs bg-white border border-indigo-300 rounded-lg px-3 py-2 text-gray-700 break-all select-all">
+                    {`${window.location.origin}/api/line/webhook?tenantId=${encodeURIComponent(tenantId)}`}
+                  </code>
+                  <button
+                    onClick={() => {
+                      const url = `${window.location.origin}/api/line/webhook?tenantId=${encodeURIComponent(tenantId)}`;
+                      navigator.clipboard.writeText(url).then(() => {
+                        setWebhookUrlCopied(true);
+                        setTimeout(() => setWebhookUrlCopied(false), 2000);
+                      }).catch(() => {});
+                    }}
+                    className="shrink-0 px-3 py-2 text-xs font-medium rounded-lg border border-indigo-400 text-indigo-700 bg-white hover:bg-indigo-50 transition-colors"
+                  >
+                    {webhookUrlCopied ? '✓ コピー済み' : 'コピー'}
+                  </button>
+                </div>
+              )}
             </div>
             {/* ---- LINE 予約リンク ---- */}
             <div className="p-4 bg-green-50 rounded-lg border border-green-200">
