@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import AdminTopBar from "../../_components/ui/AdminTopBar";
-import { Bot, Plus, Trash2, Save, RefreshCw, ChevronDown, ChevronUp, MessageSquare, TrendingUp, Clock } from "lucide-react";
+import { Bot, Plus, Trash2, Save, RefreshCw, ChevronDown, ChevronUp, MessageSquare, TrendingUp, Clock, Send, ExternalLink } from "lucide-react";
 import { useAdminTenantId } from "@/src/lib/useAdminTenantId";
 
 // ─── Defaults ─────────────────────────────────────────────────────────────
@@ -221,6 +221,13 @@ export default function AdminAIClient() {
   const [loadingFollowups, setLoadingFollowups] = useState(false);
   const [banner, setBanner] = useState<{ msg: string; kind: "success" | "error" } | null>(null);
 
+  // --- test chat state ---
+  const [chatInput, setChatInput] = useState("");
+  const [chatMessages, setChatMessages] = useState<
+    { role: "user" | "ai"; text: string; suggestedActions?: { type?: string; label?: string; url?: string }[]; intent?: string }[]
+  >([]);
+  const [chatSending, setChatSending] = useState(false);
+
   // policy form: textarea helpers（未保存時は日本語デフォルトを表示）
   const [hardRulesText, setHardRulesText] = useState(DEFAULT_HARD_RULES);
   const [prohibitedText, setProhibitedText] = useState("");
@@ -281,6 +288,47 @@ export default function AdminAIClient() {
   const flash = (msg: string, kind: "success" | "error") => {
     setBanner({ msg, kind });
     setTimeout(() => setBanner(null), 3500);
+  };
+
+  // ── Test Chat ──────────────────────────────────────────────────────────
+
+  const sendTestChat = async () => {
+    const msg = chatInput.trim();
+    if (!msg || chatSending) return;
+    setChatInput("");
+    setChatMessages((prev) => [...prev, { role: "user", text: msg }]);
+    setChatSending(true);
+    try {
+      const r = await fetch(apiBase("ai/chat", tenantId), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ message: msg, tenantId }),
+      });
+      const j = await r.json() as any;
+      if (j?.ok && j?.answer) {
+        setChatMessages((prev) => [
+          ...prev,
+          {
+            role: "ai",
+            text: j.answer,
+            suggestedActions: Array.isArray(j.suggestedActions) ? j.suggestedActions : [],
+            intent: j.intent ?? undefined,
+          },
+        ]);
+      } else {
+        setChatMessages((prev) => [
+          ...prev,
+          { role: "ai", text: `[エラー] ${j?.error ?? "応答なし"}` },
+        ]);
+      }
+    } catch (e: any) {
+      setChatMessages((prev) => [
+        ...prev,
+        { role: "ai", text: `[通信エラー] ${String(e?.message ?? e)}` },
+      ]);
+    } finally {
+      setChatSending(false);
+    }
   };
 
   // ── Save: Settings ─────────────────────────────────────────────────────
@@ -748,7 +796,98 @@ export default function AdminAIClient() {
           </div>
         </SectionCard>
 
-        {/* ── 6. フォローアップ履歴 ────────────────────────────────── */}
+        {/* ── 6. テストチャット ──────────────────────────────────── */}
+        <SectionCard title="テストチャット" icon={<Send className="w-4 h-4 text-blue-500" />} collapsible>
+          <p className="text-xs text-gray-400 mb-3">
+            AI接客の動作確認ができます。suggestedActions がボタンとして表示されます。
+          </p>
+
+          {/* メッセージ履歴 */}
+          {chatMessages.length > 0 && (
+            <div className="space-y-3 mb-4 max-h-96 overflow-y-auto">
+              {chatMessages.map((m, i) => (
+                <div key={i} className={`flex flex-col ${m.role === "user" ? "items-end" : "items-start"}`}>
+                  <div
+                    className={[
+                      "max-w-[85%] rounded-xl px-4 py-2.5 text-sm whitespace-pre-wrap break-words",
+                      m.role === "user"
+                        ? "bg-indigo-500 text-white"
+                        : "bg-gray-100 text-gray-800",
+                    ].join(" ")}
+                  >
+                    {m.text}
+                  </div>
+                  {m.intent && (
+                    <span className="text-[10px] text-gray-400 mt-0.5 px-1">intent: {m.intent}</span>
+                  )}
+                  {/* suggestedActions チップ */}
+                  {m.suggestedActions && m.suggestedActions.length > 0 && (
+                    <div className="flex flex-wrap gap-2 mt-2">
+                      {m.suggestedActions.map((a, j) => (
+                        a.url ? (
+                          <a
+                            key={j}
+                            href={a.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-indigo-200 text-indigo-600 text-xs font-medium rounded-full hover:bg-indigo-50 transition-colors"
+                          >
+                            <ExternalLink className="w-3 h-3" />
+                            {a.label || "リンクを開く"}
+                          </a>
+                        ) : (
+                          <button
+                            key={j}
+                            type="button"
+                            onClick={() => {
+                              setChatInput(a.label || "");
+                            }}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-gray-200 text-gray-700 text-xs font-medium rounded-full hover:bg-gray-50 transition-colors"
+                          >
+                            {a.label || "送信"}
+                          </button>
+                        )
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* 入力欄 */}
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={chatInput}
+              onChange={(e) => setChatInput(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && sendTestChat()}
+              placeholder="メッセージを入力（例: 予約できますか？）"
+              disabled={chatSending}
+              className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-300 disabled:bg-gray-50"
+            />
+            <button
+              type="button"
+              disabled={chatSending || !chatInput.trim()}
+              onClick={sendTestChat}
+              className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 text-white text-sm font-medium rounded-lg transition-colors flex items-center gap-1.5"
+            >
+              {chatSending ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+              送信
+            </button>
+          </div>
+          {chatMessages.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setChatMessages([])}
+              className="mt-2 text-xs text-gray-400 hover:text-gray-600 transition-colors"
+            >
+              履歴をクリア
+            </button>
+          )}
+        </SectionCard>
+
+        {/* ── 7. フォローアップ履歴 ────────────────────────────────── */}
         <SectionCard
           title="フォローアップ履歴"
           icon={<Clock className="w-4 h-4 text-violet-500" />}

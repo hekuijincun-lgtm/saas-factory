@@ -4,13 +4,13 @@ import { getRequestContext } from "@cloudflare/next-on-pages";
 export const runtime = "edge";
 
 // ─── version / stamps ────────────────────────────────────────────────────────
-// V10: ACK削除・予約intent → テンプレカード reply・AI intent → push のみ
+// V11: AI push に quickReply 追加（suggestedActions → LINE quickReply 変換）
 //   normal  → dedup
 //             → booking: buttons template を replyLine で即返信（AI不使用）
-//             → ai:     waitUntil(AI+push) → 即時 200 返却
+//             → ai:     waitUntil(AI+push+quickReply) → 即時 200 返却
 //   debug=1 → 実送信ゼロ・{ intent, bookingUrl, replyPlanned, pushPlanned } 返却
-//   debug=2 → push のみ同期実送信して pushStatus を返す（テスト用）
-const STAMP = "LINE_WEBHOOK_V10_20260227_NOACK";
+//   debug=2 → push のみ同期実送信して pushStatus + quickReply を返す（テスト用）
+const STAMP = "LINE_WEBHOOK_V11_20260308_QUICKREPLY";
 const where  = "api/line/webhook";
 
 const FALLBACK_TEXT = "少し時間をおいて再度お試しください。";
@@ -221,6 +221,34 @@ function buildBookingTemplateMessage(bookingUrl: string): object {
       ],
     },
   };
+}
+
+// ─── suggestedActions → LINE quickReply 変換 ─────────────────────────────────
+// LINE quickReply 制約: 最大13アイテム、label最大20文字
+// action.type="open_booking_form" + url → uri action（外部リンク）
+// action.url なし → message action（テキスト再送信）
+function buildQuickReplyFromActions(
+  actions: { type?: string; label?: string; url?: string }[]
+): { items: object[] } | undefined {
+  if (!Array.isArray(actions) || actions.length === 0) return undefined;
+  const items: object[] = [];
+  for (const a of actions.slice(0, 13)) {
+    const label = String(a.label ?? "").slice(0, 20) || "詳細を見る";
+    if (a.url) {
+      // URL付き → uri action（予約フォームへ遷移）
+      items.push({
+        type: "action",
+        action: { type: "uri", label, uri: a.url },
+      });
+    } else {
+      // URLなし → message action（ラベルテキストを再送信）
+      items.push({
+        type: "action",
+        action: { type: "message", label, text: label },
+      });
+    }
+  }
+  return items.length > 0 ? { items } : undefined;
 }
 
 // ─── tenant config resolution ─────────────────────────────────────────────────
@@ -587,7 +615,8 @@ export async function POST(req: Request) {
   if (debugMode === "2") {
     const ai       = await runAiChat(tenantId, textIn, aiIp);
     const answer   = ai.ok ? ai.answer : FALLBACK_TEXT;
-    const messages = [{ type: "text", text: answer }];
+    const quickReply = ai.ok ? buildQuickReplyFromActions(ai.suggestedActions) : undefined;
+    const messages = [{ type: "text", text: answer, ...(quickReply ? { quickReply } : {}) }];
 
     let pushRep: { ok: boolean; status: number; bodyText: string } | null = null;
     if (lineUserId) {
@@ -600,6 +629,8 @@ export async function POST(req: Request) {
       intent: isBookingIntent ? "booking" : "ai",
       hasUserId: !!lineUserId,
       finalText: answer,
+      suggestedActions: ai.suggestedActions ?? [],
+      quickReply: quickReply ?? null,
       pushStatus:      pushRep?.status      ?? null,
       pushOk:          pushRep?.ok          ?? null,
       pushBodySnippet: pushRep?.bodyText?.slice(0, 500) ?? null,
@@ -679,7 +710,8 @@ export async function POST(req: Request) {
       }
 
       const answer   = ai.ok ? ai.answer : FALLBACK_TEXT;
-      const messages = [{ type: "text" as const, text: answer }];
+      const quickReply = ai.ok ? buildQuickReplyFromActions(ai.suggestedActions) : undefined;
+      const messages = [{ type: "text" as const, text: answer, ...(quickReply ? { quickReply } : {}) }];
 
       if (lineUserId) {
         const pushRep = await pushLine(cfg.channelAccessToken, lineUserId, messages)
