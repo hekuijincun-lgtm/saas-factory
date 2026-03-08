@@ -190,7 +190,15 @@ export async function GET(req: Request) {
   // 14-day expiry (same as magic link session lifetime).
   const SESSION_MAX_AGE = 14 * 24 * 60 * 60; // 1209600 seconds
 
-  const res = NextResponse.redirect(new URL(returnTo, url.origin));
+  // Ensure tenantId is present in the redirect URL so the admin UI lands
+  // on the correct tenant instead of falling back to "default".
+  let finalRedirect = returnTo;
+  if (tenantId && tenantId !== "default" && !returnTo.includes("tenantId=")) {
+    const sep = returnTo.includes("?") ? "&" : "?";
+    finalRedirect = `${returnTo}${sep}tenantId=${encodeURIComponent(tenantId)}`;
+  }
+
+  const res = NextResponse.redirect(new URL(finalRedirect, url.origin));
   res.headers.append(
     "Set-Cookie",
     `line_session=${sessionToken}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${SESSION_MAX_AGE}`

@@ -282,8 +282,17 @@ export async function GET(req: Request) {
       );
     }
 
+    // Ensure tenantId is present in the redirect URL so the admin UI lands
+    // on the correct tenant instead of falling back to "default".
+    const effectiveTenantId = signupTenantId ?? tenantId;
+    let finalRedirect = returnTo;
+    if (effectiveTenantId && effectiveTenantId !== "default" && !returnTo.includes("tenantId=")) {
+      const sep = returnTo.includes("?") ? "&" : "?";
+      finalRedirect = `${returnTo}${sep}tenantId=${encodeURIComponent(effectiveTenantId)}`;
+    }
+
     // Success: set session cookies and redirect
-    const res = NextResponse.redirect(new URL(returnTo, url.origin));
+    const res = NextResponse.redirect(new URL(finalRedirect, url.origin));
     res.headers.append(
       "Set-Cookie",
       `line_session=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=86400`

@@ -101,8 +101,10 @@ export async function middleware(req: NextRequest) {
         const valid = await verifySessionHasUserId(sessionToken, secret);
         if (!valid) {
           // Invalid / expired session → redirect to login
+          // Preserve full path + query (especially tenantId) in returnTo
+          const fullPath = pathname + (req.nextUrl.search || "");
           const target = new URL(
-            `/login?reason=session_expired&returnTo=${encodeURIComponent(pathname)}`,
+            `/login?reason=session_expired&returnTo=${encodeURIComponent(fullPath)}`,
             req.nextUrl.origin
           );
           return NextResponse.redirect(target);
@@ -110,8 +112,10 @@ export async function middleware(req: NextRequest) {
       }
     } else {
       // No session → redirect to login
+      // Preserve full path + query (especially tenantId) in returnTo
+      const fullPath = pathname + (req.nextUrl.search || "");
       const target = new URL(
-        `/login?reason=not_logged_in&returnTo=${encodeURIComponent(pathname)}`,
+        `/login?reason=not_logged_in&returnTo=${encodeURIComponent(fullPath)}`,
         req.nextUrl.origin
       );
       return NextResponse.redirect(target);
