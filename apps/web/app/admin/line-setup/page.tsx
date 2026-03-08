@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { saveAdminSettings } from "../../lib/adminApi";
 import { useAdminTenantId } from "@/src/lib/useAdminTenantId";
 import { clearAdminSettingsCache } from "../_lib/useAdminSettings";
@@ -31,91 +31,11 @@ function BookingLikeShell({
   );
 }
 
-// ─── Field rows ───────────────────────────────────────────────────────────────
-function maskValue(v: string, keep = 4) {
-  if (!v) return "";
-  if (v.length <= keep * 2) return "•".repeat(Math.max(8, v.length));
-  return v.slice(0, keep) + "•".repeat(Math.max(8, v.length - keep * 2)) + v.slice(-keep);
-}
-
-function FieldRow({
-  label,
-  value,
-  placeholder,
-  onChange,
-  mono = false,
-  secret = false,
-  readOnly = false,
-}: {
-  label: string;
-  value: string;
-  placeholder?: string;
-  onChange: (v: string) => void;
-  mono?: boolean;
-  secret?: boolean;
-  readOnly?: boolean;
-}) {
-  const [reveal, setReveal] = React.useState(false);
-  const shown = secret && !reveal ? maskValue(value) : value;
-
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(value ?? "");
-    } catch {
-      const ta = document.createElement("textarea");
-      ta.value = value ?? "";
-      document.body.appendChild(ta);
-      ta.select();
-      document.execCommand("copy");
-      document.body.removeChild(ta);
-    }
-  }
-
-  return (
-    <div className="grid gap-2">
-      <div className="flex items-center justify-between">
-        <div className="text-sm font-medium text-slate-700">{label}</div>
-        <div className="flex items-center gap-2">
-          {secret && (
-            <button
-              type="button"
-              onClick={() => setReveal((x) => !x)}
-              className="rounded-lg border px-2 py-1 text-xs text-slate-600 hover:bg-slate-50"
-            >
-              {reveal ? "🙈 Hide" : "👁️ Show"}
-            </button>
-          )}
-          <button
-            type="button"
-            onClick={copy}
-            className="rounded-lg border px-2 py-1 text-xs text-slate-600 hover:bg-slate-50"
-          >
-            📋 Copy
-          </button>
-        </div>
-      </div>
-      <input
-        value={shown}
-        placeholder={placeholder}
-        readOnly={readOnly}
-        onChange={(e) => !readOnly && onChange(e.target.value)}
-        className={[
-          "w-full rounded-xl border bg-white px-3 py-2",
-          readOnly ? "bg-slate-50 text-slate-500 cursor-default" : "focus:outline-none focus:ring-2 focus:ring-slate-300",
-          mono ? "font-mono text-[13px]" : "",
-          secret && !reveal ? "tracking-wider text-slate-700" : "",
-        ].join(" ")}
-      />
-    </div>
-  );
-}
-
 // ─── Credentials card ─────────────────────────────────────────────────────────
 type Creds = {
   channelId: string;
   channelSecret: string;
   channelAccessToken: string;
-  bookingUrl: string;
 };
 
 function CredentialsCard({
@@ -145,6 +65,23 @@ function CredentialsCard({
     ? "bg-emerald-50 text-emerald-700 border-emerald-200"
     : "bg-amber-50 text-amber-700 border-amber-200";
 
+  const [copied, setCopied] = React.useState(false);
+
+  async function copyWebhookUrl() {
+    try {
+      await navigator.clipboard.writeText(webhookUrl);
+    } catch {
+      const ta = document.createElement("textarea");
+      ta.value = webhookUrl;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+    }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+
   return (
     <div className="rounded-2xl border bg-white shadow-sm">
       {/* header */}
@@ -154,8 +91,8 @@ function CredentialsCard({
             <span className="text-sm font-bold">LI</span>
           </div>
           <div>
-            <div className="text-base font-semibold text-slate-900">Credentials</div>
-            <div className="text-sm text-slate-500">Messaging API の接続情報</div>
+            <div className="text-base font-semibold text-slate-900">LINE Messaging API 設定</div>
+            <div className="text-sm text-slate-500">LINE Developers の情報を入力してください</div>
           </div>
         </div>
         <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${statusCls}`}>
@@ -164,57 +101,73 @@ function CredentialsCard({
       </div>
 
       <div className="grid gap-4 px-5 py-5">
-        {/* Webhook URL — read-only, for pasting into LINE Developers */}
-        <FieldRow
-          label="Webhook URL（LINE Developers に貼り付け）"
-          value={webhookUrl}
-          placeholder="読み込み中..."
-          readOnly
-          mono
-          onChange={() => {}}
-        />
+        {/* Webhook URL — tenant-specific, read-only, prominent */}
+        <div className="rounded-xl border-2 border-indigo-200 bg-indigo-50/50 px-4 py-3">
+          <div className="flex items-center justify-between mb-1.5">
+            <div className="text-sm font-semibold text-indigo-900">
+              Webhook URL（LINE Developers に貼り付け）
+            </div>
+            <button
+              type="button"
+              onClick={copyWebhookUrl}
+              className={[
+                "rounded-lg px-3 py-1 text-xs font-semibold transition",
+                copied
+                  ? "bg-emerald-100 text-emerald-700 border border-emerald-300"
+                  : "bg-indigo-600 text-white hover:bg-indigo-700",
+              ].join(" ")}
+            >
+              {copied ? "Copied!" : "Copy"}
+            </button>
+          </div>
+          <div className="font-mono text-[13px] text-indigo-800 break-all select-all bg-white rounded-lg border px-3 py-2">
+            {webhookUrl || "読み込み中..."}
+          </div>
+        </div>
 
         <hr className="border-slate-100" />
 
-        <FieldRow
-          label="Channel ID（数字）"
-          value={creds.channelId ?? ""}
-          placeholder="例: 2008463345"
-          mono
-          onChange={(v) => setCreds((p) => ({ ...p, channelId: v }))}
-        />
-        <FieldRow
-          label="Channel Secret"
-          value={creds.channelSecret ?? ""}
-          placeholder="LINE Developers の Channel Secret"
-          mono
-          secret
-          onChange={(v) => setCreds((p) => ({ ...p, channelSecret: v }))}
-        />
-        <FieldRow
-          label="Channel Access Token"
-          value={creds.channelAccessToken ?? ""}
-          placeholder="Messaging API のアクセストークン"
-          mono
-          secret
-          onChange={(v) => setCreds((p) => ({ ...p, channelAccessToken: v }))}
-        />
+        {/* Channel ID */}
+        <div className="grid gap-1.5">
+          <div className="text-sm font-medium text-slate-700">Channel ID（数字）</div>
+          <input
+            value={creds.channelId ?? ""}
+            placeholder="例: 2008463345"
+            onChange={(e) => setCreds((p) => ({ ...p, channelId: e.target.value }))}
+            className="w-full rounded-xl border bg-white px-3 py-2 font-mono text-[13px] focus:outline-none focus:ring-2 focus:ring-slate-300"
+          />
+        </div>
 
-        <hr className="border-slate-100" />
+        {/* Channel Secret */}
+        <div className="grid gap-1.5">
+          <div className="text-sm font-medium text-slate-700">Channel Secret</div>
+          <input
+            type="password"
+            value={creds.channelSecret ?? ""}
+            placeholder="LINE Developers の Channel Secret"
+            onChange={(e) => setCreds((p) => ({ ...p, channelSecret: e.target.value }))}
+            autoComplete="off"
+            className="w-full rounded-xl border bg-white px-3 py-2 font-mono text-[13px] focus:outline-none focus:ring-2 focus:ring-slate-300"
+          />
+        </div>
 
-        {/* Booking URL — optional override */}
-        <FieldRow
-          label="予約ページURL（任意・未入力で自動）"
-          value={creds.bookingUrl ?? ""}
-          placeholder="例: https://example.com/booking?tenantId=default"
-          mono
-          onChange={(v) => setCreds((p) => ({ ...p, bookingUrl: v }))}
-        />
+        {/* Channel Access Token */}
+        <div className="grid gap-1.5">
+          <div className="text-sm font-medium text-slate-700">Channel Access Token</div>
+          <input
+            type="password"
+            value={creds.channelAccessToken ?? ""}
+            placeholder="Messaging API のアクセストークン"
+            onChange={(e) => setCreds((p) => ({ ...p, channelAccessToken: e.target.value }))}
+            autoComplete="off"
+            className="w-full rounded-xl border bg-white px-3 py-2 font-mono text-[13px] focus:outline-none focus:ring-2 focus:ring-slate-300"
+          />
+        </div>
 
         {/* actions */}
         <div className="flex flex-col gap-2 pt-1 sm:flex-row sm:items-center sm:justify-between">
           <div className="text-xs text-slate-500">
-            {ready ? "入力OK ✅ 保存して反映しよ" : "不足があります（ID/Secret/Token）"}
+            {ready ? "入力OK ✅ 保存して反映しよう" : "不足があります（ID/Secret/Token）"}
           </div>
           <button
             type="button"
@@ -390,17 +343,7 @@ function MappingDiagnosticCard({
         <hr className="border-slate-100" />
         <div className="text-xs text-slate-500 space-y-1">
           <div className="font-semibold text-slate-600">LINE Developers Console で確認:</div>
-          <div>1. Webhook URL を以下に設定:</div>
-          <div className="flex items-center gap-2">
-            <code className="rounded bg-slate-100 px-2 py-0.5 text-[11px] font-mono break-all">{webhookUrl}</code>
-            <button
-              type="button"
-              onClick={() => { navigator.clipboard.writeText(webhookUrl).catch(() => {}); }}
-              className="rounded border px-1.5 py-0.5 text-[10px] text-slate-500 hover:bg-slate-50 whitespace-nowrap"
-            >
-              Copy
-            </button>
-          </div>
+          <div>1. Webhook URL を上記の URL に設定</div>
           <div>2. 「Use webhook」を <strong>ON</strong> にする</div>
           <div>3. 「応答メッセージ」は OFF 推奨（AI応答と競合するため）</div>
         </div>
@@ -412,28 +355,27 @@ function MappingDiagnosticCard({
 // ─── Page ─────────────────────────────────────────────────────────────────────
 export default function LineSetupPage() {
   const router = useRouter();
-  const searchParams = useSearchParams();
   const { tenantId } = useAdminTenantId();
 
-  // Webhook URL to display — includes tenantId so LINE knows which tenant
+  // Webhook URL — tenant-specific
   const [webhookUrl, setWebhookUrl] = React.useState("");
   React.useEffect(() => {
-    setWebhookUrl(
-      `${window.location.origin}/api/line/webhook`
-    );
+    if (tenantId) {
+      setWebhookUrl(
+        `${window.location.origin}/api/line/webhook?tenantId=${encodeURIComponent(tenantId)}`
+      );
+    }
   }, [tenantId]);
 
   const [creds, setCreds] = React.useState<Creds>({
     channelId: "",
     channelSecret: "",
     channelAccessToken: "",
-    bookingUrl: "",
   });
   const [initialCreds, setInitialCreds] = React.useState<Creds>({
     channelId: "",
     channelSecret: "",
     channelAccessToken: "",
-    bookingUrl: "",
   });
 
   const [saving, setSaving] = React.useState(false);
@@ -510,21 +452,20 @@ export default function LineSetupPage() {
   const changed =
     creds.channelId !== initialCreds.channelId ||
     creds.channelSecret !== initialCreds.channelSecret ||
-    creds.channelAccessToken !== initialCreds.channelAccessToken ||
-    creds.bookingUrl !== initialCreds.bookingUrl;
+    creds.channelAccessToken !== initialCreds.channelAccessToken;
 
   async function onSave() {
     setSaving(true);
     setMessage("");
     try {
-      const payload: Creds = {
+      const payload = {
         channelId:          (creds.channelId ?? "").trim(),
         channelSecret:      (creds.channelSecret ?? "").trim(),
         channelAccessToken: (creds.channelAccessToken ?? "").trim(),
-        bookingUrl:         (creds.bookingUrl ?? "").trim(),
       };
 
       // Step 1: save via general settings (saves channelId + onboarding flag)
+      // bookingUrl is intentionally omitted — deep-merge preserves existing value
       await saveAdminSettings(
         {
           integrations: {
@@ -533,7 +474,6 @@ export default function LineSetupPage() {
               channelId:          payload.channelId,
               channelSecret:      payload.channelSecret,
               channelAccessToken: payload.channelAccessToken,
-              ...(payload.bookingUrl ? { bookingUrl: payload.bookingUrl } : {}),
             },
           },
           onboarding: { lineConnected: true },
@@ -552,7 +492,6 @@ export default function LineSetupPage() {
             body: JSON.stringify({
               channelAccessToken: payload.channelAccessToken,
               channelSecret:      payload.channelSecret,
-              webhookUrl:         payload.bookingUrl || undefined,
             }),
           }
         );
@@ -585,7 +524,7 @@ export default function LineSetupPage() {
   }
 
   return (
-    <BookingLikeShell label="ADMIN" title="LINE 連携設定">
+    <BookingLikeShell label="SETUP" title="LINE Messaging API 設定">
       <CredentialsCard
         creds={creds}
         setCreds={setCreds}

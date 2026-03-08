@@ -224,6 +224,11 @@ export default function AdminShell({
   // hydration mismatch 完全防止
   if (!mounted) return null;
 
+  // /admin/line-setup は専用セットアップ画面 — サイドバーなしで children をそのまま返す
+  if (pathname === "/admin/line-setup") {
+    return <>{children}</>;
+  }
+
   return (
     <div data-admin-shell className="flex h-screen overflow-hidden bg-gray-50">
       {/* サイドバー */}
