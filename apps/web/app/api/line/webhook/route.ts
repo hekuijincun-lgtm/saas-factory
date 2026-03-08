@@ -148,7 +148,7 @@ async function runAiChat(
   tenantId: string,
   message: string,
   ip: string
-): Promise<{ ok: boolean; answer: string; suggestedActions: any[] }> {
+): Promise<{ ok: boolean; answer: string; suggestedActions: any[]; disabled?: boolean }> {
   const EMPTY = { ok: false, answer: "", suggestedActions: [] };
 
   const apiBase = (
@@ -176,6 +176,10 @@ async function runAiChat(
         answer: String(data.answer),
         suggestedActions: Array.isArray(data.suggestedActions) ? data.suggestedActions : [],
       };
+    }
+    // AI disabled by admin → signal to skip push
+    if (data?.error === "ai_disabled") {
+      return { ...EMPTY, disabled: true };
     }
     return EMPTY;
   } catch {
@@ -667,6 +671,12 @@ export async function POST(req: Request) {
       const aiStart = Date.now();
       const ai      = await runAiChat(tenantId, textIn, aiIp);
       const aiMs    = Date.now() - aiStart;
+
+      // AI disabled by admin → do not push any message
+      if (ai.disabled) {
+        console.log(`[LINE_AI_SKIP] tenant=${tenantId} reason=ai_disabled`);
+        return;
+      }
 
       const answer   = ai.ok ? ai.answer : FALLBACK_TEXT;
       const messages = [{ type: "text" as const, text: answer }];

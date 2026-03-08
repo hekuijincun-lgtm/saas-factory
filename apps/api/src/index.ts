@@ -5092,6 +5092,11 @@ app.post("/ai/chat", async (c) => {
       if (u && typeof u === "object") aiUpsell = { ...AI_DEFAULT_UPSELL, ...u };
     }
 
+    // 4.4 AI 有効判定（管理画面の「AI接客を有効化」トグルを反映）
+    if (aiSettings.enabled === false) {
+      return c.json({ ok: false, stamp: STAMP, tenantId, error: "ai_disabled", detail: "AI is disabled for this tenant" });
+    }
+
     // 4.5 レート制限（KV, 60 req / 10 min per tenantId+IP）
     const ip = c.req.header("cf-connecting-ip") || c.req.header("x-real-ip") || "unknown";
     const rlKey = `ai:rl:${tenantId}:${ip}`;
