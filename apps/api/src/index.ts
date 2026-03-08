@@ -5045,10 +5045,71 @@ app.put("/admin/ai/retention", async (c) => {
   }
 });
 
-// POST /ai/chat — OpenAI Responses API (AI_CHAT_V3)
-// V3変更点: max_output_tokens 1600 (推論モデル対応), incomplete/in_progress retrieve polling
+// === Intent Classification & suggestedActions Builder (INTENT_V1) ===
+type AiIntent = "booking" | "hours" | "menu" | "price" | "location" | "first_visit" | "cancel_policy" | "generic";
+
+function classifyIntent(message: string): AiIntent {
+  const m = message.toLowerCase();
+  // Order matters: more specific intents first
+  if (/予約|空き|ご予約|booking|reserve|フォーム|予約したい|今日.*行ける|明日.*行ける/.test(m)) return "booking";
+  if (/キャンセル|取り消し|cancel/.test(m)) return "cancel_policy";
+  if (/初めて|初回|はじめて|first|ビギナー|未経験/.test(m)) return "first_visit";
+  if (/料金|値段|価格|いくら|price|費用|金額/.test(m)) return "price";
+  if (/メニュー|施術|コース|menu|プラン/.test(m)) return "menu";
+  if (/営業時間|何時|開店|閉店|営業日|hours|オープン|クローズ|定休日|休み|お休み/.test(m)) return "hours";
+  if (/場所|住所|どこ|アクセス|行き方|最寄り|location|address|地図/.test(m)) return "location";
+  return "generic";
+}
+
+function buildSuggestedActions(intent: AiIntent, bookingUrl: string): { type: string; label?: string; url?: string }[] {
+  if (!bookingUrl) return [];
+  switch (intent) {
+    case "booking":
+      return [{ type: "open_booking_form", label: "予約フォームを開く", url: bookingUrl }];
+    case "hours":
+    case "location":
+      return [{ type: "open_booking_form", label: "予約する", url: bookingUrl }];
+    case "menu":
+    case "price":
+      return [{ type: "open_booking_form", label: "メニューを選んで予約", url: bookingUrl }];
+    case "first_visit":
+      return [{ type: "open_booking_form", label: "初回予約はこちら", url: bookingUrl }];
+    case "cancel_policy":
+      return [{ type: "open_booking_form", label: "新しい予約を入れる", url: bookingUrl }];
+    case "generic":
+      return [];
+  }
+}
+
+function buildCtaText(intent: AiIntent, bookingUrl: string): string {
+  if (!bookingUrl) return "";
+  switch (intent) {
+    case "booking":
+      return `\n\nご予約はこちらからどうぞ：${bookingUrl}`;
+    case "menu":
+    case "price":
+      return `\n\n気になるメニューがあれば、こちらからご予約いただけます：${bookingUrl}`;
+    case "first_visit":
+      return `\n\n初めての方も安心してご予約いただけます：${bookingUrl}`;
+    case "hours":
+    case "location":
+      return `\n\nご来店お待ちしております。ご予約はこちら：${bookingUrl}`;
+    case "cancel_policy":
+      return `\n\n新しいご予約はこちらからどうぞ：${bookingUrl}`;
+    case "generic":
+      return "";
+  }
+}
+
+function resolveBookingUrl(storeSettings: any, env: any, tenantId: string): string {
+  return storeSettings?.integrations?.line?.bookingUrl
+    || (env?.WEB_BASE ? `${env.WEB_BASE}/booking?tenantId=${tenantId}` : "");
+}
+
+// POST /ai/chat — OpenAI Responses API (AI_CHAT_V4)
+// V4変更点: intent分類 + intent別suggestedActions + CTA自然挿入
 app.post("/ai/chat", async (c) => {
-  const STAMP = "AI_CHAT_V3";
+  const STAMP = "AI_CHAT_V4";
   const env = c.env as any;
   let tenantId = "default";
   const isDebug = c.req.query("debug") === "1";
@@ -5127,12 +5188,14 @@ app.post("/ai/chat", async (c) => {
       return q && (m === q || m.includes(q) || q.includes(m));
     });
     if (faqMatch) {
-      const faqAnswer = String(faqMatch.answer ?? "").trim();
+      let faqAnswer = String(faqMatch.answer ?? "").trim();
       if (faqAnswer) {
-        const bkw = ["予約", "ご予約", "booking", "reserve", "フォーム", "予約フォーム"];
-        const needsBooking = bkw.some((k) => faqAnswer.includes(k) || message.includes(k));
-        const suggestedActions = needsBooking ? [{ type: "open_booking_form", url: "/booking" }] : [];
-        return c.json({ ok: true, stamp: STAMP, tenantId, answer: faqAnswer, suggestedActions, source: "faq" });
+        const faqIntent = classifyIntent(message);
+        const faqBookingUrl = resolveBookingUrl(storeSettings, env, tenantId);
+        const suggestedActions = buildSuggestedActions(faqIntent, faqBookingUrl);
+        const cta = buildCtaText(faqIntent, faqBookingUrl);
+        if (cta) faqAnswer = faqAnswer + cta;
+        return c.json({ ok: true, stamp: STAMP, tenantId, answer: faqAnswer, suggestedActions, intent: faqIntent, source: "faq" });
       }
     }
 
@@ -5201,7 +5264,7 @@ app.post("/ai/chat", async (c) => {
       "- 店舗情報セクションに記載された情報はそのまま案内してください。",
       "- 店舗情報セクションに無い情報は「お問い合わせください」と案内してください。",
       "- 料金は店舗情報のメニュー一覧に記載がある場合のみ案内し、空き枠は断定しません。",
-      "- 予約に関する質問には予約ページURLを案内してください。",
+      "- 予約に関する質問には「予約フォームからご予約ください」と案内してください（URLはシステムが自動追記するため回答文に含めないでください）。",
       "- 医療・法律・政治・宗教などのアドバイスはしません。",
       "- booking created や reservation confirmed などの行動を起こしたとは絶対に言いません。",
       faqBlock,
@@ -5322,10 +5385,12 @@ app.post("/ai/chat", async (c) => {
       });
     }
 
-    // 10. suggestedActions（予約関連キーワードで open_booking_form を提案）
-    const bookingKw = ["予約", "ご予約", "booking", "reserve", "フォーム", "予約フォーム"];
-    const needsBooking = bookingKw.some((k) => answer.includes(k) || message.includes(k));
-    const suggestedActions = needsBooking ? [{ type: "open_booking_form", url: "/booking" }] : [];
+    // 10. Intent分類 + suggestedActions + CTA挿入
+    const intent = classifyIntent(message);
+    const bookingUrl = resolveBookingUrl(storeSettings, env, tenantId);
+    const suggestedActions = buildSuggestedActions(intent, bookingUrl);
+    const cta = buildCtaText(intent, bookingUrl);
+    if (cta) answer = answer + cta;
 
     // 11. Upsell injection: キーワードに一致する upsell メッセージを末尾追記
     if (aiUpsell.enabled && Array.isArray(aiUpsell.items) && aiUpsell.items.length > 0) {
@@ -5340,7 +5405,7 @@ app.post("/ai/chat", async (c) => {
       }
     }
 
-    return c.json({ ok: true, stamp: STAMP, tenantId, answer, suggestedActions });
+    return c.json({ ok: true, stamp: STAMP, tenantId, answer, suggestedActions, intent });
 
   } catch (e: any) {
     return c.json({ ok: false, stamp: STAMP, tenantId, error: "exception", detail: String(e?.message ?? e) });
