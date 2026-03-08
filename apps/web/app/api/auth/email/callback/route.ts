@@ -129,25 +129,10 @@ export async function GET(req: Request) {
     bootstrapError?: string;
   };
 
-  // ── unauthorized ──────────────────────────────────────────────────────────
-  // DEV_BYPASS_ADMIN_RBAC: temporarily skip unauthorized redirect during
-  // email-login development phase. Set to false to re-enable RBAC enforcement.
-  const DEV_BYPASS_ADMIN_RBAC = process.env.DEV_BYPASS_ADMIN_RBAC === '1';
-
-  if (!allowed && !DEV_BYPASS_ADMIN_RBAC) {
-    if (isDebug) {
-      return new Response(
-        JSON.stringify({ ok: false, step: "allowed_check", identityKey, membersFound, bootstrapped, bootstrapError }),
-        { status: 200, headers: { "content-type": "application/json" } }
-      );
-    }
-    if (bootstrapError) {
-      return NextResponse.redirect(new URL(`/login?reason=invalid_bootstrap_key`, url.origin));
-    }
-    return NextResponse.redirect(
-      new URL(`/admin/unauthorized?userId=${encodeURIComponent(identityKey)}`, url.origin)
-    );
-  }
+  // ── admin guard disabled ─────────────────────────────────────────────────
+  // RBAC is enforced at Workers API layer (requireRole). Callback allows all
+  // authenticated users through to the admin UI; write operations are still
+  // gated server-side.
 
   // ── sign session (same format as LINE callback) ───────────────────────────
   const secret = (() => {

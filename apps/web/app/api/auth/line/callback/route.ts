@@ -193,25 +193,11 @@ export async function GET(req: Request) {
     ctx.displayName = displayName;
     ctx.allowed = allowed;
 
-    // ── STEP: allowed_check ────────────────────────────────────────────────
-    // signup=1 flows always pass — new users don't exist in the allow list yet
-    // DEV_BYPASS_ADMIN_RBAC: temporarily skip unauthorized redirect during
-    // email-login development phase. Set to false to re-enable RBAC enforcement.
-    const DEV_BYPASS_ADMIN_RBAC = process.env.DEV_BYPASS_ADMIN_RBAC === '1';
-
+    // ── admin guard disabled ──────────────────────────────────────────────
+    // RBAC is enforced at Workers API layer (requireRole). Callback allows all
+    // authenticated users through to the admin UI; write operations are still
+    // gated server-side.
     step = "allowed_check";
-    if (!allowed && !isSignup && !DEV_BYPASS_ADMIN_RBAC) {
-      if (isDebug) return applyDiag(
-        jsonError("userId not in allowedAdminLineUserIds and isSignup=false"),
-        "ng:unauthorized", step
-      );
-      return applyDiag(
-        NextResponse.redirect(
-          new URL(`/admin/unauthorized?userId=${encodeURIComponent(userId)}`, url.origin)
-        ),
-        "ng:unauthorized", step
-      );
-    }
 
     // ── STEP: signup_tenant ────────────────────────────────────────────────
     // Derive a per-user tenantId from LINE userId and inject into returnTo

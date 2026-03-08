@@ -180,9 +180,11 @@ function getTenantId(c: any, body?: any): string {
 function checkTenantMismatch(c: any): Response | null {
   const enforce = (c.env as any)?.ENFORCE_TENANT_MISMATCH === '1';
   if (!enforce) return null;
+  const route = c.req.method + ' ' + c.req.path;
   const sessionTid = c.req.header('x-session-tenant-id')?.trim();
   const queryTid = c.req.query('tenantId')?.trim();
   if (sessionTid && queryTid && sessionTid !== queryTid) {
+    console.warn(`[tenant-mismatch:deny] route=${route} session=${sessionTid} query=${queryTid}`);
     return c.json({ ok: false, error: 'forbidden_tenant_mismatch', sessionTenant: sessionTid, queryTenant: queryTid }, 403);
   }
   return null;
@@ -283,6 +285,7 @@ app.get("/__build", (c) => c.json({ ok: true, stamp: "API_BUILD_V1" }));
 // Diagnostic: check members status for a tenant (or multiple via ?tenantIds=a,b,c).
 // Returns member counts, roles, and ENFORCE_RBAC status for pre-rollout verification.
 app.get('/admin/rbac/audit', async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
   const env = c.env as any;
   const kv = env.SAAS_FACTORY;
   if (!kv) return c.json({ ok: false, error: 'kv_missing' }, 500);
@@ -3250,6 +3253,7 @@ interface AdminMember {
 interface AdminMembersStore { version: 1; members: AdminMember[]; }
 
 app.get('/admin/members', async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
   const tenantId = getTenantId(c, null);
   const kv = (c.env as any).SAAS_FACTORY as KVNamespace;
   const raw = await kv.get(`admin:members:${tenantId}`);
@@ -3827,6 +3831,7 @@ app.post("/auth/line/exchange", async (c) => {
    Protected by /admin/* middleware (ADMIN_TOKEN).
 */
 app.get("/admin/integrations/line/status", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
   const tenantId = getTenantId(c);
   const env = c.env as any;
 
@@ -3887,6 +3892,7 @@ async function verifyLineToken(token: string): Promise<{ status: "ok" | "ng"; us
 
 // ── GET /admin/integrations/line/messaging/status ────────────────────────────
 app.get("/admin/integrations/line/messaging/status", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
   const STAMP = "LINE_MSG_STATUS_V1_20260225";
   const tenantId = getTenantId(c, null);
   try {
@@ -3921,6 +3927,7 @@ app.get("/admin/integrations/line/messaging/status", async (c) => {
 
 // ── POST /admin/integrations/line/messaging/save ────────────────────────────
 app.post("/admin/integrations/line/messaging/save", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
   const rbac = await requireRole(c, 'owner'); if (rbac) return rbac;
   const STAMP = "LINE_MSG_SAVE_V1_20260225";
   const tenantId = getTenantId(c, null);
@@ -3999,6 +4006,7 @@ app.post("/admin/integrations/line/messaging/save", async (c) => {
 
 // ── DELETE /admin/integrations/line/messaging ────────────────────────────────
 app.delete("/admin/integrations/line/messaging", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
   const rbac = await requireRole(c, 'owner'); if (rbac) return rbac;
   const STAMP = "LINE_MSG_DELETE_V1_20260225";
   const tenantId = getTenantId(c, null);
@@ -4048,6 +4056,7 @@ app.delete("/admin/integrations/line/messaging", async (c) => {
 // Re-generates destination-to-tenant + tenant2dest KV mappings from existing LINE settings.
 // Cleans up stale mappings if botUserId changed. Returns 409 if destination already mapped to another tenant.
 app.post("/admin/integrations/line/remap", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
   const rbac = await requireRole(c, 'owner'); if (rbac) return rbac;
   const STAMP = "LINE_REMAP_V1_20260305";
   const tenantId = getTenantId(c, null);
@@ -4106,6 +4115,7 @@ app.post("/admin/integrations/line/remap", async (c) => {
 // ── GET /admin/integrations/line/mapping-status ──────────────────────────────
 // Returns current destination mapping status for a tenant (for diagnostic UI).
 app.get("/admin/integrations/line/mapping-status", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
   const STAMP = "LINE_MAPPING_STATUS_V1_20260305";
   const tenantId = getTenantId(c, null);
   try {
@@ -4146,6 +4156,7 @@ app.get("/admin/integrations/line/mapping-status", async (c) => {
 // KV key: line:last_webhook:{tenantId}  TTL: 7 days
 // NOTE: This is admin-protected. Pages webhook uses /internal/line/last-webhook instead.
 app.post("/admin/integrations/line/last-webhook", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
   const rbac = await requireRole(c, 'admin'); if (rbac) return rbac;
   const tenantId = getTenantId(c, null);
   try {
@@ -4209,6 +4220,7 @@ app.post("/internal/line/last-user", async (c) => {
 // ── GET /admin/integrations/line/last-webhook ───────────────────────────────
 // Returns the most recent webhook receipt log for diagnostic UI.
 app.get("/admin/integrations/line/last-webhook", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
   const tenantId = getTenantId(c, null);
   try {
     const kv = (c.env as any).SAAS_FACTORY;
@@ -4239,6 +4251,7 @@ app.get("/line/destination-to-tenant", async (c) => {
 // KV key: line:lastUser:${tenantId}  TTL: 24 h
 // stamp: LINE_LAST_USER_V1_20260225
 app.post("/admin/integrations/line/last-user", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
   const rbac = await requireRole(c, 'admin'); if (rbac) return rbac;
   const STAMP = "LINE_LAST_USER_POST_V1_20260225";
   const tenantId = getTenantId(c, null);
@@ -4262,6 +4275,7 @@ app.post("/admin/integrations/line/last-user", async (c) => {
 // ── GET /admin/integrations/line/last-user ───────────────────────────────────
 // Returns the most-recently-saved userId for a tenant (for push notify testing).
 app.get("/admin/integrations/line/last-user", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
   const STAMP = "LINE_LAST_USER_GET_V1_20260225";
   const tenantId = getTenantId(c, null);
   try {
@@ -4379,6 +4393,7 @@ function extractResponseText(resp: any): string {
 
 // GET /admin/ai — combined: settings + policy + retention
 app.get("/admin/ai", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
   const STAMP = "AI_GET_V1";
   const tenantId = getTenantId(c, null);
   try {
@@ -4402,6 +4417,7 @@ app.get("/admin/ai", async (c) => {
 
 // PUT /admin/ai — save settings/policy/retention (partial merge)
 app.put("/admin/ai", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
   const rbac = await requireRole(c, 'admin'); if (rbac) return rbac;
   const STAMP = "AI_PUT_V1";
   const tenantId = getTenantId(c, null);
@@ -4437,6 +4453,7 @@ app.put("/admin/ai", async (c) => {
 
 // GET /admin/ai/faq
 app.get("/admin/ai/faq", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
   const STAMP = "AI_FAQ_GET_V1";
   const tenantId = getTenantId(c, null);
   try {
@@ -4452,6 +4469,7 @@ app.get("/admin/ai/faq", async (c) => {
 
 // POST /admin/ai/faq
 app.post("/admin/ai/faq", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
   const rbac = await requireRole(c, 'admin'); if (rbac) return rbac;
   const STAMP = "AI_FAQ_POST_V1";
   const tenantId = getTenantId(c, null);
@@ -4483,6 +4501,7 @@ app.post("/admin/ai/faq", async (c) => {
 
 // DELETE /admin/ai/faq/:id
 app.delete("/admin/ai/faq/:id", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
   const rbac = await requireRole(c, 'admin'); if (rbac) return rbac;
   const STAMP = "AI_FAQ_DELETE_V1";
   const tenantId = getTenantId(c, null);
@@ -4504,6 +4523,7 @@ app.delete("/admin/ai/faq/:id", async (c) => {
 
 // GET /admin/ai/policy
 app.get("/admin/ai/policy", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
   const STAMP = "AI_POLICY_GET_V1";
   const tenantId = getTenantId(c, null);
   try {
@@ -4518,6 +4538,7 @@ app.get("/admin/ai/policy", async (c) => {
 
 // PUT /admin/ai/policy
 app.put("/admin/ai/policy", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
   const rbac = await requireRole(c, 'admin'); if (rbac) return rbac;
   const STAMP = "AI_POLICY_PUT_V1";
   const tenantId = getTenantId(c, null);
@@ -4542,6 +4563,7 @@ app.put("/admin/ai/policy", async (c) => {
 
 // GET /admin/ai/retention
 app.get("/admin/ai/retention", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
   const STAMP = "AI_RETENTION_GET_V1";
   const tenantId = getTenantId(c, null);
   try {
@@ -4556,6 +4578,7 @@ app.get("/admin/ai/retention", async (c) => {
 
 // PUT /admin/ai/retention
 app.put("/admin/ai/retention", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
   const rbac = await requireRole(c, 'admin'); if (rbac) return rbac;
   const STAMP = "AI_RETENTION_PUT_V1";
   const tenantId = getTenantId(c, null);
@@ -4829,6 +4852,7 @@ app.post("/ai/chat", async (c) => {
 
 // GET /admin/ai/upsell
 app.get("/admin/ai/upsell", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
   const STAMP = "AI_UPSELL_GET_V1";
   const tenantId = getTenantId(c, null);
   try {
@@ -4843,6 +4867,7 @@ app.get("/admin/ai/upsell", async (c) => {
 
 // PUT /admin/ai/upsell
 app.put("/admin/ai/upsell", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
   const rbac = await requireRole(c, 'admin'); if (rbac) return rbac;
   const STAMP = "AI_UPSELL_PUT_V1";
   const tenantId = getTenantId(c, null);
@@ -4863,6 +4888,7 @@ app.put("/admin/ai/upsell", async (c) => {
 
 // GET /admin/ai/followups — last 50 followup rows for a tenant
 app.get("/admin/ai/followups", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
   const STAMP = "AI_FOLLOWUPS_GET_V1";
   const tenantId = getTenantId(c, null);
   try {
