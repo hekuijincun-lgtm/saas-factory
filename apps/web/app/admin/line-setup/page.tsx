@@ -449,7 +449,7 @@ export default function LineSetupPage() {
 
   const fetchLastWebhook = React.useCallback(async () => {
     try {
-      const r = await fetch(`/api/proxy/admin/integrations/line/last-webhook?tenantId=${encodeURIComponent(tenantId)}`);
+      const r = await fetch(`/api/proxy/admin/integrations/line/last-webhook?tenantId=${encodeURIComponent(tenantId)}`, { cache: 'no-store' });
       if (!r.ok) { setLastWebhookStatus("error"); return; }
       const d = await r.json() as any;
       if (d.status === "never" || !d.log) {
@@ -467,7 +467,7 @@ export default function LineSetupPage() {
   // Fetch mapping status on mount and after save/remap
   const fetchMappingStatus = React.useCallback(async () => {
     try {
-      const r = await fetch(`/api/proxy/admin/integrations/line/mapping-status?tenantId=${encodeURIComponent(tenantId)}`);
+      const r = await fetch(`/api/proxy/admin/integrations/line/mapping-status?tenantId=${encodeURIComponent(tenantId)}`, { cache: 'no-store' });
       if (!r.ok) { setMapping({ status: "error", error: `HTTP ${r.status}` }); return; }
       const d = await r.json() as any;
       setMapping({

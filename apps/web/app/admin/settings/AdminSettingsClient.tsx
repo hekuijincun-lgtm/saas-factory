@@ -210,7 +210,7 @@ export default function AdminSettingsClient() {
         order: rpOrder,
         excludeSentWithinDays: String(rpExcludeDays),
       });
-      const res = await fetch(`/api/proxy/admin/repeat-targets?${params.toString()}`);
+      const res = await fetch(`/api/proxy/admin/repeat-targets?${params.toString()}`, { cache: 'no-store' });
       const json = await res.json() as any;
       if (!json.ok) throw new Error(json.error || '対象抽出失敗');
       setRpTargets(json.targets || []);

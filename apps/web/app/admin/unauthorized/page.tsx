@@ -28,14 +28,14 @@ function UnauthorizedContent() {
             管理者権限がありません
           </h1>
           <p className="text-sm text-gray-500 leading-relaxed">
-            このLINEアカウントは管理画面へのアクセスが許可されていません。
+            このアカウントは管理画面へのアクセスが許可されていません。
           </p>
         </div>
 
         {userId && (
           <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 space-y-2 text-left">
             <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">
-              あなたのLINE ユーザーID
+              あなたのユーザーID
             </p>
             <div className="flex items-center gap-2">
               <code className="flex-1 text-sm font-mono text-gray-700 bg-white border border-gray-200 rounded-lg px-3 py-2 break-all">
@@ -56,7 +56,7 @@ function UnauthorizedContent() {
 
         <div className="space-y-2 pt-2">
           <a
-            href="/admin/line-setup"
+            href="/login"
             className="block w-full py-2.5 px-4 border border-gray-200 text-sm text-gray-600 rounded-xl hover:bg-gray-50 transition-colors"
           >
             別のアカウントでログイン

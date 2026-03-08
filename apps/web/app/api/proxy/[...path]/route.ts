@@ -78,12 +78,10 @@ async function proxy(req: Request, ctx: Ctx): Promise<Response> {
   // クライアントからの x-session-tenant-id を必ず strip（偽装防止）
   headers.delete('x-session-tenant-id');
   // セッション tenantId を注入（HMAC 検証済み → Workers が信頼できる）
-  // ただし URL に明示的な tenantId がある場合はセッション値を注入しない
-  // （公開予約画面で別テナントのデータが混入するのを防ぐ）
-  const hasExplicitTenantId = sp.has('tenantId');
-  if (isAdminRoute && !hasExplicitTenantId) {
-    const sessionTenantId = await readSessionTenantId(req);
-    if (sessionTenantId) headers.set('x-session-tenant-id', sessionTenantId);
+  let resolvedSessionTenantId: string | null = null;
+  if (isAdminRoute) {
+    resolvedSessionTenantId = await readSessionTenantId(req);
+    if (resolvedSessionTenantId) headers.set('x-session-tenant-id', resolvedSessionTenantId);
   }
 
   let method = (req.method === "PATCH" ? "PUT" : req.method).toUpperCase();
@@ -131,6 +129,13 @@ async function proxy(req: Request, ctx: Ctx): Promise<Response> {
   out.headers.set("x-proxy-upstream-url", upstream.toString());
   out.headers.set("x-proxy-upstream-method", method);
   if (adminTokenInjected) out.headers.set("x-admin-token-present", "1");
+  // Tenant observability: always show which tenant was resolved from session
+  if (isAdminRoute && resolvedSessionTenantId) {
+    out.headers.set("x-tenant-session", resolvedSessionTenantId);
+  }
+  if (isAdminRoute && sp.has('tenantId')) {
+    out.headers.set("x-tenant-query", sp.get('tenantId')!);
+  }
   if (isDebug) {
     applyDebugHeaders(out.headers, { stamp: makeDebugStamp(), isAdminRoute, tokenConfigured: isTokenConfigured, tokenInjected: adminTokenInjected });
   }

@@ -11,12 +11,25 @@ interface MeResult {
 }
 
 let _promise: Promise<MeResult> | null = null;
+let _resolvedAt = 0;
+const ME_CACHE_TTL_MS = 30_000; // 30 seconds — prevents stale session across tenant switches
+
+/** Invalidate cached /api/auth/me result. Call on logout or tenant switch. */
+export function clearMeCache() {
+  _promise = null;
+  _resolvedAt = 0;
+}
 
 function fetchMe(): Promise<MeResult> {
+  // TTL: if cache is stale, force re-fetch
+  if (_promise && _resolvedAt > 0 && Date.now() - _resolvedAt >= ME_CACHE_TTL_MS) {
+    _promise = null;
+  }
   if (!_promise) {
-    _promise = fetch("/api/auth/me", { credentials: "same-origin" })
+    _promise = fetch("/api/auth/me", { credentials: "same-origin", cache: "no-store" })
       .then((r) => r.json())
       .then((d: any) => {
+        _resolvedAt = Date.now();
         if (d?.ok && d.tenantId && d.tenantId !== "default") {
           return {
             tenantId: d.tenantId,
@@ -29,6 +42,7 @@ function fetchMe(): Promise<MeResult> {
       })
       .catch(() => {
         _promise = null; // allow retry on next call
+        _resolvedAt = 0;
         const tid =
           typeof window !== "undefined"
             ? new URLSearchParams(window.location.search).get("tenantId") ??

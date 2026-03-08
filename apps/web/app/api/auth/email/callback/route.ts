@@ -132,7 +132,7 @@ export async function GET(req: Request) {
   // ── unauthorized ──────────────────────────────────────────────────────────
   // DEV_BYPASS_ADMIN_RBAC: temporarily skip unauthorized redirect during
   // email-login development phase. Set to false to re-enable RBAC enforcement.
-  const DEV_BYPASS_ADMIN_RBAC = true;
+  const DEV_BYPASS_ADMIN_RBAC = process.env.DEV_BYPASS_ADMIN_RBAC === '1';
 
   if (!allowed && !DEV_BYPASS_ADMIN_RBAC) {
     if (isDebug) {

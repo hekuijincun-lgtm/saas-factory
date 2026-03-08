@@ -22,8 +22,8 @@ export default function BootstrapKeyManager() {
   useEffect(() => {
     const qs = tenantId ? `?tenantId=${encodeURIComponent(tenantId)}` : '';
     Promise.all([
-      fetch(`/api/auth/me`).then(r => r.json() as Promise<Record<string, unknown>>).catch(() => ({} as Record<string, unknown>)),
-      fetch(`/api/proxy/admin/members${qs}`).then(r => r.json() as Promise<Record<string, unknown>>).catch(() => ({} as Record<string, unknown>)),
+      fetch(`/api/auth/me`, { cache: 'no-store' }).then(r => r.json() as Promise<Record<string, unknown>>).catch(() => ({} as Record<string, unknown>)),
+      fetch(`/api/proxy/admin/members${qs}`, { cache: 'no-store' }).then(r => r.json() as Promise<Record<string, unknown>>).catch(() => ({} as Record<string, unknown>)),
     ]).then(([me, membersRes]) => {
       setMyUserId(typeof me?.userId === 'string' ? me.userId : null);
       setMyRole(typeof me?.role === 'string' ? me.role : null);

@@ -191,7 +191,7 @@ export default function AdminShell({
     }
 
     // API から storeName + onboarding フラグを取得
-    fetch(`/api/proxy/admin/settings?tenantId=${encodeURIComponent(sessionTenantId)}`)
+    fetch(`/api/proxy/admin/settings?tenantId=${encodeURIComponent(sessionTenantId)}`, { cache: 'no-store' })
       .then((r) => r.json())
       .then((data: any) => {
         // API returns { ok, tenantId, data: { storeName, ... } }

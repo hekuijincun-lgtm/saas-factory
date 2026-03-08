@@ -145,6 +145,8 @@ export async function apiRequest<T>(
     const response = await fetch(url, {
       ...requestOptions,
       signal: controller.signal,
+      // Default to no-store for admin routes to prevent tenant data leakage via cache
+      cache: requestOptions.cache ?? 'no-store',
       headers: {
         'Content-Type': 'application/json',
         ...(tenantId ? { 'x-session-tenant': tenantId } : {}),

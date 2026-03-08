@@ -79,6 +79,7 @@ function copyHeaders(src: Headers, extra?: Dict): Headers {
 
   src.forEach((v, k) => {
     const key = k.toLowerCase();
+    if (key === 'x-session-tenant-id') return; // strip client-supplied (spoofing prevention)
     if (allow.has(key)) h.set(k, v);
   });
 
@@ -230,6 +231,12 @@ export async function proxyFetch(
   const isTokenConfigured = isAdminRoute && !!readAdminToken();
   const adminTokenInjected = injectAdminToken(headers, upstreamPathname);
 
+  // セッション tenantId を注入（admin route のみ）
+  if (isAdminRoute) {
+    const sessionTenantId = await readSessionTenantId(req);
+    if (sessionTenantId) headers.set('x-session-tenant-id', sessionTenantId);
+  }
+
   // If we send body, ensure content-type exists (caller may override)
   const body = opts?.body ?? (method === 'GET' || method === 'HEAD' ? null : await req.arrayBuffer().catch(() => null));
 
@@ -312,6 +319,9 @@ export const getBookingApiBase = resolveBookingBase;
 export async function forwardJson(req: Request, url: string, init: RequestInit = {}) {
   const h = new Headers(req.headers);
 
+  // クライアントからの x-session-tenant-id を strip（偽装防止）
+  h.delete('x-session-tenant-id');
+
   let isDebug = false;
   let dbgStamp = "";
   try {
@@ -337,6 +347,12 @@ export async function forwardJson(req: Request, url: string, init: RequestInit =
     isTokenConfigured = isAdminRoute && !!readAdminToken();
     adminTokenInjected = injectAdminToken(h, pathname);
   } catch { /* 無効 URL は無視 */ }
+
+  // セッション tenantId を注入（admin route のみ）
+  if (isAdminRoute) {
+    const sessionTenantId = await readSessionTenantId(req);
+    if (sessionTenantId) h.set('x-session-tenant-id', sessionTenantId);
+  }
 
   // body: keep streaming where possible
   const method = (init.method ?? req.method).toUpperCase();

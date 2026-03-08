@@ -197,7 +197,7 @@ export async function GET(req: Request) {
     // signup=1 flows always pass — new users don't exist in the allow list yet
     // DEV_BYPASS_ADMIN_RBAC: temporarily skip unauthorized redirect during
     // email-login development phase. Set to false to re-enable RBAC enforcement.
-    const DEV_BYPASS_ADMIN_RBAC = true;
+    const DEV_BYPASS_ADMIN_RBAC = process.env.DEV_BYPASS_ADMIN_RBAC === '1';
 
     step = "allowed_check";
     if (!allowed && !isSignup && !DEV_BYPASS_ADMIN_RBAC) {

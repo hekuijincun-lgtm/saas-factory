@@ -13,7 +13,14 @@ export interface AdminSettingsNormalized {
 const FALLBACK: AdminSettingsNormalized = { open: '10:00', close: '19:00', interval: 30 };
 
 // Module-scope cache keyed by tenantId (survives React re-renders; cleared on page refresh)
-const _cache = new Map<string, AdminSettingsNormalized>();
+const _cache = new Map<string, { data: AdminSettingsNormalized; ts: number }>();
+const CACHE_TTL_MS = 30_000; // 30 seconds — short enough to prevent stale tenant data
+
+/** Clear cached settings. Call on tenant switch or logout. */
+export function clearAdminSettingsCache(tenantId?: string) {
+  if (tenantId) _cache.delete(tenantId);
+  else _cache.clear();
+}
 
 /**
  * API レスポンス（flat or nested）→ 正規化
@@ -43,9 +50,10 @@ export function normalizeSettings(raw: unknown): AdminSettingsNormalized {
  * @returns { settings, loading, error, reload }
  */
 export function useAdminSettings(tenantId: string = 'default') {
-  const cached = _cache.get(tenantId);
-  const [settings, setSettings] = useState<AdminSettingsNormalized>(cached ?? FALLBACK);
-  const [loading,  setLoading]  = useState(!cached);
+  const entry = _cache.get(tenantId);
+  const isFresh = entry && (Date.now() - entry.ts < CACHE_TTL_MS);
+  const [settings, setSettings] = useState<AdminSettingsNormalized>(isFresh ? entry.data : FALLBACK);
+  const [loading,  setLoading]  = useState(!isFresh);
   const [error,    setError]    = useState<string | null>(null);
 
   const load = async () => {
@@ -54,7 +62,7 @@ export function useAdminSettings(tenantId: string = 'default') {
     try {
       const raw = await fetchAdminSettings(tenantId);
       const n = normalizeSettings(raw);
-      _cache.set(tenantId, n);
+      _cache.set(tenantId, { data: n, ts: Date.now() });
       setSettings(n);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'settings取得失敗';
@@ -66,7 +74,8 @@ export function useAdminSettings(tenantId: string = 'default') {
   };
 
   useEffect(() => {
-    if (!_cache.has(tenantId)) {
+    const cached = _cache.get(tenantId);
+    if (!cached || (Date.now() - cached.ts >= CACHE_TTL_MS)) {
       load();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
