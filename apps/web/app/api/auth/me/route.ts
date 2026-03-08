@@ -39,7 +39,7 @@ async function verifyAndParseSession(
     if (!payload.userId) return null;
     return {
       userId: payload.userId,
-      tenantId: payload.tenantId ?? "default",
+      tenantId: payload.tenantId ?? "",
       displayName: payload.displayName ?? "",
       role: payload.role ?? null,
     };

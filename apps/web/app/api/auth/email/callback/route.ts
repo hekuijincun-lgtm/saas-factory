@@ -48,13 +48,22 @@ export async function GET(req: Request) {
 
   const token = url.searchParams.get("token");
   const returnToRaw = url.searchParams.get("returnTo") ?? "/admin";
-  const tenantId = url.searchParams.get("tenantId") ?? "default";
 
   // ── open-redirect guard ───────────────────────────────────────────────────
   const returnTo =
     returnToRaw.startsWith("/") && !returnToRaw.startsWith("//")
       ? returnToRaw
       : "/admin";
+
+  // Resolve tenantId: direct param first, then extract from returnTo as fallback
+  let tenantId = url.searchParams.get("tenantId") ?? "";
+  if (!tenantId && returnTo.includes("tenantId=")) {
+    try {
+      const rtUrl = new URL(returnTo, url.origin);
+      tenantId = rtUrl.searchParams.get("tenantId") ?? "";
+    } catch { /* malformed returnTo */ }
+  }
+  if (!tenantId) tenantId = "default";
 
   // ── missing token ─────────────────────────────────────────────────────────
   if (!token) {

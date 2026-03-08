@@ -95,30 +95,25 @@ export async function middleware(req: NextRequest) {
     const sessionMatch = cookie.match(/(?:^|;\s*)line_session=([^;]+)/);
     const sessionToken = sessionMatch ? sessionMatch[1] : null;
 
+    // Helper: build /login redirect URL preserving tenantId as a direct param
+    const buildLoginRedirect = (reason: string) => {
+      const fullPath = pathname + (req.nextUrl.search || "");
+      const tidParam = req.nextUrl.searchParams.get("tenantId");
+      let loginUrl = `/login?reason=${reason}&returnTo=${encodeURIComponent(fullPath)}`;
+      if (tidParam) loginUrl += `&tenantId=${encodeURIComponent(tidParam)}`;
+      return new URL(loginUrl, req.nextUrl.origin);
+    };
+
     if (sessionToken) {
       const secret = (process.env.LINE_SESSION_SECRET ?? "").trim();
       if (secret) {
         const valid = await verifySessionHasUserId(sessionToken, secret);
         if (!valid) {
-          // Invalid / expired session → redirect to login
-          // Preserve full path + query (especially tenantId) in returnTo
-          const fullPath = pathname + (req.nextUrl.search || "");
-          const target = new URL(
-            `/login?reason=session_expired&returnTo=${encodeURIComponent(fullPath)}`,
-            req.nextUrl.origin
-          );
-          return NextResponse.redirect(target);
+          return NextResponse.redirect(buildLoginRedirect("session_expired"));
         }
       }
     } else {
-      // No session → redirect to login
-      // Preserve full path + query (especially tenantId) in returnTo
-      const fullPath = pathname + (req.nextUrl.search || "");
-      const target = new URL(
-        `/login?reason=not_logged_in&returnTo=${encodeURIComponent(fullPath)}`,
-        req.nextUrl.origin
-      );
-      return NextResponse.redirect(target);
+      return NextResponse.redirect(buildLoginRedirect("not_logged_in"));
     }
   }
 
