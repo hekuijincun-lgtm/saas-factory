@@ -585,6 +585,39 @@ function SolutionSection() {
             );
           })}
         </div>
+
+        {/* LINE booking experience — visual proof */}
+        <Reveal delay={200}>
+          <div className="mt-16 flex flex-col md:flex-row items-center gap-10 md:gap-16">
+            <div className="md:w-1/2 text-center md:text-left">
+              <h3 className="text-2xl font-black text-gray-900 mb-3">
+                LINEから予約完了まで、わずか数タップ
+              </h3>
+              <p className="text-gray-500 leading-relaxed">
+                お客様がLINEで「予約したい」と送ると、自動で予約ページへ案内。
+                予約確定の通知もLINEで届くので、メールを探す手間もありません。
+              </p>
+            </div>
+            <div className="md:w-1/2 flex justify-center">
+              <div className="w-[200px] sm:w-[220px] rounded-[28px] border-[3px] border-gray-200 bg-gray-100 shadow-xl overflow-hidden">
+                <div className="relative h-5 bg-gray-100 flex items-end justify-center">
+                  <div className="w-16 h-3.5 bg-gray-200 rounded-b-xl" />
+                </div>
+                <Image
+                  src="/images/lp/line-booking-mobile.jpg"
+                  alt="LINEで予約する様子 — チャットから予約完了まで"
+                  width={390}
+                  height={844}
+                  className="w-full h-auto"
+                  loading="lazy"
+                />
+                <div className="h-5 bg-gray-100 flex items-center justify-center">
+                  <div className="w-10 h-1 rounded-full bg-gray-300" />
+                </div>
+              </div>
+            </div>
+          </div>
+        </Reveal>
       </div>
     </section>
   );
@@ -712,6 +745,38 @@ function DashboardSection() {
             </div>
           </Reveal>
         </div>
+
+        {/* Customer management — Before/After showcase */}
+        <Reveal delay={200}>
+          <div className="mt-16 flex flex-col md:flex-row-reverse items-center gap-10 md:gap-16">
+            <div className="md:w-1/2 text-center md:text-left">
+              <h3 className="text-2xl font-black text-gray-900 mb-3">
+                顧客カルテで施術履歴を一括管理
+              </h3>
+              <p className="text-gray-500 leading-relaxed">
+                Before / After 写真の記録、来店回数の確認、同意ログの保存まで。
+                お客様一人ひとりの施術履歴をデジタルカルテとして蓄積できます。
+              </p>
+            </div>
+            <div className="md:w-1/2">
+              <div className="rounded-xl overflow-hidden shadow-xl ring-1 ring-gray-200">
+                <div className="h-8 bg-gray-100 border-b border-gray-200 flex items-center px-4 gap-1.5" aria-hidden="true">
+                  <span className="w-2.5 h-2.5 rounded-full bg-red-400" />
+                  <span className="w-2.5 h-2.5 rounded-full bg-yellow-400" />
+                  <span className="w-2.5 h-2.5 rounded-full bg-green-400" />
+                </div>
+                <Image
+                  src="/images/lp/customer-management-desktop.png"
+                  alt="顧客管理画面 — Before/After写真と施術履歴"
+                  width={1440}
+                  height={900}
+                  className="w-full h-auto"
+                  loading="lazy"
+                />
+              </div>
+            </div>
+          </div>
+        </Reveal>
       </div>
     </section>
   );
@@ -775,21 +840,43 @@ function EyebrowSection() {
           </div>
         </Reveal>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-          {specifics.map((s, i) => {
-            const Icon = s.icon;
-            return (
-              <Reveal key={s.title} delay={i * 80} className="h-full">
-                <div className="bg-white rounded-2xl border border-rose-100 p-6 shadow-sm hover:shadow-lg hover:-translate-y-1 transition-all duration-200 h-full">
-                  <div className="w-10 h-10 bg-rose-100 rounded-xl flex items-center justify-center mb-4">
-                    <Icon className="w-5 h-5 text-rose-600" aria-hidden="true" />
+        <div className="flex flex-col lg:flex-row gap-10 lg:gap-14 items-center">
+          <div className="lg:w-3/5 grid grid-cols-1 sm:grid-cols-2 gap-5">
+            {specifics.map((s, i) => {
+              const Icon = s.icon;
+              return (
+                <Reveal key={s.title} delay={i * 80} className="h-full">
+                  <div className="bg-white rounded-2xl border border-rose-100 p-6 shadow-sm hover:shadow-lg hover:-translate-y-1 transition-all duration-200 h-full">
+                    <div className="w-10 h-10 bg-rose-100 rounded-xl flex items-center justify-center mb-4">
+                      <Icon className="w-5 h-5 text-rose-600" aria-hidden="true" />
+                    </div>
+                    <h3 className="font-bold text-gray-900 mb-2">{s.title}</h3>
+                    <p className="text-sm text-gray-500 leading-relaxed">{s.desc}</p>
                   </div>
-                  <h3 className="font-bold text-gray-900 mb-2">{s.title}</h3>
-                  <p className="text-sm text-gray-500 leading-relaxed">{s.desc}</p>
-                </div>
-              </Reveal>
-            );
-          })}
+                </Reveal>
+              );
+            })}
+          </div>
+
+          {/* Mobile booking menu screenshot */}
+          <Reveal className="lg:w-2/5 flex justify-center" delay={300}>
+            <div className="w-[200px] sm:w-[220px] rounded-[28px] border-[3px] border-rose-200 bg-white shadow-xl overflow-hidden">
+              <div className="relative h-5 bg-white flex items-end justify-center">
+                <div className="w-16 h-3.5 bg-gray-100 rounded-b-xl" />
+              </div>
+              <Image
+                src="/images/lp/booking-menu-mobile.jpg"
+                alt="眉毛メニュー選択画面 — 性別フィルタ・画像付きメニューカード"
+                width={390}
+                height={844}
+                className="w-full h-auto"
+                loading="lazy"
+              />
+              <div className="h-5 bg-white flex items-center justify-center">
+                <div className="w-10 h-1 rounded-full bg-gray-200" />
+              </div>
+            </div>
+          </Reveal>
         </div>
       </div>
     </section>
