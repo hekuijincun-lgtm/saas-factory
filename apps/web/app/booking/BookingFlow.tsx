@@ -8,7 +8,7 @@ import StepDatetime from './steps/StepDatetime';
 import StepConfirm from './steps/StepConfirm';
 import StepSurvey from './steps/StepSurvey';
 import type { MenuItem } from '@/src/lib/bookingApi';
-import { fetchAdminSettings } from '../lib/adminApi';
+import { fetchBookingSettings } from '@/src/lib/bookingApi';
 import type { EyebrowSurveyQuestion } from '@/src/types/settings';
 
 export interface BookingState {
@@ -156,7 +156,7 @@ export default function BookingFlow() {
   }, []);
 
   useEffect(() => {
-    fetchAdminSettings(tenantId).then(settings => {
+    fetchBookingSettings(tenantId).then(settings => {
       const raw = settings as any;
       // Generic booking agreement checkbox text (top-level)
       const ct = raw.consentText || raw.eyebrow?.consentText;

@@ -432,7 +432,7 @@ export async function getMenu(tenantId: string = "default"): Promise<MenuItem[]>
     const params = new URLSearchParams();
     params.set("tenantId", tenantId);
 
-    const response = await fetch("/api/proxy/admin/menu?" + params.toString(), {
+    const response = await fetch("/api/booking/menu?" + params.toString(), {
       method: "GET",
       headers: { "accept": "application/json" },
       cache: "no-store",
@@ -501,6 +501,20 @@ export async function getMenu(tenantId: string = "default"): Promise<MenuItem[]>
   } catch (error) {
     throw new ApiClientError(error instanceof Error ? error.message : "Failed to fetch menu");
   }
+}
+
+/**
+ * Public booking settings fetch — bypasses admin session/tenant guard.
+ */
+export async function fetchBookingSettings(tenantId: string = "default"): Promise<AdminSettings> {
+  const params = new URLSearchParams({ tenantId });
+  const res = await fetch(`/api/booking/settings?${params}`, {
+    headers: { accept: "application/json" },
+    cache: "no-store",
+  });
+  if (!res.ok) throw new ApiClientError("Failed to fetch settings", res.status);
+  const json: any = await res.json();
+  return (json?.data ?? json) as AdminSettings;
 }
 
 export async function createMenuItem(payload: Omit<MenuItem, 'id'>): Promise<MenuItem> {
