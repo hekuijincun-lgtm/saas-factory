@@ -204,6 +204,72 @@ export async function deleteMessagingConfig(tenantId?: string): Promise<Messagin
 }
 
 // ============================================================================
+// LINE Rich Menu
+// ============================================================================
+
+export interface RichMenuStatusResponse {
+  ok: boolean;
+  tenantId: string;
+  linked: boolean;
+  configured: boolean;
+  templateKey: string | null;
+  richMenuId: string | null;
+  lastPublishedAt: string | null;
+  menuVersion: number | null;
+  previewUrls: {
+    booking: string;
+    storeInfo: string;
+    menu: string;
+  };
+  webhookUrl: string;
+  error?: string;
+}
+
+export interface RichMenuPublishResponse {
+  ok: boolean;
+  tenantId: string;
+  richMenuId?: string;
+  templateKey?: string;
+  menuVersion?: number;
+  lastPublishedAt?: string;
+  previewUrls?: {
+    booking: string;
+    storeInfo: string;
+    menu: string;
+  };
+  error?: string;
+  step?: string;
+  detail?: string;
+}
+
+export async function fetchRichMenuStatus(tenantId?: string): Promise<RichMenuStatusResponse> {
+  try {
+    return await apiGet<RichMenuStatusResponse>('/admin/integrations/line/richmenu/status', { tenantId });
+  } catch (error) {
+    if (error instanceof ApiClientError) throw error;
+    throw new ApiClientError('Failed to fetch rich menu status');
+  }
+}
+
+export async function publishRichMenu(tenantId?: string): Promise<RichMenuPublishResponse> {
+  try {
+    return await apiPost<RichMenuPublishResponse>('/admin/integrations/line/richmenu', {}, { tenantId });
+  } catch (error) {
+    if (error instanceof ApiClientError) throw error;
+    throw new ApiClientError('Failed to publish rich menu');
+  }
+}
+
+export async function deleteRichMenu(tenantId?: string): Promise<{ ok: boolean; tenantId: string; deleted: string | null }> {
+  try {
+    return await apiDelete<{ ok: boolean; tenantId: string; deleted: string | null }>('/admin/integrations/line/richmenu', { tenantId });
+  } catch (error) {
+    if (error instanceof ApiClientError) throw error;
+    throw new ApiClientError('Failed to delete rich menu');
+  }
+}
+
+// ============================================================================
 // Admin Members (RBAC)
 // ============================================================================
 

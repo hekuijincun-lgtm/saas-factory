@@ -13,7 +13,10 @@ import {
   fetchMessagingStatus,
   saveMessagingConfig,
   deleteMessagingConfig,
-  type MessagingStatusResponse
+  type MessagingStatusResponse,
+  fetchRichMenuStatus,
+  publishRichMenu,
+  type RichMenuStatusResponse,
 } from '../../lib/adminApi';
 import { ApiClientError } from '../../lib/apiClient';
 import { clearAdminSettingsCache } from '../_lib/useAdminSettings';
@@ -121,6 +124,12 @@ export default function AdminSettingsClient() {
     channelSecret: '',
     webhookUrl: '',
   });
+
+  // --- Rich Menu ---
+  const [richMenuStatus, setRichMenuStatus] = useState<RichMenuStatusResponse | null>(null);
+  const [richMenuLoading, setRichMenuLoading] = useState(false);
+  const [richMenuPublishing, setRichMenuPublishing] = useState(false);
+  const [richMenuError, setRichMenuError] = useState<string | null>(null);
 
   // Backfill UI state
   interface BackfillResult {
@@ -427,6 +436,45 @@ export default function AdminSettingsClient() {
   };
 
   // ============================================================
+  // Rich Menu ステータス取得 / 公開
+  // ============================================================
+
+  const fetchRichMenuStatusState = async () => {
+    setRichMenuLoading(true);
+    setRichMenuError(null);
+    try {
+      const status = await fetchRichMenuStatus(tenantId);
+      setRichMenuStatus(status);
+    } catch (error) {
+      const msg = error instanceof ApiClientError ? error.message
+        : error instanceof Error ? error.message : 'リッチメニューステータスの取得に失敗しました';
+      setRichMenuError(msg);
+    } finally {
+      setRichMenuLoading(false);
+    }
+  };
+
+  const handleRichMenuPublish = async () => {
+    setRichMenuPublishing(true);
+    setRichMenuError(null);
+    try {
+      const res = await publishRichMenu(tenantId);
+      if (!res.ok) {
+        setRichMenuError(res.detail || res.error || 'リッチメニューの公開に失敗しました');
+      } else {
+        showToast('リッチメニューを公開しました', 'success');
+        await fetchRichMenuStatusState();
+      }
+    } catch (error) {
+      const msg = error instanceof ApiClientError ? error.message
+        : error instanceof Error ? error.message : 'リッチメニューの公開に失敗しました';
+      setRichMenuError(msg);
+    } finally {
+      setRichMenuPublishing(false);
+    }
+  };
+
+  // ============================================================
   // トースト表示ヘルパー
   // ============================================================
 
@@ -459,6 +507,7 @@ export default function AdminSettingsClient() {
 
     fetchSettings();
     fetchMessagingStatusState();
+    fetchRichMenuStatusState();
     // Fetch current admin's LINE userId from session
     fetch('/api/auth/me', { cache: 'no-store' })
       .then(r => r.json())
@@ -1087,6 +1136,101 @@ export default function AdminSettingsClient() {
                 ※ QRコード生成はブラウザの「共有」機能または外部サービスをご利用ください。
               </p>
             </div>
+          </div>
+        </div>
+
+        {/* ============================================================
+            LINE リッチメニュー
+        ============================================================ */}
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <div className="flex items-center gap-3 mb-5">
+            <div className="p-2 bg-green-100 rounded-lg shrink-0">
+              <LinkIcon className="w-5 h-5 text-green-600" />
+            </div>
+            <div>
+              <h2 className="text-base font-semibold text-gray-900">LINE リッチメニュー</h2>
+              <p className="text-xs text-gray-500">LINE 公式アカウントのリッチメニューを管理します</p>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            {/* ステータス表示 */}
+            <div className="p-4 bg-gray-50 rounded-lg border border-gray-200">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${
+                    richMenuLoading ? 'bg-gray-400 animate-pulse' :
+                    !richMenuStatus?.linked ? 'bg-gray-400' :
+                    richMenuStatus?.configured ? 'bg-green-500' :
+                    'bg-yellow-500'
+                  }`} />
+                  <div className="font-semibold text-sm text-gray-900">
+                    {richMenuLoading ? '読み込み中...' :
+                     !richMenuStatus?.linked ? 'LINE 未連携' :
+                     richMenuStatus?.configured ? 'リッチメニュー公開済み' :
+                     'リッチメニュー未公開'}
+                  </div>
+                </div>
+                <button
+                  onClick={fetchRichMenuStatusState}
+                  disabled={richMenuLoading}
+                  className="text-xs text-gray-500 hover:text-gray-700 disabled:opacity-50"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${richMenuLoading ? 'animate-spin' : ''}`} />
+                </button>
+              </div>
+
+              {richMenuStatus?.configured && (
+                <div className="text-xs text-gray-500 space-y-1">
+                  <div>テンプレート: {richMenuStatus.templateKey ?? '-'}</div>
+                  <div>バージョン: {richMenuStatus.menuVersion ?? '-'}</div>
+                  <div>最終公開: {richMenuStatus.lastPublishedAt ? new Date(richMenuStatus.lastPublishedAt).toLocaleString('ja-JP') : '-'}</div>
+                </div>
+              )}
+
+              {!richMenuStatus?.linked && !richMenuLoading && (
+                <p className="text-xs text-gray-400">
+                  リッチメニューを公開するには、先に LINE Messaging API を連携してください。
+                </p>
+              )}
+            </div>
+
+            {/* エラー表示 */}
+            {richMenuError && (
+              <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
+                <div className="flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
+                  <div className="text-xs text-red-700">{richMenuError}</div>
+                </div>
+              </div>
+            )}
+
+            {/* プレビューURL表示 */}
+            {richMenuStatus?.linked && richMenuStatus.previewUrls && (
+              <div className="text-xs text-gray-500 space-y-1 p-3 bg-gray-50 rounded-lg border border-gray-200">
+                <div className="font-medium text-gray-700 mb-1">アクション URL</div>
+                <div>予約: <code className="bg-white px-1 rounded border text-gray-600">{richMenuStatus.previewUrls.booking}</code></div>
+                <div>メニュー: <code className="bg-white px-1 rounded border text-gray-600">{richMenuStatus.previewUrls.menu}</code></div>
+                <div>店舗情報: <code className="bg-white px-1 rounded border text-gray-600">{richMenuStatus.previewUrls.storeInfo}</code></div>
+                <div>相談: <span className="text-gray-600">「予約について相談したい」(メッセージ送信)</span></div>
+              </div>
+            )}
+
+            {/* 公開/再公開ボタン */}
+            {richMenuStatus?.linked && (
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleRichMenuPublish}
+                  disabled={richMenuPublishing || richMenuLoading}
+                  className="px-4 py-2 text-sm font-medium rounded-lg text-white bg-green-600 hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  {richMenuPublishing ? '公開中...' : richMenuStatus.configured ? 'リッチメニューを再公開' : 'リッチメニューを公開'}
+                </button>
+                {richMenuPublishing && (
+                  <span className="text-xs text-gray-400">LINE API に送信中です。数秒かかる場合があります。</span>
+                )}
+              </div>
+            )}
           </div>
         </div>
 

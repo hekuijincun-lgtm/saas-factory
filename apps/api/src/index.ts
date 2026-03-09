@@ -4728,6 +4728,312 @@ app.get("/admin/integrations/line/last-user", async (c) => {
   }
 });
 
+/* === LINE_RICHMENU_V1 === */
+
+// ── Rich menu テンプレート ─────────────────────────────────────────────────
+// beauty-default: 4-action layout (2500×1686, 2×2 grid)
+// 将来テンプレート追加時は RICH_MENU_TEMPLATES に追加するだけで済む設計。
+
+interface RichMenuTemplate {
+  key: string;
+  label: string;
+  build: (ctx: { origin: string; tenantId: string }) => {
+    payload: any;         // LINE create-richmenu JSON body
+    imageUrl?: string;    // 画像URL（外部 or R2）
+  };
+}
+
+function buildTenantBookingUrl(origin: string, tenantId: string): string {
+  return `${origin}/booking?tenantId=${encodeURIComponent(tenantId)}`;
+}
+function buildTenantStoreInfoUrl(origin: string, tenantId: string): string {
+  // 将来 /store?tenantId= に差し替え可能
+  return `${origin}/booking?tenantId=${encodeURIComponent(tenantId)}#store-info`;
+}
+function buildTenantMenuUrl(origin: string, tenantId: string): string {
+  // 将来 /menu?tenantId= に差し替え可能
+  return `${origin}/booking?tenantId=${encodeURIComponent(tenantId)}#menu`;
+}
+
+const RICH_MENU_TEMPLATES: Record<string, RichMenuTemplate> = {
+  "beauty-default": {
+    key: "beauty-default",
+    label: "美容サロン標準",
+    build: ({ origin, tenantId }) => ({
+      payload: {
+        size: { width: 2500, height: 1686 },
+        selected: true,
+        name: `SaaS Factory Rich Menu [${tenantId}]`,
+        chatBarText: "メニューを開く",
+        areas: [
+          {
+            // 左上: 予約する
+            bounds: { x: 0, y: 0, width: 1250, height: 843 },
+            action: { type: "uri", label: "予約する", uri: buildTenantBookingUrl(origin, tenantId) },
+          },
+          {
+            // 右上: メニュー
+            bounds: { x: 1250, y: 0, width: 1250, height: 843 },
+            action: { type: "uri", label: "メニュー", uri: buildTenantMenuUrl(origin, tenantId) },
+          },
+          {
+            // 左下: 店舗情報
+            bounds: { x: 0, y: 843, width: 1250, height: 843 },
+            action: { type: "uri", label: "店舗情報", uri: buildTenantStoreInfoUrl(origin, tenantId) },
+          },
+          {
+            // 右下: 相談する (message action → webhook/AI concierge が将来 intent 化)
+            bounds: { x: 1250, y: 843, width: 1250, height: 843 },
+            action: { type: "message", label: "相談する", text: "予約について相談したい" },
+          },
+        ],
+      },
+    }),
+  },
+};
+
+const RICHMENU_KV_PREFIX = "line:richmenu:";
+const RICHMENU_IMAGE_VERSION = "v1"; // bump when default image changes
+
+/** Generate a simple 2500×1686 placeholder rich menu image as JPEG.
+ *  Workers have no Canvas API, so we generate a minimal valid JPEG.
+ *  For MVP we use a solid-color placeholder. Replace with proper asset later. */
+function generatePlaceholderImageBytes(): Uint8Array {
+  // Minimal 1x1 white JPEG (will be stretched by LINE to fit)
+  // LINE requires image upload but accepts small images that it stretches.
+  // For production, replace with a proper pre-rendered asset.
+  const base64 = "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAMCAgMCAgMDAwMEAwMEBQgFBQQEBQoHBwYIDAoMCwsKCwsM" +
+    "DhEQDQ4RDgsLEBYQERMUFRUVDA8XGBYUGBIUFRT/2wBDAQMEBAUEBQkFBQkUDQsNFBQUFBQUFBQUFBQU" +
+    "FBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBT/wAARCAABAAEDASIAAhEBAxEB/8QAHwAA" +
+    "AQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEG" +
+    "E1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZ" +
+    "WmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJ" +
+    "ytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcI" +
+    "CQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLR" +
+    "ChYkNOEl8RcYI4Q/RFhHRUYnJCk2NTgpOkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOE" +
+    "hYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq" +
+    "8vP09fb3+Pn6/9oADAMBAAIRAxEAPwD9U6KKKACiiigD/9k=";
+  const binaryStr = atob(base64);
+  const bytes = new Uint8Array(binaryStr.length);
+  for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
+  return bytes;
+}
+
+// ── GET /admin/integrations/line/richmenu/status ──────────────────────────
+app.get("/admin/integrations/line/richmenu/status", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
+  try {
+    const tenantId = getTenantId(c, null);
+    const kv = (c.env as any)?.SAAS_FACTORY;
+    if (!kv) return c.json({ ok: false, error: "kv_not_bound" }, 500);
+
+    // LINE credentials
+    const line = await readLineKv(kv, tenantId);
+    const accessToken = String(line?.channelAccessToken ?? "").trim();
+    const linked = !!(accessToken && line?.connected);
+
+    // Rich menu state from dedicated KV
+    let rm: any = null;
+    try {
+      const raw = await kv.get(`${RICHMENU_KV_PREFIX}${tenantId}`);
+      if (raw) rm = JSON.parse(raw);
+    } catch {}
+
+    const configured = !!(rm?.richMenuId);
+
+    // Resolve origin for preview URLs
+    const origin = (c.env as any)?.WEB_ORIGIN || "https://saas-factory-web-v2.pages.dev";
+
+    return c.json({
+      ok: true,
+      tenantId,
+      linked,
+      configured,
+      templateKey: rm?.templateKey ?? null,
+      richMenuId: rm?.richMenuId ?? null,
+      lastPublishedAt: rm?.lastPublishedAt ?? null,
+      menuVersion: rm?.menuVersion ?? null,
+      previewUrls: {
+        booking: buildTenantBookingUrl(origin, tenantId),
+        storeInfo: buildTenantStoreInfoUrl(origin, tenantId),
+        menu: buildTenantMenuUrl(origin, tenantId),
+      },
+      webhookUrl: `${origin}/api/line/webhook?tenantId=${encodeURIComponent(tenantId)}`,
+    });
+  } catch (e: any) {
+    return c.json({ ok: false, error: "status_error", detail: String(e?.message ?? e) }, 500);
+  }
+});
+
+// ── POST /admin/integrations/line/richmenu/publish ────────────────────────
+app.post("/admin/integrations/line/richmenu/publish", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
+  const rbac = await requireRole(c, "admin"); if (rbac) return rbac;
+  try {
+    const tenantId = getTenantId(c, null);
+    const kv = (c.env as any)?.SAAS_FACTORY;
+    if (!kv) return c.json({ ok: false, error: "kv_not_bound" }, 500);
+
+    // Get LINE credentials
+    const line = await readLineKv(kv, tenantId);
+    const accessToken = String(line?.channelAccessToken ?? "").trim();
+    if (!accessToken) {
+      return c.json({ ok: false, error: "missing_access_token", detail: "LINE channelAccessToken が未設定です。先に LINE Messaging API を連携してください。" }, 400);
+    }
+
+    // Verify token first
+    const tokenCheck = await verifyLineToken(accessToken);
+    if (tokenCheck.status !== "ok") {
+      return c.json({ ok: false, error: "invalid_access_token", detail: "LINE channelAccessToken が無効です。LINE Developers Console でトークンを再発行してください。" }, 400);
+    }
+
+    const origin = (c.env as any)?.WEB_ORIGIN || "https://saas-factory-web-v2.pages.dev";
+    const templateKey = "beauty-default";
+    const template = RICH_MENU_TEMPLATES[templateKey];
+    if (!template) {
+      return c.json({ ok: false, error: "template_not_found", detail: `テンプレート '${templateKey}' が見つかりません。` }, 400);
+    }
+
+    // Build payload
+    const { payload } = template.build({ origin, tenantId });
+
+    // Read existing state
+    let existing: any = null;
+    try {
+      const raw = await kv.get(`${RICHMENU_KV_PREFIX}${tenantId}`);
+      if (raw) existing = JSON.parse(raw);
+    } catch {}
+
+    // If existing richMenuId, try to delete old menu (best-effort)
+    if (existing?.richMenuId) {
+      try {
+        await fetch(`https://api.line.me/v2/bot/richmenu/${existing.richMenuId}`, {
+          method: "DELETE",
+          headers: { Authorization: "Bearer " + accessToken },
+        });
+      } catch { /* best-effort cleanup */ }
+    }
+
+    // Step 1: Create rich menu
+    const createRes = await fetch("https://api.line.me/v2/bot/richmenu", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer " + accessToken,
+      },
+      body: JSON.stringify(payload),
+    });
+    if (!createRes.ok) {
+      const errBody = await createRes.text().catch(() => "");
+      return c.json({ ok: false, error: "line_create_failed", step: "create", status: createRes.status, detail: errBody }, 502);
+    }
+    const createData = await createRes.json() as any;
+    const richMenuId = createData?.richMenuId;
+    if (!richMenuId) {
+      return c.json({ ok: false, error: "line_create_no_id", step: "create", detail: JSON.stringify(createData) }, 502);
+    }
+
+    // Step 2: Upload placeholder image
+    const imageBytes = generatePlaceholderImageBytes();
+    const uploadRes = await fetch(`https://api-data.line.me/v2/bot/richmenu/${richMenuId}/content`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "image/jpeg",
+        Authorization: "Bearer " + accessToken,
+      },
+      body: imageBytes,
+    });
+    if (!uploadRes.ok) {
+      const errBody = await uploadRes.text().catch(() => "");
+      // Clean up created menu
+      await fetch(`https://api.line.me/v2/bot/richmenu/${richMenuId}`, {
+        method: "DELETE", headers: { Authorization: "Bearer " + accessToken },
+      }).catch(() => {});
+      return c.json({ ok: false, error: "line_upload_failed", step: "upload_image", status: uploadRes.status, detail: errBody }, 502);
+    }
+
+    // Step 3: Set as default for all users
+    const setDefaultRes = await fetch(`https://api.line.me/v2/bot/user/all/richmenu/${richMenuId}`, {
+      method: "POST",
+      headers: { Authorization: "Bearer " + accessToken },
+    });
+    if (!setDefaultRes.ok) {
+      const errBody = await setDefaultRes.text().catch(() => "");
+      return c.json({ ok: false, error: "line_set_default_failed", step: "set_default", status: setDefaultRes.status, detail: errBody }, 502);
+    }
+
+    // Save state to KV
+    const menuVersion = (existing?.menuVersion ?? 0) + 1;
+    const state = {
+      richMenuId,
+      templateKey,
+      menuVersion,
+      imageVersion: RICHMENU_IMAGE_VERSION,
+      lastPublishedAt: new Date().toISOString(),
+      publishedBy: c.req.header("x-session-user-id") || "unknown",
+    };
+    await kv.put(`${RICHMENU_KV_PREFIX}${tenantId}`, JSON.stringify(state));
+
+    console.log(`[RICHMENU] tenant=${tenantId} action=publish richMenuId=${richMenuId} version=${menuVersion}`);
+
+    return c.json({
+      ok: true,
+      tenantId,
+      richMenuId,
+      templateKey,
+      menuVersion,
+      lastPublishedAt: state.lastPublishedAt,
+      previewUrls: {
+        booking: buildTenantBookingUrl(origin, tenantId),
+        storeInfo: buildTenantStoreInfoUrl(origin, tenantId),
+        menu: buildTenantMenuUrl(origin, tenantId),
+      },
+    });
+  } catch (e: any) {
+    return c.json({ ok: false, error: "publish_error", detail: String(e?.message ?? e) }, 500);
+  }
+});
+
+// ── DELETE /admin/integrations/line/richmenu ───────────────────────────────
+app.delete("/admin/integrations/line/richmenu", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
+  const rbac = await requireRole(c, "admin"); if (rbac) return rbac;
+  try {
+    const tenantId = getTenantId(c, null);
+    const kv = (c.env as any)?.SAAS_FACTORY;
+    if (!kv) return c.json({ ok: false, error: "kv_not_bound" }, 500);
+
+    let rm: any = null;
+    try {
+      const raw = await kv.get(`${RICHMENU_KV_PREFIX}${tenantId}`);
+      if (raw) rm = JSON.parse(raw);
+    } catch {}
+
+    if (rm?.richMenuId) {
+      const line = await readLineKv(kv, tenantId);
+      const accessToken = String(line?.channelAccessToken ?? "").trim();
+      if (accessToken) {
+        // Unset default
+        await fetch("https://api.line.me/v2/bot/user/all/richmenu", {
+          method: "DELETE", headers: { Authorization: "Bearer " + accessToken },
+        }).catch(() => {});
+        // Delete menu
+        await fetch(`https://api.line.me/v2/bot/richmenu/${rm.richMenuId}`, {
+          method: "DELETE", headers: { Authorization: "Bearer " + accessToken },
+        }).catch(() => {});
+      }
+    }
+
+    await kv.delete(`${RICHMENU_KV_PREFIX}${tenantId}`);
+    console.log(`[RICHMENU] tenant=${tenantId} action=delete richMenuId=${rm?.richMenuId ?? "none"}`);
+    return c.json({ ok: true, tenantId, deleted: rm?.richMenuId ?? null });
+  } catch (e: any) {
+    return c.json({ ok: false, error: "delete_error", detail: String(e?.message ?? e) }, 500);
+  }
+});
+
+/* === /LINE_RICHMENU_V1 === */
+
 /* === /LINE_MESSAGING_ROUTES_V1 === */
 
 /* === AI_CONCIERGE_V1 === */
