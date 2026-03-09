@@ -16,6 +16,7 @@ import {
   LayoutDashboard,
   UserCircle,
   LogOut,
+  CreditCard,
 } from "lucide-react";
 import { adminNavItems } from "./nav.config";
 
@@ -33,6 +34,7 @@ const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   "/admin/reservations": Calendar,
   "/admin/customers":    UserCircle,
   "/admin/ai":           Bot,
+  "/admin/billing":      CreditCard,
   // temporarily hidden — re-enable with nav.config.ts
   // "/admin/admins":       Shield,
   // "/admin/security":     KeyRound,
