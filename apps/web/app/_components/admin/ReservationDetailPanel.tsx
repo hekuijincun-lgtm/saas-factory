@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { Scissors } from 'lucide-react';
 import { compressImage, MAX_UPLOAD_BYTES } from '@/src/lib/compressImage';
+import { detectAuthError } from '@/src/lib/adminAuthError';
 import type { Reservation, ReservationMeta, Staff } from '@/src/lib/bookingApi';
 
 type DetailTab = 'basic' | 'karte' | 'consent' | 'image' | 'survey';
@@ -47,6 +48,7 @@ export default function ReservationDetailPanel({
   const [metaError, setMetaError] = useState<string | null>(null);
   const [beforeUploading, setBeforeUploading] = useState(false);
   const [afterUploading, setAfterUploading] = useState(false);
+  const [authError, setAuthError] = useState<{ message: string; loginUrl: string } | null>(null);
 
   // Sync metaForm when reservation changes (e.g. after refresh)
   useEffect(() => {
@@ -83,6 +85,8 @@ export default function ReservationDetailPanel({
           staffId: editForm.staffId === 'any' ? null : editForm.staffId,
         }),
       });
+      const ae = detectAuthError(res, tenantId);
+      if (ae) { setAuthError({ message: ae.message, loginUrl: ae.loginUrl }); return; }
       const json = await res.json() as any;
       if (!json.ok) throw new Error(json.error || '更新に失敗しました');
       setEditMode(false);
@@ -104,6 +108,8 @@ export default function ReservationDetailPanel({
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ meta: metaForm }),
       });
+      const ae = detectAuthError(res, tenantId);
+      if (ae) { setAuthError({ message: ae.message, loginUrl: ae.loginUrl }); return; }
       const json = await res.json() as any;
       if (!json.ok) throw new Error(json.error || '保存に失敗しました');
       onRefresh();
@@ -125,6 +131,9 @@ export default function ReservationDetailPanel({
         `/api/proxy/admin/reservations/${reservation.reservationId}/image?tenantId=${encodeURIComponent(tenantId)}&kind=${kind}`,
         { method: 'POST', body: fd }
       );
+      // Auth error detection: 401/403 → show login redirect instead of generic error
+      const ae = detectAuthError(res, tenantId);
+      if (ae) { setAuthError({ message: ae.message, loginUrl: ae.loginUrl }); return; }
       const json = await res.json() as any;
       if (!json.ok) {
         const msg = json.error === 'file_too_large'
@@ -194,6 +203,19 @@ export default function ReservationDetailPanel({
             </svg>
           </button>
         </div>
+
+        {/* ── Auth error banner ── */}
+        {authError && (
+          <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl space-y-2">
+            <p className="text-sm font-medium text-amber-800">{authError.message}</p>
+            <a
+              href={authError.loginUrl}
+              className="inline-flex items-center px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white text-xs font-medium rounded-lg transition-colors"
+            >
+              ログインページへ
+            </a>
+          </div>
+        )}
 
         {/* ── Tabs ── */}
         {!editMode && (

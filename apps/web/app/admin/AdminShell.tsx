@@ -163,7 +163,7 @@ export default function AdminShell({
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const router = useRouter();
   const pathname = usePathname();
-  const { status: tenantStatus, tenantId: sessionTenantId } = useAdminTenantId();
+  const { status: tenantStatus, tenantId: sessionTenantId, authenticated } = useAdminTenantId();
 
   useEffect(() => {
     setMounted(true);
@@ -227,6 +227,48 @@ export default function AdminShell({
   // /admin/line-setup は専用セットアップ画面 — サイドバーなしで children をそのまま返す
   if (pathname === "/admin/line-setup") {
     return <>{children}</>;
+  }
+
+  // Auth guard: session expired or invalid → show login redirect banner
+  // Skip for pages that handle their own auth (line-setup is already excluded above)
+  if (tenantStatus === "ready" && !authenticated) {
+    const loginParams = new URLSearchParams();
+    const returnTo = typeof window !== "undefined"
+      ? window.location.pathname + window.location.search
+      : "/admin";
+    loginParams.set("returnTo", returnTo);
+    if (sessionTenantId && sessionTenantId !== "default") {
+      loginParams.set("tenantId", sessionTenantId);
+    }
+    loginParams.set("reason", "session_expired");
+    const loginUrl = `/login?${loginParams.toString()}`;
+
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-gray-50 p-4">
+        <div className="bg-white rounded-2xl shadow-lg border border-gray-200 max-w-md w-full p-8 text-center space-y-4">
+          <div className="w-14 h-14 rounded-full bg-amber-100 flex items-center justify-center mx-auto">
+            <LogOut className="w-7 h-7 text-amber-600" />
+          </div>
+          <h2 className="text-lg font-semibold text-gray-900">
+            ログインの有効期限が切れました
+          </h2>
+          <p className="text-sm text-gray-500">
+            セッションの有効期限が切れたか、認証情報が無効です。再度ログインしてください。
+          </p>
+          <a
+            href={loginUrl}
+            className="inline-flex items-center justify-center w-full px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-xl transition-colors"
+          >
+            ログインページへ
+          </a>
+          {sessionTenantId && sessionTenantId !== "default" && (
+            <p className="text-xs text-gray-400">
+              テナント: {sessionTenantId}
+            </p>
+          )}
+        </div>
+      </div>
+    );
   }
 
   return (

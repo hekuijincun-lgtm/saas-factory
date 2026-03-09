@@ -9,6 +9,7 @@ interface MeResult {
   userId: string;
   displayName: string;
   role: string | null;
+  authenticated: boolean;
 }
 
 let _promise: Promise<MeResult> | null = null;
@@ -52,6 +53,7 @@ export async function refreshMe(): Promise<MeResult> {
     userId: d?.userId ?? "",
     displayName: d?.displayName ?? "",
     role: d?.role ?? null,
+    authenticated: !!d?.ok,
   };
   // Seed the cache with fresh data
   _promise = Promise.resolve(result);
@@ -116,6 +118,7 @@ function fetchMe(): Promise<MeResult> {
             userId: d.userId ?? "",
             displayName: d.displayName ?? "",
             role: d.role ?? null,
+            authenticated: true,
           };
         }
         throw new Error(d?.error ?? "no_session");
@@ -127,7 +130,7 @@ function fetchMe(): Promise<MeResult> {
           ? new URLSearchParams(window.location.search).get("tenantId")
           : null;
         const tid = urlTid ?? readLastTenantCookie() ?? "default";
-        return { tenantId: tid, userId: "", displayName: "", role: null };
+        return { tenantId: tid, userId: "", displayName: "", role: null, authenticated: false };
       });
   }
   return _promise;
@@ -135,6 +138,8 @@ function fetchMe(): Promise<MeResult> {
 
 export interface AdminTenantState {
   status: "loading" | "ready";
+  /** true only when /api/auth/me returned ok:true with a valid userId */
+  authenticated: boolean;
   tenantId: string;
   userId: string;
   displayName: string;
@@ -154,6 +159,7 @@ export function withTenant(path: string, tenantId: string): string {
 export function useAdminTenantId(): AdminTenantState {
   const [state, setState] = useState<AdminTenantState>({
     status: "loading",
+    authenticated: false,
     tenantId: "default",
     userId: "",
     displayName: "",
