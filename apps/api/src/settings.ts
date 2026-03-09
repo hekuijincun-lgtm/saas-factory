@@ -111,6 +111,18 @@ export interface EyebrowSettings {
   surveyQuestions?: EyebrowSurveyQuestion[]; // 事前アンケート質問リスト
 }
 
+export type PlanId = 'starter' | 'pro' | 'enterprise';
+
+export interface SubscriptionInfo {
+  planId: PlanId;
+  stripeCustomerId?: string;
+  stripeSubscriptionId?: string;
+  stripeSessionId?: string;
+  status: 'active' | 'past_due' | 'cancelled' | 'trialing';
+  currentPeriodEnd?: number;
+  createdAt: number;
+}
+
 export interface AdminSettings {
   storeName?: string; // 店舗名（表示用）
   storeAddress?: string; // 店舗住所（LINE通知等に使用）
@@ -134,6 +146,8 @@ export interface AdminSettings {
   verticalConfig?: VerticalConfig;
   /** 管理者ログイン許可 LINE userId リスト（空 = セルフシード待ち） */
   allowedAdminLineUserIds?: string[];
+  /** サブスクリプション情報（Stripe Checkout 経由で設定） */
+  subscription?: SubscriptionInfo;
 }
 
 /**
@@ -419,6 +433,7 @@ export function mergeSettings(defaults: AdminSettings, partial: Partial<AdminSet
             : undefined,
         }
       : undefined,
+    subscription: partial.subscription ?? defaults.subscription,
     vertical: partial.vertical ?? defaults.vertical,
     verticalConfig: (partial.verticalConfig || defaults.verticalConfig)
       ? {

@@ -1,6 +1,8 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import Stripe from "stripe";
 import { resolveVertical, DEFAULT_ADMIN_SETTINGS, mergeSettings } from "./settings";
+import type { PlanId } from "./settings";
 import { getRepeatConfig, getStyleLabel, buildRepeatMessage, eyebrowOnboardingChecks } from "./verticals/eyebrow";
 
 // test helper (lock reproduction)
@@ -3383,6 +3385,91 @@ interface AdminMember {
 }
 interface AdminMembersStore { version: 1; members: AdminMember[]; }
 
+// =============================================================================
+// Billing (Stripe Checkout)
+// =============================================================================
+
+function getStripe(env: any): Stripe | null {
+  const key: string = env.STRIPE_SECRET_KEY ?? '';
+  if (!key) return null;
+  return new Stripe(key, { httpClient: Stripe.createFetchHttpClient() });
+}
+
+app.post('/billing/checkout', async (c) => {
+  const env = c.env as any;
+  const stripe = getStripe(env);
+  if (!stripe) {
+    return c.json({ ok: false, error: 'stripe_not_configured' }, 500);
+  }
+
+  let body: any = {};
+  try { body = await c.req.json(); } catch {}
+
+  const planId: string = String(body.planId ?? '');
+  if (planId !== 'starter' && planId !== 'pro') {
+    return c.json({ ok: false, error: 'invalid_plan' }, 400);
+  }
+
+  const priceId: string = planId === 'starter'
+    ? (env.STRIPE_PRICE_STARTER ?? '')
+    : (env.STRIPE_PRICE_PRO ?? '');
+
+  if (!priceId) {
+    return c.json({ ok: false, error: 'price_not_configured' }, 500);
+  }
+
+  const webOrigin: string = (env.WEB_ORIGIN ?? env.WEB_BASE ?? 'https://saas-factory-web-v2.pages.dev')
+    .replace(/\/+$/, '');
+
+  const session = await stripe.checkout.sessions.create({
+    mode: 'subscription',
+    line_items: [{ price: priceId, quantity: 1 }],
+    metadata: { planId },
+    success_url: `${webOrigin}/signup?session_id={CHECKOUT_SESSION_ID}`,
+    cancel_url: `${webOrigin}/lp/eyebrow#pricing`,
+  });
+
+  return c.json({ ok: true, url: session.url });
+});
+
+app.post('/billing/verify-session', async (c) => {
+  const env = c.env as any;
+  const stripe = getStripe(env);
+  if (!stripe) {
+    return c.json({ ok: false, error: 'stripe_not_configured' }, 500);
+  }
+
+  let body: any = {};
+  try { body = await c.req.json(); } catch {}
+
+  const sessionId: string = String(body.sessionId ?? '');
+  if (!sessionId) {
+    return c.json({ ok: false, error: 'missing_session_id' }, 400);
+  }
+
+  try {
+    const session = await stripe.checkout.sessions.retrieve(sessionId);
+    if (session.payment_status !== 'paid') {
+      return c.json({ ok: false, error: 'payment_not_completed', paymentStatus: session.payment_status });
+    }
+    const planId = (session.metadata?.planId ?? 'starter') as PlanId;
+    return c.json({
+      ok: true,
+      planId,
+      paymentStatus: session.payment_status,
+      customerId: session.customer,
+      subscriptionId: session.subscription,
+    });
+  } catch (err: any) {
+    return c.json({ ok: false, error: 'session_not_found', detail: err.message }, 404);
+  }
+});
+
+app.post('/billing/webhook', async (c) => {
+  // Phase 2: Stripe webhook handler for subscription lifecycle events
+  return c.json({ ok: true, phase: 2 });
+});
+
 app.get('/admin/members', async (c) => {
   const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
   const tenantId = getTenantId(c, null);
@@ -3709,8 +3796,39 @@ app.post('/auth/email/start', async (c) => {
       .replace(/[^\w]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 20) || 'store';
     tenantId = baseSlug + '-' + crypto.randomUUID().slice(0, 4);
     safeReturnTo = `/admin/onboarding?tenantId=${encodeURIComponent(tenantId)}`;
-    await kv.put(`signup:init:${tenantId}`, JSON.stringify({ storeName, ownerEmail: rawEmail }),
-                 { expirationTtl: 900 }); // 15 min
+
+    // Stripe session verification (if provided from Checkout flow)
+    const stripeSessionId: string = String(body.stripeSessionId ?? '').trim();
+    let stripeInfo: { sessionId: string; planId: string; customerId: string; subscriptionId: string } | undefined;
+    if (stripeSessionId) {
+      // Prevent session reuse: one Checkout Session → one tenant
+      const usedKey = `stripe:session:used:${stripeSessionId}`;
+      const alreadyUsed = await kv.get(usedKey);
+      if (alreadyUsed) {
+        return c.json({ ok: false, error: 'stripe_session_already_used' }, 409);
+      }
+      const stripe = getStripe(env);
+      if (stripe) {
+        try {
+          const session = await stripe.checkout.sessions.retrieve(stripeSessionId);
+          if (session.payment_status === 'paid') {
+            stripeInfo = {
+              sessionId: stripeSessionId,
+              planId: (session.metadata?.planId ?? 'starter'),
+              customerId: String(session.customer ?? ''),
+              subscriptionId: String(session.subscription ?? ''),
+            };
+            // Mark session as used (30 days TTL — Stripe sessions expire in 24h anyway)
+            await kv.put(usedKey, tenantId, { expirationTtl: 2592000 });
+          }
+        } catch { /* invalid session — continue without stripe info */ }
+      }
+    }
+
+    await kv.put(`signup:init:${tenantId}`, JSON.stringify({
+      storeName, ownerEmail: rawEmail,
+      ...(stripeInfo ? { stripe: stripeInfo } : {}),
+    }), { expirationTtl: 900 }); // 15 min
   } else {
     tenantId = String(body.tenantId ?? 'default');
     const returnTo = String(body.returnTo ?? '/admin');
@@ -3872,7 +3990,7 @@ app.post('/auth/email/verify', async (c) => {
   // --- Signup provisioning (signup:init written by /start when signup=1) ---
   const signupInitRaw = await kv.get(`signup:init:${tenantId}`);
   if (signupInitRaw) {
-    const si: { storeName?: string } = JSON.parse(signupInitRaw);
+    const si: { storeName?: string; stripe?: { sessionId?: string; planId: string; customerId: string; subscriptionId: string } } = JSON.parse(signupInitRaw);
     const storedName = si.storeName || email;
     const ownerStore: AdminMembersStore = {
       version: 1,
@@ -3913,6 +4031,16 @@ app.post('/auth/email/verify', async (c) => {
       storeName: storedName,
       tenant: { name: storedName, email },
       onboarding: { onboardingCompleted: false },
+      ...(si.stripe ? {
+        subscription: {
+          planId: si.stripe.planId as PlanId,
+          stripeCustomerId: si.stripe.customerId || undefined,
+          stripeSubscriptionId: si.stripe.subscriptionId || undefined,
+          stripeSessionId: si.stripe.sessionId || undefined,
+          status: 'active' as const,
+          createdAt: Date.now(),
+        },
+      } : {}),
     });
     await kv.put('settings:' + tenantId, JSON.stringify(seedSettings));
     // admin:settings: key for tenant listing/lookup (simple format)

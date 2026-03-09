@@ -23,6 +23,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { Reveal } from '../_components/Reveal';
+import { PlanCTA } from './PlanCTA';
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Configuration constants — update these without touching layout logic
@@ -1249,20 +1250,28 @@ function PricingSection() {
                 </ul>
 
                 {/* CTA */}
-                <Link
-                  href={plan.href}
-                  className={`group w-full inline-flex items-center justify-center gap-2 px-6 py-3 rounded-full font-semibold text-sm transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 ${
-                    plan.highlighted
-                      ? 'bg-rose-500 text-white hover:bg-rose-400 focus-visible:ring-rose-400 focus-visible:ring-offset-slate-900'
-                      : 'bg-gray-900 text-white hover:bg-gray-700 focus-visible:ring-gray-900'
-                  }`}
-                >
-                  {plan.cta}
-                  <ArrowRight
-                    className="w-4 h-4 transition-transform duration-200 group-hover:translate-x-1"
-                    aria-hidden="true"
+                {plan.id === 'starter' || plan.id === 'pro' ? (
+                  <PlanCTA
+                    planId={plan.id}
+                    label={plan.cta}
+                    highlighted={plan.highlighted}
                   />
-                </Link>
+                ) : (
+                  <Link
+                    href={plan.href}
+                    className={`group w-full inline-flex items-center justify-center gap-2 px-6 py-3 rounded-full font-semibold text-sm transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 ${
+                      plan.highlighted
+                        ? 'bg-rose-500 text-white hover:bg-rose-400 focus-visible:ring-rose-400 focus-visible:ring-offset-slate-900'
+                        : 'bg-gray-900 text-white hover:bg-gray-700 focus-visible:ring-gray-900'
+                    }`}
+                  >
+                    {plan.cta}
+                    <ArrowRight
+                      className="w-4 h-4 transition-transform duration-200 group-hover:translate-x-1"
+                      aria-hidden="true"
+                    />
+                  </Link>
+                )}
               </div>
             </Reveal>
           ))}

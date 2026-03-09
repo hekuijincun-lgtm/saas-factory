@@ -1,6 +1,19 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { CheckCircle2 } from "lucide-react";
+
+interface PlanVerification {
+  status: "idle" | "verifying" | "verified" | "error";
+  planId?: string;
+  error?: string;
+}
+
+const PLAN_LABELS: Record<string, string> = {
+  starter: "Starter",
+  pro: "Pro",
+  enterprise: "Enterprise",
+};
 
 export default function SignupPage() {
   const [email, setEmail] = useState("");
@@ -10,6 +23,40 @@ export default function SignupPage() {
   );
   const [errorMsg, setErrorMsg] = useState("");
   const [debugLink, setDebugLink] = useState<string | null>(null);
+
+  // Stripe session verification
+  const [plan, setPlan] = useState<PlanVerification>({ status: "idle" });
+  const [stripeSessionId, setStripeSessionId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const sid = params.get("session_id");
+    if (!sid) return;
+
+    setStripeSessionId(sid);
+    setPlan({ status: "verifying" });
+
+    fetch("/api/proxy/billing/verify-session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sessionId: sid }),
+    })
+      .then((r) => r.json() as Promise<Record<string, unknown>>)
+      .then((data) => {
+        if (data.ok && data.planId) {
+          setPlan({ status: "verified", planId: String(data.planId) });
+        } else {
+          setPlan({
+            status: "error",
+            error: String(data.error ?? "決済が確認できません"),
+          });
+        }
+      })
+      .catch(() => {
+        setPlan({ status: "error", error: "決済確認に失敗しました" });
+      });
+  }, []);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -31,6 +78,7 @@ export default function SignupPage() {
         email: emailTrimmed,
         storeName: storeName.trim(),
         signup: true,
+        ...(stripeSessionId ? { stripeSessionId } : {}),
         ...(isDebug ? { debug: "1" } : {}),
       }),
     }).catch(() => null);
@@ -49,6 +97,8 @@ export default function SignupPage() {
           ? "送信回数の上限です。1分後に再試行してください。"
           : err === "invalid_store_name"
           ? "ショップ名は2〜50文字で入力してください。"
+          : err === "stripe_session_already_used"
+          ? "この決済セッションは既に使用されています。LPから再度お申し込みください。"
           : `エラー: ${err || "不明なエラー"}`
       );
       setStatus("error");
@@ -79,7 +129,7 @@ export default function SignupPage() {
           {debugLink && (
             <div className="mt-5 p-3 bg-yellow-50 border-2 border-yellow-300 rounded-xl text-left">
               <p className="text-xs font-bold text-yellow-700 mb-1">
-                ⚡ Debug リンク（メール未送信）
+                Debug リンク（メール未送信）
               </p>
               <a
                 href={debugLink}
@@ -119,6 +169,27 @@ export default function SignupPage() {
         </div>
 
         <div className="px-8 py-10">
+          {/* Plan verification badge */}
+          {plan.status === "verifying" && (
+            <div className="mb-5 rounded-xl bg-slate-50 border border-slate-200 px-4 py-3 text-sm text-slate-500 text-center">
+              決済を確認中...
+            </div>
+          )}
+          {plan.status === "verified" && plan.planId && (
+            <div className="mb-5 rounded-xl bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-700 flex items-center gap-2 justify-center">
+              <CheckCircle2 className="w-4 h-4 shrink-0" />
+              <span>
+                <strong>{PLAN_LABELS[plan.planId] ?? plan.planId}</strong>{" "}
+                プラン — 決済完了
+              </span>
+            </div>
+          )}
+          {plan.status === "error" && (
+            <div className="mb-5 rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-700 text-center">
+              {plan.error}
+            </div>
+          )}
+
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1.5">
