@@ -310,8 +310,71 @@ function HeroSection() {
             ),
           )}
         </div>
+
+        {/* Hero device mockup */}
+        <HeroDeviceMockup />
       </div>
     </section>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Hero device mockup — desktop + mobile overlay
+// ──────────────────────────────────────────────────────────────────────────────
+function HeroDeviceMockup() {
+  return (
+    <div className="relative mt-16 mx-auto max-w-4xl">
+      {/* Desktop frame */}
+      <div className="relative rounded-xl border border-white/10 bg-gray-900 shadow-2xl shadow-black/40">
+        {/* Browser chrome */}
+        <div className="flex items-center gap-2 px-4 py-2.5 border-b border-white/10">
+          <div className="flex gap-1.5">
+            <span className="w-2.5 h-2.5 rounded-full bg-red-400/80" />
+            <span className="w-2.5 h-2.5 rounded-full bg-yellow-400/80" />
+            <span className="w-2.5 h-2.5 rounded-full bg-green-400/80" />
+          </div>
+          <div className="flex-1 mx-8 h-5 rounded-md bg-white/5 flex items-center justify-center">
+            <span className="text-[10px] text-white/30 select-none">app.eyebrowbook.jp/admin</span>
+          </div>
+        </div>
+        {/* Screen */}
+        <div className="relative overflow-hidden rounded-b-xl">
+          <Image
+            src="/images/lp/admin-desktop-hero.png"
+            alt="管理画面ダッシュボード"
+            width={1920}
+            height={1080}
+            className="w-full h-auto object-cover object-top"
+            priority
+          />
+        </div>
+      </div>
+
+      {/* Mobile frame — overlaid at bottom-right */}
+      <div className="absolute -bottom-8 -right-4 sm:bottom-[-2rem] sm:right-4 w-[120px] sm:w-[160px] md:w-[180px]">
+        <div className="rounded-[20px] sm:rounded-[24px] border-[3px] border-gray-700 bg-gray-900 shadow-2xl shadow-black/50 overflow-hidden">
+          {/* Notch */}
+          <div className="relative h-5 bg-gray-900 flex items-end justify-center">
+            <div className="w-16 h-3.5 bg-gray-950 rounded-b-xl" />
+          </div>
+          {/* Screen */}
+          <div className="overflow-hidden bg-white">
+            <Image
+              src="/images/lp/booking-mobile-hero.jpg"
+              alt="LINE予約画面"
+              width={390}
+              height={844}
+              className="w-full h-auto object-cover object-top"
+              priority
+            />
+          </div>
+          {/* Home indicator */}
+          <div className="h-5 bg-gray-900 flex items-center justify-center">
+            <div className="w-10 h-1 rounded-full bg-gray-600" />
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
