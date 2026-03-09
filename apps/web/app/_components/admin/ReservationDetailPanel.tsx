@@ -75,7 +75,7 @@ export default function ReservationDetailPanel({
     setEditing(true);
     setEditError(null);
     try {
-      const res = await fetch(`/api/proxy/admin/reservations/${reservation.reservationId}`, {
+      const res = await fetch(`/api/proxy/admin/reservations/${reservation.reservationId}?tenantId=${encodeURIComponent(tenantId)}`, {
         method: 'PATCH',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
@@ -103,7 +103,7 @@ export default function ReservationDetailPanel({
     setMetaSaving(true);
     setMetaError(null);
     try {
-      const res = await fetch(`/api/proxy/admin/reservations/${reservation.reservationId}`, {
+      const res = await fetch(`/api/proxy/admin/reservations/${reservation.reservationId}?tenantId=${encodeURIComponent(tenantId)}`, {
         method: 'PATCH',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ meta: metaForm }),
