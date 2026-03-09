@@ -79,11 +79,18 @@ async function proxy(req: Request, ctx: Ctx): Promise<Response> {
   headers.delete('x-session-tenant-id');
   headers.delete('x-session-user-id');
   // セッション tenantId + userId を注入（HMAC 検証済み → Workers が信頼できる）
+  // URL ?tenantId が明示されている場合はそちらを優先する。
+  // 理由: admin UI (useAdminTenantId) は URL query を正としてテナントを解決するが、
+  // セッション cookie のテナントが古い（別テナントでログイン後に切り替え）場合がある。
+  // Workers getTenantId() は x-session-tenant-id を最優先するため、
+  // ここで URL query を反映しないと Workers が誤ったテナントのデータを返す。
   let resolvedSessionTenantId: string | null = null;
   if (isAdminRoute) {
     const session = await readSessionPayload(req);
-    resolvedSessionTenantId = session.tenantId;
-    if (session.tenantId) headers.set('x-session-tenant-id', session.tenantId);
+    const urlTenantId = sp.get('tenantId')?.trim() || null;
+    // URL query tenantId > session cookie tenantId
+    resolvedSessionTenantId = urlTenantId || session.tenantId;
+    if (resolvedSessionTenantId) headers.set('x-session-tenant-id', resolvedSessionTenantId);
     if (session.userId) headers.set('x-session-user-id', session.userId);
   }
 

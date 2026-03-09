@@ -247,9 +247,13 @@ export async function proxyFetch(
   const adminTokenInjected = injectAdminToken(headers, upstreamPathname);
 
   // セッション tenantId + userId を注入（admin route のみ）
+  // URL ?tenantId を優先（セッション cookie のテナントが古い場合の不整合防止）
   if (isAdminRoute) {
     const session = await readSessionPayload(req);
-    if (session.tenantId) headers.set('x-session-tenant-id', session.tenantId);
+    const reqUrl = new URL(req.url);
+    const urlTenantId = reqUrl.searchParams.get('tenantId')?.trim() || null;
+    const effectiveTenantId = urlTenantId || session.tenantId;
+    if (effectiveTenantId) headers.set('x-session-tenant-id', effectiveTenantId);
     if (session.userId) headers.set('x-session-user-id', session.userId);
   }
 
@@ -366,9 +370,13 @@ export async function forwardJson(req: Request, url: string, init: RequestInit =
   } catch { /* 無効 URL は無視 */ }
 
   // セッション tenantId + userId を注入（admin route のみ）
+  // URL ?tenantId を優先（セッション cookie のテナントが古い場合の不整合防止）
   if (isAdminRoute) {
     const session = await readSessionPayload(req);
-    if (session.tenantId) h.set('x-session-tenant-id', session.tenantId);
+    const reqUrl = new URL(req.url);
+    const urlTenantId = reqUrl.searchParams.get('tenantId')?.trim() || null;
+    const effectiveTenantId = urlTenantId || session.tenantId;
+    if (effectiveTenantId) h.set('x-session-tenant-id', effectiveTenantId);
     if (session.userId) h.set('x-session-user-id', session.userId);
   }
 
