@@ -533,13 +533,30 @@ export async function POST(req: Request) {
     cfgHasToken: !!cfg.channelAccessToken,
   });
 
-  // ── debug=1 POST: return tenant resolution trace without processing ──────
+  // ── debug=1 POST: full pipeline dry-run (AI gate + intent) without sending ──
   if (debugMode === "1") {
     // Wait briefly for log POST to complete so we can report its status
     await new Promise(r => setTimeout(r, 500));
+
+    // Run the same AI gate check as the POST main line (L622)
+    const _d1AiEnabled = await checkAiEnabled(tenantId);
+
+    // Extract text from first event for intent judgment
+    const _d1Ev = events.find((x: any) =>
+      x?.type === "message" && x?.message?.type === "text" && x?.replyToken);
+    const _d1Text = _d1Ev ? String(_d1Ev.message?.text ?? "") : null;
+    const _d1IsBooking = _d1Text ? detectBookingIntent(_d1Text) : null;
+
+    // Determine what POST main line would do
+    let _d1Action: string;
+    if (!_d1Ev) _d1Action = "no_text_event";
+    else if (!_d1AiEnabled) _d1Action = "blocked_ai_disabled";
+    else if (_d1IsBooking) _d1Action = "would_reply_booking_template";
+    else _d1Action = "would_push_ai";
+
     return NextResponse.json({
       ok: true, stamp: STAMP, where, debug: 1,
-      step: "tenant_resolved",
+      step: "full_dry_run",
       destination: destination || null,
       resolvedTenantId: tenantId,
       resolvedBy,
@@ -552,6 +569,13 @@ export async function POST(req: Request) {
       allowBadSig,
       parseError,
       eventCount: events.length,
+      // AI gate result (same function as POST main line)
+      aiEnabled: _d1AiEnabled,
+      // Intent (if text event exists)
+      firstText: _d1Text?.slice(0, 80) ?? null,
+      intent: _d1IsBooking === null ? null : (_d1IsBooking ? "booking" : "ai"),
+      // What would happen in POST main line
+      actionIfLive: _d1Action,
       logPostAttempt: !!webhookLogApiBase && !!internalToken,
       logPostOk: _logPostOk,
       logPostStatus: _logPostStatus,
@@ -621,13 +645,17 @@ export async function POST(req: Request) {
 
   // ── AI gate: テナントの AI接客が無効なら全自動応答をスキップ ──────────────
   const aiEnabled = await checkAiEnabled(tenantId);
+  console.log(
+    `[LINE_WEBHOOK] method=POST tenant=${tenantId} resolvedBy=${resolvedBy} ` +
+    `aiEnabled=${aiEnabled} text=${textIn.slice(0, 20)} uid=${lineUserId.slice(0, 6)}***`
+  );
   if (!aiEnabled) {
-    console.log(`[AI_GATE] tenant=${tenantId} enabled=false path=line_webhook skip=all`);
+    console.log(`[LINE_WEBHOOK] method=POST tenant=${tenantId} aiEnabled=false action=blocked`);
     return NextResponse.json(
       {
         ok: true, stamp: STAMP, where, tenantId, source: cfg.source,
         verified, aiEnabled: false, skipped: true, reason: "ai_disabled",
-        eventCount: events.length,
+        resolvedBy, eventCount: events.length,
       },
       { headers: { "x-stamp": STAMP } }
     );
@@ -701,8 +729,9 @@ export async function POST(req: Request) {
     });
   }
 
-  // ── 予約 intent: テンプレカードを reply で返す（AI 不使用・ACK なし）───────
+  // ── 予約 intent: テンプレカードを reply で返す（AI gate 通過済み）───────
   if (isBookingIntent) {
+    console.log(`[LINE_WEBHOOK] method=POST tenant=${tenantId} aiEnabled=true intent=booking action=reply_template`);
     const bookingMsg = buildBookingTemplateMessage(bookingUrl);
     const repBooking = await replyLine(cfg.channelAccessToken, replyToken, [bookingMsg])
       .catch(() => ({ ok: false, status: 0, bodyText: "reply_exception" }));
@@ -715,7 +744,7 @@ export async function POST(req: Request) {
     return NextResponse.json(
       {
         ok: true, stamp: STAMP, where, tenantId, source: cfg.source,
-        verified, intent: "booking",
+        verified, aiEnabled: true, resolvedBy, intent: "booking",
         replyOk: repBooking.ok, replyStatus: repBooking.status,
         hasUserId: !!lineUserId, eventCount: events.length,
       },
