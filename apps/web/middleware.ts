@@ -128,8 +128,94 @@ export async function middleware(req: NextRequest) {
     }
   }
 
+  // ── Billing gate (only when BILLING_REQUIRED=1) ──────────────────────────
+  //
+  // Blocks admin pages (except exempt paths) when tenant has no active subscription.
+  // Uses a short-lived cookie (billing_ok=<tenantId>) scoped per tenant to avoid
+  // fetching settings on every request. Tenant switch invalidates the cache.
+  if (
+    process.env.BILLING_REQUIRED === "1" &&
+    pathname.startsWith("/admin/") &&
+    !pathname.startsWith("/admin/billing") &&
+    !pathname.startsWith("/admin/onboarding") &&
+    !pathname.startsWith("/admin/unauthorized") &&
+    !pathname.startsWith("/admin/line-setup")
+  ) {
+    const cookie = req.headers.get("cookie") ?? "";
+
+    // Resolve tenantId from URL query > session cookie > last_tenant_id cookie
+    let tenantId = req.nextUrl.searchParams.get("tenantId")?.trim() || null;
+    if (!tenantId) {
+      const sessionMatch = cookie.match(/(?:^|;\s*)line_session=([^;]+)/);
+      if (sessionMatch) {
+        try {
+          const bodyB64u = sessionMatch[1].split(".")[0];
+          const bodyJson = atob(bodyB64u.replace(/-/g, "+").replace(/_/g, "/"));
+          const payload = JSON.parse(bodyJson);
+          tenantId = payload.tenantId || null;
+        } catch {}
+      }
+    }
+    if (!tenantId) {
+      const ltMatch = cookie.match(/(?:^|;\s*)last_tenant_id=([^;]+)/);
+      tenantId = ltMatch ? decodeURIComponent(ltMatch[1]) : null;
+    }
+
+    if (tenantId) {
+      // Check cache cookie — value stores the tenantId it was validated for
+      const billingOkMatch = cookie.match(/(?:^|;\s*)billing_ok=([^;]+)/);
+      const cachedTenant = billingOkMatch ? decodeURIComponent(billingOkMatch[1]) : null;
+      const cacheHit = cachedTenant === tenantId;
+
+      if (!cacheHit) {
+        // Fetch subscription status from Workers API directly
+        const apiBase = (process.env.API_BASE ?? "").replace(/\/+$/, "");
+        const adminToken = process.env.ADMIN_TOKEN ?? "";
+
+        if (apiBase) {
+          try {
+            const settingsUrl = `${apiBase}/admin/settings?tenantId=${encodeURIComponent(tenantId)}`;
+            const headers: Record<string, string> = {};
+            if (adminToken) headers["X-Admin-Token"] = adminToken;
+            const resp = await fetch(settingsUrl, { headers, signal: AbortSignal.timeout(3000) });
+
+            if (resp.ok) {
+              const data = (await resp.json()) as any;
+              const sub = (data?.data ?? data)?.subscription;
+              const status: string = sub?.status ?? "";
+              const isAllowed = status === "active" || status === "trialing" || status === "past_due";
+
+              if (!isAllowed) {
+                // Clear stale cache cookie + redirect to billing page
+                const billingUrl = `/admin/billing?tenantId=${encodeURIComponent(tenantId)}`;
+                const redirect = NextResponse.redirect(new URL(billingUrl, req.nextUrl.origin));
+                redirect.cookies.delete("billing_ok");
+                return redirect;
+              }
+
+              // Set cache cookie (5 min) with tenantId as value
+              const res = NextResponse.next();
+              res.headers.set("x-mw-stamp", "MW_20260309_BILLING_GATE");
+              res.cookies.set("billing_ok", tenantId, {
+                path: "/admin",
+                maxAge: 300,
+                httpOnly: true,
+                secure: true,
+                sameSite: "lax",
+              });
+              return res;
+            }
+            // Non-OK response (e.g. 401, 500) — fail open, don't block
+          } catch {
+            // Fetch failed (timeout, network) — fail open
+          }
+        }
+      }
+    }
+  }
+
   const res = NextResponse.next();
-  res.headers.set("x-mw-stamp", "MW_20260304_EMAIL_AUTH");
+  res.headers.set("x-mw-stamp", "MW_20260309_BILLING_GATE");
   return res;
 }
 

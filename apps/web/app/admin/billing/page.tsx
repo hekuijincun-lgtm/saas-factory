@@ -5,7 +5,7 @@ import { useState, useEffect } from 'react';
 import AdminTopBar from '../../_components/ui/AdminTopBar';
 import { useAdminTenantId } from '@/src/lib/useAdminTenantId';
 import type { SubscriptionInfo, PlanId } from '@/src/types/settings';
-import { CreditCard } from 'lucide-react';
+import { CreditCard, ExternalLink } from 'lucide-react';
 
 // ── Plan display ─────────────────────────────────────────────────────────────
 
@@ -69,6 +69,32 @@ export default function BillingPage() {
   const [subscription, setSubscription] = useState<SubscriptionInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [portalLoading, setPortalLoading] = useState(false);
+  const [portalError, setPortalError] = useState<string | null>(null);
+
+  async function openPortal() {
+    setPortalLoading(true);
+    setPortalError(null);
+    try {
+      const res = await fetch(`/api/proxy/admin/billing/portal-session?tenantId=${encodeURIComponent(tenantId)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      const json = await res.json() as any;
+      if (json?.ok && json.url) {
+        window.location.href = json.url;
+      } else {
+        setPortalError(json?.error === 'no_stripe_customer'
+          ? 'Stripe の顧客情報が見つかりません'
+          : 'ポータルの作成に失敗しました');
+      }
+    } catch {
+      setPortalError('ポータルの作成に失敗しました');
+    } finally {
+      setPortalLoading(false);
+    }
+  }
 
   useEffect(() => {
     if (tenantStatus !== 'ready') return;
@@ -186,10 +212,30 @@ export default function BillingPage() {
             )}
           </div>
 
-          {/* Phase 2c placeholder note */}
-          <p className="text-xs text-center text-gray-400">
-            プラン変更・お支払い方法の更新は、次回アップデートで対応予定です。
-          </p>
+          {/* Portal actions */}
+          {subscription?.stripeCustomerId && (
+            <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6">
+              <h2 className="text-base font-semibold text-gray-900 mb-1">Stripe で管理</h2>
+              <p className="text-xs text-gray-500 mb-4">
+                プラン変更・お支払い方法の更新・解約は Stripe Customer Portal から行えます。
+              </p>
+              {portalError && (
+                <p className="text-sm text-red-500 mb-3">{portalError}</p>
+              )}
+              <button
+                onClick={openPortal}
+                disabled={portalLoading}
+                className="inline-flex items-center gap-2 px-4 py-2.5 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-50 transition-all"
+              >
+                {portalLoading ? '読み込み中...' : (
+                  <>
+                    Stripe で管理する
+                    <ExternalLink className="w-4 h-4" />
+                  </>
+                )}
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </>
