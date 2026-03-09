@@ -17,7 +17,7 @@ export default function BookingShell({ children }: BookingShellProps) {
 
   useEffect(() => {
     // Fetch storeName from admin settings API; fail silently
-    fetch(`/api/proxy/admin/settings?tenantId=${encodeURIComponent(tenantId)}`, { cache: 'no-store' })
+    fetch(`/api/booking/settings?tenantId=${encodeURIComponent(tenantId)}`, { cache: 'no-store' })
       .then(r => r.ok ? r.json() : null)
       .then((json: any) => {
         const name = json?.data?.storeName || json?.storeName;
@@ -34,9 +34,7 @@ export default function BookingShell({ children }: BookingShellProps) {
       <div className="w-full max-w-[520px] bg-white rounded-3xl shadow-soft overflow-hidden">
         {/* ヘッダー */}
         <div className="bg-brand-header px-8 py-6">
-          <div className="text-xs font-medium text-white/80 uppercase tracking-wider mb-1">
-            HAIR SALON
-          </div>
+          {/* Removed static "HAIR SALON" label — multi-vertical SaaS (hair / nail / eyebrow) so store name only */}
           <h1 className="text-2xl font-bold text-white">{storeName}</h1>
         </div>
 
