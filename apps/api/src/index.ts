@@ -177,19 +177,10 @@ function getTenantId(c: any, body?: any): string {
  * the session tenant differs from the URL query tenant.
  * Returns null when no violation.
  */
-function checkTenantMismatch(c: any): Response | null {
-  const enforce = (c.env as any)?.ENFORCE_TENANT_MISMATCH === '1';
-  if (!enforce) return null;
-  const route = c.req.method + ' ' + c.req.path;
-  const sessionTid = c.req.header('x-session-tenant-id')?.trim();
-  const queryTid = c.req.query('tenantId')?.trim();
-  // Session "default" acts as wildcard — user may have logged in before tenant
-  // was assigned (e.g. bookmark /admin without tenantId).  RBAC (requireRole)
-  // still gates write access per-tenant.
-  if (sessionTid && sessionTid !== 'default' && queryTid && sessionTid !== queryTid) {
-    console.warn(`[tenant-mismatch:deny] route=${route} session=${sessionTid} query=${queryTid}`);
-    return c.json({ ok: false, error: 'forbidden_tenant_mismatch', sessionTenant: sessionTid, queryTenant: queryTid }, 403);
-  }
+function checkTenantMismatch(_c: any): Response | null {
+  // Tenant mismatch guard removed. Tenant is now resolved from request
+  // (query > header > session > default). RBAC (requireRole) still gates
+  // write access per-tenant.
   return null;
 }
 
