@@ -128,6 +128,51 @@ export async function middleware(req: NextRequest) {
     }
   }
 
+  // ── Owner auth gate (/owner/*) ────────────────────────────────────────────
+  // Always requires valid session + userId in OWNER_USER_IDS env.
+  if (pathname === "/owner" || pathname.startsWith("/owner/")) {
+    const cookie = req.headers.get("cookie") ?? "";
+    const sessionMatch = cookie.match(/(?:^|;\s*)line_session=([^;]+)/);
+    const sessionToken = sessionMatch ? sessionMatch[1] : null;
+
+    if (!sessionToken) {
+      return NextResponse.redirect(new URL("/login?reason=not_logged_in", req.nextUrl.origin));
+    }
+
+    const secret = (process.env.LINE_SESSION_SECRET ?? "").trim();
+    if (!secret) {
+      return NextResponse.redirect(new URL("/login?reason=config_error", req.nextUrl.origin));
+    }
+
+    // Verify HMAC + extract userId
+    const valid = await verifySessionHasUserId(sessionToken, secret);
+    if (!valid) {
+      return NextResponse.redirect(new URL("/login?reason=session_expired", req.nextUrl.origin));
+    }
+
+    // Extract userId from token payload
+    const dotIdx = sessionToken.lastIndexOf(".");
+    let userId = "";
+    if (dotIdx > 0) {
+      try {
+        const bodyB64u = sessionToken.slice(0, dotIdx);
+        const bodyJson = atob(bodyB64u.replace(/-/g, "+").replace(/_/g, "/"));
+        const payload = JSON.parse(bodyJson);
+        userId = payload.userId ?? "";
+      } catch {}
+    }
+
+    // Check against OWNER_USER_IDS
+    const ownerIds = (process.env.OWNER_USER_IDS ?? "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (!userId || !ownerIds.includes(userId)) {
+      return NextResponse.redirect(new URL("/admin?error=not_owner", req.nextUrl.origin));
+    }
+    // Passed — continue
+  }
+
   // ── Billing gate (only when BILLING_REQUIRED=1) ──────────────────────────
   //
   // Blocks admin pages (except exempt paths) when tenant has no active subscription.
@@ -242,5 +287,5 @@ export async function middleware(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/admin/:path*", "/booking/:path*", "/login", "/api/:path*"],
+  matcher: ["/admin/:path*", "/owner/:path*", "/booking/:path*", "/login", "/api/:path*"],
 };

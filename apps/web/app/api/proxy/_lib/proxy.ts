@@ -106,6 +106,11 @@ export function isAdminPathname(pathname: string): boolean {
   return pathname === '/admin' || pathname.startsWith('/admin/');
 }
 
+/** /owner または /owner/* かどうかを pathname で判定する */
+export function isOwnerPathname(pathname: string): boolean {
+  return pathname === '/owner' || pathname.startsWith('/owner/');
+}
+
 /** ADMIN_TOKEN を環境から読む: CF Pages runtime env → process.env の順 */
 export function readAdminToken(): string | undefined {
   try {
@@ -122,7 +127,7 @@ export function readAdminToken(): string | undefined {
  * /admin/* 以外・ADMIN_TOKEN 未設定時は false を返す（注入なし）。
  */
 export function injectAdminToken(headers: Headers, pathname: string): boolean {
-  if (!isAdminPathname(pathname)) return false;
+  if (!isAdminPathname(pathname) && !isOwnerPathname(pathname)) return false;
   const token = readAdminToken();
   if (!token) return false;
   headers.set('X-Admin-Token', token);
@@ -246,9 +251,9 @@ export async function proxyFetch(
   const isTokenConfigured = isAdminRoute && !!readAdminToken();
   const adminTokenInjected = injectAdminToken(headers, upstreamPathname);
 
-  // セッション tenantId + userId を注入（admin route のみ）
+  // セッション tenantId + userId を注入（admin/owner route）
   // URL ?tenantId を優先（セッション cookie のテナントが古い場合の不整合防止）
-  if (isAdminRoute) {
+  if (isAdminRoute || isOwnerPathname(upstreamPathname)) {
     const session = await readSessionPayload(req);
     const reqUrl = new URL(req.url);
     const urlTenantId = reqUrl.searchParams.get('tenantId')?.trim() || null;
@@ -369,15 +374,19 @@ export async function forwardJson(req: Request, url: string, init: RequestInit =
     adminTokenInjected = injectAdminToken(h, pathname);
   } catch { /* 無効 URL は無視 */ }
 
-  // セッション tenantId + userId を注入（admin route のみ）
+  // セッション tenantId + userId を注入（admin/owner route）
   // URL ?tenantId を優先（セッション cookie のテナントが古い場合の不整合防止）
-  if (isAdminRoute) {
-    const session = await readSessionPayload(req);
-    const reqUrl = new URL(req.url);
-    const urlTenantId = reqUrl.searchParams.get('tenantId')?.trim() || null;
-    const effectiveTenantId = urlTenantId || session.tenantId;
-    if (effectiveTenantId) h.set('x-session-tenant-id', effectiveTenantId);
-    if (session.userId) h.set('x-session-user-id', session.userId);
+  {
+    let fwdPathname = '';
+    try { fwdPathname = new URL(url).pathname; } catch {}
+    if (isAdminRoute || isOwnerPathname(fwdPathname)) {
+      const session = await readSessionPayload(req);
+      const reqUrl = new URL(req.url);
+      const urlTenantId = reqUrl.searchParams.get('tenantId')?.trim() || null;
+      const effectiveTenantId = urlTenantId || session.tenantId;
+      if (effectiveTenantId) h.set('x-session-tenant-id', effectiveTenantId);
+      if (session.userId) h.set('x-session-user-id', session.userId);
+    }
   }
 
   // body: keep streaming where possible

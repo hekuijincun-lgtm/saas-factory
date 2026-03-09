@@ -4,6 +4,7 @@ import Stripe from "stripe";
 import { resolveVertical, DEFAULT_ADMIN_SETTINGS, mergeSettings } from "./settings";
 import type { PlanId, SubscriptionInfo } from "./settings";
 import { getRepeatConfig, getStyleLabel, buildRepeatMessage, eyebrowOnboardingChecks } from "./verticals/eyebrow";
+import { registerOwnerRoutes } from "./routes/owner";
 
 // test helper (lock reproduction)
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
@@ -149,6 +150,9 @@ app.use('/admin/*', async (c, next) => {
 
   return next();
 });
+
+// Owner routes (middleware + endpoints) — see apps/api/src/routes/owner.ts
+registerOwnerRoutes(app);
 
 function getTenantId(c: any, body?: any): string {
   // x-session-tenant-id: injected by Pages proxy after HMAC-verifying line_session cookie.

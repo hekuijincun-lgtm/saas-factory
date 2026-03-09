@@ -1,6 +1,6 @@
 /* LITERAL_OK_20260221_144234 */
 export const runtime = "edge";
-import { isAdminPathname, readAdminToken, injectAdminToken, makeDebugStamp, applyDebugHeaders, readSessionPayload } from '../_lib/proxy';
+import { isAdminPathname, isOwnerPathname, readAdminToken, injectAdminToken, makeDebugStamp, applyDebugHeaders, readSessionPayload } from '../_lib/proxy';
 
 type Ctx = { params: any };
 
@@ -85,7 +85,7 @@ async function proxy(req: Request, ctx: Ctx): Promise<Response> {
   // Workers getTenantId() は x-session-tenant-id を最優先するため、
   // ここで URL query を反映しないと Workers が誤ったテナントのデータを返す。
   let resolvedSessionTenantId: string | null = null;
-  if (isAdminRoute) {
+  if (isAdminRoute || isOwnerPathname(upstream.pathname)) {
     const session = await readSessionPayload(req);
     const urlTenantId = sp.get('tenantId')?.trim() || null;
     // URL query tenantId > session cookie tenantId
