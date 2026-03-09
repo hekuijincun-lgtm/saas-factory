@@ -3620,6 +3620,66 @@ app.post('/admin/billing/portal-session', async (c) => {
   }
 });
 
+// ── Support ticket submission ───────────────────────────────────────────────
+app.post('/admin/support', async (c) => {
+  const env = c.env as any;
+  const kv = env.SAAS_FACTORY as KVNamespace;
+
+  let body: any = {};
+  try { body = await c.req.json(); } catch {}
+
+  const tenantId = getTenantId(c, body);
+  if (!tenantId || tenantId === 'default') {
+    return c.json({ ok: false, error: 'missing_tenant_id' }, 400);
+  }
+
+  const validCategories = ['bug', 'feature', 'support', 'other'];
+  const category = body.category;
+  if (!category || !validCategories.includes(category)) {
+    return c.json({ ok: false, error: 'invalid_category' }, 400);
+  }
+
+  const message = typeof body.message === 'string' ? body.message.trim() : '';
+  if (message.length < 3) {
+    return c.json({ ok: false, error: 'message_too_short' }, 400);
+  }
+
+  // Simple email validation if provided
+  const contactEmail = typeof body.contactEmail === 'string' ? body.contactEmail.trim() : '';
+  if (contactEmail && !contactEmail.includes('@')) {
+    return c.json({ ok: false, error: 'invalid_email' }, 400);
+  }
+
+  const validPriorities = ['low', 'medium', 'high'];
+  const priority = validPriorities.includes(body.priority) ? body.priority : 'medium';
+
+  const now = new Date();
+  const ts = now.getTime();
+  const rand = Math.random().toString(36).slice(2, 8);
+  const ticketId = `${ts}-${rand}`;
+
+  const ticket = {
+    id: ticketId,
+    tenantId,
+    category,
+    subject: typeof body.subject === 'string' ? body.subject.trim() : undefined,
+    message,
+    priority,
+    wantsReply: body.wantsReply === true,
+    contactEmail: contactEmail || undefined,
+    pageUrl: typeof body.pageUrl === 'string' ? body.pageUrl : undefined,
+    userAgent: typeof body.userAgent === 'string' ? body.userAgent.slice(0, 500) : undefined,
+    status: 'new',
+    source: 'admin_ui',
+    createdAt: body.createdAt || now.toISOString(),
+  };
+
+  const kvKey = `support:ticket:${tenantId}:${ticketId}`;
+  await kv.put(kvKey, JSON.stringify(ticket), { expirationTtl: 60 * 60 * 24 * 365 }); // 1 year TTL
+
+  return c.json({ ok: true, id: ticketId, saved: true });
+});
+
 app.get('/admin/members', async (c) => {
   const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
   const tenantId = getTenantId(c, null);

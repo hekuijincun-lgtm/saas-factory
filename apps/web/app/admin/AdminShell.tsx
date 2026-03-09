@@ -17,6 +17,7 @@ import {
   UserCircle,
   LogOut,
   CreditCard,
+  LifeBuoy,
 } from "lucide-react";
 import { adminNavItems } from "./nav.config";
 
@@ -38,6 +39,7 @@ const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   // temporarily hidden — re-enable with nav.config.ts
   // "/admin/admins":       Shield,
   // "/admin/security":     KeyRound,
+  "/admin/support":      LifeBuoy,
   "/admin/settings":     Settings,
 };
 
