@@ -287,7 +287,8 @@ export default function AdminAIClient() {
 
   const flash = (msg: string, kind: "success" | "error") => {
     setBanner({ msg, kind });
-    setTimeout(() => setBanner(null), 3500);
+    // Only auto-dismiss success; errors stay visible until next action
+    if (kind === "success") setTimeout(() => setBanner(null), 3500);
   };
 
   // ── Test Chat ──────────────────────────────────────────────────────────
@@ -295,6 +296,16 @@ export default function AdminAIClient() {
   const sendTestChat = async () => {
     const msg = chatInput.trim();
     if (!msg || chatSending) return;
+    // Local gate: warn if AI is disabled in current settings
+    if (!settings.enabled) {
+      setChatMessages((prev) => [
+        ...prev,
+        { role: "user", text: msg },
+        { role: "ai", text: "[AI無効] AI接客が無効になっています。有効化してから再度お試しください。" },
+      ]);
+      setChatInput("");
+      return;
+    }
     setChatInput("");
     setChatMessages((prev) => [...prev, { role: "user", text: msg }]);
     setChatSending(true);
@@ -341,6 +352,10 @@ export default function AdminAIClient() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ settings }),
       });
+      if (r.status === 401 || r.status === 403) {
+        flash("セッション切れ: ページを再読み込みして再ログインしてください", "error");
+        return;
+      }
       const j = await r.json() as any;
       if (j?.ok) flash("基本設定を保存しました", "success");
       else flash("保存失敗: " + (j?.error || "unknown"), "error");
@@ -363,6 +378,11 @@ export default function AdminAIClient() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ policy: { hardRules, prohibitedTopics } }),
       });
+      if (r.status === 401 || r.status === 403) {
+        flash("セッション切れ: ページを再読み込みして再ログインしてください", "error");
+        setSavingPolicy(false);
+        return;
+      }
       const j = await r.json() as any;
       if (j?.ok) flash("ポリシーを保存しました", "success");
       else flash("保存失敗: " + (j?.error || "unknown"), "error");
@@ -391,6 +411,11 @@ export default function AdminAIClient() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ retention: { ...retention, templates } }),
       });
+      if (r.status === 401 || r.status === 403) {
+        flash("セッション切れ: ページを再読み込みして再ログインしてください", "error");
+        setSavingRetention(false);
+        return;
+      }
       const j = await r.json() as any;
       if (j?.ok) flash("リピート促進設定を保存しました", "success");
       else flash("保存失敗: " + (j?.error || "unknown"), "error");
@@ -412,6 +437,11 @@ export default function AdminAIClient() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify(payload),
       });
+      if (r.status === 401 || r.status === 403) {
+        flash("セッション切れ: ページを再読み込みして再ログインしてください", "error");
+        setSavingUpsell(false);
+        return;
+      }
       const j = await r.json() as any;
       if (j?.ok) {
         if (j.upsell) setUpsell(j.upsell);
@@ -437,6 +467,11 @@ export default function AdminAIClient() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ question: newQ.trim(), answer: newA.trim() }),
       });
+      if (r.status === 401 || r.status === 403) {
+        flash("セッション切れ: ページを再読み込みして再ログインしてください", "error");
+        setAddingFaq(false);
+        return;
+      }
       const j = await r.json() as any;
       if (j?.ok && j?.item) {
         setFaq((prev) => [...prev, j.item]);

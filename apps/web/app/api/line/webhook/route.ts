@@ -614,6 +614,17 @@ export async function POST(req: Request) {
   // ── debug=2: push のみ同期実送信（ack なし・テスト用）────────────────────
   if (debugMode === "2") {
     const ai       = await runAiChat(tenantId, textIn, aiIp);
+
+    // AI disabled by admin → skip push even in debug=2
+    if (ai.disabled) {
+      return NextResponse.json({
+        ok: true, stamp: STAMP, where, tenantId, debug: 2,
+        intent: "ai", aiDisabled: true,
+        hasUserId: !!lineUserId,
+        finalText: null, pushStatus: null, pushOk: null, pushBodySnippet: null,
+      });
+    }
+
     const answer   = ai.ok ? ai.answer : FALLBACK_TEXT;
     const quickReply = ai.ok ? buildQuickReplyFromActions(ai.suggestedActions) : undefined;
     const messages = [{ type: "text", text: answer, ...(quickReply ? { quickReply } : {}) }];
