@@ -621,6 +621,64 @@ export async function POST(req: Request) {
     );
   }
 
+  // ── Postback handling (rich menu: 店舗情報) ──────────────────────────────────
+  const postbackEv = events.find(
+    (x: any) => x?.type === "postback" && x?.replyToken
+  );
+  if (postbackEv) {
+    const postbackData = String(postbackEv.postback?.data ?? "");
+    const params = new URLSearchParams(postbackData);
+
+    if (params.get("action") === "store_info") {
+      // Fetch tenant settings for store info
+      try {
+        const apiBase = (
+          process.env.API_BASE ?? process.env.NEXT_PUBLIC_API_BASE ?? ""
+        ).replace(/\/+$/, "");
+        let adminToken = "";
+        try {
+          const cfEnv = (getRequestContext()?.env as any);
+          if (cfEnv?.ADMIN_TOKEN) adminToken = String(cfEnv.ADMIN_TOKEN);
+        } catch {}
+        if (!adminToken) adminToken = process.env.ADMIN_TOKEN ?? "";
+
+        let storeName = "未設定";
+        let address = "未設定";
+        let email = "未設定";
+
+        if (apiBase) {
+          const settingsUrl = `${apiBase}/admin/settings?tenantId=${encodeURIComponent(tenantId)}`;
+          const headers: Record<string, string> = { Accept: "application/json" };
+          if (adminToken) headers["X-Admin-Token"] = adminToken;
+          const r = await fetch(settingsUrl, { headers });
+          if (r.ok) {
+            const json = (await r.json()) as any;
+            const s = json?.data ?? json;
+            if (s?.storeName) storeName = s.storeName;
+            if (s?.storeAddress) address = s.storeAddress;
+            if (s?.tenant?.email) email = s.tenant.email;
+          }
+        }
+
+        const replyText = `店舗情報です📍\n\n店舗名: ${storeName}\n住所: ${address}\nメール: ${email}`;
+        await replyLine(cfg.channelAccessToken, String(postbackEv.replyToken), [
+          { type: "text", text: replyText },
+        ]);
+
+        return NextResponse.json({
+          ok: true, stamp: STAMP, where, tenantId, source: cfg.source,
+          verified, replied: true, action: "store_info",
+        });
+      } catch (err: any) {
+        console.error(`[LINE_WEBHOOK] store_info error: ${err.message}`);
+        return NextResponse.json({
+          ok: true, stamp: STAMP, where, tenantId, source: cfg.source,
+          verified, replied: false, action: "store_info", error: String(err.message),
+        });
+      }
+    }
+  }
+
   const ev = events.find(
     (x: any) =>
       x?.type === "message" && x?.message?.type === "text" && x?.replyToken
