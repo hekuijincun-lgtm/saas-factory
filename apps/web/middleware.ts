@@ -87,7 +87,7 @@ export async function middleware(req: NextRequest) {
   // Redirects to /login (email magic-link) — LINE fallback is on that page.
   if (
     process.env.REQUIRE_LINE_AUTH === "1" &&
-    pathname.startsWith("/admin/") &&
+    (pathname === "/admin" || pathname.startsWith("/admin/")) &&
     !pathname.startsWith("/admin/unauthorized") &&
     !pathname.startsWith("/admin/line-setup")
   ) {
@@ -135,7 +135,7 @@ export async function middleware(req: NextRequest) {
   // fetching settings on every request. Tenant switch invalidates the cache.
   if (
     process.env.BILLING_REQUIRED === "1" &&
-    pathname.startsWith("/admin/") &&
+    (pathname === "/admin" || pathname.startsWith("/admin/")) &&
     !pathname.startsWith("/admin/billing") &&
     !pathname.startsWith("/admin/onboarding") &&
     !pathname.startsWith("/admin/unauthorized") &&
