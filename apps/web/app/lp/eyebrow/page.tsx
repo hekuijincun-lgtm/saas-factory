@@ -217,17 +217,25 @@ function LpNavbar() {
           </a>
         </nav>
 
-        {/* CTA */}
-        <Link
-          href={DEMO_HREF}
-          className="group inline-flex items-center gap-1.5 px-4 py-2 bg-rose-500 text-white text-sm font-semibold rounded-full hover:bg-rose-600 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 focus-visible:ring-offset-2 shadow-sm"
-        >
-          デモを見る
-          <ArrowRight
-            className="w-3.5 h-3.5 transition-transform duration-200 group-hover:translate-x-1"
-            aria-hidden="true"
-          />
-        </Link>
+        {/* Login + CTA */}
+        <div className="flex items-center gap-3 sm:gap-4">
+          <Link
+            href="/login"
+            className="hidden sm:inline-flex text-sm text-gray-500 hover:text-gray-900 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 rounded"
+          >
+            ログイン
+          </Link>
+          <Link
+            href={DEMO_HREF}
+            className="group inline-flex items-center gap-1.5 px-4 py-2 bg-rose-500 text-white text-sm font-semibold rounded-full hover:bg-rose-600 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 focus-visible:ring-offset-2 shadow-sm"
+          >
+            デモを見る
+            <ArrowRight
+              className="w-3.5 h-3.5 transition-transform duration-200 group-hover:translate-x-1"
+              aria-hidden="true"
+            />
+          </Link>
+        </div>
       </div>
     </header>
   );
@@ -315,6 +323,14 @@ function HeroSection() {
             ),
           )}
         </div>
+
+        {/* Existing user login link */}
+        <p className="mt-6 text-sm text-slate-500">
+          すでにご利用中の方は
+          <Link href="/login" className="text-slate-300 hover:text-white underline underline-offset-2 transition-colors ml-1">
+            ログイン
+          </Link>
+        </p>
 
         {/* Hero device mockup */}
         <HeroDeviceMockup />
@@ -1423,6 +1439,12 @@ function LpFooter() {
           >
             FAQ
           </a>
+          <Link
+            href="/login"
+            className="hover:text-white transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 rounded"
+          >
+            ログイン
+          </Link>
         </nav>
 
         <p className="text-xs">© 2026 LumiBook. All rights reserved.</p>
