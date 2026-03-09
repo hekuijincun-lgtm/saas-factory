@@ -190,12 +190,14 @@ export async function middleware(req: NextRequest) {
                 const billingUrl = `/admin/billing?tenantId=${encodeURIComponent(tenantId)}`;
                 const redirect = NextResponse.redirect(new URL(billingUrl, req.nextUrl.origin));
                 redirect.cookies.delete("billing_ok");
+                redirect.headers.set("x-mw-billing-debug", `blocked|tenant=${tenantId}|status=${status}`);
                 return redirect;
               }
 
               // Set cache cookie (5 min) with tenantId as value
               const res = NextResponse.next();
               res.headers.set("x-mw-stamp", "MW_20260309_BILLING_GATE");
+              res.headers.set("x-mw-billing-debug", `allowed|tenant=${tenantId}|status=${status}`);
               res.cookies.set("billing_ok", tenantId, {
                 path: "/admin",
                 maxAge: 300,
@@ -206,16 +208,36 @@ export async function middleware(req: NextRequest) {
               return res;
             }
             // Non-OK response (e.g. 401, 500) — fail open, don't block
-          } catch {
+            const failRes = NextResponse.next();
+            failRes.headers.set("x-mw-billing-debug", `fail-open-http|tenant=${tenantId}|resp=${resp.status}`);
+            return failRes;
+          } catch (err) {
             // Fetch failed (timeout, network) — fail open
+            const failRes = NextResponse.next();
+            failRes.headers.set("x-mw-billing-debug", `fail-open-catch|tenant=${tenantId}|err=${String(err).slice(0, 80)}`);
+            return failRes;
           }
         }
+        // apiBase empty — fail open
+        const failRes = NextResponse.next();
+        failRes.headers.set("x-mw-billing-debug", `fail-open-no-apibase|tenant=${tenantId}`);
+        return failRes;
       }
+      // Cache hit — billing already validated for this tenant
+      const cacheRes = NextResponse.next();
+      cacheRes.headers.set("x-mw-stamp", "MW_20260309_BILLING_GATE");
+      cacheRes.headers.set("x-mw-billing-debug", `cache-hit|tenant=${tenantId}|cached=${cachedTenant}`);
+      return cacheRes;
     }
+    // No tenantId resolved — fail open
+    const noTenantRes = NextResponse.next();
+    noTenantRes.headers.set("x-mw-billing-debug", `fail-open-no-tenant|pathname=${pathname}`);
+    return noTenantRes;
   }
 
   const res = NextResponse.next();
   res.headers.set("x-mw-stamp", "MW_20260309_BILLING_GATE");
+  res.headers.set("x-mw-billing-debug", "gate-skipped");
   return res;
 }
 
