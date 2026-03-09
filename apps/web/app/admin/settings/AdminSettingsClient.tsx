@@ -16,6 +16,7 @@ import {
   type MessagingStatusResponse,
   fetchRichMenuStatus,
   publishRichMenu,
+  deleteRichMenu,
   type RichMenuStatusResponse,
 } from '../../lib/adminApi';
 import { ApiClientError } from '../../lib/apiClient';
@@ -130,6 +131,7 @@ export default function AdminSettingsClient() {
   const [richMenuLoading, setRichMenuLoading] = useState(false);
   const [richMenuPublishing, setRichMenuPublishing] = useState(false);
   const [richMenuError, setRichMenuError] = useState<string | null>(null);
+  const [richMenuDeleting, setRichMenuDeleting] = useState(false);
 
   // Backfill UI state
   interface BackfillResult {
@@ -471,6 +473,27 @@ export default function AdminSettingsClient() {
       setRichMenuError(msg);
     } finally {
       setRichMenuPublishing(false);
+    }
+  };
+
+  const handleRichMenuDelete = async () => {
+    if (!confirm('リッチメニューを削除しますか？LINE上のリッチメニューも非表示になります。')) return;
+    setRichMenuDeleting(true);
+    setRichMenuError(null);
+    try {
+      const res = await deleteRichMenu(tenantId);
+      if (!res.ok) {
+        setRichMenuError('リッチメニューの削除に失敗しました');
+      } else {
+        showToast('リッチメニューを削除しました', 'success');
+        await fetchRichMenuStatusState();
+      }
+    } catch (error) {
+      const msg = error instanceof ApiClientError ? error.message
+        : error instanceof Error ? error.message : 'リッチメニューの削除に失敗しました';
+      setRichMenuError(msg);
+    } finally {
+      setRichMenuDeleting(false);
     }
   };
 
@@ -1216,17 +1239,26 @@ export default function AdminSettingsClient() {
               </div>
             )}
 
-            {/* 公開/再公開ボタン */}
+            {/* 公開/再公開 + 削除ボタン */}
             {richMenuStatus?.linked && (
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <button
                   onClick={handleRichMenuPublish}
-                  disabled={richMenuPublishing || richMenuLoading}
+                  disabled={richMenuPublishing || richMenuDeleting || richMenuLoading}
                   className="px-4 py-2 text-sm font-medium rounded-lg text-white bg-green-600 hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
                   {richMenuPublishing ? '公開中...' : richMenuStatus.configured ? 'リッチメニューを再公開' : 'リッチメニューを公開'}
                 </button>
-                {richMenuPublishing && (
+                {richMenuStatus.configured && (
+                  <button
+                    onClick={handleRichMenuDelete}
+                    disabled={richMenuPublishing || richMenuDeleting || richMenuLoading}
+                    className="px-4 py-2 text-sm font-medium rounded-lg text-red-600 bg-white border border-red-300 hover:bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  >
+                    {richMenuDeleting ? '削除中...' : '削除'}
+                  </button>
+                )}
+                {(richMenuPublishing || richMenuDeleting) && (
                   <span className="text-xs text-gray-400">LINE API に送信中です。数秒かかる場合があります。</span>
                 )}
               </div>
