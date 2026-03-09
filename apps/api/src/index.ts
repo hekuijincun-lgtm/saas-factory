@@ -3426,7 +3426,7 @@ app.post('/billing/checkout', async (c) => {
     line_items: [{ price: priceId, quantity: 1 }],
     metadata: { planId },
     success_url: `${webOrigin}/signup?session_id={CHECKOUT_SESSION_ID}`,
-    cancel_url: `${webOrigin}/lp/eyebrow#pricing`,
+    cancel_url: `${webOrigin}/lp/eyebrow?canceled=1#pricing`,
   });
 
   return c.json({ ok: true, url: session.url });
