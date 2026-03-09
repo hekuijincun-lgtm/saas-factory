@@ -33,8 +33,9 @@ export async function POST(req: Request) {
   injectAdminToken(headers, '/admin/menu/image');
 
   // Inject HMAC-verified session headers so Workers can perform RBAC
+  // x-session-tenant-id: URL tenantId を優先（セッション cookie のテナント不一致防止）
   const session = await readSessionPayload(req);
-  if (session.tenantId) headers.set('x-session-tenant-id', session.tenantId);
+  headers.set('x-session-tenant-id', tenantId);
   if (session.userId) headers.set('x-session-user-id', session.userId);
 
   const body = await req.arrayBuffer().catch(() => null);

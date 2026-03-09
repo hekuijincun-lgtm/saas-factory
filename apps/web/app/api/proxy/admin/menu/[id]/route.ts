@@ -24,8 +24,9 @@ async function forward(req: Request, method: string): Promise<Response> {
   injectAdminToken(reqHeaders, upstream.pathname);
 
   // Inject HMAC-verified session headers so Workers can perform RBAC
+  // x-session-tenant-id: URL tenantId を優先（セッション cookie のテナント不一致防止）
   const session = await readSessionPayload(req);
-  if (session.tenantId) reqHeaders.set("x-session-tenant-id", session.tenantId);
+  reqHeaders.set("x-session-tenant-id", tenantId);
   if (session.userId) reqHeaders.set("x-session-user-id", session.userId);
 
   let body: ArrayBuffer | undefined;

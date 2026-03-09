@@ -55,8 +55,11 @@ async function buildUpstream(req: Request) {
 
   // Inject session headers (x-session-tenant-id + x-session-user-id)
   // so Workers requireRole() can identify the user on PUT.
+  // x-session-tenant-id: URL tenantId を優先する（セッション cookie が古い場合の
+  // テナント間設定リンク問題を防止）。Workers getTenantId() は
+  // x-session-tenant-id を最優先するため、ここで URL 解決済みの tenantId を使う。
   const session = await readSessionPayload(req);
-  if (session.tenantId) reqHeaders.set('x-session-tenant-id', session.tenantId);
+  reqHeaders.set('x-session-tenant-id', tenantId);
   if (session.userId) reqHeaders.set('x-session-user-id', session.userId);
 
   return { upstream, reqHeaders, tenantId, isDebug, tokenConfigured, tokenInjected };
