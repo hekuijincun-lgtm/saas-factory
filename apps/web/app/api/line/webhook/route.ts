@@ -4,16 +4,38 @@ import { getRequestContext } from "@cloudflare/next-on-pages";
 export const runtime = "edge";
 
 // ─── version / stamps ────────────────────────────────────────────────────────
-// V11: AI push に quickReply 追加（suggestedActions → LINE quickReply 変換）
-//   normal  → dedup
+// V12: AI enabled gate — ALL automated responses (booking template + AI push)
+//      are skipped when ai:settings:{tenantId}.enabled !== true.
+//   normal  → aiEnabled check → dedup
 //             → booking: buttons template を replyLine で即返信（AI不使用）
 //             → ai:     waitUntil(AI+push+quickReply) → 即時 200 返却
-//   debug=1 → 実送信ゼロ・{ intent, bookingUrl, replyPlanned, pushPlanned } 返却
+//   debug=1 → 実送信ゼロ・{ intent, bookingUrl, replyPlanned, pushPlanned, aiEnabled } 返却
 //   debug=2 → push のみ同期実送信して pushStatus + quickReply を返す（テスト用）
-const STAMP = "LINE_WEBHOOK_V11_20260308_QUICKREPLY";
+const STAMP = "LINE_WEBHOOK_V12_20260309_AI_GATE";
 const where  = "api/line/webhook";
 
 const FALLBACK_TEXT = "少し時間をおいて再度お試しください。";
+
+// ─── AI enabled check ───────────────────────────────────────────────────────
+// Calls GET /ai/enabled on Workers to check if AI is enabled for the tenant.
+// Returns false when disabled; defaults to false on error (fail-closed).
+async function checkAiEnabled(tenantId: string): Promise<boolean> {
+  const apiBase = (
+    process.env.API_BASE ?? process.env.NEXT_PUBLIC_API_BASE ?? ""
+  ).replace(/\/+$/, "");
+  if (!apiBase) return false;
+  try {
+    const r = await fetch(
+      `${apiBase}/ai/enabled?tenantId=${encodeURIComponent(tenantId)}`,
+      { headers: { Accept: "application/json" } }
+    );
+    if (!r.ok) return false;
+    const d = (await r.json()) as any;
+    return d?.enabled === true;
+  } catch {
+    return false;
+  }
+}
 
 // 予約 intent キーワード（テンプレカードを返す条件）
 const BOOKING_INTENT_KW = [
@@ -355,13 +377,16 @@ export async function GET(req: Request) {
   if (debugMode) {
     const isBooking  = detectBookingIntent(debugText);
     const bookingUrl = buildBookingLink(cfg.bookingUrl, tenantId, "DEBUG_USER_ID");
+    const aiEnabled  = await checkAiEnabled(tenantId);
     return NextResponse.json(
       {
         ...base,
         debug: true,
+        aiEnabled,
         intent:       isBooking ? "booking" : "ai",
-        replyPlanned: isBooking ? buildBookingTemplateMessage(bookingUrl) : null,
-        pushPlanned:  !isBooking ? { type: "text", text: "(AI response)" } : null,
+        replyPlanned: aiEnabled && isBooking ? buildBookingTemplateMessage(bookingUrl) : null,
+        pushPlanned:  aiEnabled && !isBooking ? { type: "text", text: "(AI response)" } : null,
+        gateReason:   !aiEnabled ? "ai_disabled" : null,
       },
       { headers: cacheHeaders }
     );
@@ -594,6 +619,20 @@ export async function POST(req: Request) {
 
   const aiIp = lineUserId ? `line:${lineUserId.slice(0, 12)}` : "line";
 
+  // ── AI gate: テナントの AI接客が無効なら全自動応答をスキップ ──────────────
+  const aiEnabled = await checkAiEnabled(tenantId);
+  if (!aiEnabled) {
+    console.log(`[AI_GATE] tenant=${tenantId} enabled=false path=line_webhook skip=all`);
+    return NextResponse.json(
+      {
+        ok: true, stamp: STAMP, where, tenantId, source: cfg.source,
+        verified, aiEnabled: false, skipped: true, reason: "ai_disabled",
+        eventCount: events.length,
+      },
+      { headers: { "x-stamp": STAMP } }
+    );
+  }
+
   // ── intent 判定（booking が優先）────────────────────────────────────────────
   const isBookingIntent = detectBookingIntent(textIn);
   const bookingUrl      = buildBookingLink(cfg.bookingUrl, tenantId, lineUserId);
@@ -602,6 +641,7 @@ export async function POST(req: Request) {
   if (debugMode === "1") {
     return NextResponse.json({
       ok: true, stamp: STAMP, where, tenantId, debug: 1,
+      aiEnabled: true,  // if we reached here, AI gate passed
       intent:       isBookingIntent ? "booking" : "ai",
       bookingUrl:   isBookingIntent ? bookingUrl : null,
       replyPlanned: isBookingIntent ? buildBookingTemplateMessage(bookingUrl) : null,

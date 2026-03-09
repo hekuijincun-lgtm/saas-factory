@@ -5106,6 +5106,17 @@ function resolveBookingUrl(storeSettings: any, env: any, tenantId: string): stri
     || (env?.WEB_BASE ? `${env.WEB_BASE}/booking?tenantId=${tenantId}` : "");
 }
 
+// GET /ai/enabled — lightweight AI enabled check (no auth, single KV read)
+app.get("/ai/enabled", async (c) => {
+  const tenantId = getTenantId(c, null);
+  const kv = (c.env as any)?.SAAS_FACTORY;
+  if (!kv) return c.json({ ok: true, tenantId, enabled: false });
+  const s = await aiGetJson(kv, `ai:settings:${tenantId}`);
+  const enabled = s?.enabled === true;  // strict: only true when explicitly enabled
+  console.log(`[AI_GATE] tenant=${tenantId} enabled=${enabled} path=/ai/enabled`);
+  return c.json({ ok: true, tenantId, enabled });
+});
+
 // POST /ai/chat — OpenAI Responses API (AI_CHAT_V4)
 // V4変更点: intent分類 + intent別suggestedActions + CTA自然挿入
 app.post("/ai/chat", async (c) => {
@@ -5160,7 +5171,8 @@ app.post("/ai/chat", async (c) => {
     }
 
     // 4.4 AI 有効判定（管理画面の「AI接客を有効化」トグルを反映）
-    if (aiSettings.enabled === false) {
+    if (aiSettings.enabled !== true) {
+      console.log(`[AI_GATE] tenant=${tenantId} enabled=false path=/ai/chat`);
       return c.json({ ok: false, stamp: STAMP, tenantId, error: "ai_disabled", detail: "AI is disabled for this tenant" });
     }
 
