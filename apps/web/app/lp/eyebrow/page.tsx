@@ -125,11 +125,11 @@ const FAQS: { q: string; a: string }[] = [
 // SEO Metadata
 // ──────────────────────────────────────────────────────────────────────────────
 export const metadata: Metadata = {
-  title: '眉毛サロン専用 予約管理ツール | LINE予約・リマインド自動化',
+  title: 'LumiBook | 眉毛サロン専用予約管理ツール',
   description:
-    'LINEで予約受付・前日リマインド自動送信・ダブルブッキング防止・予約台帳を一括管理。眉毛サロンオーナーの手間をまるごと削減する予約自動化ツール。',
+    'LumiBook — LINEで予約受付・前日リマインド自動送信・ダブルブッキング防止・予約台帳を一括管理。眉毛サロンオーナーの手間をまるごと削減する予約自動化ツール。',
   openGraph: {
-    title: '眉毛サロン専用 予約管理ツール | LINE完結',
+    title: 'LumiBook | 眉毛サロン専用予約管理ツール',
     description:
       'LINE予約・リマインド・台帳をすべて自動化。眉毛サロンオーナーの手間を大幅削減。',
     type: 'website',
@@ -137,7 +137,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: 'summary_large_image',
-    title: '眉毛サロン専用 予約管理ツール',
+    title: 'LumiBook | 眉毛サロン専用予約管理ツール',
     description: 'LINE完結 予約×リマインド×台帳 自動化',
   },
 };
@@ -178,7 +178,7 @@ function LpNavbar() {
           <div className="w-7 h-7 bg-rose-500 rounded-lg flex items-center justify-center shadow-sm">
             <Scissors className="w-4 h-4 text-white" aria-hidden="true" />
           </div>
-          <span className="font-bold text-gray-900 text-sm tracking-tight">EyebrowBook</span>
+          <span className="font-bold text-gray-900 text-sm tracking-tight">LumiBook</span>
         </div>
 
         {/* Desktop nav */}
@@ -715,7 +715,7 @@ function DashboardSection() {
           <Reveal className="lg:w-3/5 w-full" delay={120}>
             <div
               className="rounded-xl overflow-hidden shadow-2xl ring-1 ring-gray-200 hover:scale-[1.02] transition-transform duration-300 ease-out"
-              aria-label="EyebrowBook 管理画面のスクリーンショット"
+              aria-label="LumiBook 管理画面のスクリーンショット"
             >
               {/* Mac window chrome */}
               <div
@@ -733,7 +733,7 @@ function DashboardSection() {
               {/* Screenshot */}
               <Image
                 src="/lp/eyebrow/admin-dashboard.webp"
-                alt="EyebrowBook 管理画面 — 予約台帳・売上KPI・スタッフ管理が一画面で確認できるダッシュボード"
+                alt="LumiBook 管理画面 — 予約台帳・売上KPI・スタッフ管理が一画面で確認できるダッシュボード"
                 width={1600}
                 height={900}
                 loading="lazy"
@@ -1379,7 +1379,7 @@ function LpFooter() {
           <div className="w-6 h-6 bg-rose-500 rounded-md flex items-center justify-center">
             <Scissors className="w-3.5 h-3.5 text-white" aria-hidden="true" />
           </div>
-          <span className="text-sm font-bold text-white">EyebrowBook</span>
+          <span className="text-sm font-bold text-white">LumiBook</span>
         </div>
 
         <nav
@@ -1412,7 +1412,7 @@ function LpFooter() {
           </a>
         </nav>
 
-        <p className="text-xs">© 2026 EyebrowBook. All rights reserved.</p>
+        <p className="text-xs">© 2026 LumiBook. All rights reserved.</p>
       </div>
     </footer>
   );
