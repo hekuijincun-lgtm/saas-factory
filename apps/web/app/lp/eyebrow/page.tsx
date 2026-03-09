@@ -151,6 +151,8 @@ export default function EyebrowLandingPage() {
       <LpNavbar />
       <main>
         <HeroSection />
+        {/* Gradient bridge: dark hero → light problem */}
+        <div aria-hidden="true" className="h-24 sm:h-32 bg-gradient-to-b from-slate-950 via-[#1e1b3a] to-slate-50" />
         <ProblemSection />
         <SolutionSection />
         <DashboardSection />
@@ -159,6 +161,8 @@ export default function EyebrowLandingPage() {
         <SetupSection />
         <PricingSection />
         <FaqSection />
+        {/* Gradient bridge: white FAQ → dark CTA */}
+        <div aria-hidden="true" className="h-24 sm:h-32 bg-gradient-to-b from-white via-[#e8e0f0] to-slate-950" />
         <FinalCtaSection />
       </main>
       <LpFooter />
@@ -237,18 +241,18 @@ function HeroSection() {
       className="relative overflow-hidden bg-slate-950 text-white"
       aria-label="ヒーロー"
     >
-      {/* Decorative gradient orbs */}
+      {/* Decorative gradient orbs — subtle pulse */}
       <div
         aria-hidden="true"
-        className="pointer-events-none absolute -top-40 -left-40 w-[700px] h-[700px] rounded-full bg-rose-600/15 blur-[140px]"
+        className="pointer-events-none absolute -top-40 -left-40 w-[700px] h-[700px] rounded-full bg-rose-600/15 blur-[140px] motion-safe:animate-lp-glow"
       />
       <div
         aria-hidden="true"
-        className="pointer-events-none absolute top-20 -right-20 w-[500px] h-[500px] rounded-full bg-indigo-600/15 blur-[120px]"
+        className="pointer-events-none absolute top-20 -right-20 w-[500px] h-[500px] rounded-full bg-indigo-600/15 blur-[120px] motion-safe:animate-lp-glow [animation-delay:2s]"
       />
       <div
         aria-hidden="true"
-        className="pointer-events-none absolute -bottom-10 left-1/2 -translate-x-1/2 w-[800px] h-[200px] rounded-full bg-amber-600/10 blur-[100px]"
+        className="pointer-events-none absolute -bottom-10 left-1/2 -translate-x-1/2 w-[800px] h-[200px] rounded-full bg-amber-600/10 blur-[100px] motion-safe:animate-lp-glow [animation-delay:4s]"
       />
 
       <div className="relative mx-auto max-w-5xl px-5 pt-24 pb-32 text-center">
@@ -323,7 +327,7 @@ function HeroSection() {
 // ──────────────────────────────────────────────────────────────────────────────
 function HeroDeviceMockup() {
   return (
-    <div className="relative mt-16 mx-auto max-w-4xl">
+    <div className="relative mt-16 mx-auto max-w-4xl motion-safe:animate-lp-float">
       {/* Desktop frame */}
       <div className="relative rounded-xl border border-white/10 bg-gray-900 shadow-2xl shadow-black/40">
         {/* Browser chrome */}
@@ -351,7 +355,7 @@ function HeroDeviceMockup() {
       </div>
 
       {/* Mobile frame — overlaid at bottom-right */}
-      <div className="absolute -bottom-8 -right-4 sm:bottom-[-2rem] sm:right-4 w-[120px] sm:w-[160px] md:w-[180px]">
+      <div className="absolute -bottom-8 -right-4 sm:bottom-[-2rem] sm:right-4 w-[120px] sm:w-[160px] md:w-[180px] motion-safe:animate-lp-float-slow [animation-delay:1s]">
         <div className="rounded-[20px] sm:rounded-[24px] border-[3px] border-gray-700 bg-gray-900 shadow-2xl shadow-black/50 overflow-hidden">
           {/* Notch */}
           <div className="relative h-5 bg-gray-900 flex items-end justify-center">
@@ -599,7 +603,7 @@ function SolutionSection() {
               </p>
             </div>
             <div className="md:w-1/2 flex justify-center">
-              <div className="w-[200px] sm:w-[220px] rounded-[28px] border-[3px] border-gray-200 bg-gray-100 shadow-xl overflow-hidden">
+              <div className="w-[200px] sm:w-[220px] rounded-[28px] border-[3px] border-gray-200 bg-gray-100 shadow-xl overflow-hidden motion-safe:animate-lp-float-slow">
                 <div className="relative h-5 bg-gray-100 flex items-end justify-center">
                   <div className="w-16 h-3.5 bg-gray-200 rounded-b-xl" />
                 </div>
@@ -860,7 +864,7 @@ function EyebrowSection() {
 
           {/* Mobile booking menu screenshot */}
           <Reveal className="lg:w-2/5 flex justify-center" delay={300}>
-            <div className="w-[200px] sm:w-[220px] rounded-[28px] border-[3px] border-rose-200 bg-white shadow-xl overflow-hidden">
+            <div className="w-[200px] sm:w-[220px] rounded-[28px] border-[3px] border-rose-200 bg-white shadow-xl overflow-hidden motion-safe:animate-lp-float-slow">
               <div className="relative h-5 bg-white flex items-end justify-center">
                 <div className="w-16 h-3.5 bg-gray-100 rounded-b-xl" />
               </div>
@@ -1338,7 +1342,7 @@ function FinalCtaSection() {
         aria-hidden="true"
         className="pointer-events-none absolute inset-0 flex items-center justify-center"
       >
-        <div className="w-[600px] h-[300px] bg-rose-600/20 blur-[100px] rounded-full" />
+        <div className="w-[600px] h-[300px] bg-rose-600/20 blur-[100px] rounded-full motion-safe:animate-lp-glow" />
       </div>
 
       <Reveal className="relative mx-auto max-w-2xl">
