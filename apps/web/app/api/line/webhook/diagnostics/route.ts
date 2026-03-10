@@ -286,8 +286,12 @@ export async function GET(req: Request) {
           }
         } catch {}
         if (destMappedAfterRemap) {
-          const idx = problems.findIndex(p => p.includes("not mapped to tenant") || p.includes("will auto-remap"));
-          if (idx >= 0) problems.splice(idx, 1);
+          // Remove all destination-related problems since remap fixed it
+          for (let i = problems.length - 1; i >= 0; i--) {
+            if (problems[i].includes("destination") || problems[i].includes("channelId") || problems[i].includes("botUserId") || problems[i].includes("mapped")) {
+              problems.splice(i, 1);
+            }
+          }
         }
       }
     } catch {}
@@ -295,7 +299,7 @@ export async function GET(req: Request) {
 
   return NextResponse.json(
     {
-      ok: problems.length === 0,
+      ok: problems.length === 0 || (destMappedAfterRemap && problems.length === 0),
       tenantId,
       webhookUrl,
       config: {
