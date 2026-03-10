@@ -42,8 +42,13 @@ const PURPOSE_LABELS: Record<string, string> = {
 // ── Component ───────────────────────────────────────────────────────────────
 
 export default function OwnerSalesLinesClient() {
-  // Use 'default' tenantId for owner-level management
-  const tenantId = "default";
+  // Resolve tenantId from URL query param, fallback to "default"
+  const [tenantId, setTenantId] = useState("default");
+  useEffect(() => {
+    const p = new URLSearchParams(window.location.search);
+    const tid = p.get("tenantId");
+    if (tid) setTenantId(tid);
+  }, []);
 
   // --- State ---
   const [accounts, setAccounts] = useState<
@@ -105,7 +110,7 @@ export default function OwnerSalesLinesClient() {
   useEffect(() => {
     fetchAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [tenantId]);
 
   // --- Modal ---
   const openModal = (acct?: LineAccount & { synthesized?: boolean }) => {
