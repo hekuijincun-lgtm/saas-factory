@@ -445,8 +445,20 @@ export async function POST(req: Request) {
     } catch { resolvedBy = "parse_error"; }
   }
 
-  // No default fallback — unknown destination returns 400
+  // LINE verification: empty events array without tenantId → return 200 immediately
+  // LINE sends POST with {"events":[],"destination":"..."} during webhook URL verification.
+  // tenantId may not be resolvable yet (destination not mapped), but LINE requires HTTP 200.
   if (!tenantId) {
+    let isVerification = false;
+    try {
+      const peek = JSON.parse(new TextDecoder().decode(raw));
+      isVerification = Array.isArray(peek?.events) && peek.events.length === 0;
+    } catch {}
+
+    if (isVerification) {
+      return new Response("OK", { status: 200 });
+    }
+
     const hint = "Open /admin/line-setup?tenantId=YOUR_TENANT and click Remap to fix destination mapping.";
     if (debugMode === "1") {
       return NextResponse.json({
