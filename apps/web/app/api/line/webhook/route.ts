@@ -757,8 +757,40 @@ export async function POST(req: Request) {
     `body=${guaranteedReplyBody}`
   );
 
-  // Return immediately with diagnostic info — the guaranteed reply was the main goal.
-  // Once we confirm replies work, we can remove this and restore AI/sales branching.
+  // ── Persist last result to KV (fire-and-forget) ──────────────────────────
+  const lastResultPayload = {
+    ts: new Date().toISOString(),
+    stamp: STAMP,
+    tenantId,
+    resolvedBy,
+    eventType: "message",
+    messageType: "text",
+    messageText: textIn.slice(0, 100),
+    lineUserId: lineUserId.slice(0, 8),
+    branch: "guaranteed_echo",
+    replyAttempted: true,
+    replyOk: guaranteedReplyOk,
+    replyStatus: guaranteedReplyStatus,
+    replyBody: guaranteedReplyBody.slice(0, 200),
+    errorReason: guaranteedReplyOk ? null : guaranteedReplyBody.slice(0, 200),
+    sigVerified: verified,
+    cfgSource: cfg.source,
+  };
+  if (webhookLogApiBase && internalToken) {
+    fetch(
+      `${webhookLogApiBase}/internal/line/last-result?tenantId=${encodeURIComponent(tenantId)}`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-internal-token": internalToken,
+        },
+        body: JSON.stringify({ result: lastResultPayload }),
+      }
+    ).catch(() => null);
+  }
+
+  // Return immediately with diagnostic info
   return NextResponse.json(
     {
       ok: true, stamp: STAMP, where, tenantId, source: cfg.source,

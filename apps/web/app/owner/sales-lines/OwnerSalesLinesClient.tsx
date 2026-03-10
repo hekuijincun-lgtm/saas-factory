@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Plus, AlertCircle, RefreshCw, Link as LinkIcon } from "lucide-react";
+import { Plus, AlertCircle, RefreshCw, Link as LinkIcon, Activity } from "lucide-react";
 import type {
   LineAccount,
   LineAccountPurpose,
@@ -75,6 +75,43 @@ export default function OwnerSalesLinesClient() {
   });
   const [saving, setSaving] = useState(false);
 
+  // Diagnostics
+  const [diag, setDiag] = useState<any>(null);
+  const [diagLoading, setDiagLoading] = useState(false);
+  const [simText, setSimText] = useState("");
+  const [simResult, setSimResult] = useState<any>(null);
+  const [simLoading, setSimLoading] = useState(false);
+
+  const fetchDiagnostics = async () => {
+    if (!tenantId) return;
+    setDiagLoading(true);
+    try {
+      const r = await fetch(`/api/line/webhook/diagnostics?tenantId=${encodeURIComponent(tenantId)}`);
+      setDiag(await r.json());
+    } catch (e: any) {
+      setDiag({ ok: false, error: e?.message });
+    } finally {
+      setDiagLoading(false);
+    }
+  };
+
+  const runSimulate = async () => {
+    if (!tenantId || !simText.trim()) return;
+    setSimLoading(true);
+    try {
+      const r = await fetch(`/api/line/webhook/debug-simulate?tenantId=${encodeURIComponent(tenantId)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: simText.trim() }),
+      });
+      setSimResult(await r.json());
+    } catch (e: any) {
+      setSimResult({ ok: false, error: e?.message });
+    } finally {
+      setSimLoading(false);
+    }
+  };
+
   // Toast
   const [toast, setToast] = useState<{
     msg: string;
@@ -106,8 +143,9 @@ export default function OwnerSalesLinesClient() {
   };
 
   useEffect(() => {
-    if (!tenantId) return; // wait until tenantId is resolved
+    if (!tenantId) return;
     fetchAll();
+    fetchDiagnostics();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId]);
 
@@ -221,14 +259,12 @@ export default function OwnerSalesLinesClient() {
         </div>
         <div className="flex items-center gap-2">
           <button
-            onClick={fetchAll}
-            disabled={loading}
+            onClick={() => { fetchAll(); fetchDiagnostics(); }}
+            disabled={loading || diagLoading}
             className="p-2 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-50"
             title="再読み込み"
           >
-            <RefreshCw
-              className={`w-4 h-4 text-gray-500 ${loading ? "animate-spin" : ""}`}
-            />
+            <RefreshCw className={`w-4 h-4 text-gray-500 ${loading || diagLoading ? "animate-spin" : ""}`} />
           </button>
           <button
             onClick={() => openModal()}
@@ -268,6 +304,128 @@ export default function OwnerSalesLinesClient() {
           既存のMessaging API設定が検出されました。「アカウント追加」から正式に登録すると、マルチアカウント管理が有効になります。
         </div>
       )}
+
+      {/* ─── Webhook Diagnostics ─── */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+        <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Activity className="w-4 h-4 text-amber-500" />
+            <h2 className="text-sm font-semibold text-gray-900">Webhook 診断</h2>
+          </div>
+          <button
+            onClick={fetchDiagnostics}
+            disabled={diagLoading}
+            className="text-xs text-amber-600 hover:text-amber-700 disabled:opacity-50"
+          >
+            {diagLoading ? "診断中..." : "再診断"}
+          </button>
+        </div>
+        <div className="p-5 space-y-4">
+          {diag ? (
+            <>
+              {/* Status badges */}
+              <div className="flex flex-wrap gap-2">
+                <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${
+                  diag.ok ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"
+                }`}>
+                  {diag.ok ? "Ready" : "Not Ready"}
+                </span>
+                <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${
+                  diag.config?.hasSecret ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"
+                }`}>
+                  Secret: {diag.config?.hasSecret ? "OK" : "Missing"}
+                </span>
+                <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${
+                  diag.config?.hasToken ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"
+                }`}>
+                  Token: {diag.config?.hasToken ? "OK" : "Missing"}
+                </span>
+                <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${
+                  diag.destination?.mapped ? "bg-green-100 text-green-700" : "bg-yellow-100 text-yellow-700"
+                }`}>
+                  Dest Map: {diag.destination?.mapped ? "OK" : "未設定"}
+                </span>
+                <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${
+                  diag.ai?.salesFlowAvailable ? "bg-amber-100 text-amber-700" : "bg-blue-100 text-blue-700"
+                }`}>
+                  {diag.ai?.salesFlowAvailable ? "Sales Flow" : "AI Flow"}
+                </span>
+              </div>
+
+              {/* Problems */}
+              {diag.problems?.length > 0 && (
+                <div className="space-y-1">
+                  {diag.problems.map((p: string, i: number) => (
+                    <div key={i} className="flex items-start gap-1.5 text-xs text-red-600">
+                      <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                      <span>{p}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Last webhook */}
+              {diag.lastWebhook && (
+                <div className="text-xs text-gray-500 space-y-0.5">
+                  <div className="font-medium text-gray-700">最終受信:</div>
+                  <div>時刻: {diag.lastWebhook.ts}</div>
+                  <div>署名検証: {diag.lastWebhook.sigVerified ? "OK" : "NG"}</div>
+                  <div>テキスト: {diag.lastWebhook.firstText || "(なし)"}</div>
+                </div>
+              )}
+
+              {/* Last result */}
+              {diag.lastResult && (
+                <div className="text-xs text-gray-500 space-y-0.5">
+                  <div className="font-medium text-gray-700">最終処理結果:</div>
+                  <div>時刻: {diag.lastResult.ts}</div>
+                  <div>分岐: {diag.lastResult.branch}</div>
+                  <div>返信: {diag.lastResult.replyOk ? `成功 (${diag.lastResult.replyStatus})` : `失敗 (${diag.lastResult.replyStatus})`}</div>
+                  {diag.lastResult.errorReason && <div className="text-red-600">エラー: {diag.lastResult.errorReason}</div>}
+                  <div>テキスト: {diag.lastResult.messageText || "(なし)"}</div>
+                </div>
+              )}
+            </>
+          ) : diagLoading ? (
+            <div className="text-sm text-gray-400">診断中...</div>
+          ) : (
+            <div className="text-sm text-gray-400">データなし</div>
+          )}
+
+          {/* Simulate */}
+          <div className="border-t border-gray-100 pt-4">
+            <div className="text-xs font-medium text-gray-700 mb-2">分岐シミュレーション</div>
+            <div className="flex gap-2">
+              <input
+                value={simText}
+                onChange={(e) => setSimText(e.target.value)}
+                placeholder="テストテキスト (例: こんにちは, 1, 予約)"
+                className="flex-1 px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none"
+                onKeyDown={(e) => e.key === "Enter" && runSimulate()}
+              />
+              <button
+                onClick={runSimulate}
+                disabled={simLoading || !simText.trim()}
+                className="px-3 py-1.5 bg-amber-600 text-white text-xs font-medium rounded-lg hover:bg-amber-700 disabled:opacity-50 transition-colors"
+              >
+                {simLoading ? "..." : "実行"}
+              </button>
+            </div>
+            {simResult && (
+              <div className="mt-2 p-3 bg-gray-50 rounded-lg text-xs font-mono space-y-0.5">
+                <div>branch: <span className="text-amber-700 font-semibold">{simResult.branch}</span></div>
+                <div>aiEnabled: {String(simResult.aiEnabled)}</div>
+                <div>wouldReply: {String(simResult.wouldReply)}</div>
+                {simResult.salesLabel && <div>salesLabel: {simResult.salesLabel}</div>}
+                <div>replyContent: {simResult.replyContent}</div>
+                {simResult.problems?.length > 0 && (
+                  <div className="text-red-600">problems: {simResult.problems.join(", ")}</div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
 
       {/* ─── Account Table ─── */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">

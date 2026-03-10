@@ -5093,6 +5093,49 @@ app.post("/internal/line/last-webhook", async (c) => {
   } catch { return c.json({ ok: false }, 500); }
 });
 
+// ── POST /internal/line/last-result ──────────────────────────────────────────
+// Saves the last webhook processing result (branch, reply status, etc.)
+// Protected by shared secret (LINE_INTERNAL_TOKEN).
+app.post("/internal/line/last-result", async (c) => {
+  const env = c.env as any;
+  const expected = String(env?.LINE_INTERNAL_TOKEN ?? "").trim();
+  const provided = String(c.req.header("x-internal-token") ?? "").trim();
+  if (!expected || !provided || provided !== expected) {
+    return c.json({ ok: false, error: "unauthorized" }, 401);
+  }
+  const tenantId = (c.req.query("tenantId") ?? "").trim();
+  if (!tenantId) return c.json({ ok: false, error: "missing_tenantId" }, 400);
+  try {
+    const kv = env.SAAS_FACTORY;
+    if (!kv) return c.json({ ok: false, error: "kv_missing" }, 500);
+    const body = await c.req.json().catch(() => ({} as any));
+    const result = body?.result ?? body;
+    await kv.put(`line:last_result:${tenantId}`, JSON.stringify(result), { expirationTtl: 604800 });
+    return c.json({ ok: true });
+  } catch { return c.json({ ok: false }, 500); }
+});
+
+// ── GET /internal/line/last-result ──────────────────────────────────────────
+// Retrieves the last webhook processing result.
+// Protected by shared secret (LINE_INTERNAL_TOKEN).
+app.get("/internal/line/last-result", async (c) => {
+  const env = c.env as any;
+  const expected = String(env?.LINE_INTERNAL_TOKEN ?? "").trim();
+  const provided = String(c.req.header("x-internal-token") ?? "").trim();
+  if (!expected || !provided || provided !== expected) {
+    return c.json({ ok: false, error: "unauthorized" }, 401);
+  }
+  const tenantId = (c.req.query("tenantId") ?? "").trim();
+  if (!tenantId) return c.json({ ok: false, error: "missing_tenantId" }, 400);
+  try {
+    const kv = env.SAAS_FACTORY;
+    if (!kv) return c.json({ ok: false, error: "kv_missing" }, 500);
+    const raw = await kv.get(`line:last_result:${tenantId}`);
+    if (!raw) return c.json({ ok: true, status: "never", result: null });
+    return c.json({ ok: true, status: "found", result: JSON.parse(raw) });
+  } catch { return c.json({ ok: false }, 500); }
+});
+
 // ── POST /internal/line/last-user ────────────────────────────────────────────
 // Internal endpoint for Pages webhook to save last-seen LINE userId.
 // Protected by shared secret (LINE_INTERNAL_TOKEN) — no RBAC needed.
