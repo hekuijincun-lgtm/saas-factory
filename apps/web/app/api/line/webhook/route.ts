@@ -4,7 +4,7 @@ import { getRequestContext } from "@cloudflare/next-on-pages";
 export const runtime = "edge";
 
 // ─── version / stamps ────────────────────────────────────────────────────────
-const STAMP = "LINE_WEBHOOK_V18_20260310_PURPOSE_SPLIT";
+const STAMP = "LINE_WEBHOOK_V18B_20260310_BOOKING_AI";
 const where  = "api/line/webhook";
 
 type LinePurpose = "booking" | "sales";
@@ -181,23 +181,28 @@ function buildBookingTemplateMessage(bookingUrl: string): object {
   };
 }
 
-function getBookingFallbackText(): string {
+function getBookingFallbackText(bookingUrl: string): string {
   return [
     "メッセージありがとうございます！",
     "",
-    "ご予約やお問い合わせは以下からお気軽にどうぞ：",
+    "当店へのご予約・お問い合わせはお気軽にどうぞ😊",
+    "",
     "・「予約」「空き」→ 予約ページをご案内します",
-    "・その他のご質問もお気軽にどうぞ😊",
+    "・メニューや営業時間など、何でもお聞きください",
+    "",
+    `▼ ご予約はこちら`,
+    bookingUrl,
   ].join("\n");
 }
 
-/** Handle a text message on a BOOKING-purpose LINE account */
+/** Handle a text message on a BOOKING-purpose LINE account.
+ *  Flow: booking intent → template card
+ *        otherwise → AI接客 (if enabled) → fallback */
 async function handleBookingEvent(ctx: HandlerContext): Promise<HandlerResult> {
-  const { textIn, cfg, tenantId, lineUserId } = ctx;
+  const { textIn, cfg, tenantId, lineUserId, apiBase } = ctx;
 
-  const isBooking = detectBookingIntent(textIn);
-
-  if (isBooking) {
+  // 1. Booking intent → template card (highest priority, always synchronous)
+  if (detectBookingIntent(textIn)) {
     const bookingLink = buildBookingLink(cfg.bookingUrl, tenantId, lineUserId);
     return {
       branch: "booking_template",
@@ -208,11 +213,44 @@ async function handleBookingEvent(ctx: HandlerContext): Promise<HandlerResult> {
     };
   }
 
-  // Booking fallback: friendly store greeting (NOT sales templates)
+  // 2. AI接客 — call /ai/chat for FAQ / policy / OpenAI response
+  const aiIp = lineUserId ? `line:${lineUserId.slice(0, 12)}` : "line";
+  const aiEnabled = await checkAiEnabled(tenantId);
+
+  if (aiEnabled && apiBase) {
+    console.log(`[BOOKING_AI] calling runAiChat tenant=${tenantId} text="${textIn.slice(0, 40)}"`);
+    const ai = await runAiChat(tenantId, textIn, aiIp);
+
+    if (ai.ok && ai.answer) {
+      // Append booking link if AI response mentions 予約
+      let answer = ai.answer;
+      const bookingLink = buildBookingLink(cfg.bookingUrl, tenantId, lineUserId);
+      // Build reply: text + optional quickReply actions
+      const msg: any = { type: "text", text: answer };
+      if (ai.suggestedActions.length > 0) {
+        const qr = buildQuickReplyFromActions(ai.suggestedActions);
+        if (qr) msg.quickReply = qr;
+      }
+      console.log(`[BOOKING_AI] success answerLen=${answer.length} actions=${ai.suggestedActions.length}`);
+      return {
+        branch: "booking_ai",
+        salesIntent: null,
+        replyMessages: [msg],
+        leadLabel: null,
+        leadCapture: false,
+      };
+    }
+
+    // AI returned disabled signal or error — fall through to fallback
+    console.log(`[BOOKING_AI] failed ok=${ai.ok} disabled=${ai.disabled} answerLen=${ai.answer.length}`);
+  }
+
+  // 3. Fallback — friendly store greeting with booking link
+  const bookingLink = buildBookingLink(cfg.bookingUrl, tenantId, lineUserId);
   return {
-    branch: "booking_fallback",
+    branch: aiEnabled ? "booking_ai_fallback" : "booking_fallback",
     salesIntent: null,
-    replyMessages: [{ type: "text", text: getBookingFallbackText() }],
+    replyMessages: [{ type: "text", text: getBookingFallbackText(bookingLink) }],
     leadLabel: null,
     leadCapture: false,
   };
@@ -227,6 +265,7 @@ interface HandlerContext {
   lineUserId: string;
   tenantId: string;
   cfg: TenantLineConfig;
+  apiBase: string;
 }
 
 interface HandlerResult {
@@ -613,11 +652,15 @@ export async function GET(req: Request) {
 
   if (debugMode) {
     // Simulate handler dispatch
+    const debugApiBase = (
+      process.env.API_BASE ?? process.env.NEXT_PUBLIC_API_BASE ?? ""
+    ).replace(/\/+$/, "");
     const ctx: HandlerContext = {
       textIn: debugText,
       lineUserId: "DEBUG_USER_ID",
       tenantId,
       cfg,
+      apiBase: debugApiBase,
     };
     const result = cfg.purpose === "sales"
       ? await handleSalesEvent(ctx)
@@ -833,6 +876,7 @@ export async function POST(req: Request) {
         lineUserId: String(_d1Ev?.source?.userId ?? "").trim(),
         tenantId,
         cfg,
+        apiBase: webhookLogApiBase,
       };
       _d1Result = cfg.purpose === "sales"
         ? await handleSalesEvent(ctx)
@@ -1009,7 +1053,7 @@ export async function POST(req: Request) {
   // ── PURPOSE-BASED DISPATCH ────────────────────────────────────────────────
   // ═══════════════════════════════════════════════════════════════════════════
 
-  const handlerCtx: HandlerContext = { textIn, lineUserId, tenantId, cfg };
+  const handlerCtx: HandlerContext = { textIn, lineUserId, tenantId, cfg, apiBase };
 
   const result = cfg.purpose === "sales"
     ? await handleSalesEvent(handlerCtx)
