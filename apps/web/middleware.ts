@@ -129,7 +129,9 @@ export async function middleware(req: NextRequest) {
   }
 
   // ── Owner auth gate (/owner/*) ────────────────────────────────────────────
-  // Always requires valid session + userId in OWNER_USER_IDS env.
+  // Requires valid session + owner membership (KV owner:members via Workers API).
+  // Uses owner_ok cookie cache (5 min) to avoid calling Workers on every request.
+  // Deprecated fallback: OWNER_USER_IDS env var (used when API_BASE is not set).
   if (pathname === "/owner" || pathname.startsWith("/owner/")) {
     const cookie = req.headers.get("cookie") ?? "";
     const sessionMatch = cookie.match(/(?:^|;\s*)line_session=([^;]+)/);
@@ -162,19 +164,65 @@ export async function middleware(req: NextRequest) {
       } catch {}
     }
 
-    // Check against OWNER_USER_IDS
-    const ownerIds = (process.env.OWNER_USER_IDS ?? "")
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
-    if (!userId || !ownerIds.includes(userId)) {
-      const params = new URLSearchParams({
-        error: "not_owner",
-        ...(userId ? { uid: userId } : {}),
-      });
-      return NextResponse.redirect(new URL(`/admin?${params}`, req.nextUrl.origin));
+    if (!userId) {
+      return NextResponse.redirect(new URL("/admin?error=not_owner", req.nextUrl.origin));
     }
-    // Passed — continue
+
+    // Check owner_ok cache cookie (value = userId that was verified)
+    const ownerOkMatch = cookie.match(/(?:^|;\s*)owner_ok=([^;]+)/);
+    const cachedUserId = ownerOkMatch ? decodeURIComponent(ownerOkMatch[1]) : null;
+
+    if (cachedUserId === userId) {
+      // Cache hit — owner already verified
+      return NextResponse.next();
+    }
+
+    // Cache miss — call Workers /auth/owner-check (includes bootstrap logic)
+    const apiBase = (process.env.API_BASE ?? "").replace(/\/+$/, "");
+    const adminToken = process.env.ADMIN_TOKEN ?? "";
+    let isOwner = false;
+
+    if (apiBase) {
+      try {
+        const headers: Record<string, string> = { "x-session-user-id": userId };
+        if (adminToken) headers["X-Admin-Token"] = adminToken;
+        const resp = await fetch(`${apiBase}/auth/owner-check`, {
+          headers,
+          signal: AbortSignal.timeout(3000),
+        });
+        if (resp.ok) {
+          const data = (await resp.json()) as any;
+          isOwner = !!data?.isOwner;
+        }
+      } catch {}
+    }
+
+    // Deprecated fallback: OWNER_USER_IDS env var
+    if (!isOwner) {
+      const ownerIds = (process.env.OWNER_USER_IDS ?? "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+      isOwner = ownerIds.includes(userId);
+    }
+
+    if (isOwner) {
+      const res = NextResponse.next();
+      res.cookies.set("owner_ok", userId, {
+        path: "/owner",
+        maxAge: 300,
+        httpOnly: true,
+        secure: true,
+        sameSite: "lax",
+      });
+      return res;
+    }
+
+    const params = new URLSearchParams({
+      error: "not_owner",
+      ...(userId ? { uid: userId } : {}),
+    });
+    return NextResponse.redirect(new URL(`/admin?${params}`, req.nextUrl.origin));
   }
 
   // ── Billing gate (only when BILLING_REQUIRED=1) ──────────────────────────

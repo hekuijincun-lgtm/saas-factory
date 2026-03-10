@@ -1,16 +1,30 @@
 /**
  * Owner routes — cross-tenant management dashboard
  *
- * Auth: ADMIN_TOKEN (X-Admin-Token header) + userId in OWNER_USER_IDS env.
+ * Auth: ADMIN_TOKEN (X-Admin-Token header) + owner membership (KV owner:members).
  * Both conditions must pass; fail-closed on misconfiguration.
+ *
+ * Owner list storage: KV key "owner:members" → { version: 1, owners: string[] }
+ * Deprecated fallback: OWNER_USER_IDS env var (comma-separated).
+ *
+ * Bootstrap: when owner:members is empty AND the requesting userId matches
+ * the hardcoded BOOTSTRAP_OWNER_ID, auto-seed the KV with that identity.
  *
  * Future: rate limiting (KV-based, per-userId), audit log to D1
  */
 import type { Hono } from "hono";
 import { mergeSettings, DEFAULT_ADMIN_SETTINGS } from "../settings";
 
+// ── Bootstrap identity (only used when owner:members KV is empty) ──────────
+const BOOTSTRAP_OWNER_ID = "email:mesomesobanana@outlook.jp";
+
+// ── Owner members KV store ─────────────────────────────────────────────────
+export interface OwnerMembersStore {
+  version: 1;
+  owners: string[];
+}
+
 // ── Principal helpers ───────────────────────────────────────────────────────
-// OWNER_USER_IDS stores comma-separated principal strings.
 // Each principal has a prefix indicating identity type:
 //   email:kazuki@example.com
 //   line:U1234567890abcdef
@@ -28,6 +42,41 @@ export function isPrincipalAllowed(userId: string, allowedList: string[]): boole
   return allowedList.includes(userId);
 }
 
+/**
+ * Get owner list from KV (primary) with env fallback (deprecated).
+ * Returns deduplicated owner identity list.
+ */
+export async function getOwnerIds(kv: KVNamespace | null, envFallback: string): Promise<string[]> {
+  // Primary: KV owner:members
+  if (kv) {
+    try {
+      const raw = await kv.get("owner:members", "json") as OwnerMembersStore | null;
+      if (raw?.owners?.length) return raw.owners;
+    } catch {}
+  }
+  // Deprecated fallback: OWNER_USER_IDS env var
+  return parsePrincipalList(envFallback);
+}
+
+/**
+ * Bootstrap: if owner:members KV is empty AND userId matches BOOTSTRAP_OWNER_ID,
+ * seed the KV with that single owner. Returns true if bootstrap occurred.
+ */
+export async function bootstrapOwnerIfEmpty(kv: KVNamespace, userId: string): Promise<boolean> {
+  if (userId !== BOOTSTRAP_OWNER_ID) return false;
+  try {
+    const raw = await kv.get("owner:members", "json") as OwnerMembersStore | null;
+    if (raw?.owners?.length) return false; // already has owners — no bootstrap
+    const store: OwnerMembersStore = { version: 1, owners: [userId] };
+    await kv.put("owner:members", JSON.stringify(store));
+    console.log(`[owner-bootstrap] seeded owner:members with ${userId}`);
+    return true;
+  } catch (e) {
+    console.error("[owner-bootstrap] failed:", String(e));
+    return false;
+  }
+}
+
 // ── Active reservation filter (duplicated from index.ts to avoid circular dep) ──
 const SQL_ACTIVE_FILTER = "status != 'cancelled'" as const;
 
@@ -35,9 +84,10 @@ const SQL_ACTIVE_FILTER = "status != 'cancelled'" as const;
 
 export function registerOwnerRoutes(app: Hono<{ Bindings: Record<string, unknown> }>) {
   // ── Owner auth middleware ──────────────────────────────────────────────
-  // Two-layer check: ADMIN_TOKEN + OWNER_USER_IDS
+  // Two-layer check: ADMIN_TOKEN + owner membership (KV owner:members).
   // Pages middleware already verified session; Workers re-verifies to prevent
   // direct API access bypass.
+  // Deprecated fallback: OWNER_USER_IDS env var.
   app.use("/owner/*", async (c, next) => {
     const env = c.env as any;
     const expected: string | undefined = env?.ADMIN_TOKEN;
@@ -50,8 +100,14 @@ export function registerOwnerRoutes(app: Hono<{ Bindings: Record<string, unknown
       return c.json({ ok: false, error: "Unauthorized" }, 401);
     }
 
-    const ownerIds = parsePrincipalList(env?.OWNER_USER_IDS ?? "");
+    const kv = env.SAAS_FACTORY as KVNamespace | null;
     const userId = c.req.header("x-session-user-id") ?? "";
+
+    // Try bootstrap (only if KV empty + bootstrap identity)
+    if (kv && userId) await bootstrapOwnerIfEmpty(kv, userId);
+
+    // Check owner list (KV primary, env fallback deprecated)
+    const ownerIds = await getOwnerIds(kv, env?.OWNER_USER_IDS ?? "");
     if (!isPrincipalAllowed(userId, ownerIds)) {
       console.warn(`[owner-auth] denied userId=${userId.slice(0, 20)}...`);
       return c.json({ ok: false, error: "Forbidden" }, 403);

@@ -4,7 +4,7 @@ import Stripe from "stripe";
 import { resolveVertical, DEFAULT_ADMIN_SETTINGS, mergeSettings } from "./settings";
 import type { PlanId, SubscriptionInfo } from "./settings";
 import { getRepeatConfig, getStyleLabel, buildRepeatMessage, eyebrowOnboardingChecks } from "./verticals/eyebrow";
-import { registerOwnerRoutes } from "./routes/owner";
+import { registerOwnerRoutes, getOwnerIds, bootstrapOwnerIfEmpty, isPrincipalAllowed } from "./routes/owner";
 
 // test helper (lock reproduction)
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
@@ -149,6 +149,31 @@ app.use('/admin/*', async (c, next) => {
   }
 
   return next();
+});
+
+// ── GET /auth/owner-check — KV-based owner verification ───────────────────
+// Called by Pages middleware to check if a userId is an owner.
+// Auth: ADMIN_TOKEN required. Not under /owner/* so it's not blocked by owner middleware.
+app.get("/auth/owner-check", async (c) => {
+  const env = c.env as any;
+  const expected: string | undefined = env?.ADMIN_TOKEN;
+  if (!expected) return c.json({ ok: false, error: "Service unavailable" }, 503);
+  const provided = c.req.header("X-Admin-Token");
+  if (!provided || provided !== expected) return c.json({ ok: false, error: "Unauthorized" }, 401);
+
+  const kv = env.SAAS_FACTORY as KVNamespace | null;
+  const userId = c.req.header("x-session-user-id") ?? "";
+  if (!userId) return c.json({ ok: true, isOwner: false });
+
+  // Try bootstrap (only if KV empty + bootstrap identity)
+  let bootstrapped = false;
+  if (kv) bootstrapped = await bootstrapOwnerIfEmpty(kv, userId);
+
+  // Check owner list (KV primary, env fallback deprecated)
+  const ownerIds = await getOwnerIds(kv, env?.OWNER_USER_IDS ?? "");
+  const isOwner = isPrincipalAllowed(userId, ownerIds);
+
+  return c.json({ ok: true, isOwner, ...(bootstrapped ? { bootstrapped: true } : {}) });
 });
 
 // Owner routes (middleware + endpoints) — see apps/api/src/routes/owner.ts
