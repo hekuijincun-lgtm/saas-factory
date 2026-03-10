@@ -4,7 +4,7 @@ import { getRequestContext } from "@cloudflare/next-on-pages";
 export const runtime = "edge";
 
 // ─── version / stamps ────────────────────────────────────────────────────────
-const STAMP = "LINE_WEBHOOK_V18B_20260310_BOOKING_AI";
+const STAMP = "LINE_WEBHOOK_V18C_20260310_ROBUST";
 const where  = "api/line/webhook";
 
 type LinePurpose = "booking" | "sales";
@@ -213,19 +213,34 @@ async function handleBookingEvent(ctx: HandlerContext): Promise<HandlerResult> {
     };
   }
 
-  // 2. AI接客 — call /ai/chat for FAQ / policy / OpenAI response
+  // 2. AI接客 — call /ai/chat with 8s timeout (replyToken expires at ~30s)
   const aiIp = lineUserId ? `line:${lineUserId.slice(0, 12)}` : "line";
   const aiEnabled = await checkAiEnabled(tenantId);
 
   if (aiEnabled && apiBase) {
     console.log(`[BOOKING_AI] calling runAiChat tenant=${tenantId} text="${textIn.slice(0, 40)}"`);
-    const ai = await runAiChat(tenantId, textIn, aiIp);
+    const AI_TIMEOUT_MS = 8000;
+    type AiResult = { ok: boolean; answer: string; suggestedActions: any[]; disabled?: boolean };
+    const EMPTY_AI: AiResult = { ok: false, answer: "", suggestedActions: [] };
+
+    let ai: AiResult;
+    try {
+      ai = await Promise.race([
+        runAiChat(tenantId, textIn, aiIp),
+        new Promise<typeof EMPTY_AI>(resolve =>
+          setTimeout(() => {
+            console.log(`[BOOKING_AI] timeout after ${AI_TIMEOUT_MS}ms`);
+            resolve(EMPTY_AI);
+          }, AI_TIMEOUT_MS)
+        ),
+      ]);
+    } catch (e: any) {
+      console.log(`[BOOKING_AI] exception: ${String(e?.message ?? e).slice(0, 100)}`);
+      ai = EMPTY_AI;
+    }
 
     if (ai.ok && ai.answer) {
-      // Append booking link if AI response mentions 予約
-      let answer = ai.answer;
-      const bookingLink = buildBookingLink(cfg.bookingUrl, tenantId, lineUserId);
-      // Build reply: text + optional quickReply actions
+      const answer = ai.answer;
       const msg: any = { type: "text", text: answer };
       if (ai.suggestedActions.length > 0) {
         const qr = buildQuickReplyFromActions(ai.suggestedActions);
@@ -241,7 +256,6 @@ async function handleBookingEvent(ctx: HandlerContext): Promise<HandlerResult> {
       };
     }
 
-    // AI returned disabled signal or error — fall through to fallback
     console.log(`[BOOKING_AI] failed ok=${ai.ok} disabled=${ai.disabled} answerLen=${ai.answer.length}`);
   }
 
@@ -1055,9 +1069,25 @@ export async function POST(req: Request) {
 
   const handlerCtx: HandlerContext = { textIn, lineUserId, tenantId, cfg, apiBase };
 
-  const result = cfg.purpose === "sales"
-    ? await handleSalesEvent(handlerCtx)
-    : await handleBookingEvent(handlerCtx);
+  let result: HandlerResult;
+  try {
+    result = cfg.purpose === "sales"
+      ? await handleSalesEvent(handlerCtx)
+      : await handleBookingEvent(handlerCtx);
+  } catch (handlerErr: any) {
+    // Handler crashed — guaranteed fallback reply so user always gets a response
+    console.error(
+      `[WH_HANDLER_CRASH] purpose=${cfg.purpose} error=${String(handlerErr?.message ?? handlerErr).slice(0, 200)}`
+    );
+    const bookingLink = buildBookingLink(cfg.bookingUrl, tenantId, lineUserId);
+    result = {
+      branch: "handler_crash_fallback",
+      salesIntent: null,
+      replyMessages: [{ type: "text", text: getBookingFallbackText(bookingLink) }],
+      leadLabel: null,
+      leadCapture: false,
+    };
+  }
 
   const tokenPreviewMain = cfg.channelAccessToken.length > 8
     ? `${cfg.channelAccessToken.slice(0, 4)}...${cfg.channelAccessToken.slice(-4)}`
