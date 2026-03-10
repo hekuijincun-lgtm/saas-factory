@@ -11,7 +11,7 @@ export const runtime = "edge";
 //             → ai:     waitUntil(AI+push+quickReply) → 即時 200 返却
 //   debug=1 → 実送信ゼロ・{ intent, bookingUrl, replyPlanned, pushPlanned, aiEnabled } 返却
 //   debug=2 → push のみ同期実送信して pushStatus + quickReply を返す（テスト用）
-const STAMP = "LINE_WEBHOOK_V14_20260310_SALES_FLOW";
+const STAMP = "LINE_WEBHOOK_V15_20260310_DEBUG_REPLY";
 const where  = "api/line/webhook";
 
 const FALLBACK_TEXT = "少し時間をおいて再度お試しください。";
@@ -407,21 +407,21 @@ export async function POST(req: Request) {
 
   const raw = await req.arrayBuffer();
 
+  console.log(`[WH_ENTRY] stamp=${STAMP} bytes=${raw.byteLength} hasSig=${!!sig} debug=${debugMode}`);
+
   // ── LINE verification early-exit ──────────────────────────────────────────
-  // LINE sends POST {"events":[],"destination":"..."} during webhook URL
-  // verification. This MUST return HTTP 200 regardless of tenantId/signature.
-  // Check immediately before any tenant or auth logic runs.
-  // Also handles empty body (0 bytes) as verification for safety.
   if (raw.byteLength === 0) {
+    console.log("[WH_VERIFY] empty body → 200");
     return new Response("OK", { status: 200 });
   }
   try {
     const earlyPeek = JSON.parse(new TextDecoder().decode(raw));
     if (Array.isArray(earlyPeek?.events) && earlyPeek.events.length === 0) {
+      console.log("[WH_VERIFY] events=[] → 200");
       return new Response("OK", { status: 200 });
     }
   } catch {
-    // Not valid JSON — continue to normal flow (will fail later with parse error)
+    // Not valid JSON — continue
   }
 
   // Resolve tenantId: query param → destination KV lookup → 400 error
@@ -462,9 +462,12 @@ export async function POST(req: Request) {
     } catch { resolvedBy = "parse_error"; }
   }
 
+  console.log(`[WH_TENANT] tenantId=${tenantId} resolvedBy=${resolvedBy} dest=${destination.slice(0, 12)} kvHit=${kvHit}`);
+
   // No default fallback — unknown destination returns 400
   if (!tenantId) {
     const hint = "Open /admin/line-setup?tenantId=YOUR_TENANT and click Remap to fix destination mapping.";
+    console.log(`[WH_FAIL] no tenantId resolvedBy=${resolvedBy} destination=${destination}`);
     if (debugMode === "1") {
       return NextResponse.json({
         ok: false, stamp: STAMP, where, debug: 1,
@@ -480,7 +483,6 @@ export async function POST(req: Request) {
   }
 
   // ── Webhook receipt log helper: fire-and-forget to Workers KV ──────────────
-  // Uses /internal/line/last-webhook (shared secret) instead of /admin/ (requires ADMIN_TOKEN)
   const webhookLogApiBase = (
     process.env.API_BASE ?? process.env.NEXT_PUBLIC_API_BASE ?? ""
   ).replace(/\/+$/, "");
@@ -496,7 +498,7 @@ export async function POST(req: Request) {
   function saveWebhookLog(log: Record<string, unknown>) {
     if (!webhookLogApiBase || !internalToken) {
       _logPostOk = false;
-      _logPostStatus = !webhookLogApiBase ? -1 : -2; // -1=no apiBase, -2=no token
+      _logPostStatus = !webhookLogApiBase ? -1 : -2;
       return;
     }
     fetch(`${webhookLogApiBase}/internal/line/last-webhook?tenantId=${encodeURIComponent(tenantId!)}`, {
@@ -509,7 +511,7 @@ export async function POST(req: Request) {
     }).then(r => { _logPostStatus = r.status; _logPostOk = r.ok; }).catch(() => { _logPostStatus = 0; _logPostOk = false; });
   }
 
-  // ── Phase 1: parse body (best-effort, before sig check) ───────────────────
+  // ── Phase 1: parse body ───────────────────────────────────────────────────
   let payload: any = null;
   let parseError: string | null = null;
   let events: any[] = [];
@@ -525,11 +527,23 @@ export async function POST(req: Request) {
     destination = String(payload.destination).trim();
   }
 
+  console.log(
+    `[WH_PARSE] eventCount=${events.length} parseError=${parseError ?? "none"} ` +
+    `firstEventType=${firstEvent?.type ?? "none"} firstMsgType=${firstEvent?.message?.type ?? "none"} ` +
+    `hasReplyToken=${!!firstEvent?.replyToken} firstText="${String(firstEvent?.message?.text ?? "").slice(0, 40)}"`
+  );
+
   // ── Phase 2: resolve config + sig check ───────────────────────────────────
   const cfg = await getTenantLineConfig(tenantId, origin);
   const verified = (sig && cfg.channelSecret)
     ? await verifyLineSignature(raw, sig, cfg.channelSecret).catch(() => false)
     : false;
+
+  console.log(
+    `[WH_CONFIG] source=${cfg.source} hasSecret=${!!cfg.channelSecret} secretLen=${cfg.channelSecret.length} ` +
+    `hasToken=${!!cfg.channelAccessToken} tokenLen=${cfg.channelAccessToken.length} ` +
+    `sigVerified=${verified} allowBadSig=${allowBadSig}`
+  );
 
   // ── Save receipt log (BEFORE any early-return) ────────────────────────────
   saveWebhookLog({
@@ -550,24 +564,17 @@ export async function POST(req: Request) {
     cfgHasToken: !!cfg.channelAccessToken,
   });
 
-  // ── debug=1 POST: full pipeline dry-run (AI gate + intent) without sending ──
+  // ── debug=1 POST: full pipeline dry-run ──────────────────────────────────
   if (debugMode === "1") {
-    // Wait briefly for log POST to complete so we can report its status
     await new Promise(r => setTimeout(r, 500));
-
-    // Run the same AI gate check as the POST main line (L622)
     const _d1AiEnabled = await checkAiEnabled(tenantId);
-
-    // Extract text from first event for intent judgment
     const _d1Ev = events.find((x: any) =>
       x?.type === "message" && x?.message?.type === "text" && x?.replyToken);
     const _d1Text = _d1Ev ? String(_d1Ev.message?.text ?? "") : null;
     const _d1IsBooking = _d1Text ? detectBookingIntent(_d1Text) : null;
-
-    // Determine what POST main line would do
     let _d1Action: string;
     if (!_d1Ev) _d1Action = "no_text_event";
-    else if (!_d1AiEnabled) _d1Action = "blocked_ai_disabled";
+    else if (!_d1AiEnabled) _d1Action = "sales_flow";
     else if (_d1IsBooking) _d1Action = "would_reply_booking_template";
     else _d1Action = "would_push_ai";
 
@@ -576,28 +583,19 @@ export async function POST(req: Request) {
       step: "full_dry_run",
       destination: destination || null,
       resolvedTenantId: tenantId,
-      resolvedBy,
-      kvHit,
+      resolvedBy, kvHit,
       cfgSource: cfg.source,
       cfgHasSecret: !!cfg.channelSecret,
       cfgHasToken:  !!cfg.channelAccessToken,
-      sigVerified: verified,
-      hasSig: !!sig,
-      allowBadSig,
-      parseError,
-      eventCount: events.length,
-      // AI gate result (same function as POST main line)
+      sigVerified: verified, hasSig: !!sig, allowBadSig,
+      parseError, eventCount: events.length,
       aiEnabled: _d1AiEnabled,
-      // Intent (if text event exists)
       firstText: _d1Text?.slice(0, 80) ?? null,
       intent: _d1IsBooking === null ? null : (_d1IsBooking ? "booking" : "ai"),
-      // What would happen in POST main line
       actionIfLive: _d1Action,
       logPostAttempt: !!webhookLogApiBase && !!internalToken,
-      logPostOk: _logPostOk,
-      logPostStatus: _logPostStatus,
-      logHasApiBase: !!webhookLogApiBase,
-      logHasToken: !!internalToken,
+      logPostOk: _logPostOk, logPostStatus: _logPostStatus,
+      logHasApiBase: !!webhookLogApiBase, logHasToken: !!internalToken,
       hint: resolvedBy.includes("destination_miss")
         ? "KV key missing — re-save LINE credentials for this tenant"
         : resolvedBy === "no_api_base"
@@ -609,12 +607,14 @@ export async function POST(req: Request) {
   }
 
   if (!cfg.channelSecret) {
+    console.log(`[WH_FAIL] missing channelSecret tenant=${tenantId} source=${cfg.source}`);
     return NextResponse.json(
       { ok: false, stamp: STAMP, where, tenantId, source: cfg.source, error: "missing_channelSecret" },
       { status: 500 }
     );
   }
   if (!cfg.channelAccessToken) {
+    console.log(`[WH_FAIL] missing channelAccessToken tenant=${tenantId} source=${cfg.source}`);
     return NextResponse.json(
       { ok: false, stamp: STAMP, where, tenantId, source: cfg.source, error: "missing_channelAccessToken" },
       { status: 500 }
@@ -622,6 +622,7 @@ export async function POST(req: Request) {
   }
 
   if (!verified && !allowBadSig) {
+    console.log(`[WH_FAIL] bad_signature tenant=${tenantId} hasSig=${!!sig} bodyLen=${raw.byteLength}`);
     return NextResponse.json(
       {
         ok: false, stamp: STAMP, where, tenantId,
@@ -632,11 +633,29 @@ export async function POST(req: Request) {
   }
 
   if (parseError) {
+    console.log(`[WH_FAIL] invalid_json tenant=${tenantId} error=${parseError}`);
     return NextResponse.json(
       { ok: false, stamp: STAMP, where, tenantId, error: "invalid_json", message: parseError },
       { status: 400 }
     );
   }
+
+  // ── Find first text message event with replyToken ─────────────────────────
+  // Do this BEFORE postback so we can use it for guaranteed-reply fallback
+  const ev = events.find(
+    (x: any) =>
+      x?.type === "message" && x?.message?.type === "text" && x?.replyToken
+  );
+
+  // Extract replyToken + userId early — needed for guaranteed-reply fallback
+  const textIn     = ev ? String(ev.message.text ?? "") : "";
+  const replyToken = ev ? String(ev.replyToken) : "";
+  const lineUserId = ev ? String(ev.source?.userId ?? "").trim() : "";
+
+  console.log(
+    `[WH_EVENT] hasTextEvent=${!!ev} text="${textIn.slice(0, 40)}" ` +
+    `uid=${lineUserId.slice(0, 8)} replyToken=${replyToken.slice(0, 8)}...`
+  );
 
   // ── Postback handling (rich menu: 店舗情報) ──────────────────────────────────
   const postbackEv = events.find(
@@ -647,7 +666,6 @@ export async function POST(req: Request) {
     const params = new URLSearchParams(postbackData);
 
     if (params.get("action") === "store_info") {
-      // Fetch tenant settings for store info
       try {
         const apiBase = (
           process.env.API_BASE ?? process.env.NEXT_PUBLIC_API_BASE ?? ""
@@ -678,16 +696,17 @@ export async function POST(req: Request) {
         }
 
         const replyText = `店舗情報です📍\n\n店舗名: ${storeName}\n住所: ${address}\nメール: ${email}`;
-        await replyLine(cfg.channelAccessToken, String(postbackEv.replyToken), [
+        const pbRep = await replyLine(cfg.channelAccessToken, String(postbackEv.replyToken), [
           { type: "text", text: replyText },
         ]);
+        console.log(`[WH_POSTBACK] store_info replyOk=${pbRep.ok} st=${pbRep.status} body=${pbRep.bodyText.slice(0, 120)}`);
 
         return NextResponse.json({
           ok: true, stamp: STAMP, where, tenantId, source: cfg.source,
           verified, replied: true, action: "store_info",
         });
       } catch (err: any) {
-        console.error(`[LINE_WEBHOOK] store_info error: ${err.message}`);
+        console.error(`[WH_POSTBACK] store_info error: ${err.message}`);
         return NextResponse.json({
           ok: true, stamp: STAMP, where, tenantId, source: cfg.source,
           verified, replied: false, action: "store_info", error: String(err.message),
@@ -696,26 +715,18 @@ export async function POST(req: Request) {
     }
   }
 
-  const ev = events.find(
-    (x: any) =>
-      x?.type === "message" && x?.message?.type === "text" && x?.replyToken
-  );
-
   if (!ev) {
+    console.log(`[WH_SKIP] no text event found. eventTypes=${events.map((e: any) => e?.type).join(",")}`);
     return NextResponse.json({
       ok: true, stamp: STAMP, where, tenantId, source: cfg.source,
       verified, replied: false, eventCount: events.length,
     });
   }
 
-  const textIn     = String(ev.message.text ?? "");
-  const replyToken = String(ev.replyToken);
-  const lineUserId = String(ev.source?.userId ?? "").trim();
-
   console.log(
-    `[LINE_WEBHOOK] method=POST tenant=${tenantId} resolvedBy=${resolvedBy} ` +
-    `text=${textIn.slice(0, 40)} uid=${lineUserId.slice(0, 6)}*** ` +
-    `hasReplyToken=${!!replyToken} cfgSource=${cfg.source}`
+    `[WH_TEXT] tenant=${tenantId} resolvedBy=${resolvedBy} ` +
+    `text="${textIn.slice(0, 40)}" uid=${lineUserId.slice(0, 8)} ` +
+    `replyToken=${replyToken.slice(0, 8)}... cfgSource=${cfg.source}`
   );
 
   const apiBase = (
@@ -724,19 +735,14 @@ export async function POST(req: Request) {
 
   const aiIp = lineUserId ? `line:${lineUserId.slice(0, 12)}` : "line";
 
-  // ── AI gate: テナントの AI接客が無効なら簡易エコー返信 ────────────────────
-  // AI が有効なテナントは従来通り AI/予約テンプレ処理へ進む。
-  // AI 未設定テナント（営業LINEなど）には最低限のエコー返信を行う。
+  // ── AI gate ────────────────────────────────────────────────────────────────
   const aiEnabled = await checkAiEnabled(tenantId);
-  console.log(`[LINE_WEBHOOK] aiEnabled=${aiEnabled} tenant=${tenantId}`);
+  console.log(`[WH_AI_GATE] aiEnabled=${aiEnabled} tenant=${tenantId}`);
 
   if (!aiEnabled) {
     // ── Sales LINE flow (AI disabled tenants) ─────────────────────────────
-    // Detects numbered replies (1-4) and classifies them.
-    // For any other text, sends a greeting with menu options.
     const trimmed = textIn.trim();
     const numberMatch = trimmed.match(/^[１-４1-4]$/);
-    // Normalize full-width to half-width
     const num = numberMatch
       ? trimmed.replace(/[１２３４]/g, (c) => String("１２３４".indexOf(c) + 1))
       : null;
@@ -757,11 +763,11 @@ export async function POST(req: Request) {
       label = "demo_request";
       replyText = "ありがとうございます！\n担当者より直接ご連絡いたします。\n\nご都合の良い曜日・時間帯があれば教えてください🙏";
     } else {
-      // Default greeting
       replyText = "ありがとうございます！Lumi Bookです✨\n\n眉毛サロン向けに\n・LINE予約導線の改善\n・予約の取りこぼしチェック\n・無料診断\nを行っています。\n\n気になるものを番号で返信してください。\n1. 無料診断したい\n2. どんなツールか知りたい\n3. 料金を知りたい\n4. 担当者と話したい";
     }
 
-    // Send reply
+    console.log(`[WH_SALES] BEFORE replyLine() label=${label ?? "greeting"} tokenLen=${cfg.channelAccessToken.length} replyTokenLen=${replyToken.length}`);
+
     let salesReplyOk = false;
     let salesReplyStatus = 0;
     let salesReplyBody = "";
@@ -771,32 +777,25 @@ export async function POST(req: Request) {
       ]);
       salesReplyOk = rep.ok;
       salesReplyStatus = rep.status;
-      salesReplyBody = rep.bodyText.slice(0, 200);
+      salesReplyBody = rep.bodyText.slice(0, 500);
     } catch (e: any) {
-      salesReplyBody = String(e?.message ?? e).slice(0, 200);
+      salesReplyBody = `EXCEPTION: ${String(e?.message ?? e).slice(0, 400)}`;
     }
 
     console.log(
-      `[LINE_SALES] tenant=${tenantId} uid=${lineUserId.slice(0, 6)}*** ` +
-      `label=${label ?? "greeting"} replyOk=${salesReplyOk} st=${salesReplyStatus} ` +
+      `[WH_SALES] AFTER replyLine() ok=${salesReplyOk} status=${salesReplyStatus} ` +
       `body=${salesReplyBody}`
     );
 
     // Save to /owner/leads via internal endpoint (fire-and-forget)
     if (apiBase && lineUserId) {
-      let internalToken = "";
-      try {
-        const cfEnv = (getRequestContext()?.env as any);
-        if (cfEnv?.LINE_INTERNAL_TOKEN) internalToken = String(cfEnv.LINE_INTERNAL_TOKEN);
-      } catch {}
-      if (!internalToken) internalToken = process.env.LINE_INTERNAL_TOKEN ?? "";
-
-      if (internalToken) {
+      const leadToken = internalToken; // reuse from outer scope
+      if (leadToken) {
         fetch(`${apiBase}/internal/sales/lead-reply`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "x-internal-token": internalToken,
+            "x-internal-token": leadToken,
           },
           body: JSON.stringify({
             tenantId,
@@ -805,7 +804,7 @@ export async function POST(req: Request) {
             label: label ?? null,
             displayName: "",
           }),
-        }).catch((e) => console.error(`[LINE_SALES] lead-reply error: ${e}`));
+        }).catch((e) => console.error(`[WH_SALES] lead-reply error: ${e}`));
       }
     }
 
@@ -813,7 +812,8 @@ export async function POST(req: Request) {
       {
         ok: true, stamp: STAMP, where, tenantId, source: cfg.source,
         verified, aiEnabled: false, replied: salesReplyOk,
-        replyStatus: salesReplyStatus, resolvedBy, eventCount: events.length,
+        replyStatus: salesReplyStatus, replyBody: salesReplyBody.slice(0, 200),
+        resolvedBy, eventCount: events.length,
         mode: "sales", label: label ?? "greeting",
       },
       { headers: { "x-stamp": STAMP } }
@@ -821,8 +821,11 @@ export async function POST(req: Request) {
   }
 
   // ── intent 判定（booking が優先）────────────────────────────────────────────
+  console.log(`[WH_AI_FLOW] tenant=${tenantId} aiEnabled=true, proceeding to intent detection`);
   const isBookingIntent = detectBookingIntent(textIn);
   const bookingUrl      = buildBookingLink(cfg.bookingUrl, tenantId, lineUserId);
+  console.log(`[WH_AI_FLOW] isBooking=${isBookingIntent} text="${textIn.slice(0, 30)}"`);
+
 
   // ── debug=1: 実送信ゼロ・判定結果のみ JSON で返す ─────────────────────────
   if (debugMode === "1") {
@@ -890,14 +893,14 @@ export async function POST(req: Request) {
 
   // ── 予約 intent: テンプレカードを reply で返す（AI gate 通過済み）───────
   if (isBookingIntent) {
-    console.log(`[LINE_WEBHOOK] method=POST tenant=${tenantId} aiEnabled=true intent=booking action=reply_template`);
+    console.log(`[WH_BOOKING] BEFORE replyLine() tenant=${tenantId} bookingUrl=${bookingUrl.slice(0, 60)}`);
     const bookingMsg = buildBookingTemplateMessage(bookingUrl);
     const repBooking = await replyLine(cfg.channelAccessToken, replyToken, [bookingMsg])
       .catch(() => ({ ok: false, status: 0, bodyText: "reply_exception" }));
 
     console.log(
-      `[LINE_BOOKING_REPLY] tenant=${tenantId} uid=${lineUserId.slice(0, 6)}*** ` +
-      `st=${repBooking.status} ok=${repBooking.ok} body=${repBooking.bodyText.slice(0, 120)}`
+      `[WH_BOOKING] AFTER replyLine() ok=${repBooking.ok} st=${repBooking.status} ` +
+      `body=${repBooking.bodyText.slice(0, 200)}`
     );
 
     return NextResponse.json(
