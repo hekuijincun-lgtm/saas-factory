@@ -274,10 +274,18 @@ export async function GET(req: Request) {
         }
       );
       remapResult = await r.json().catch(() => ({ status: r.status }));
-      if (remapResult?.ok) {
-        const recheck = await checkDestinationMapping(apiBase, tenantId);
-        destMappedAfterRemap = recheck.mapped;
-        if (recheck.mapped) {
+      if (remapResult?.ok && remapResult?.botUserId) {
+        // Verify the newly created mapping directly
+        try {
+          const vr = await fetch(
+            `${apiBase}/line/destination-to-tenant?destination=${encodeURIComponent(remapResult.botUserId)}`
+          );
+          if (vr.ok) {
+            const vd = (await vr.json()) as any;
+            destMappedAfterRemap = vd?.tenantId === tenantId;
+          }
+        } catch {}
+        if (destMappedAfterRemap) {
           const idx = problems.findIndex(p => p.includes("not mapped to tenant") || p.includes("will auto-remap"));
           if (idx >= 0) problems.splice(idx, 1);
         }
