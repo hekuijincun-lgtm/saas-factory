@@ -168,7 +168,11 @@ export async function middleware(req: NextRequest) {
       .map((s) => s.trim())
       .filter(Boolean);
     if (!userId || !ownerIds.includes(userId)) {
-      return NextResponse.redirect(new URL("/admin?error=not_owner", req.nextUrl.origin));
+      const params = new URLSearchParams({
+        error: "not_owner",
+        ...(userId ? { uid: userId } : {}),
+      });
+      return NextResponse.redirect(new URL(`/admin?${params}`, req.nextUrl.origin));
     }
     // Passed — continue
   }
