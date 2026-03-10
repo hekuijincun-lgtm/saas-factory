@@ -11,7 +11,7 @@ export const runtime = "edge";
 //             → ai:     waitUntil(AI+push+quickReply) → 即時 200 返却
 //   debug=1 → 実送信ゼロ・{ intent, bookingUrl, replyPlanned, pushPlanned, aiEnabled } 返却
 //   debug=2 → push のみ同期実送信して pushStatus + quickReply を返す（テスト用）
-const STAMP = "LINE_WEBHOOK_V12_20260309_AI_GATE";
+const STAMP = "LINE_WEBHOOK_V13_20260310_VERIFY_FIX";
 const where  = "api/line/webhook";
 
 const FALLBACK_TEXT = "少し時間をおいて再度お試しください。";
@@ -409,8 +409,12 @@ export async function POST(req: Request) {
 
   // ── LINE verification early-exit ──────────────────────────────────────────
   // LINE sends POST {"events":[],"destination":"..."} during webhook URL
-  // verification. This MUST return HTTP 200 regardless of tenantId resolution.
-  // Check immediately before any tenant logic runs.
+  // verification. This MUST return HTTP 200 regardless of tenantId/signature.
+  // Check immediately before any tenant or auth logic runs.
+  // Also handles empty body (0 bytes) as verification for safety.
+  if (raw.byteLength === 0) {
+    return new Response("OK", { status: 200 });
+  }
   try {
     const earlyPeek = JSON.parse(new TextDecoder().decode(raw));
     if (Array.isArray(earlyPeek?.events) && earlyPeek.events.length === 0) {
