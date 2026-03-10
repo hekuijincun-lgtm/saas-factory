@@ -254,16 +254,23 @@ export async function GET(req: Request) {
 
   const webhookUrl = `${origin}/api/line/webhook?tenantId=${encodeURIComponent(tenantId)}`;
 
-  // Auto-fix: if destination not mapped but we have token, try remap
+  // Auto-fix: if destination not mapped but we have token, try internal remap
   let remapResult: any = null;
   let destMappedAfterRemap = destCheck.mapped;
-  if (!destCheck.mapped && hasToken && apiBase && adminToken) {
+  let internalTokenForRemap = "";
+  try {
+    const cfEnv = (getRequestContext()?.env as any);
+    if (cfEnv?.LINE_INTERNAL_TOKEN) internalTokenForRemap = String(cfEnv.LINE_INTERNAL_TOKEN);
+  } catch {}
+  if (!internalTokenForRemap) internalTokenForRemap = process.env.LINE_INTERNAL_TOKEN || "";
+
+  if (!destCheck.mapped && hasToken && apiBase && internalTokenForRemap) {
     try {
       const r = await fetch(
-        `${apiBase}/admin/integrations/line/remap?tenantId=${encodeURIComponent(tenantId)}`,
+        `${apiBase}/internal/line/remap?tenantId=${encodeURIComponent(tenantId)}`,
         {
           method: "POST",
-          headers: { "X-Admin-Token": adminToken },
+          headers: { "x-internal-token": internalTokenForRemap },
         }
       );
       remapResult = await r.json().catch(() => ({ status: r.status }));

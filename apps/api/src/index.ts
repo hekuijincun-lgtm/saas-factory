@@ -5093,6 +5093,57 @@ app.post("/internal/line/last-webhook", async (c) => {
   } catch { return c.json({ ok: false }, 500); }
 });
 
+// ── POST /internal/line/remap ────────────────────────────────────────────────
+// Internal version of /admin/integrations/line/remap — uses LINE_INTERNAL_TOKEN
+// instead of owner auth. For use by diagnostics endpoint auto-fix.
+app.post("/internal/line/remap", async (c) => {
+  const env = c.env as any;
+  const expected = String(env?.LINE_INTERNAL_TOKEN ?? "").trim();
+  const provided = String(c.req.header("x-internal-token") ?? "").trim();
+  if (!expected || !provided || provided !== expected) {
+    return c.json({ ok: false, error: "unauthorized" }, 401);
+  }
+  const tenantId = (c.req.query("tenantId") ?? "").trim();
+  if (!tenantId) return c.json({ ok: false, error: "missing_tenantId" }, 400);
+  try {
+    const kv = env.SAAS_FACTORY;
+    if (!kv) return c.json({ ok: false, error: "kv_missing" }, 500);
+
+    const key = `settings:${tenantId}`;
+    let existing: any = {};
+    try { const r = await kv.get(key); if (r) existing = JSON.parse(r); } catch {}
+
+    const lineSettings = existing?.integrations?.line ?? {};
+    const token = String(lineSettings.channelAccessToken ?? "").trim();
+    if (!token) return c.json({ ok: false, error: "no_token" }, 400);
+
+    // Get botUserId from LINE API
+    const botCheck = await verifyLineToken(token);
+    if (botCheck.status !== "ok" || !botCheck.userId) {
+      return c.json({ ok: false, error: "missing_user_id", detail: botCheck }, 400);
+    }
+    const botUserId = botCheck.userId;
+
+    // Clean up old mappings
+    const oldBotUserId = await kv.get(`line:tenant2dest:${tenantId}`);
+    if (oldBotUserId && oldBotUserId !== botUserId) {
+      await kv.delete(`line:destination-to-tenant:${oldBotUserId}`);
+    }
+    const existingMapping = await kv.get(`line:destination-to-tenant:${botUserId}`);
+    if (existingMapping && existingMapping !== tenantId) {
+      await kv.delete(`line:tenant2dest:${existingMapping}`);
+    }
+
+    // Write new mappings
+    await kv.put(`line:destination-to-tenant:${botUserId}`, tenantId);
+    await kv.put(`line:tenant2dest:${tenantId}`, botUserId);
+
+    return c.json({ ok: true, tenantId, botUserId, destinationMapped: true });
+  } catch (e: any) {
+    return c.json({ ok: false, error: String(e?.message ?? e) }, 500);
+  }
+});
+
 // ── POST /internal/line/last-result ──────────────────────────────────────────
 // Saves the last webhook processing result (branch, reply status, etc.)
 // Protected by shared secret (LINE_INTERNAL_TOKEN).
