@@ -10,6 +10,7 @@ import {
   Menu,
   Shield,
   MessageCircle,
+  Target,
 } from "lucide-react";
 
 function Sidebar({
@@ -25,6 +26,7 @@ function Sidebar({
 
   const navItems = [
     { href: "/owner", label: "概要", icon: LayoutDashboard },
+    { href: "/owner/leads", label: "営業リード管理", icon: Target },
     { href: "/owner/sales-lines", label: "営業LINE管理", icon: MessageCircle },
   ];
 

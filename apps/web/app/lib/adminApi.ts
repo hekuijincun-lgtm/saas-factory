@@ -431,3 +431,141 @@ export async function saveLineRouting(
   }
 }
 
+// ============================================================================
+// Sales Leads (Owner)
+// ============================================================================
+
+export interface SalesLead {
+  id: string;
+  tenantId: string;
+  industry: string;
+  storeName: string;
+  websiteUrl?: string;
+  instagramUrl?: string;
+  lineUrl?: string;
+  region?: string;
+  notes?: string;
+  status: string;
+  score?: number;
+  painPoints?: string[];
+  bestOffer?: string;
+  recommendedChannel?: string;
+  nextAction?: string;
+  aiSummary?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface LeadDraft {
+  id: string;
+  leadId: string;
+  kind: string;
+  subject?: string;
+  body: string;
+  createdAt: string;
+}
+
+export interface LeadClassification {
+  id: string;
+  leadId: string;
+  rawReply: string;
+  label: string;
+  confidence?: number;
+  suggestedNextAction?: string;
+  createdAt: string;
+}
+
+export interface LeadDetailResponse {
+  ok: boolean;
+  lead: SalesLead;
+  drafts: LeadDraft[];
+  classifications: LeadClassification[];
+}
+
+export async function fetchLeads(tenantId?: string): Promise<{ ok: boolean; leads: SalesLead[] }> {
+  try {
+    return await apiGet<{ ok: boolean; leads: SalesLead[] }>('/owner/leads', { tenantId });
+  } catch (error) {
+    if (error instanceof ApiClientError) throw error;
+    throw new ApiClientError('Failed to fetch leads');
+  }
+}
+
+export async function createLead(
+  data: {
+    storeName: string;
+    industry?: string;
+    websiteUrl?: string;
+    instagramUrl?: string;
+    lineUrl?: string;
+    region?: string;
+    notes?: string;
+    tenantId?: string;
+  },
+  tenantId?: string,
+): Promise<{ ok: boolean; id: string; createdAt: string }> {
+  try {
+    return await apiPost<{ ok: boolean; id: string; createdAt: string }>('/owner/leads', data, { tenantId });
+  } catch (error) {
+    if (error instanceof ApiClientError) throw error;
+    throw new ApiClientError('Failed to create lead');
+  }
+}
+
+export async function fetchLead(id: string, tenantId?: string): Promise<LeadDetailResponse> {
+  try {
+    return await apiGet<LeadDetailResponse>(`/owner/leads/${id}`, { tenantId });
+  } catch (error) {
+    if (error instanceof ApiClientError) throw error;
+    throw new ApiClientError('Failed to fetch lead');
+  }
+}
+
+export async function analyzeLeadApi(id: string, tenantId?: string): Promise<{ ok: boolean; analysis: any; updatedAt: string }> {
+  try {
+    return await apiPost<{ ok: boolean; analysis: any; updatedAt: string }>(`/owner/leads/${id}/analyze`, {}, { tenantId, timeout: 30000 });
+  } catch (error) {
+    if (error instanceof ApiClientError) throw error;
+    throw new ApiClientError('Failed to analyze lead');
+  }
+}
+
+export async function generateDraftsApi(id: string, tenantId?: string): Promise<{ ok: boolean; drafts: any; createdAt: string }> {
+  try {
+    return await apiPost<{ ok: boolean; drafts: any; createdAt: string }>(`/owner/leads/${id}/generate-draft`, {}, { tenantId, timeout: 30000 });
+  } catch (error) {
+    if (error instanceof ApiClientError) throw error;
+    throw new ApiClientError('Failed to generate drafts');
+  }
+}
+
+export async function classifyReplyApi(
+  id: string,
+  rawReply: string,
+  tenantId?: string,
+): Promise<{ ok: boolean; classification: any; createdAt: string }> {
+  try {
+    return await apiPost<{ ok: boolean; classification: any; createdAt: string }>(
+      `/owner/leads/${id}/classify-reply`, { rawReply }, { tenantId, timeout: 30000 },
+    );
+  } catch (error) {
+    if (error instanceof ApiClientError) throw error;
+    throw new ApiClientError('Failed to classify reply');
+  }
+}
+
+export async function updateLeadStatus(
+  id: string,
+  status: string,
+  tenantId?: string,
+): Promise<{ ok: boolean; status: string; updatedAt: string }> {
+  try {
+    return await apiPut<{ ok: boolean; status: string; updatedAt: string }>(
+      `/owner/leads/${id}/status`, { status }, { tenantId },
+    );
+  } catch (error) {
+    if (error instanceof ApiClientError) throw error;
+    throw new ApiClientError('Failed to update lead status');
+  }
+}
+

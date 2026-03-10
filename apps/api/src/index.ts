@@ -5,6 +5,7 @@ import { resolveVertical, DEFAULT_ADMIN_SETTINGS, mergeSettings } from "./settin
 import type { PlanId, SubscriptionInfo } from "./settings";
 import { getRepeatConfig, getStyleLabel, buildRepeatMessage, eyebrowOnboardingChecks } from "./verticals/eyebrow";
 import { registerOwnerRoutes, getOwnerIds, bootstrapOwnerIfEmpty, isPrincipalAllowed } from "./routes/owner";
+import { registerOwnerLeadRoutes } from "./routes/ownerLeads";
 
 // test helper (lock reproduction)
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
@@ -178,6 +179,7 @@ app.get("/auth/owner-check", async (c) => {
 
 // Owner routes (middleware + endpoints) — see apps/api/src/routes/owner.ts
 registerOwnerRoutes(app);
+registerOwnerLeadRoutes(app);
 
 function getTenantId(c: any, body?: any): string {
   // x-session-tenant-id: injected by Pages proxy after HMAC-verifying line_session cookie.
