@@ -491,6 +491,7 @@ export default function OwnerLeadsClient() {
   const [classifyLeadId, setClassifyLeadId] = useState<string | null>(null);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
   const [statusFilter, setStatusFilter] = useState("");
+  const [buildInfo, setBuildInfo] = useState<{ gitSha?: string; ai?: { configured: boolean }; migration?: { ok: boolean } } | null>(null);
 
   const showToast = useCallback((message: string, type: "success" | "error") => {
     setToast({ message, type });
@@ -509,6 +510,11 @@ export default function OwnerLeadsClient() {
 
   useEffect(() => {
     loadLeads();
+    // Fetch build info (AI availability, migration status)
+    fetch("/api/proxy/__build")
+      .then((r) => r.json())
+      .then((data: any) => setBuildInfo(data))
+      .catch(() => {});
   }, [loadLeads]);
 
   const handleCreate = async (data: any) => {
@@ -540,8 +546,23 @@ export default function OwnerLeadsClient() {
     }
   };
 
+  const isAiUnavailable = buildInfo && buildInfo.ai && !buildInfo.ai.configured;
+
+  const handleAiError = (e: any) => {
+    // Detect 503 (OPENAI_API_KEY not configured) specifically
+    if (e?.status === 503 || e?.message?.includes("not configured")) {
+      showToast("AI機能は未設定です。OPENAI_API_KEY を Workers に設定してください。", "error");
+    } else {
+      showToast(e?.message ?? "AI操作に失敗しました", "error");
+    }
+  };
+
   const handleAnalyze = async () => {
     if (!expandedId) return;
+    if (isAiUnavailable) {
+      showToast("AI機能は未設定です。OPENAI_API_KEY を Workers に設定してください。", "error");
+      return;
+    }
     setAnalyzing(true);
     try {
       await analyzeLeadApi(expandedId);
@@ -550,7 +571,7 @@ export default function OwnerLeadsClient() {
       setDetailData({ lead: res.lead, drafts: res.drafts, classifications: res.classifications });
       await loadLeads();
     } catch (e: any) {
-      showToast(e.message ?? "AI採点に失敗しました", "error");
+      handleAiError(e);
     } finally {
       setAnalyzing(false);
     }
@@ -558,6 +579,10 @@ export default function OwnerLeadsClient() {
 
   const handleGenerateDrafts = async () => {
     if (!expandedId) return;
+    if (isAiUnavailable) {
+      showToast("AI機能は未設定です。OPENAI_API_KEY を Workers に設定してください。", "error");
+      return;
+    }
     setGenerating(true);
     try {
       await generateDraftsApi(expandedId);
@@ -565,7 +590,7 @@ export default function OwnerLeadsClient() {
       const res = await fetchLead(expandedId);
       setDetailData({ lead: res.lead, drafts: res.drafts, classifications: res.classifications });
     } catch (e: any) {
-      showToast(e.message ?? "営業文生成に失敗しました", "error");
+      handleAiError(e);
     } finally {
       setGenerating(false);
     }
@@ -580,7 +605,7 @@ export default function OwnerLeadsClient() {
         setDetailData({ lead: res.lead, drafts: res.drafts, classifications: res.classifications });
       }
     } catch (e: any) {
-      showToast(e.message ?? "返信分類に失敗しました", "error");
+      handleAiError(e);
     }
   };
 
@@ -617,6 +642,27 @@ export default function OwnerLeadsClient() {
           リード追加
         </button>
       </div>
+
+      {/* AI Unavailable Banner */}
+      {isAiUnavailable && (
+        <div className="mb-4 px-4 py-3 bg-yellow-50 border border-yellow-200 rounded-lg flex items-start gap-3">
+          <Brain className="w-5 h-5 text-yellow-600 shrink-0 mt-0.5" />
+          <div>
+            <p className="text-sm font-medium text-yellow-800">AI機能は未設定です</p>
+            <p className="text-xs text-yellow-700 mt-0.5">
+              OPENAI_API_KEY を Workers に設定するとAI採点・営業文生成・返信分類が利用できます。
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Build Info */}
+      {buildInfo?.gitSha && buildInfo.gitSha !== "dev" && (
+        <div className="mb-4 text-[10px] text-gray-400">
+          build: {buildInfo.gitSha.slice(0, 7)}
+          {buildInfo.migration && !buildInfo.migration.ok && " | DB migration pending"}
+        </div>
+      )}
 
       {/* Status Filter */}
       <div className="flex flex-wrap gap-1.5 mb-4">

@@ -388,7 +388,41 @@ function setTenantDebugHeaders(c: any, tenantId: string, keyExample?: string): v
   if (keyExample) c.header('x-tenant-key', keyExample);
 }
 
-app.get("/__build", (c) => c.json({ ok: true, stamp: "API_BUILD_V1" }));
+// ── /__build — deployment health + version info ─────────────────────────────
+// Returns: git SHA, migration status (D1 tables), AI availability, timestamp.
+// Used by CI smoke tests and owner UI build stamp.
+app.get("/__build", async (c) => {
+  const env = c.env as any;
+  const gitSha = env?.GIT_SHA || "dev";
+
+  // D1 migration check — verify sales_leads table exists (latest migration)
+  let migrationOk = false;
+  let migrationDetail = "";
+  try {
+    const db = env?.DB;
+    if (db) {
+      await db.prepare("SELECT 1 FROM sales_leads LIMIT 0").run();
+      migrationOk = true;
+      migrationDetail = "sales_leads OK";
+    } else {
+      migrationDetail = "DB binding missing";
+    }
+  } catch (e: any) {
+    migrationDetail = String(e?.message ?? e).slice(0, 100);
+  }
+
+  // OpenAI availability
+  const aiConfigured = !!env?.OPENAI_API_KEY;
+
+  return c.json({
+    ok: true,
+    stamp: "API_BUILD_V2",
+    gitSha,
+    deployedAt: new Date().toISOString(),
+    migration: { ok: migrationOk, detail: migrationDetail },
+    ai: { configured: aiConfigured },
+  });
+});
 
 
 // ── GET /admin/rbac/audit ──────────────────────────────────────────────────

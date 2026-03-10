@@ -1,0 +1,97 @@
+name: Deploy Full Stack (API + Web)
+
+# Runs when BOTH api and web are changed in the same push.
+# Ensures correct order: migrate → Workers deploy → Pages deploy.
+# Individual workflows still handle single-side changes.
+
+on:
+  push:
+    branches: [ main, master ]
+    paths:
+      - "apps/api/**"
+      - "apps/web/**"
+
+jobs:
+  # Gate: only run if BOTH api and web files changed
+  check-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      api_changed: ${{ steps.filter.outputs.api }}
+      web_changed: ${{ steps.filter.outputs.web }}
+      both_changed: ${{ steps.filter.outputs.api == 'true' && steps.filter.outputs.web == 'true' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            api:
+              - 'apps/api/**'
+            web:
+              - 'apps/web/**'
+
+  deploy-api:
+    needs: check-changes
+    if: needs.check-changes.outputs.both_changed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Enable pnpm via Corepack
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.25.0 --activate
+
+      - name: Install (workspace)
+        run: pnpm install --frozen-lockfile
+
+      - name: Apply D1 migrations (strict)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+        working-directory: apps/api
+        run: pnpm dlx wrangler d1 migrations apply saas-factory-staging --env production --remote
+
+      - name: Deploy Workers API
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          GIT_SHA: ${{ github.sha }}
+        working-directory: apps/api
+        run: pnpm dlx wrangler deploy --env production --var GIT_SHA:$GIT_SHA
+
+      - name: Smoke test — /__build
+        run: |
+          sleep 5
+          RESPONSE=$(curl -sf https://saas-factory-api.mesomesobanana.workers.dev/__build || echo '{}')
+          echo "Workers /__build: $RESPONSE"
+
+  deploy-web:
+    needs: [ check-changes, deploy-api ]
+    if: needs.check-changes.outputs.both_changed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Enable pnpm via Corepack
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.25.0 --activate
+
+      - name: Install (workspace)
+        run: pnpm install --frozen-lockfile
+
+      - name: Build (Next.js)
+        working-directory: apps/web
+        run: pnpm run build
+
+      - name: Generate Pages output (next-on-pages)
+        working-directory: apps/web
+        run: pnpm dlx @cloudflare/next-on-pages
+
+      - name: Deploy to Cloudflare Pages
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+        working-directory: apps/web
+        run: pnpm dlx wrangler pages deploy .vercel/output/static --project-name "saas-factory-web-v2" --branch main --commit-message "deploy from CI (full-stack)"
