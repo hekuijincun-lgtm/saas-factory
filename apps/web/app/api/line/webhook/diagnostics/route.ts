@@ -108,6 +108,35 @@ async function checkDestinationMapping(
   }
 }
 
+// ─── LINE API token verification ────────────────────────────────────────────
+async function verifyTokenWithLineApi(
+  token: string
+): Promise<{ valid: boolean; botUserId: string | null; displayName: string | null; error: string | null }> {
+  if (!token) return { valid: false, botUserId: null, displayName: null, error: "no_token" };
+  try {
+    const ac = new AbortController();
+    const tid = setTimeout(() => ac.abort(), 5000);
+    const r = await fetch("https://api.line.me/v2/bot/info", {
+      headers: { Authorization: "Bearer " + token },
+      signal: ac.signal,
+    });
+    clearTimeout(tid);
+    if (!r.ok) {
+      const body = await r.text().catch(() => "");
+      return { valid: false, botUserId: null, displayName: null, error: `HTTP ${r.status}: ${body.slice(0, 200)}` };
+    }
+    const data = (await r.json()) as any;
+    return {
+      valid: true,
+      botUserId: String(data?.userId ?? "").trim() || null,
+      displayName: String(data?.displayName ?? "").trim() || null,
+      error: null,
+    };
+  } catch (e: any) {
+    return { valid: false, botUserId: null, displayName: null, error: String(e?.message ?? e).slice(0, 200) };
+  }
+}
+
 // ─── GET /api/line/webhook/diagnostics ──────────────────────────────────────
 
 export async function GET(req: Request) {
@@ -142,6 +171,7 @@ export async function GET(req: Request) {
   let tokenLen = 0;
   let hasBookingUrl = false;
   let cfgSource: "kv" | "env" | "none" = "none";
+  let rawToken = "";  // kept in memory only for verification, never returned
 
   if (apiBase) {
     try {
@@ -162,6 +192,7 @@ export async function GET(req: Request) {
         tokenLen = token.length;
         hasBookingUrl = burl.length > 0;
         cfgSource = "kv";
+        rawToken = token;
       }
     } catch {}
   }
@@ -252,6 +283,14 @@ export async function GET(req: Request) {
     } catch {}
   }
 
+  // 9. Verify token against LINE API
+  const tokenVerification = rawToken
+    ? await verifyTokenWithLineApi(rawToken)
+    : { valid: false, botUserId: null, displayName: null, error: "no_token_to_verify" };
+  if (rawToken && !tokenVerification.valid) {
+    problems.push(`channelAccessToken rejected by LINE API: ${tokenVerification.error}`);
+  }
+
   const webhookUrl = `${origin}/api/line/webhook?tenantId=${encodeURIComponent(tenantId)}`;
 
   // Auto-fix: if destination not mapped but we have token, try internal remap
@@ -318,6 +357,12 @@ export async function GET(req: Request) {
         wasRemapped: remapResult?.ok === true,
         hasChannelId: !!destCheck.channelId,
         hasBotUserId: !!destCheck.destination,
+      },
+      tokenVerification: {
+        valid: tokenVerification.valid,
+        botUserId: tokenVerification.botUserId,
+        displayName: tokenVerification.displayName,
+        error: tokenVerification.error,
       },
       ai: {
         enabled: aiEnabled,

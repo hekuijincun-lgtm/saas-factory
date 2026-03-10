@@ -11,7 +11,7 @@ export const runtime = "edge";
 //             → ai:     waitUntil(AI+push+quickReply) → 即時 200 返却
 //   debug=1 → 実送信ゼロ・{ intent, bookingUrl, replyPlanned, pushPlanned, aiEnabled } 返却
 //   debug=2 → push のみ同期実送信して pushStatus + quickReply を返す（テスト用）
-const STAMP = "LINE_WEBHOOK_V15_20260310_DEBUG_REPLY";
+const STAMP = "LINE_WEBHOOK_V16_20260310_REPLY_DEBUG";
 const where  = "api/line/webhook";
 
 const FALLBACK_TEXT = "少し時間をおいて再度お試しください。";
@@ -96,15 +96,29 @@ async function replyLine(
   replyToken: string,
   messages: any[]
 ): Promise<{ ok: boolean; status: number; bodyText: string }> {
+  const tokenPreview = accessToken.length > 8
+    ? `${accessToken.slice(0, 4)}...${accessToken.slice(-4)}`
+    : `len=${accessToken.length}`;
+  console.log(
+    `[REPLY_LINE] calling api.line.me/v2/bot/message/reply ` +
+    `tokenPreview=${tokenPreview} tokenLen=${accessToken.length} ` +
+    `replyTokenLen=${replyToken.length} replyToken=${replyToken.slice(0, 12)}... ` +
+    `msgCount=${messages.length}`
+  );
+  const reqBody = JSON.stringify({ replyToken, messages });
   const res = await fetch("https://api.line.me/v2/bot/message/reply", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: "Bearer " + accessToken,
     },
-    body: JSON.stringify({ replyToken, messages }),
+    body: reqBody,
   });
   const bodyText = await res.text().catch(() => "");
+  console.log(
+    `[REPLY_LINE] response status=${res.status} ok=${res.ok} ` +
+    `body=${bodyText.slice(0, 300)}`
+  );
   return { ok: res.ok, status: res.status, bodyText };
 }
 
@@ -738,7 +752,15 @@ export async function POST(req: Request) {
   // ── GUARANTEED REPLY: always reply first, then do AI/sales logic ─────────
   // This ensures the user ALWAYS gets a response, regardless of downstream errors.
   // replyToken is single-use — after this, only pushLine can send additional messages.
-  console.log(`[WH_GUARANTEED] attempting immediate reply tenant=${tenantId} tokenLen=${cfg.channelAccessToken.length} replyTokenLen=${replyToken.length}`);
+  const tokenPreviewMain = cfg.channelAccessToken.length > 8
+    ? `${cfg.channelAccessToken.slice(0, 4)}...${cfg.channelAccessToken.slice(-4)}`
+    : `(empty:${cfg.channelAccessToken.length})`;
+  console.log(
+    `[WH_GUARANTEED] attempting immediate reply tenant=${tenantId} ` +
+    `tokenPreview=${tokenPreviewMain} tokenLen=${cfg.channelAccessToken.length} ` +
+    `replyToken=${replyToken} replyTokenLen=${replyToken.length} ` +
+    `text="${textIn.slice(0, 60)}"`
+  );
   let guaranteedReplyOk = false;
   let guaranteedReplyStatus = 0;
   let guaranteedReplyBody = "";
@@ -775,6 +797,12 @@ export async function POST(req: Request) {
     errorReason: guaranteedReplyOk ? null : guaranteedReplyBody.slice(0, 200),
     sigVerified: verified,
     cfgSource: cfg.source,
+    tokenLen: cfg.channelAccessToken.length,
+    tokenPreview: cfg.channelAccessToken.length > 8
+      ? `${cfg.channelAccessToken.slice(0, 4)}...${cfg.channelAccessToken.slice(-4)}`
+      : "(short)",
+    replyTokenLen: replyToken.length,
+    replyTokenPreview: replyToken.slice(0, 12),
   };
   if (webhookLogApiBase && internalToken) {
     fetch(
