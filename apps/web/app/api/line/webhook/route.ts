@@ -11,10 +11,129 @@ export const runtime = "edge";
 //             → ai:     waitUntil(AI+push+quickReply) → 即時 200 返却
 //   debug=1 → 実送信ゼロ・{ intent, bookingUrl, replyPlanned, pushPlanned, aiEnabled } 返却
 //   debug=2 → push のみ同期実送信して pushStatus + quickReply を返す（テスト用）
-const STAMP = "LINE_WEBHOOK_V16_20260310_REPLY_DEBUG";
+const STAMP = "LINE_WEBHOOK_V17_20260310_SALES_INTENT";
 const where  = "api/line/webhook";
 
 const FALLBACK_TEXT = "少し時間をおいて再度お試しください。";
+
+// ─── sales intent detection ─────────────────────────────────────────────────
+// label → keyword list (matched against NFKC-normalized, lowercased, whitespace-stripped input)
+const SALES_INTENT_MAP: { label: string; keywords: string[] }[] = [
+  { label: "pricing",      keywords: ["料金", "価格", "値段", "プラン", "月額", "いくら", "費用", "コスト", "pricing", "price"] },
+  { label: "features",     keywords: ["機能", "できること", "特徴", "何ができる", "feature", "features"] },
+  { label: "demo",         keywords: ["デモ", "demo", "お試し", "試し", "トライアル", "trial"] },
+  { label: "consultation", keywords: ["導入", "相談", "問い合わせ", "問合せ", "導入相談", "consultation", "inquiry"] },
+];
+
+function detectSalesIntent(textIn: string): string | null {
+  const normalized = textIn
+    .normalize("NFKC")
+    .replace(/[\s\u200B-\u200D\uFEFF]/g, "")
+    .toLowerCase();
+  for (const { label, keywords } of SALES_INTENT_MAP) {
+    if (keywords.some(k => normalized.includes(k))) return label;
+  }
+  return null;
+}
+
+// ─── sales reply templates ──────────────────────────────────────────────────
+function getSalesReplyText(intent: string | null): string {
+  switch (intent) {
+    case "pricing":
+      return [
+        "料金についてのご質問ありがとうございます！",
+        "",
+        "LumiBookの料金プランは以下の通りです：",
+        "",
+        "🔹 Starter — ¥3,980/月",
+        "　個人サロン向け（スタッフ2名、メニュー10件）",
+        "",
+        "🔹 Pro — ¥9,800/月",
+        "　成長中サロン向け（無制限、AI接客、リピート促進）",
+        "",
+        "🔹 Enterprise — 要相談",
+        "　複数店舗・法人向け（専任サポート、カスタム機能）",
+        "",
+        "※ 初期費用0円、最低契約期間なし、いつでも解約OK",
+        "",
+        "詳しいご案内やお見積もりをご希望でしたら「相談」とお送りください😊",
+      ].join("\n");
+
+    case "features":
+      return [
+        "LumiBookの主な機能をご紹介します！",
+        "",
+        "📅 予約受付・管理",
+        "　LINE経由の自動予約、空き枠リアルタイム表示",
+        "",
+        "💬 LINE自動応答",
+        "　AI接客で24時間お客様対応",
+        "",
+        "📊 顧客管理・KPI",
+        "　リピート率・来店間隔を自動計算",
+        "",
+        "🔔 リマインド通知",
+        "　予約前日にLINE自動通知",
+        "",
+        "🎨 メニュー・スタッフ管理",
+        "　画像付きメニュー、スタッフ別スケジュール",
+        "",
+        "デモをご覧になりたい場合は「デモ」とお送りください😊",
+      ].join("\n");
+
+    case "demo":
+      return [
+        "デモのご希望ありがとうございます！",
+        "",
+        "LumiBookの操作感を実際にお試しいただけます。",
+        "以下の方法でご案内可能です：",
+        "",
+        "1️⃣ オンラインデモ（画面共有、約15分）",
+        "2️⃣ テスト環境のご案内（ご自身で操作可能）",
+        "",
+        "ご都合の良い日時や、ご希望の方法があればこちらにお送りください。",
+        "担当から折り返しご連絡いたします😊",
+      ].join("\n");
+
+    case "consultation":
+      return [
+        "導入相談のご連絡ありがとうございます！",
+        "",
+        "現在の課題やご状況をお聞かせいただければ、",
+        "最適なプランや活用方法をご提案いたします。",
+        "",
+        "例えば：",
+        "・現在の予約管理方法（電話？紙？他ツール？）",
+        "・スタッフ人数、メニュー数",
+        "・LINEの活用状況",
+        "",
+        "何でもお気軽にどうぞ！担当から詳しくご案内いたします😊",
+      ].join("\n");
+
+    default:
+      // 汎用営業メッセージ（intent不明時のfallback）
+      return [
+        "ご連絡ありがとうございます！",
+        "",
+        "LumiBookは、サロン向けの予約受付・LINE対応・顧客管理をまとめて効率化できるツールです。",
+        "",
+        "気になる内容をそのまま送ってください：",
+        "『料金』『機能』『デモ』『導入相談』",
+        "と送っていただければ、すぐにご案内します😊",
+      ].join("\n");
+  }
+}
+
+// classify label for lead-reply (maps sales intent to lead classification label)
+function salesIntentToLeadLabel(intent: string | null): string {
+  switch (intent) {
+    case "pricing":      return "pricing_question";
+    case "features":     return "info_request";
+    case "demo":         return "demo_request";
+    case "consultation": return "interested";
+    default:             return "info_request";
+  }
+}
 
 // ─── AI enabled check ───────────────────────────────────────────────────────
 // Calls GET /ai/enabled on Workers to check if AI is enabled for the tenant.
@@ -586,11 +705,12 @@ export async function POST(req: Request) {
       x?.type === "message" && x?.message?.type === "text" && x?.replyToken);
     const _d1Text = _d1Ev ? String(_d1Ev.message?.text ?? "") : null;
     const _d1IsBooking = _d1Text ? detectBookingIntent(_d1Text) : null;
+    const _d1SalesIntent = (_d1Text && !_d1IsBooking) ? detectSalesIntent(_d1Text) : null;
     let _d1Action: string;
     if (!_d1Ev) _d1Action = "no_text_event";
-    else if (!_d1AiEnabled) _d1Action = "sales_flow";
     else if (_d1IsBooking) _d1Action = "would_reply_booking_template";
-    else _d1Action = "would_push_ai";
+    else if (_d1SalesIntent) _d1Action = `would_reply_sales_${_d1SalesIntent}`;
+    else _d1Action = "would_reply_sales_generic";
 
     return NextResponse.json({
       ok: true, stamp: STAMP, where, debug: 1,
@@ -605,8 +725,10 @@ export async function POST(req: Request) {
       parseError, eventCount: events.length,
       aiEnabled: _d1AiEnabled,
       firstText: _d1Text?.slice(0, 80) ?? null,
-      intent: _d1IsBooking === null ? null : (_d1IsBooking ? "booking" : "ai"),
+      intent: _d1IsBooking ? "booking" : _d1SalesIntent ? `sales_${_d1SalesIntent}` : "sales_generic",
+      salesIntent: _d1SalesIntent,
       actionIfLive: _d1Action,
+      replyPreview: _d1Text ? getSalesReplyText(_d1SalesIntent).slice(0, 200) : null,
       logPostAttempt: !!webhookLogApiBase && !!internalToken,
       logPostOk: _logPostOk, logPostStatus: _logPostStatus,
       logHasApiBase: !!webhookLogApiBase, logHasToken: !!internalToken,
@@ -749,35 +871,77 @@ export async function POST(req: Request) {
 
   const aiIp = lineUserId ? `line:${lineUserId.slice(0, 12)}` : "line";
 
-  // ── GUARANTEED REPLY: always reply first, then do AI/sales logic ─────────
-  // This ensures the user ALWAYS gets a response, regardless of downstream errors.
+  // ── SALES INTENT REPLY (V17): detect intent → reply with template ────────
+  // 1. Detect booking intent (existing keywords) → booking template card
+  // 2. Detect sales intent (pricing/features/demo/consultation) → sales template text
+  // 3. Fallback → generic sales greeting with keyword hints
   // replyToken is single-use — after this, only pushLine can send additional messages.
+
+  const isBooking = detectBookingIntent(textIn);
+  const salesIntent = isBooking ? null : detectSalesIntent(textIn);
+  const branch = isBooking ? "booking_template" : salesIntent ? `sales_${salesIntent}` : "sales_generic";
+
   const tokenPreviewMain = cfg.channelAccessToken.length > 8
     ? `${cfg.channelAccessToken.slice(0, 4)}...${cfg.channelAccessToken.slice(-4)}`
     : `(empty:${cfg.channelAccessToken.length})`;
   console.log(
-    `[WH_GUARANTEED] attempting immediate reply tenant=${tenantId} ` +
+    `[WH_SALES_V17] attempting reply tenant=${tenantId} branch=${branch} ` +
+    `isBooking=${isBooking} salesIntent=${salesIntent} ` +
     `tokenPreview=${tokenPreviewMain} tokenLen=${cfg.channelAccessToken.length} ` +
-    `replyToken=${replyToken} replyTokenLen=${replyToken.length} ` +
-    `text="${textIn.slice(0, 60)}"`
+    `replyToken=${replyToken.slice(0, 12)}... text="${textIn.slice(0, 60)}"`
   );
-  let guaranteedReplyOk = false;
-  let guaranteedReplyStatus = 0;
-  let guaranteedReplyBody = "";
+
+  // Build reply message(s) based on intent
+  let replyMessages: any[];
+  if (isBooking) {
+    const bookingLink = buildBookingLink(cfg.bookingUrl, tenantId, lineUserId);
+    replyMessages = [buildBookingTemplateMessage(bookingLink)];
+  } else {
+    replyMessages = [{ type: "text", text: getSalesReplyText(salesIntent) }];
+  }
+
+  let replyOk = false;
+  let replyStatus = 0;
+  let replyBody = "";
   try {
-    const gr = await replyLine(cfg.channelAccessToken, replyToken, [
-      { type: "text", text: `受信しました: ${textIn.slice(0, 100)}` },
-    ]);
-    guaranteedReplyOk = gr.ok;
-    guaranteedReplyStatus = gr.status;
-    guaranteedReplyBody = gr.bodyText.slice(0, 500);
+    const gr = await replyLine(cfg.channelAccessToken, replyToken, replyMessages);
+    replyOk = gr.ok;
+    replyStatus = gr.status;
+    replyBody = gr.bodyText.slice(0, 500);
   } catch (e: any) {
-    guaranteedReplyBody = `EXCEPTION: ${String(e?.message ?? e).slice(0, 400)}`;
+    replyBody = `EXCEPTION: ${String(e?.message ?? e).slice(0, 400)}`;
   }
   console.log(
-    `[WH_GUARANTEED] result ok=${guaranteedReplyOk} status=${guaranteedReplyStatus} ` +
-    `body=${guaranteedReplyBody}`
+    `[WH_SALES_V17] reply result ok=${replyOk} status=${replyStatus} ` +
+    `branch=${branch} body=${replyBody.slice(0, 200)}`
   );
+
+  // ── Lead capture: fire-and-forget POST to /internal/sales/lead-reply ────
+  let leadCaptureAttempted = false;
+  if (apiBase && internalToken && lineUserId) {
+    leadCaptureAttempted = true;
+    const leadLabel = isBooking ? "interested" : salesIntentToLeadLabel(salesIntent);
+    fetch(`${apiBase}/internal/sales/lead-reply`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-internal-token": internalToken,
+      },
+      body: JSON.stringify({
+        tenantId,
+        lineUserId,
+        rawReply: textIn.slice(0, 500),
+        label: leadLabel,
+        displayName: "",
+      }),
+    })
+      .then(r => console.log(`[WH_LEAD] status=${r.status} ok=${r.ok}`))
+      .catch(e => console.log(`[WH_LEAD] error: ${String(e?.message ?? e).slice(0, 100)}`));
+  } else {
+    console.log(
+      `[WH_LEAD] skipped: apiBase=${!!apiBase} internalToken=${!!internalToken} lineUserId=${!!lineUserId}`
+    );
+  }
 
   // ── Persist last result to KV (fire-and-forget) ──────────────────────────
   const lastResultPayload = {
@@ -789,12 +953,14 @@ export async function POST(req: Request) {
     messageType: "text",
     messageText: textIn.slice(0, 100),
     lineUserId: lineUserId.slice(0, 8),
-    branch: "guaranteed_echo",
+    branch,
+    salesIntent: salesIntent ?? (isBooking ? "booking" : "none"),
     replyAttempted: true,
-    replyOk: guaranteedReplyOk,
-    replyStatus: guaranteedReplyStatus,
-    replyBody: guaranteedReplyBody.slice(0, 200),
-    errorReason: guaranteedReplyOk ? null : guaranteedReplyBody.slice(0, 200),
+    replyOk,
+    replyStatus,
+    replyBody: replyBody.slice(0, 200),
+    errorReason: replyOk ? null : replyBody.slice(0, 200),
+    leadCaptureAttempted,
     sigVerified: verified,
     cfgSource: cfg.source,
     tokenLen: cfg.channelAccessToken.length,
@@ -818,22 +984,20 @@ export async function POST(req: Request) {
     ).catch(() => null);
   }
 
-  // Return immediately with diagnostic info
+  // Return with full diagnostic info
   return NextResponse.json(
     {
       ok: true, stamp: STAMP, where, tenantId, source: cfg.source,
-      verified, mode: "guaranteed_echo",
-      replied: guaranteedReplyOk,
-      replyStatus: guaranteedReplyStatus,
-      replyBody: guaranteedReplyBody.slice(0, 200),
+      verified, mode: "sales_v17", branch,
+      salesIntent: salesIntent ?? (isBooking ? "booking" : null),
+      replied: replyOk,
+      replyStatus,
+      replyBody: replyBody.slice(0, 200),
+      leadCaptureAttempted,
       resolvedBy, eventCount: events.length,
       text: textIn.slice(0, 80),
       lineUserId: lineUserId.slice(0, 8),
     },
     { headers: { "x-stamp": STAMP } }
   );
-
-  // NOTE: AI gate, sales flow, booking template, and AI push are all
-  // temporarily bypassed. The guaranteed-reply above handles everything.
-  // Once reply is confirmed working, restore the full flow.
 }
