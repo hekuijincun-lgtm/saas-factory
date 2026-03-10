@@ -712,25 +712,54 @@ export async function POST(req: Request) {
   const replyToken = String(ev.replyToken);
   const lineUserId = String(ev.source?.userId ?? "").trim();
 
+  console.log(
+    `[LINE_WEBHOOK] method=POST tenant=${tenantId} resolvedBy=${resolvedBy} ` +
+    `text=${textIn.slice(0, 40)} uid=${lineUserId.slice(0, 6)}*** ` +
+    `hasReplyToken=${!!replyToken} cfgSource=${cfg.source}`
+  );
+
   const apiBase = (
     process.env.API_BASE ?? process.env.NEXT_PUBLIC_API_BASE ?? ""
   ).replace(/\/+$/, "");
 
   const aiIp = lineUserId ? `line:${lineUserId.slice(0, 12)}` : "line";
 
-  // ── AI gate: テナントの AI接客が無効なら全自動応答をスキップ ──────────────
+  // ── AI gate: テナントの AI接客が無効なら簡易エコー返信 ────────────────────
+  // AI が有効なテナントは従来通り AI/予約テンプレ処理へ進む。
+  // AI 未設定テナント（営業LINEなど）には最低限のエコー返信を行う。
   const aiEnabled = await checkAiEnabled(tenantId);
-  console.log(
-    `[LINE_WEBHOOK] method=POST tenant=${tenantId} resolvedBy=${resolvedBy} ` +
-    `aiEnabled=${aiEnabled} text=${textIn.slice(0, 20)} uid=${lineUserId.slice(0, 6)}***`
-  );
+  console.log(`[LINE_WEBHOOK] aiEnabled=${aiEnabled} tenant=${tenantId}`);
+
   if (!aiEnabled) {
-    console.log(`[LINE_WEBHOOK] method=POST tenant=${tenantId} aiEnabled=false action=blocked`);
+    // ── Minimal echo reply (AI disabled tenants) ──────────────────────────
+    // Temporary: sends a confirmation reply so the webhook path is verified.
+    // Will be replaced with sales conversation logic later.
+    const echoText = `メッセージ受け取りました：${textIn.slice(0, 200)}`;
+    let echoReplyOk = false;
+    let echoReplyStatus = 0;
+    let echoReplyBody = "";
+    try {
+      const rep = await replyLine(cfg.channelAccessToken, replyToken, [
+        { type: "text", text: echoText },
+      ]);
+      echoReplyOk = rep.ok;
+      echoReplyStatus = rep.status;
+      echoReplyBody = rep.bodyText.slice(0, 200);
+    } catch (e: any) {
+      echoReplyBody = String(e?.message ?? e).slice(0, 200);
+    }
+
+    console.log(
+      `[LINE_WEBHOOK_ECHO] tenant=${tenantId} uid=${lineUserId.slice(0, 6)}*** ` +
+      `replyOk=${echoReplyOk} replyStatus=${echoReplyStatus} body=${echoReplyBody}`
+    );
+
     return NextResponse.json(
       {
         ok: true, stamp: STAMP, where, tenantId, source: cfg.source,
-        verified, aiEnabled: false, skipped: true, reason: "ai_disabled",
-        resolvedBy, eventCount: events.length,
+        verified, aiEnabled: false, replied: echoReplyOk,
+        replyStatus: echoReplyStatus, resolvedBy, eventCount: events.length,
+        mode: "echo",
       },
       { headers: { "x-stamp": STAMP } }
     );
