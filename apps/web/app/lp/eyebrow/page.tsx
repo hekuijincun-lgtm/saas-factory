@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { Reveal } from '../_components/Reveal';
 import { PlanCTA } from './PlanCTA';
+import { SalesLineCTA, SalesLineStickyBar } from '../_components/SalesLineCTA';
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Configuration constants — update these without touching layout logic
@@ -160,6 +161,15 @@ export default function EyebrowLandingPage() {
         <EyebrowSection />
         <FlowSection />
         <SetupSection />
+        {/* Mid-page LINE CTA band */}
+        <section className="bg-slate-50 py-12 px-5 text-center" aria-label="LINE相談CTA">
+          <Reveal className="mx-auto max-w-xl">
+            <p className="text-gray-600 mb-4 text-sm">
+              料金プランの前に、まずはお気軽にご相談ください
+            </p>
+            <SalesLineCTA variant="section" subtitle="LINEで30秒・無料相談" />
+          </Reveal>
+        </section>
         <PricingSection />
         <FaqSection />
         {/* Gradient bridge: white FAQ → dark CTA */}
@@ -167,6 +177,9 @@ export default function EyebrowLandingPage() {
         <FinalCtaSection />
       </main>
       <LpFooter />
+      {/* Bottom padding for mobile sticky CTA bar */}
+      <div className="h-16 md:hidden" aria-hidden="true" />
+      <SalesLineStickyBar />
     </div>
   );
 }
@@ -291,6 +304,10 @@ function HeroSection() {
 
         {/* CTA buttons */}
         <div className="flex flex-col sm:flex-row gap-4 justify-center items-center">
+          <SalesLineCTA
+            variant="hero"
+            subtitle="導入相談・デモ相談OK"
+          />
           <Link
             href={DEMO_HREF}
             className="group inline-flex items-center gap-2 px-8 py-4 bg-white text-gray-900 font-bold rounded-full text-base hover:bg-gray-100 transition-all duration-200 shadow-xl shadow-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
@@ -301,12 +318,6 @@ function HeroSection() {
               aria-hidden="true"
             />
           </Link>
-          <a
-            href={PRICING_ANCHOR}
-            className="inline-flex items-center gap-2 px-8 py-4 border border-white/20 text-white font-semibold rounded-full text-base hover:bg-white/10 transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/50"
-          >
-            料金を見る
-          </a>
         </div>
 
         {/* Trust indicators */}
@@ -482,19 +493,10 @@ function ProblemSection() {
             <div className="bg-gradient-to-br from-rose-500 to-pink-600 rounded-2xl p-6 text-white shadow-lg flex flex-col justify-center hover:shadow-xl hover:-translate-y-1 transition-all duration-200 h-full">
               <p className="font-bold text-lg mb-2">そのすべてを解決します</p>
               <p className="text-rose-100 text-sm leading-relaxed mb-4">
-                予約・リマインド・台帳を自動化して、サロン業務に集中できる時間を
-                取り戻しましょう。
+                予約の取りこぼしを減らしたいサロン向け。
+                LINEで無料診断できます。
               </p>
-              <Link
-                href={DEMO_HREF}
-                className="group inline-flex items-center gap-1.5 text-sm font-semibold text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-white rounded"
-              >
-                デモを見る
-                <ArrowRight
-                  className="w-4 h-4 transition-transform duration-200 group-hover:translate-x-1"
-                  aria-hidden="true"
-                />
-              </Link>
+              <SalesLineCTA variant="inline" label="LINEで無料診断する" />
             </div>
           </Reveal>
         </div>
@@ -1377,15 +1379,20 @@ function FinalCtaSection() {
           解放されませんか
         </h2>
         <p className="text-slate-300 mb-8 text-lg leading-relaxed">
-          最短30分で稼働開始。まずは無料でデモをご体験ください。
+          最短30分で稼働開始。まずはLINEでお気軽にご相談ください。
         </p>
+        <SalesLineCTA
+          variant="hero"
+          subtitle="無料診断・導入相談OK　30秒で完了"
+          className="mb-4"
+        />
         <Link
           href={DEMO_HREF}
-          className="group inline-flex items-center gap-2 px-10 py-4 bg-white text-gray-900 font-bold rounded-full text-lg hover:bg-gray-100 transition-all duration-200 shadow-2xl shadow-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
+          className="group inline-flex items-center gap-2 px-7 py-3 text-slate-300 font-medium rounded-full text-sm hover:text-white transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
         >
-          無料でデモを見る
+          デモを見る
           <ArrowRight
-            className="w-5 h-5 transition-transform duration-200 group-hover:translate-x-1"
+            className="w-4 h-4 transition-transform duration-200 group-hover:translate-x-1"
             aria-hidden="true"
           />
         </Link>
