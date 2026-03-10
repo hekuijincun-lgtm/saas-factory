@@ -4,20 +4,18 @@ import { getRequestContext } from "@cloudflare/next-on-pages";
 export const runtime = "edge";
 
 // ─── version / stamps ────────────────────────────────────────────────────────
-// V12: AI enabled gate — ALL automated responses (booking template + AI push)
-//      are skipped when ai:settings:{tenantId}.enabled !== true.
-//   normal  → aiEnabled check → dedup
-//             → booking: buttons template を replyLine で即返信（AI不使用）
-//             → ai:     waitUntil(AI+push+quickReply) → 即時 200 返却
-//   debug=1 → 実送信ゼロ・{ intent, bookingUrl, replyPlanned, pushPlanned, aiEnabled } 返却
-//   debug=2 → push のみ同期実送信して pushStatus + quickReply を返す（テスト用）
-const STAMP = "LINE_WEBHOOK_V17_20260310_SALES_INTENT";
+const STAMP = "LINE_WEBHOOK_V18_20260310_PURPOSE_SPLIT";
 const where  = "api/line/webhook";
+
+type LinePurpose = "booking" | "sales";
 
 const FALLBACK_TEXT = "少し時間をおいて再度お試しください。";
 
-// ─── sales intent detection ─────────────────────────────────────────────────
-// label → keyword list (matched against NFKC-normalized, lowercased, whitespace-stripped input)
+// ═══════════════════════════════════════════════════════════════════════════════
+// ─── SALES handler ──────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// sales intent keywords
 const SALES_INTENT_MAP: { label: string; keywords: string[] }[] = [
   { label: "pricing",      keywords: ["料金", "価格", "値段", "プラン", "月額", "いくら", "費用", "コスト", "pricing", "price"] },
   { label: "features",     keywords: ["機能", "できること", "特徴", "何ができる", "feature", "features"] },
@@ -36,7 +34,6 @@ function detectSalesIntent(textIn: string): string | null {
   return null;
 }
 
-// ─── sales reply templates ──────────────────────────────────────────────────
 function getSalesReplyText(intent: string | null): string {
   switch (intent) {
     case "pricing":
@@ -111,7 +108,6 @@ function getSalesReplyText(intent: string | null): string {
       ].join("\n");
 
     default:
-      // 汎用営業メッセージ（intent不明時のfallback）
       return [
         "ご連絡ありがとうございます！",
         "",
@@ -124,7 +120,6 @@ function getSalesReplyText(intent: string | null): string {
   }
 }
 
-// classify label for lead-reply (maps sales intent to lead classification label)
 function salesIntentToLeadLabel(intent: string | null): string {
   switch (intent) {
     case "pricing":      return "pricing_question";
@@ -135,9 +130,114 @@ function salesIntentToLeadLabel(intent: string | null): string {
   }
 }
 
+/** Handle a text message on a SALES-purpose LINE account */
+async function handleSalesEvent(ctx: HandlerContext): Promise<HandlerResult> {
+  const { textIn, lineUserId } = ctx;
+
+  // Sales intent detection (no booking template — even "予約" is treated as sales context)
+  const salesIntent = detectSalesIntent(textIn);
+  const branch = salesIntent ? `sales_${salesIntent}` : "sales_generic";
+
+  const replyMessages = [{ type: "text", text: getSalesReplyText(salesIntent) }];
+
+  // Lead capture label
+  const leadLabel = salesIntentToLeadLabel(salesIntent);
+
+  return { branch, salesIntent, replyMessages, leadLabel, leadCapture: true };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ─── BOOKING handler ────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const BOOKING_INTENT_KW = [
+  "予約", "よやく", "予約したい", "予約できる", "予約した", "予約を開始",
+  "booking", "reserve",
+  "空き", "あき", "空き状況", "空いてる", "空いてますか",
+  "最短", "明日行ける", "今日行ける", "来週行ける", "当日",
+  "いつ空いてる",
+] as const;
+
+function detectBookingIntent(textIn: string): boolean {
+  const normalized = textIn
+    .normalize("NFKC")
+    .replace(/[\s\u200B-\u200D\uFEFF]/g, "")
+    .toLowerCase();
+  return BOOKING_INTENT_KW.some(k => normalized.includes(k));
+}
+
+function buildBookingTemplateMessage(bookingUrl: string): object {
+  return {
+    type: "template",
+    altText: "予約ページ",
+    template: {
+      type: "buttons",
+      title: "予約ページ",
+      text: "下のボタンから予約を開始してね😊",
+      actions: [
+        { type: "uri", label: "予約を開始", uri: bookingUrl },
+      ],
+    },
+  };
+}
+
+function getBookingFallbackText(): string {
+  return [
+    "メッセージありがとうございます！",
+    "",
+    "ご予約やお問い合わせは以下からお気軽にどうぞ：",
+    "・「予約」「空き」→ 予約ページをご案内します",
+    "・その他のご質問もお気軽にどうぞ😊",
+  ].join("\n");
+}
+
+/** Handle a text message on a BOOKING-purpose LINE account */
+async function handleBookingEvent(ctx: HandlerContext): Promise<HandlerResult> {
+  const { textIn, cfg, tenantId, lineUserId } = ctx;
+
+  const isBooking = detectBookingIntent(textIn);
+
+  if (isBooking) {
+    const bookingLink = buildBookingLink(cfg.bookingUrl, tenantId, lineUserId);
+    return {
+      branch: "booking_template",
+      salesIntent: null,
+      replyMessages: [buildBookingTemplateMessage(bookingLink)],
+      leadLabel: null,
+      leadCapture: false,
+    };
+  }
+
+  // Booking fallback: friendly store greeting (NOT sales templates)
+  return {
+    branch: "booking_fallback",
+    salesIntent: null,
+    replyMessages: [{ type: "text", text: getBookingFallbackText() }],
+    leadLabel: null,
+    leadCapture: false,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ─── Shared types & utilities ───────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+
+interface HandlerContext {
+  textIn: string;
+  lineUserId: string;
+  tenantId: string;
+  cfg: TenantLineConfig;
+}
+
+interface HandlerResult {
+  branch: string;
+  salesIntent: string | null;
+  replyMessages: any[];
+  leadLabel: string | null;
+  leadCapture: boolean;
+}
+
 // ─── AI enabled check ───────────────────────────────────────────────────────
-// Calls GET /ai/enabled on Workers to check if AI is enabled for the tenant.
-// Returns false when disabled; defaults to false on error (fail-closed).
 async function checkAiEnabled(tenantId: string): Promise<boolean> {
   const apiBase = (
     process.env.API_BASE ?? process.env.NEXT_PUBLIC_API_BASE ?? ""
@@ -156,16 +256,7 @@ async function checkAiEnabled(tenantId: string): Promise<boolean> {
   }
 }
 
-// 予約 intent キーワード（テンプレカードを返す条件）
-const BOOKING_INTENT_KW = [
-  "予約", "よやく", "予約したい", "予約できる", "予約した", "予約を開始",
-  "booking", "reserve",
-  "空き", "あき", "空き状況", "空いてる", "空いてますか",
-  "最短", "明日行ける", "今日行ける", "来週行ける", "当日",
-  "いつ空いてる",
-] as const;
-
-// ─── utils ───────────────────────────────────────────────────────────────────
+// ─── crypto utils ───────────────────────────────────────────────────────────
 function base64FromBytes(bytes: Uint8Array): string {
   let s = "";
   for (const b of bytes) s += String.fromCharCode(b);
@@ -188,7 +279,6 @@ async function verifyLineSignature(
   return base64FromBytes(new Uint8Array(mac)) === signature;
 }
 
-// SHA-256 先頭4バイトを hex で返す（dedup key のサフィックス用）
 async function shortHash(text: string): Promise<string> {
   const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
   return Array.from(new Uint8Array(buf).slice(0, 4))
@@ -196,9 +286,6 @@ async function shortHash(text: string): Promise<string> {
     .join("");
 }
 
-// dedup key 生成
-// 優先: event.message.id（LINE が付与する一意 ID）
-// fallback: {userId}:{timestamp末尾10桁}:{shortHash(text)}
 async function buildDedupKey(tenantId: string, ev: any): Promise<string> {
   const msgId = String(ev.message?.id ?? "").trim();
   if (msgId) return `ai:evt:${tenantId}:msg:${msgId}`;
@@ -259,13 +346,12 @@ async function pushLine(
 }
 
 // ─── KV dedup via Workers /ai/dedup ─────────────────────────────────────────
-// 500ms タイムアウト付き（best-effort）
 async function dedupEvent(
   apiBase: string,
   key: string,
   ttlSeconds = 120
 ): Promise<boolean> {
-  if (!apiBase || !key) return true; // フォールバック: 常に新規扱い
+  if (!apiBase || !key) return true;
 
   const timeout = new Promise<boolean>(resolve =>
     setTimeout(() => resolve(true), 500)
@@ -283,7 +369,6 @@ async function dedupEvent(
 }
 
 // ─── push retry enqueue via Workers /ai/pushq ────────────────────────────────
-// 429 / 5xx 時のみ（token は送らない）
 async function enqueuePushRetry(
   apiBase: string,
   tenantId: string,
@@ -332,7 +417,6 @@ async function runAiChat(
         suggestedActions: Array.isArray(data.suggestedActions) ? data.suggestedActions : [],
       };
     }
-    // AI disabled by admin → signal to skip push
     if (data?.error === "ai_disabled") {
       return { ...EMPTY, disabled: true };
     }
@@ -342,9 +426,8 @@ async function runAiChat(
   }
 }
 
-// ─── 予約URL組み立て ──────────────────────────────────────────────────────────
+// ─── URL helpers ────────────────────────────────────────────────────────────
 function buildBookingLink(bookingUrl: string, tenantId: string, lineUserId: string): string {
-  // Strip existing tenantId/lu params to avoid duplicates
   const u = new URL(bookingUrl);
   u.searchParams.delete("tenantId");
   u.searchParams.delete("lu");
@@ -353,35 +436,7 @@ function buildBookingLink(bookingUrl: string, tenantId: string, lineUserId: stri
   return u.toString();
 }
 
-// ─── 予約 intent 判定 ─────────────────────────────────────────────────────────
-function detectBookingIntent(textIn: string): boolean {
-  const normalized = textIn
-    .normalize("NFKC")
-    .replace(/[\s\u200B-\u200D\uFEFF]/g, "")
-    .toLowerCase();
-  return BOOKING_INTENT_KW.some(k => normalized.includes(k));
-}
-
-// ─── 予約テンプレカードメッセージ組み立て ─────────────────────────────────────
-function buildBookingTemplateMessage(bookingUrl: string): object {
-  return {
-    type: "template",
-    altText: "予約ページ",
-    template: {
-      type: "buttons",
-      title: "予約ページ",
-      text: "下のボタンから予約を開始してね😊",
-      actions: [
-        { type: "uri", label: "予約を開始", uri: bookingUrl },
-      ],
-    },
-  };
-}
-
 // ─── suggestedActions → LINE quickReply 変換 ─────────────────────────────────
-// LINE quickReply 制約: 最大13アイテム、label最大20文字
-// action.type="open_booking_form" + url → uri action（外部リンク）
-// action.url なし → message action（テキスト再送信）
 function buildQuickReplyFromActions(
   actions: { type?: string; label?: string; url?: string }[]
 ): { items: object[] } | undefined {
@@ -390,13 +445,11 @@ function buildQuickReplyFromActions(
   for (const a of actions.slice(0, 13)) {
     const label = String(a.label ?? "").slice(0, 20) || "詳細を見る";
     if (a.url) {
-      // URL付き → uri action（予約フォームへ遷移）
       items.push({
         type: "action",
         action: { type: "uri", label, uri: a.url },
       });
     } else {
-      // URLなし → message action（ラベルテキストを再送信）
       items.push({
         type: "action",
         action: { type: "message", label, text: label },
@@ -406,25 +459,68 @@ function buildQuickReplyFromActions(
   return items.length > 0 ? { items } : undefined;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// ─── Purpose resolution ─────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Resolve purpose from:
+//   1. ?purpose= query param (explicit, highest priority)
+//   2. Match destination (bot userId) against lineAccounts[].botUserId
+//   3. integrations.line.purpose (legacy single-account)
+//   4. Default: "booking" (safe fallback)
+function resolvePurpose(
+  queryPurpose: string | null,
+  destination: string,
+  settingsData: any
+): { purpose: LinePurpose; resolvedPurposeBy: string } {
+  // 1. Query param
+  if (queryPurpose === "sales" || queryPurpose === "booking") {
+    return { purpose: queryPurpose, resolvedPurposeBy: "query_param" };
+  }
+
+  // 2. lineAccounts match by botUserId
+  const accounts: any[] = settingsData?.lineAccounts ?? [];
+  if (destination && accounts.length > 0) {
+    const match = accounts.find(
+      (a: any) => a?.botUserId && a.botUserId === destination && a.status === "active"
+    );
+    if (match?.purpose === "sales" || match?.purpose === "booking") {
+      return { purpose: match.purpose, resolvedPurposeBy: "lineAccounts_match" };
+    }
+  }
+
+  // 3. Legacy single-account purpose
+  const legacyPurpose = settingsData?.integrations?.line?.purpose;
+  if (legacyPurpose === "sales" || legacyPurpose === "booking") {
+    return { purpose: legacyPurpose, resolvedPurposeBy: "integrations_line_purpose" };
+  }
+
+  // 4. Default
+  return { purpose: "booking", resolvedPurposeBy: "default_booking" };
+}
+
 // ─── tenant config resolution ─────────────────────────────────────────────────
 interface TenantLineConfig {
   channelSecret: string;
   channelAccessToken: string;
   bookingUrl: string;
   source: "kv" | "env";
+  purpose: LinePurpose;
+  resolvedPurposeBy: string;
+  settingsData: any; // raw settings for purpose resolution
 }
 
 async function getTenantLineConfig(
   tenantId: string,
-  origin: string
+  origin: string,
+  queryPurpose: string | null,
+  destination: string
 ): Promise<TenantLineConfig> {
   const apiBase = (
     process.env.API_BASE ??
     process.env.NEXT_PUBLIC_API_BASE ??
     ""
   ).replace(/\/+$/, "");
-  // Read ADMIN_TOKEN: CF Pages bindings (secrets) live in getRequestContext().env,
-  // NOT in process.env. Check binding first; fall back to plain env var.
   let adminToken = "";
   try {
     const cfEnv = (getRequestContext()?.env as any);
@@ -446,11 +542,9 @@ async function getTenantLineConfig(
 
         const channelSecret      = String(line?.channelSecret      ?? "").trim();
         const channelAccessToken = String(line?.channelAccessToken ?? "").trim();
-        // Ensure bookingUrl points to /booking (not webhook URL) with correct tenantId
         const rawBookingUrl = String(line?.bookingUrl ?? "").trim();
         const fallback = `${origin}/booking?tenantId=${encodeURIComponent(tenantId)}`;
         let bookingUrl = rawBookingUrl || fallback;
-        // Reject stored URLs that point to webhook endpoint (bad data in KV)
         if (bookingUrl.includes("/api/line/webhook")) {
           bookingUrl = fallback;
         }
@@ -460,8 +554,11 @@ async function getTenantLineConfig(
           bookingUrl = bu.toString();
         } catch { bookingUrl = fallback; }
 
+        // Resolve purpose using all available data
+        const { purpose, resolvedPurposeBy } = resolvePurpose(queryPurpose, destination, s);
+
         if (channelSecret && channelAccessToken) {
-          return { channelSecret, channelAccessToken, bookingUrl, source: "kv" };
+          return { channelSecret, channelAccessToken, bookingUrl, source: "kv", purpose, resolvedPurposeBy, settingsData: s };
         }
       }
     } catch {
@@ -475,17 +572,22 @@ async function getTenantLineConfig(
     process.env.LINE_BOOKING_URL_DEFAULT ??
     `${origin}/booking`;
 
-  return { channelSecret, channelAccessToken, bookingUrl, source: "env" };
+  const { purpose, resolvedPurposeBy } = resolvePurpose(queryPurpose, destination, null);
+
+  return { channelSecret, channelAccessToken, bookingUrl, source: "env", purpose, resolvedPurposeBy, settingsData: null };
 }
 
-// ─── GET (debug probe) ────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+// ─── GET (debug probe) ──────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
 export async function GET(req: Request) {
   const { searchParams, origin } = new URL(req.url);
   const tenantId  = searchParams.get("tenantId") ?? "default";
   const debugMode = searchParams.get("debug") === "1";
   const debugText = searchParams.get("text") ?? "営業時間は？";
+  const queryPurpose = searchParams.get("purpose");
 
-  const cfg = await getTenantLineConfig(tenantId, origin);
+  const cfg = await getTenantLineConfig(tenantId, origin, queryPurpose, "");
   const allowBadSig = (process.env.LINE_WEBHOOK_ALLOW_BAD_SIGNATURE ?? "0") === "1";
 
   const base = {
@@ -493,6 +595,8 @@ export async function GET(req: Request) {
     where,
     stamp: STAMP,
     tenantId,
+    purpose: cfg.purpose,
+    resolvedPurposeBy: cfg.resolvedPurposeBy,
     secretLen: cfg.channelSecret.length,
     accessTokenLen: cfg.channelAccessToken.length,
     allowBadSig,
@@ -508,18 +612,31 @@ export async function GET(req: Request) {
   };
 
   if (debugMode) {
-    const isBooking  = detectBookingIntent(debugText);
-    const bookingUrl = buildBookingLink(cfg.bookingUrl, tenantId, "DEBUG_USER_ID");
-    const aiEnabled  = await checkAiEnabled(tenantId);
+    // Simulate handler dispatch
+    const ctx: HandlerContext = {
+      textIn: debugText,
+      lineUserId: "DEBUG_USER_ID",
+      tenantId,
+      cfg,
+    };
+    const result = cfg.purpose === "sales"
+      ? await handleSalesEvent(ctx)
+      : await handleBookingEvent(ctx);
+
+    const aiEnabled = await checkAiEnabled(tenantId);
+
     return NextResponse.json(
       {
         ...base,
         debug: true,
         aiEnabled,
-        intent:       isBooking ? "booking" : "ai",
-        replyPlanned: aiEnabled && isBooking ? buildBookingTemplateMessage(bookingUrl) : null,
-        pushPlanned:  aiEnabled && !isBooking ? { type: "text", text: "(AI response)" } : null,
-        gateReason:   !aiEnabled ? "ai_disabled" : null,
+        handler: cfg.purpose,
+        branch: result.branch,
+        salesIntent: result.salesIntent,
+        leadCapture: result.leadCapture,
+        replyPreview: result.replyMessages[0]?.text?.slice(0, 200)
+          ?? result.replyMessages[0]?.altText
+          ?? "(template)",
       },
       { headers: cacheHeaders }
     );
@@ -528,19 +645,21 @@ export async function GET(req: Request) {
   return NextResponse.json(base, { headers: cacheHeaders });
 }
 
-// ─── POST (LINE webhook) ──────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+// ─── POST (LINE webhook) ────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
 export async function POST(req: Request) {
   const { searchParams, origin } = new URL(req.url);
 
-  // debug モード: "1" = 実送信なし判定のみ, "2" = push のみ同期実送信
-  const debugMode = searchParams.get("debug"); // "1" | "2" | null
+  const debugMode    = searchParams.get("debug"); // "1" | "2" | null
+  const queryPurpose = searchParams.get("purpose"); // "booking" | "sales" | null
 
   const sig         = req.headers.get("x-line-signature") ?? "";
   const allowBadSig = (process.env.LINE_WEBHOOK_ALLOW_BAD_SIGNATURE ?? "0") === "1";
 
   const raw = await req.arrayBuffer();
 
-  console.log(`[WH_ENTRY] stamp=${STAMP} bytes=${raw.byteLength} hasSig=${!!sig} debug=${debugMode}`);
+  console.log(`[WH_ENTRY] stamp=${STAMP} bytes=${raw.byteLength} hasSig=${!!sig} debug=${debugMode} queryPurpose=${queryPurpose}`);
 
   // ── LINE verification early-exit ──────────────────────────────────────────
   if (raw.byteLength === 0) {
@@ -557,7 +676,7 @@ export async function POST(req: Request) {
     // Not valid JSON — continue
   }
 
-  // Resolve tenantId: query param → destination KV lookup → 400 error
+  // ── Resolve tenantId ──────────────────────────────────────────────────────
   let tenantId: string | null = searchParams.get("tenantId") ?? null;
   let resolvedBy = tenantId ? "query_param" : "pending";
   let destination = "";
@@ -597,7 +716,6 @@ export async function POST(req: Request) {
 
   console.log(`[WH_TENANT] tenantId=${tenantId} resolvedBy=${resolvedBy} dest=${destination.slice(0, 12)} kvHit=${kvHit}`);
 
-  // No default fallback — unknown destination returns 400
   if (!tenantId) {
     const hint = "Open /admin/line-setup?tenantId=YOUR_TENANT and click Remap to fix destination mapping.";
     console.log(`[WH_FAIL] no tenantId resolvedBy=${resolvedBy} destination=${destination}`);
@@ -615,7 +733,7 @@ export async function POST(req: Request) {
     );
   }
 
-  // ── Webhook receipt log helper: fire-and-forget to Workers KV ──────────────
+  // ── Webhook receipt log helper ────────────────────────────────────────────
   const webhookLogApiBase = (
     process.env.API_BASE ?? process.env.NEXT_PUBLIC_API_BASE ?? ""
   ).replace(/\/+$/, "");
@@ -666,22 +784,25 @@ export async function POST(req: Request) {
     `hasReplyToken=${!!firstEvent?.replyToken} firstText="${String(firstEvent?.message?.text ?? "").slice(0, 40)}"`
   );
 
-  // ── Phase 2: resolve config + sig check ───────────────────────────────────
-  const cfg = await getTenantLineConfig(tenantId, origin);
+  // ── Phase 2: resolve config + sig check + PURPOSE ─────────────────────────
+  const cfg = await getTenantLineConfig(tenantId, origin, queryPurpose, destination);
   const verified = (sig && cfg.channelSecret)
     ? await verifyLineSignature(raw, sig, cfg.channelSecret).catch(() => false)
     : false;
 
   console.log(
-    `[WH_CONFIG] source=${cfg.source} hasSecret=${!!cfg.channelSecret} secretLen=${cfg.channelSecret.length} ` +
+    `[WH_CONFIG] source=${cfg.source} purpose=${cfg.purpose} purposeBy=${cfg.resolvedPurposeBy} ` +
+    `hasSecret=${!!cfg.channelSecret} secretLen=${cfg.channelSecret.length} ` +
     `hasToken=${!!cfg.channelAccessToken} tokenLen=${cfg.channelAccessToken.length} ` +
     `sigVerified=${verified} allowBadSig=${allowBadSig}`
   );
 
-  // ── Save receipt log (BEFORE any early-return) ────────────────────────────
+  // ── Save receipt log ──────────────────────────────────────────────────────
   saveWebhookLog({
     destination: destination || null,
     resolvedBy,
+    purpose: cfg.purpose,
+    resolvedPurposeBy: cfg.resolvedPurposeBy,
     hasSig: !!sig,
     sigVerified: verified,
     allowBadSig,
@@ -704,13 +825,19 @@ export async function POST(req: Request) {
     const _d1Ev = events.find((x: any) =>
       x?.type === "message" && x?.message?.type === "text" && x?.replyToken);
     const _d1Text = _d1Ev ? String(_d1Ev.message?.text ?? "") : null;
-    const _d1IsBooking = _d1Text ? detectBookingIntent(_d1Text) : null;
-    const _d1SalesIntent = (_d1Text && !_d1IsBooking) ? detectSalesIntent(_d1Text) : null;
-    let _d1Action: string;
-    if (!_d1Ev) _d1Action = "no_text_event";
-    else if (_d1IsBooking) _d1Action = "would_reply_booking_template";
-    else if (_d1SalesIntent) _d1Action = `would_reply_sales_${_d1SalesIntent}`;
-    else _d1Action = "would_reply_sales_generic";
+
+    let _d1Result: HandlerResult | null = null;
+    if (_d1Text) {
+      const ctx: HandlerContext = {
+        textIn: _d1Text,
+        lineUserId: String(_d1Ev?.source?.userId ?? "").trim(),
+        tenantId,
+        cfg,
+      };
+      _d1Result = cfg.purpose === "sales"
+        ? await handleSalesEvent(ctx)
+        : await handleBookingEvent(ctx);
+    }
 
     return NextResponse.json({
       ok: true, stamp: STAMP, where, debug: 1,
@@ -718,6 +845,9 @@ export async function POST(req: Request) {
       destination: destination || null,
       resolvedTenantId: tenantId,
       resolvedBy, kvHit,
+      purpose: cfg.purpose,
+      resolvedPurposeBy: cfg.resolvedPurposeBy,
+      handler: cfg.purpose,
       cfgSource: cfg.source,
       cfgHasSecret: !!cfg.channelSecret,
       cfgHasToken:  !!cfg.channelAccessToken,
@@ -725,10 +855,13 @@ export async function POST(req: Request) {
       parseError, eventCount: events.length,
       aiEnabled: _d1AiEnabled,
       firstText: _d1Text?.slice(0, 80) ?? null,
-      intent: _d1IsBooking ? "booking" : _d1SalesIntent ? `sales_${_d1SalesIntent}` : "sales_generic",
-      salesIntent: _d1SalesIntent,
-      actionIfLive: _d1Action,
-      replyPreview: _d1Text ? getSalesReplyText(_d1SalesIntent).slice(0, 200) : null,
+      branch: _d1Result?.branch ?? "no_text_event",
+      salesIntent: _d1Result?.salesIntent ?? null,
+      leadCapture: _d1Result?.leadCapture ?? false,
+      actionIfLive: _d1Result ? `would_reply_${_d1Result.branch}` : "no_text_event",
+      replyPreview: _d1Result?.replyMessages[0]?.text?.slice(0, 200)
+        ?? _d1Result?.replyMessages[0]?.altText
+        ?? null,
       logPostAttempt: !!webhookLogApiBase && !!internalToken,
       logPostOk: _logPostOk, logPostStatus: _logPostStatus,
       logHasApiBase: !!webhookLogApiBase, logHasToken: !!internalToken,
@@ -742,6 +875,7 @@ export async function POST(req: Request) {
     });
   }
 
+  // ── Validation gates ──────────────────────────────────────────────────────
   if (!cfg.channelSecret) {
     console.log(`[WH_FAIL] missing channelSecret tenant=${tenantId} source=${cfg.source}`);
     return NextResponse.json(
@@ -777,23 +911,22 @@ export async function POST(req: Request) {
   }
 
   // ── Find first text message event with replyToken ─────────────────────────
-  // Do this BEFORE postback so we can use it for guaranteed-reply fallback
   const ev = events.find(
     (x: any) =>
       x?.type === "message" && x?.message?.type === "text" && x?.replyToken
   );
 
-  // Extract replyToken + userId early — needed for guaranteed-reply fallback
   const textIn     = ev ? String(ev.message.text ?? "") : "";
   const replyToken = ev ? String(ev.replyToken) : "";
   const lineUserId = ev ? String(ev.source?.userId ?? "").trim() : "";
 
   console.log(
     `[WH_EVENT] hasTextEvent=${!!ev} text="${textIn.slice(0, 40)}" ` +
-    `uid=${lineUserId.slice(0, 8)} replyToken=${replyToken.slice(0, 8)}...`
+    `uid=${lineUserId.slice(0, 8)} replyToken=${replyToken.slice(0, 8)}... ` +
+    `purpose=${cfg.purpose}`
   );
 
-  // ── Postback handling (rich menu: 店舗情報) ──────────────────────────────────
+  // ── Postback handling (rich menu: 店舗情報) — booking only ────────────────
   const postbackEv = events.find(
     (x: any) => x?.type === "postback" && x?.replyToken
   );
@@ -839,12 +972,14 @@ export async function POST(req: Request) {
 
         return NextResponse.json({
           ok: true, stamp: STAMP, where, tenantId, source: cfg.source,
+          purpose: cfg.purpose,
           verified, replied: true, action: "store_info",
         });
       } catch (err: any) {
         console.error(`[WH_POSTBACK] store_info error: ${err.message}`);
         return NextResponse.json({
           ok: true, stamp: STAMP, where, tenantId, source: cfg.source,
+          purpose: cfg.purpose,
           verified, replied: false, action: "store_info", error: String(err.message),
         });
       }
@@ -855,12 +990,13 @@ export async function POST(req: Request) {
     console.log(`[WH_SKIP] no text event found. eventTypes=${events.map((e: any) => e?.type).join(",")}`);
     return NextResponse.json({
       ok: true, stamp: STAMP, where, tenantId, source: cfg.source,
+      purpose: cfg.purpose,
       verified, replied: false, eventCount: events.length,
     });
   }
 
   console.log(
-    `[WH_TEXT] tenant=${tenantId} resolvedBy=${resolvedBy} ` +
+    `[WH_TEXT] tenant=${tenantId} purpose=${cfg.purpose} resolvedBy=${resolvedBy} ` +
     `text="${textIn.slice(0, 40)}" uid=${lineUserId.slice(0, 8)} ` +
     `replyToken=${replyToken.slice(0, 8)}... cfgSource=${cfg.source}`
   );
@@ -869,42 +1005,32 @@ export async function POST(req: Request) {
     process.env.API_BASE ?? process.env.NEXT_PUBLIC_API_BASE ?? ""
   ).replace(/\/+$/, "");
 
-  const aiIp = lineUserId ? `line:${lineUserId.slice(0, 12)}` : "line";
+  // ═══════════════════════════════════════════════════════════════════════════
+  // ── PURPOSE-BASED DISPATCH ────────────────────────────────────────────────
+  // ═══════════════════════════════════════════════════════════════════════════
 
-  // ── SALES INTENT REPLY (V17): detect intent → reply with template ────────
-  // 1. Detect booking intent (existing keywords) → booking template card
-  // 2. Detect sales intent (pricing/features/demo/consultation) → sales template text
-  // 3. Fallback → generic sales greeting with keyword hints
-  // replyToken is single-use — after this, only pushLine can send additional messages.
+  const handlerCtx: HandlerContext = { textIn, lineUserId, tenantId, cfg };
 
-  const isBooking = detectBookingIntent(textIn);
-  const salesIntent = isBooking ? null : detectSalesIntent(textIn);
-  const branch = isBooking ? "booking_template" : salesIntent ? `sales_${salesIntent}` : "sales_generic";
+  const result = cfg.purpose === "sales"
+    ? await handleSalesEvent(handlerCtx)
+    : await handleBookingEvent(handlerCtx);
 
   const tokenPreviewMain = cfg.channelAccessToken.length > 8
     ? `${cfg.channelAccessToken.slice(0, 4)}...${cfg.channelAccessToken.slice(-4)}`
     : `(empty:${cfg.channelAccessToken.length})`;
   console.log(
-    `[WH_SALES_V17] attempting reply tenant=${tenantId} branch=${branch} ` +
-    `isBooking=${isBooking} salesIntent=${salesIntent} ` +
+    `[WH_DISPATCH] purpose=${cfg.purpose} branch=${result.branch} ` +
+    `salesIntent=${result.salesIntent} leadCapture=${result.leadCapture} ` +
     `tokenPreview=${tokenPreviewMain} tokenLen=${cfg.channelAccessToken.length} ` +
     `replyToken=${replyToken.slice(0, 12)}... text="${textIn.slice(0, 60)}"`
   );
 
-  // Build reply message(s) based on intent
-  let replyMessages: any[];
-  if (isBooking) {
-    const bookingLink = buildBookingLink(cfg.bookingUrl, tenantId, lineUserId);
-    replyMessages = [buildBookingTemplateMessage(bookingLink)];
-  } else {
-    replyMessages = [{ type: "text", text: getSalesReplyText(salesIntent) }];
-  }
-
+  // ── Send reply ────────────────────────────────────────────────────────────
   let replyOk = false;
   let replyStatus = 0;
   let replyBody = "";
   try {
-    const gr = await replyLine(cfg.channelAccessToken, replyToken, replyMessages);
+    const gr = await replyLine(cfg.channelAccessToken, replyToken, result.replyMessages);
     replyOk = gr.ok;
     replyStatus = gr.status;
     replyBody = gr.bodyText.slice(0, 500);
@@ -912,15 +1038,14 @@ export async function POST(req: Request) {
     replyBody = `EXCEPTION: ${String(e?.message ?? e).slice(0, 400)}`;
   }
   console.log(
-    `[WH_SALES_V17] reply result ok=${replyOk} status=${replyStatus} ` +
-    `branch=${branch} body=${replyBody.slice(0, 200)}`
+    `[WH_REPLY] ok=${replyOk} status=${replyStatus} purpose=${cfg.purpose} ` +
+    `branch=${result.branch} body=${replyBody.slice(0, 200)}`
   );
 
-  // ── Lead capture: fire-and-forget POST to /internal/sales/lead-reply ────
+  // ── Lead capture (sales only) ─────────────────────────────────────────────
   let leadCaptureAttempted = false;
-  if (apiBase && internalToken && lineUserId) {
+  if (result.leadCapture && apiBase && internalToken && lineUserId) {
     leadCaptureAttempted = true;
-    const leadLabel = isBooking ? "interested" : salesIntentToLeadLabel(salesIntent);
     fetch(`${apiBase}/internal/sales/lead-reply`, {
       method: "POST",
       headers: {
@@ -931,30 +1056,32 @@ export async function POST(req: Request) {
         tenantId,
         lineUserId,
         rawReply: textIn.slice(0, 500),
-        label: leadLabel,
+        label: result.leadLabel ?? "info_request",
         displayName: "",
       }),
     })
       .then(r => console.log(`[WH_LEAD] status=${r.status} ok=${r.ok}`))
       .catch(e => console.log(`[WH_LEAD] error: ${String(e?.message ?? e).slice(0, 100)}`));
-  } else {
+  } else if (result.leadCapture) {
     console.log(
       `[WH_LEAD] skipped: apiBase=${!!apiBase} internalToken=${!!internalToken} lineUserId=${!!lineUserId}`
     );
   }
 
-  // ── Persist last result to KV (fire-and-forget) ──────────────────────────
+  // ── Persist last result to KV ─────────────────────────────────────────────
   const lastResultPayload = {
     ts: new Date().toISOString(),
     stamp: STAMP,
     tenantId,
     resolvedBy,
+    purpose: cfg.purpose,
+    resolvedPurposeBy: cfg.resolvedPurposeBy,
     eventType: "message",
     messageType: "text",
     messageText: textIn.slice(0, 100),
     lineUserId: lineUserId.slice(0, 8),
-    branch,
-    salesIntent: salesIntent ?? (isBooking ? "booking" : "none"),
+    branch: result.branch,
+    salesIntent: result.salesIntent ?? "none",
     replyAttempted: true,
     replyOk,
     replyStatus,
@@ -984,12 +1111,15 @@ export async function POST(req: Request) {
     ).catch(() => null);
   }
 
-  // Return with full diagnostic info
+  // ── Response ──────────────────────────────────────────────────────────────
   return NextResponse.json(
     {
       ok: true, stamp: STAMP, where, tenantId, source: cfg.source,
-      verified, mode: "sales_v17", branch,
-      salesIntent: salesIntent ?? (isBooking ? "booking" : null),
+      verified, mode: "purpose_split_v18",
+      purpose: cfg.purpose,
+      resolvedPurposeBy: cfg.resolvedPurposeBy,
+      branch: result.branch,
+      salesIntent: result.salesIntent,
       replied: replyOk,
       replyStatus,
       replyBody: replyBody.slice(0, 200),
