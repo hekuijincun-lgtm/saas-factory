@@ -4,7 +4,7 @@ import { getRequestContext } from "@cloudflare/next-on-pages";
 export const runtime = "edge";
 
 // ─── version / stamps ────────────────────────────────────────────────────────
-const STAMP = "LINE_WEBHOOK_V18C_20260310_ROBUST";
+const STAMP = "LINE_WEBHOOK_V18D_20260310_MULTI_CRED";
 const where  = "api/line/webhook";
 
 type LinePurpose = "booking" | "sales";
@@ -561,6 +561,7 @@ interface TenantLineConfig {
   purpose: LinePurpose;
   resolvedPurposeBy: string;
   settingsData: any; // raw settings for purpose resolution
+  credSource?: string; // which credential source was used (lineAccount:id | integrations_line | env)
 }
 
 async function getTenantLineConfig(
@@ -591,11 +592,67 @@ async function getTenantLineConfig(
       if (r.ok) {
         const json = (await r.json()) as any;
         const s = json?.data ?? json;
-        const line = s?.integrations?.line;
 
-        const channelSecret      = String(line?.channelSecret      ?? "").trim();
-        const channelAccessToken = String(line?.channelAccessToken ?? "").trim();
-        const rawBookingUrl = String(line?.bookingUrl ?? "").trim();
+        // Resolve purpose using all available data
+        const { purpose, resolvedPurposeBy } = resolvePurpose(queryPurpose, destination, s);
+
+        // ── Credential resolution: prefer matched lineAccount, fall back to integrations.line ──
+        let channelSecret = "";
+        let channelAccessToken = "";
+        let credSource = "integrations_line"; // track which credentials we're using
+
+        // 1. Try matched lineAccount (multi-account: correct credentials for this specific bot)
+        const accounts: any[] = s?.lineAccounts ?? [];
+        if (destination && accounts.length > 0) {
+          const matchedAccount = accounts.find(
+            (a: any) => a?.botUserId && a.botUserId === destination && a.status === "active"
+          );
+          if (matchedAccount) {
+            const maSecret = String(matchedAccount.channelSecret ?? "").trim();
+            const maToken  = String(matchedAccount.channelAccessToken ?? "").trim();
+            if (maSecret && maToken) {
+              channelSecret = maSecret;
+              channelAccessToken = maToken;
+              credSource = `lineAccount:${matchedAccount.id}`;
+              console.log(
+                `[CFG_CRED] using lineAccount credentials id=${matchedAccount.id} ` +
+                `name="${matchedAccount.name}" purpose=${matchedAccount.purpose} ` +
+                `botUserId=${destination.slice(0, 12)} secretLen=${maSecret.length} tokenLen=${maToken.length}`
+              );
+            }
+          }
+        }
+
+        // 2. If no match or match had empty creds, use purpose-based lookup from lineAccounts
+        if (!channelSecret || !channelAccessToken) {
+          const purposeAccount = accounts.find(
+            (a: any) => a?.purpose === purpose && a.status === "active"
+              && String(a.channelSecret ?? "").trim()
+              && String(a.channelAccessToken ?? "").trim()
+          );
+          if (purposeAccount) {
+            channelSecret = String(purposeAccount.channelSecret).trim();
+            channelAccessToken = String(purposeAccount.channelAccessToken).trim();
+            credSource = `lineAccount_purpose:${purposeAccount.id}`;
+            console.log(
+              `[CFG_CRED] using purpose-matched lineAccount id=${purposeAccount.id} ` +
+              `purpose=${purposeAccount.purpose} name="${purposeAccount.name}"`
+            );
+          }
+        }
+
+        // 3. Fall back to legacy integrations.line
+        if (!channelSecret || !channelAccessToken) {
+          const line = s?.integrations?.line;
+          channelSecret      = String(line?.channelSecret      ?? "").trim();
+          channelAccessToken = String(line?.channelAccessToken ?? "").trim();
+          credSource = "integrations_line";
+          if (channelSecret && channelAccessToken) {
+            console.log(`[CFG_CRED] using legacy integrations.line credentials`);
+          }
+        }
+
+        const rawBookingUrl = String(s?.integrations?.line?.bookingUrl ?? "").trim();
         const fallback = `${origin}/booking?tenantId=${encodeURIComponent(tenantId)}`;
         let bookingUrl = rawBookingUrl || fallback;
         if (bookingUrl.includes("/api/line/webhook")) {
@@ -607,11 +664,8 @@ async function getTenantLineConfig(
           bookingUrl = bu.toString();
         } catch { bookingUrl = fallback; }
 
-        // Resolve purpose using all available data
-        const { purpose, resolvedPurposeBy } = resolvePurpose(queryPurpose, destination, s);
-
         if (channelSecret && channelAccessToken) {
-          return { channelSecret, channelAccessToken, bookingUrl, source: "kv", purpose, resolvedPurposeBy, settingsData: s };
+          return { channelSecret, channelAccessToken, bookingUrl, source: "kv", purpose, resolvedPurposeBy, settingsData: s, credSource };
         }
       }
     } catch {
@@ -627,7 +681,7 @@ async function getTenantLineConfig(
 
   const { purpose, resolvedPurposeBy } = resolvePurpose(queryPurpose, destination, null);
 
-  return { channelSecret, channelAccessToken, bookingUrl, source: "env", purpose, resolvedPurposeBy, settingsData: null };
+  return { channelSecret, channelAccessToken, bookingUrl, source: "env", purpose, resolvedPurposeBy, settingsData: null, credSource: "env" };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -650,6 +704,7 @@ export async function GET(req: Request) {
     tenantId,
     purpose: cfg.purpose,
     resolvedPurposeBy: cfg.resolvedPurposeBy,
+    credSource: cfg.credSource ?? "unknown",
     secretLen: cfg.channelSecret.length,
     accessTokenLen: cfg.channelAccessToken.length,
     allowBadSig,
@@ -848,7 +903,7 @@ export async function POST(req: Request) {
     : false;
 
   console.log(
-    `[WH_CONFIG] source=${cfg.source} purpose=${cfg.purpose} purposeBy=${cfg.resolvedPurposeBy} ` +
+    `[WH_CONFIG] source=${cfg.source} credSource=${cfg.credSource} purpose=${cfg.purpose} purposeBy=${cfg.resolvedPurposeBy} ` +
     `hasSecret=${!!cfg.channelSecret} secretLen=${cfg.channelSecret.length} ` +
     `hasToken=${!!cfg.channelAccessToken} tokenLen=${cfg.channelAccessToken.length} ` +
     `sigVerified=${verified} allowBadSig=${allowBadSig}`
@@ -871,6 +926,7 @@ export async function POST(req: Request) {
     firstText: String(firstEvent?.message?.text ?? "").slice(0, 80) || null,
     hasReplyToken: !!firstEvent?.replyToken,
     cfgSource: cfg.source,
+    cfgCredSource: cfg.credSource ?? "unknown",
     cfgHasSecret: !!cfg.channelSecret,
     cfgHasToken: !!cfg.channelAccessToken,
   });
@@ -1150,6 +1206,7 @@ export async function POST(req: Request) {
     resolvedBy,
     purpose: cfg.purpose,
     resolvedPurposeBy: cfg.resolvedPurposeBy,
+    credSource: cfg.credSource ?? "unknown",
     eventType: "message",
     messageType: "text",
     messageText: textIn.slice(0, 100),
@@ -1189,9 +1246,10 @@ export async function POST(req: Request) {
   return NextResponse.json(
     {
       ok: true, stamp: STAMP, where, tenantId, source: cfg.source,
-      verified, mode: "purpose_split_v18",
+      verified, mode: "purpose_split_v18d",
       purpose: cfg.purpose,
       resolvedPurposeBy: cfg.resolvedPurposeBy,
+      credSource: cfg.credSource ?? "unknown",
       branch: result.branch,
       salesIntent: result.salesIntent,
       replied: replyOk,
