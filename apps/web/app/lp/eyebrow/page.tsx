@@ -25,6 +25,11 @@ import {
 import { Reveal } from '../_components/Reveal';
 import { PlanCTA } from './PlanCTA';
 import { SalesLineCTA, SalesLineStickyBar } from '../_components/SalesLineCTA';
+import {
+  fetchPublicSalesLine,
+  resolveSalesLineTarget,
+  type SalesLineTarget,
+} from '@/src/lib/salesLine';
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Configuration constants — update these without touching layout logic
@@ -147,15 +152,22 @@ export const metadata: Metadata = {
 // ──────────────────────────────────────────────────────────────────────────────
 // Page entry point
 // ──────────────────────────────────────────────────────────────────────────────
-export default function EyebrowLandingPage() {
+// Default tenantId for LP sales line resolution
+const LP_TENANT_ID = process.env.LP_TENANT_ID || 'default';
+
+export default async function EyebrowLandingPage() {
+  // Resolve sales LINE target: routing → env → mailto
+  const salesData = await fetchPublicSalesLine(LP_TENANT_ID);
+  const target = resolveSalesLineTarget('eyebrow', salesData);
+
   return (
     <div className="min-h-screen bg-white font-sans antialiased text-gray-900">
       <LpNavbar />
       <main>
-        <HeroSection />
+        <HeroSection target={target} />
         {/* Gradient bridge: dark hero → light problem */}
         <div aria-hidden="true" className="h-24 sm:h-32 bg-gradient-to-b from-slate-950 via-[#1e1b3a] to-slate-50" />
-        <ProblemSection />
+        <ProblemSection target={target} />
         <SolutionSection />
         <DashboardSection />
         <EyebrowSection />
@@ -167,19 +179,19 @@ export default function EyebrowLandingPage() {
             <p className="text-gray-600 mb-4 text-sm">
               料金プランの前に、まずはお気軽にご相談ください
             </p>
-            <SalesLineCTA variant="section" subtitle="LINEで30秒・無料相談" />
+            <SalesLineCTA variant="section" subtitle="LINEで30秒・無料相談" target={target} />
           </Reveal>
         </section>
         <PricingSection />
         <FaqSection />
         {/* Gradient bridge: white FAQ → dark CTA */}
         <div aria-hidden="true" className="h-24 sm:h-32 bg-gradient-to-b from-white via-[#e8e0f0] to-slate-950" />
-        <FinalCtaSection />
+        <FinalCtaSection target={target} />
       </main>
       <LpFooter />
       {/* Bottom padding for mobile sticky CTA bar */}
       <div className="h-16 md:hidden" aria-hidden="true" />
-      <SalesLineStickyBar />
+      <SalesLineStickyBar target={target} />
     </div>
   );
 }
@@ -257,7 +269,7 @@ function LpNavbar() {
 // ──────────────────────────────────────────────────────────────────────────────
 // Hero
 // ──────────────────────────────────────────────────────────────────────────────
-function HeroSection() {
+function HeroSection({ target }: { target?: SalesLineTarget }) {
   return (
     <section
       className="relative overflow-hidden bg-slate-950 text-white"
@@ -307,6 +319,7 @@ function HeroSection() {
           <SalesLineCTA
             variant="hero"
             subtitle="導入相談・デモ相談OK"
+            target={target}
           />
           <Link
             href={DEMO_HREF}
@@ -413,7 +426,7 @@ function HeroDeviceMockup() {
 // ──────────────────────────────────────────────────────────────────────────────
 // Problem section
 // ──────────────────────────────────────────────────────────────────────────────
-function ProblemSection() {
+function ProblemSection({ target }: { target?: SalesLineTarget }) {
   const problems: { icon: LucideIcon; title: string; desc: string }[] = [
     {
       icon: MessageCircle,
@@ -496,7 +509,7 @@ function ProblemSection() {
                 予約の取りこぼしを減らしたいサロン向け。
                 LINEで無料診断できます。
               </p>
-              <SalesLineCTA variant="inline" label="LINEで無料診断する" />
+              <SalesLineCTA variant="inline" label="LINEで無料診断する" target={target} />
             </div>
           </Reveal>
         </div>
@@ -1358,7 +1371,7 @@ function FaqSection() {
 // ──────────────────────────────────────────────────────────────────────────────
 // Final CTA
 // ──────────────────────────────────────────────────────────────────────────────
-function FinalCtaSection() {
+function FinalCtaSection({ target }: { target?: SalesLineTarget }) {
   return (
     <section
       className="relative overflow-hidden bg-slate-950 py-28 px-5 text-center"
@@ -1385,6 +1398,7 @@ function FinalCtaSection() {
           variant="hero"
           subtitle="無料診断・導入相談OK　30秒で完了"
           className="mb-4"
+          target={target}
         />
         <Link
           href={DEMO_HREF}

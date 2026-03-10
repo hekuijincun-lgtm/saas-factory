@@ -69,6 +69,33 @@ export interface IntegrationSettings {
   };
 }
 
+// ── Multi-LINE Account Management ───────────────────────────────────────────
+export type LineAccountPurpose = 'booking' | 'sales' | 'support' | 'broadcast' | 'internal';
+export type LineAccountIndustry = 'hair' | 'nail' | 'eyebrow' | 'esthetic' | 'dental' | 'shared';
+
+export interface LineAccount {
+  id: string;
+  key: string;              // slug e.g. "booking-main", "sales-hair"
+  name: string;             // 表示名
+  purpose: LineAccountPurpose;
+  industry: LineAccountIndustry;
+  channelId: string;
+  channelSecret: string;
+  channelAccessToken: string;
+  basicId?: string;         // @xxx
+  inviteUrl?: string;
+  status: 'active' | 'inactive';
+  botUserId?: string;       // verifyLineToken で解決
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface LineRouting {
+  booking?: { default?: string };              // lineAccount.id
+  sales?: Record<string, string>;              // industry → lineAccount.id
+  support?: { default?: string };
+}
+
 export interface OnboardingSettings {
   lineConnected?: boolean;
   enabled?: boolean;  // true のとき初回ログインで owner ブートストラップ
@@ -148,6 +175,10 @@ export interface AdminSettings {
   allowedAdminLineUserIds?: string[];
   /** サブスクリプション情報（Stripe Checkout 経由で設定） */
   subscription?: SubscriptionInfo;
+  /** マルチLINEアカウント */
+  lineAccounts?: LineAccount[];
+  /** LINEルーティング（用途別デフォルトアカウント） */
+  lineRouting?: LineRouting;
 }
 
 /**
@@ -434,6 +465,14 @@ export function mergeSettings(defaults: AdminSettings, partial: Partial<AdminSet
         }
       : undefined,
     subscription: partial.subscription ?? defaults.subscription,
+    lineAccounts: partial.lineAccounts ?? defaults.lineAccounts,
+    lineRouting: (partial.lineRouting || defaults.lineRouting)
+      ? {
+          booking: partial.lineRouting?.booking ?? defaults.lineRouting?.booking,
+          sales: partial.lineRouting?.sales ?? defaults.lineRouting?.sales,
+          support: partial.lineRouting?.support ?? defaults.lineRouting?.support,
+        }
+      : undefined,
     vertical: partial.vertical ?? defaults.vertical,
     verticalConfig: (partial.verticalConfig || defaults.verticalConfig)
       ? {

@@ -337,3 +337,97 @@ export async function createBootstrapKey(
   );
 }
 
+// ============================================================================
+// Multi-LINE Account Management
+// ============================================================================
+
+import type { LineAccount, LineRouting } from '../../src/types/settings';
+
+export interface LineAccountsResponse {
+  ok: boolean;
+  tenantId: string;
+  accounts: (LineAccount & { synthesized?: boolean })[];
+  synthesized: boolean;
+}
+
+export interface LineAccountResponse {
+  ok: boolean;
+  tenantId: string;
+  account: LineAccount;
+}
+
+export interface LineRoutingResponse {
+  ok: boolean;
+  tenantId: string;
+  routing: LineRouting;
+}
+
+export async function fetchLineAccounts(tenantId?: string): Promise<LineAccountsResponse> {
+  try {
+    return await apiGet<LineAccountsResponse>('/admin/integrations/line/accounts', { tenantId });
+  } catch (error) {
+    if (error instanceof ApiClientError) throw error;
+    throw new ApiClientError('Failed to fetch LINE accounts');
+  }
+}
+
+export async function createLineAccount(
+  data: Partial<LineAccount>,
+  tenantId?: string,
+): Promise<LineAccountResponse> {
+  try {
+    return await apiPost<LineAccountResponse>('/admin/integrations/line/accounts', data, { tenantId });
+  } catch (error) {
+    if (error instanceof ApiClientError) throw error;
+    throw new ApiClientError('Failed to create LINE account');
+  }
+}
+
+export async function updateLineAccount(
+  id: string,
+  data: Partial<LineAccount>,
+  tenantId?: string,
+): Promise<LineAccountResponse> {
+  try {
+    return await apiPut<LineAccountResponse>(`/admin/integrations/line/accounts/${id}`, data, { tenantId });
+  } catch (error) {
+    if (error instanceof ApiClientError) throw error;
+    throw new ApiClientError('Failed to update LINE account');
+  }
+}
+
+export async function deleteLineAccount(
+  id: string,
+  tenantId?: string,
+): Promise<{ ok: boolean; tenantId: string; accountId: string; status: string }> {
+  try {
+    return await apiDelete<{ ok: boolean; tenantId: string; accountId: string; status: string }>(
+      `/admin/integrations/line/accounts/${id}`, { tenantId },
+    );
+  } catch (error) {
+    if (error instanceof ApiClientError) throw error;
+    throw new ApiClientError('Failed to delete LINE account');
+  }
+}
+
+export async function fetchLineRouting(tenantId?: string): Promise<LineRoutingResponse> {
+  try {
+    return await apiGet<LineRoutingResponse>('/admin/integrations/line/routing', { tenantId });
+  } catch (error) {
+    if (error instanceof ApiClientError) throw error;
+    throw new ApiClientError('Failed to fetch LINE routing');
+  }
+}
+
+export async function saveLineRouting(
+  routing: Partial<LineRouting>,
+  tenantId?: string,
+): Promise<LineRoutingResponse> {
+  try {
+    return await apiPut<LineRoutingResponse>('/admin/integrations/line/routing', routing, { tenantId });
+  } catch (error) {
+    if (error instanceof ApiClientError) throw error;
+    throw new ApiClientError('Failed to save LINE routing');
+  }
+}
+

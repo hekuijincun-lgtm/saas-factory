@@ -69,6 +69,33 @@ export interface IntegrationSettings {
   };
 }
 
+// ── Multi-LINE Account Management ───────────────────────────────────────────
+export type LineAccountPurpose = 'booking' | 'sales' | 'support' | 'broadcast' | 'internal';
+export type LineAccountIndustry = 'hair' | 'nail' | 'eyebrow' | 'esthetic' | 'dental' | 'shared';
+
+export interface LineAccount {
+  id: string;
+  key: string;
+  name: string;
+  purpose: LineAccountPurpose;
+  industry: LineAccountIndustry;
+  channelId: string;
+  channelSecret: string;
+  channelAccessToken: string;
+  basicId?: string;
+  inviteUrl?: string;
+  status: 'active' | 'inactive';
+  botUserId?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface LineRouting {
+  booking?: { default?: string };
+  sales?: Record<string, string>;
+  support?: { default?: string };
+}
+
 export interface OnboardingSettings {
   lineConnected?: boolean;
   enabled?: boolean;  // true のとき初回ログインで owner ブートストラップ
@@ -148,6 +175,10 @@ export interface AdminSettings {
   allowedAdminLineUserIds?: string[];
   /** サブスクリプション情報（Stripe Checkout 経由で設定） */
   subscription?: SubscriptionInfo;
+  /** マルチLINEアカウント */
+  lineAccounts?: LineAccount[];
+  /** LINEルーティング（用途別デフォルトアカウント） */
+  lineRouting?: LineRouting;
 }
 
 /**

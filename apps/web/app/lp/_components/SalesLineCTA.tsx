@@ -6,6 +6,7 @@ import {
   getSalesFallbackHref,
   isSalesLineActive,
   trackSalesEvent,
+  type SalesLineTarget,
 } from '@/src/lib/salesLine';
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -19,6 +20,12 @@ interface SalesLineCTAProps {
   /** Sub-text shown below the button (hero/section only) */
   subtitle?: string;
   className?: string;
+  /**
+   * Pre-resolved target from server component.
+   * When provided, takes precedence over env-based resolution.
+   * Enables routing → env → mailto cascade from admin settings.
+   */
+  target?: SalesLineTarget;
 }
 
 // ── Styles per variant ──────────────────────────────────────────────────────
@@ -71,27 +78,33 @@ export function SalesLineCTA({
   label,
   subtitle,
   className = '',
+  target,
 }: SalesLineCTAProps) {
-  const active = isSalesLineActive();
-  const lineUrl = getSalesLineUrl();
+  // Use pre-resolved target if provided, otherwise fall back to env-only logic
+  const active = target ? target.active : isSalesLineActive();
+  const source = target?.source ?? (isSalesLineActive() ? 'env' : 'mailto');
   const styles = VARIANT_STYLES[variant];
 
   const displayLabel =
     label ?? (active ? styles.defaultLabel : styles.defaultDisabledLabel);
 
-  const href = active ? lineUrl! : getSalesFallbackHref();
+  const href = target
+    ? target.href
+    : (active ? getSalesLineUrl()! : getSalesFallbackHref());
 
   const handleClick = () => {
     if (active) {
       trackSalesEvent('sales_line_cta_click', {
         variant,
         label: displayLabel,
+        source,
       });
     } else {
       trackSalesEvent('sales_line_cta_disabled_click', {
         variant,
         label: displayLabel,
         fallback: 'email',
+        source,
       });
     }
   };
@@ -108,6 +121,7 @@ export function SalesLineCTA({
         data-analytics="sales_line_cta"
         data-analytics-variant={variant}
         data-analytics-active={active ? '1' : '0'}
+        data-analytics-source={source}
         className={`group ${styles.button}`}
       >
         <Icon className={`${styles.icon} shrink-0`} aria-hidden="true" />
@@ -128,10 +142,10 @@ export function SalesLineCTA({
 
 // ── Sticky CTA bar (mobile) ─────────────────────────────────────────────────
 
-export function SalesLineStickyBar() {
+export function SalesLineStickyBar({ target }: { target?: SalesLineTarget }) {
   return (
     <div className="fixed bottom-0 left-0 right-0 z-50 md:hidden p-3 bg-white/95 backdrop-blur-md border-t border-gray-200 shadow-[0_-4px_20px_rgba(0,0,0,0.08)]">
-      <SalesLineCTA variant="sticky" />
+      <SalesLineCTA variant="sticky" target={target} />
     </div>
   );
 }

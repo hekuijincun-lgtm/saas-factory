@@ -629,6 +629,13 @@ app.get('/admin/rbac/audit', async (c) => {
       }
     }
 
+    // lineAccounts: full array replacement (managed via dedicated endpoints)
+    if (body.lineAccounts != null) patch.lineAccounts = body.lineAccounts;
+    // lineRouting: shallow merge
+    if (body.lineRouting != null && typeof body.lineRouting === 'object') {
+      patch.lineRouting = { ...(existing.lineRouting || {}), ...body.lineRouting };
+    }
+
     const merged = { ...existing, ...patch }
     await kv.put(key, JSON.stringify(merged))
 
@@ -952,6 +959,54 @@ const parseHHMM = (s: string) => {
     })
   })
   // === /SLOTS_SETTINGS_V1 ===
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Public Sales LINE endpoint — NO AUTH (not under /admin/*)
+// Returns only sanitized routing + inviteUrl for LP CTA resolution.
+// ══════════════════════════════════════════════════════════════════════════════
+app.get("/public/sales-line", async (c) => {
+  try {
+    const tenantId = getTenantId(c, null);
+    const kv = (c.env as any)?.SAAS_FACTORY;
+    if (!kv) return c.json({ ok: false, error: "kv_not_bound" }, 500);
+
+    const raw = await kv.get(`settings:${tenantId}`, "json") as any;
+    const accounts: any[] = Array.isArray(raw?.lineAccounts) ? raw.lineAccounts : [];
+    const routing = raw?.lineRouting || {};
+
+    // Build sales routing map: industry → accountId
+    const salesRouting: Record<string, string> = {};
+    if (routing.sales && typeof routing.sales === "object") {
+      for (const [industry, accountId] of Object.entries(routing.sales)) {
+        if (typeof accountId === "string" && accountId) {
+          salesRouting[industry] = accountId;
+        }
+      }
+    }
+
+    // Build sanitized accounts (only active sales accounts with inviteUrl)
+    const salesAccounts = accounts
+      .filter((a: any) => a.status === "active" && a.purpose === "sales" && a.inviteUrl)
+      .map((a: any) => ({
+        id: a.id,
+        industry: a.industry || "shared",
+        purpose: a.purpose,
+        inviteUrl: String(a.inviteUrl),
+        status: a.status,
+        name: a.name,
+      }));
+
+    return c.json({
+      ok: true,
+      tenantId,
+      salesRouting,
+      salesAccounts,
+    }, 200, { "Cache-Control": "public, max-age=60, s-maxage=300" });
+  } catch (e: any) {
+    return c.json({ ok: false, error: "fetch_error", detail: String(e?.message ?? e) }, 500);
+  }
+});
+
 app.get('/slots__legacy', async (c) => {
   const debug = (c.req.query("debug") || "") === "1";
   try {
@@ -5393,6 +5448,335 @@ app.delete("/admin/integrations/line/richmenu", async (c) => {
 });
 
 /* === /LINE_RICHMENU_V1 === */
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Multi-LINE Account Management (LINE_MULTI_ACCOUNT_V1)
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ── GET /admin/integrations/line/accounts ─────────────────────────────────────
+app.get("/admin/integrations/line/accounts", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
+  const rbac = await requireRole(c, "viewer"); if (rbac) return rbac;
+  try {
+    const tenantId = getTenantId(c, null);
+    const kv = (c.env as any)?.SAAS_FACTORY;
+    if (!kv) return c.json({ ok: false, error: "kv_not_bound" }, 500);
+
+    const raw = await kv.get(`settings:${tenantId}`, "json") as any;
+    const accounts = Array.isArray(raw?.lineAccounts) ? raw.lineAccounts : [];
+
+    // Fallback: synthesize from existing integrations.line if no accounts exist
+    if (accounts.length === 0 && raw?.integrations?.line?.connected && raw?.integrations?.line?.channelAccessToken) {
+      const line = raw.integrations.line;
+      const synthesized = {
+        id: "legacy-single",
+        key: "booking-main",
+        name: line.displayName || "メインアカウント",
+        purpose: "booking",
+        industry: "shared",
+        channelId: line.channelId || "",
+        channelSecret: line.channelSecret || "",
+        channelAccessToken: line.channelAccessToken || "",
+        basicId: "",
+        inviteUrl: "",
+        status: "active",
+        botUserId: line.userId || "",
+        createdAt: line.connectedAt ? new Date(line.connectedAt).toISOString() : new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        synthesized: true,
+      };
+      return c.json({ ok: true, tenantId, accounts: [synthesized], synthesized: true });
+    }
+
+    return c.json({ ok: true, tenantId, accounts, synthesized: false });
+  } catch (e: any) {
+    return c.json({ ok: false, error: "fetch_error", detail: String(e?.message ?? e) }, 500);
+  }
+});
+
+// ── POST /admin/integrations/line/accounts ────────────────────────────────────
+app.post("/admin/integrations/line/accounts", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
+  const rbac = await requireRole(c, "admin"); if (rbac) return rbac;
+  try {
+    const tenantId = getTenantId(c, null);
+    const kv = (c.env as any)?.SAAS_FACTORY;
+    if (!kv) return c.json({ ok: false, error: "kv_not_bound" }, 500);
+
+    const body = await c.req.json() as any;
+    if (!body.name || !body.channelAccessToken || !body.channelSecret) {
+      return c.json({ ok: false, error: "missing_fields", hint: "name, channelAccessToken, channelSecret required" }, 400);
+    }
+
+    // Verify token
+    const botCheck = await verifyLineToken(body.channelAccessToken);
+    if (botCheck.status !== "ok") {
+      return c.json({ ok: false, error: "invalid_token", hint: "channelAccessToken verification failed" }, 400);
+    }
+
+    const now = new Date().toISOString();
+    const id = crypto.randomUUID();
+    const account = {
+      id,
+      key: String(body.key || body.name).replace(/[^a-z0-9-]/gi, "-").toLowerCase().slice(0, 40),
+      name: String(body.name).slice(0, 80),
+      purpose: (["booking", "sales", "support", "broadcast", "internal"].includes(body.purpose) ? body.purpose : "booking"),
+      industry: (["hair", "nail", "eyebrow", "esthetic", "dental", "shared"].includes(body.industry) ? body.industry : "shared"),
+      channelId: String(body.channelId || ""),
+      channelSecret: String(body.channelSecret),
+      channelAccessToken: String(body.channelAccessToken),
+      basicId: body.basicId ? String(body.basicId) : undefined,
+      inviteUrl: body.inviteUrl ? String(body.inviteUrl) : undefined,
+      status: "active" as const,
+      botUserId: botCheck.userId || "",
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    // Read existing settings
+    const settingsKey = `settings:${tenantId}`;
+    let settings: any = {};
+    try { const s = await kv.get(settingsKey, "json"); if (s) settings = s; } catch {}
+
+    const accounts = Array.isArray(settings.lineAccounts) ? [...settings.lineAccounts] : [];
+    accounts.push(account);
+    settings.lineAccounts = accounts;
+
+    // Register destination mapping
+    if (botCheck.userId) {
+      await kv.put(`line:destination-to-tenant:${botCheck.userId}`, tenantId);
+    }
+
+    // Auto-set routing.booking.default if this is the first booking account
+    if (account.purpose === "booking") {
+      const routing = settings.lineRouting || {};
+      if (!routing.booking?.default) {
+        routing.booking = { ...routing.booking, default: id };
+        settings.lineRouting = routing;
+
+        // Sync to integrations.line for backward compatibility
+        settings.integrations = settings.integrations || {};
+        settings.integrations.line = {
+          ...(settings.integrations.line || {}),
+          connected: true,
+          channelId: account.channelId,
+          channelSecret: account.channelSecret,
+          channelAccessToken: account.channelAccessToken,
+          userId: account.botUserId,
+          displayName: account.name,
+          connectedAt: Date.now(),
+        };
+        if (botCheck.userId) {
+          await kv.put(`line:tenant2dest:${tenantId}`, botCheck.userId);
+        }
+      }
+    }
+
+    await kv.put(settingsKey, JSON.stringify(settings));
+    return c.json({ ok: true, tenantId, account });
+  } catch (e: any) {
+    return c.json({ ok: false, error: "create_error", detail: String(e?.message ?? e) }, 500);
+  }
+});
+
+// ── PUT /admin/integrations/line/accounts/:id ─────────────────────────────────
+app.put("/admin/integrations/line/accounts/:id", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
+  const rbac = await requireRole(c, "admin"); if (rbac) return rbac;
+  try {
+    const tenantId = getTenantId(c, null);
+    const accountId = c.req.param("id");
+    const kv = (c.env as any)?.SAAS_FACTORY;
+    if (!kv) return c.json({ ok: false, error: "kv_not_bound" }, 500);
+
+    const body = await c.req.json() as any;
+    const settingsKey = `settings:${tenantId}`;
+    let settings: any = {};
+    try { const s = await kv.get(settingsKey, "json"); if (s) settings = s; } catch {}
+
+    const accounts: any[] = Array.isArray(settings.lineAccounts) ? settings.lineAccounts : [];
+    const idx = accounts.findIndex((a: any) => a.id === accountId);
+    if (idx === -1) return c.json({ ok: false, error: "not_found" }, 404);
+
+    const existing = accounts[idx];
+    const tokenChanged = body.channelAccessToken && body.channelAccessToken !== existing.channelAccessToken;
+
+    let botUserId = existing.botUserId;
+    if (tokenChanged) {
+      const botCheck = await verifyLineToken(body.channelAccessToken);
+      if (botCheck.status !== "ok") {
+        return c.json({ ok: false, error: "invalid_token" }, 400);
+      }
+      // Remove old mapping, create new
+      if (existing.botUserId) {
+        await kv.delete(`line:destination-to-tenant:${existing.botUserId}`);
+      }
+      botUserId = botCheck.userId || "";
+      if (botUserId) {
+        await kv.put(`line:destination-to-tenant:${botUserId}`, tenantId);
+      }
+    }
+
+    const updated = {
+      ...existing,
+      ...(body.name != null ? { name: String(body.name).slice(0, 80) } : {}),
+      ...(body.key != null ? { key: String(body.key).replace(/[^a-z0-9-]/gi, "-").toLowerCase().slice(0, 40) } : {}),
+      ...(body.purpose != null && ["booking", "sales", "support", "broadcast", "internal"].includes(body.purpose) ? { purpose: body.purpose } : {}),
+      ...(body.industry != null && ["hair", "nail", "eyebrow", "esthetic", "dental", "shared"].includes(body.industry) ? { industry: body.industry } : {}),
+      ...(body.channelId != null ? { channelId: String(body.channelId) } : {}),
+      ...(body.channelSecret != null ? { channelSecret: String(body.channelSecret) } : {}),
+      ...(body.channelAccessToken != null ? { channelAccessToken: String(body.channelAccessToken) } : {}),
+      ...(body.basicId !== undefined ? { basicId: body.basicId ? String(body.basicId) : undefined } : {}),
+      ...(body.inviteUrl !== undefined ? { inviteUrl: body.inviteUrl ? String(body.inviteUrl) : undefined } : {}),
+      ...(body.status != null && ["active", "inactive"].includes(body.status) ? { status: body.status } : {}),
+      botUserId,
+      updatedAt: new Date().toISOString(),
+    };
+    accounts[idx] = updated;
+    settings.lineAccounts = accounts;
+
+    // If this is the booking default, sync integrations.line
+    const routing = settings.lineRouting || {};
+    if (routing.booking?.default === accountId) {
+      settings.integrations = settings.integrations || {};
+      settings.integrations.line = {
+        ...(settings.integrations.line || {}),
+        connected: updated.status === "active",
+        channelId: updated.channelId,
+        channelSecret: updated.channelSecret,
+        channelAccessToken: updated.channelAccessToken,
+        userId: updated.botUserId,
+        displayName: updated.name,
+        connectedAt: Date.now(),
+      };
+      if (updated.botUserId) {
+        await kv.put(`line:tenant2dest:${tenantId}`, updated.botUserId);
+      }
+    }
+
+    await kv.put(settingsKey, JSON.stringify(settings));
+    return c.json({ ok: true, tenantId, account: updated });
+  } catch (e: any) {
+    return c.json({ ok: false, error: "update_error", detail: String(e?.message ?? e) }, 500);
+  }
+});
+
+// ── DELETE /admin/integrations/line/accounts/:id ──────────────────────────────
+app.delete("/admin/integrations/line/accounts/:id", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
+  const rbac = await requireRole(c, "admin"); if (rbac) return rbac;
+  try {
+    const tenantId = getTenantId(c, null);
+    const accountId = c.req.param("id");
+    const kv = (c.env as any)?.SAAS_FACTORY;
+    if (!kv) return c.json({ ok: false, error: "kv_not_bound" }, 500);
+
+    const settingsKey = `settings:${tenantId}`;
+    let settings: any = {};
+    try { const s = await kv.get(settingsKey, "json"); if (s) settings = s; } catch {}
+
+    const accounts: any[] = Array.isArray(settings.lineAccounts) ? settings.lineAccounts : [];
+    const idx = accounts.findIndex((a: any) => a.id === accountId);
+    if (idx === -1) return c.json({ ok: false, error: "not_found" }, 404);
+
+    const account = accounts[idx];
+
+    // Soft delete: set status to inactive
+    accounts[idx] = { ...account, status: "inactive", updatedAt: new Date().toISOString() };
+    settings.lineAccounts = accounts;
+
+    // Remove destination mapping
+    if (account.botUserId) {
+      await kv.delete(`line:destination-to-tenant:${account.botUserId}`);
+    }
+
+    // Remove routing references
+    const routing = settings.lineRouting || {};
+    if (routing.booking?.default === accountId) {
+      routing.booking = { ...routing.booking, default: undefined };
+    }
+    if (routing.support?.default === accountId) {
+      routing.support = { ...routing.support, default: undefined };
+    }
+    if (routing.sales) {
+      for (const [k, v] of Object.entries(routing.sales)) {
+        if (v === accountId) delete routing.sales[k];
+      }
+    }
+    settings.lineRouting = routing;
+
+    await kv.put(settingsKey, JSON.stringify(settings));
+    return c.json({ ok: true, tenantId, accountId, status: "inactive" });
+  } catch (e: any) {
+    return c.json({ ok: false, error: "delete_error", detail: String(e?.message ?? e) }, 500);
+  }
+});
+
+// ── GET /admin/integrations/line/routing ──────────────────────────────────────
+app.get("/admin/integrations/line/routing", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
+  const rbac = await requireRole(c, "viewer"); if (rbac) return rbac;
+  try {
+    const tenantId = getTenantId(c, null);
+    const kv = (c.env as any)?.SAAS_FACTORY;
+    if (!kv) return c.json({ ok: false, error: "kv_not_bound" }, 500);
+
+    const raw = await kv.get(`settings:${tenantId}`, "json") as any;
+    return c.json({ ok: true, tenantId, routing: raw?.lineRouting || {} });
+  } catch (e: any) {
+    return c.json({ ok: false, error: "fetch_error", detail: String(e?.message ?? e) }, 500);
+  }
+});
+
+// ── PUT /admin/integrations/line/routing ──────────────────────────────────────
+app.put("/admin/integrations/line/routing", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
+  const rbac = await requireRole(c, "admin"); if (rbac) return rbac;
+  try {
+    const tenantId = getTenantId(c, null);
+    const kv = (c.env as any)?.SAAS_FACTORY;
+    if (!kv) return c.json({ ok: false, error: "kv_not_bound" }, 500);
+
+    const body = await c.req.json() as any;
+    const settingsKey = `settings:${tenantId}`;
+    let settings: any = {};
+    try { const s = await kv.get(settingsKey, "json"); if (s) settings = s; } catch {}
+
+    const oldDefault = settings.lineRouting?.booking?.default;
+    const routing = { ...(settings.lineRouting || {}), ...body };
+    settings.lineRouting = routing;
+
+    // If booking.default changed, sync integrations.line
+    const newDefault = routing.booking?.default;
+    if (newDefault && newDefault !== oldDefault) {
+      const accounts: any[] = Array.isArray(settings.lineAccounts) ? settings.lineAccounts : [];
+      const defaultAccount = accounts.find((a: any) => a.id === newDefault && a.status === "active");
+      if (defaultAccount) {
+        settings.integrations = settings.integrations || {};
+        settings.integrations.line = {
+          ...(settings.integrations.line || {}),
+          connected: true,
+          channelId: defaultAccount.channelId,
+          channelSecret: defaultAccount.channelSecret,
+          channelAccessToken: defaultAccount.channelAccessToken,
+          userId: defaultAccount.botUserId,
+          displayName: defaultAccount.name,
+          connectedAt: Date.now(),
+        };
+        if (defaultAccount.botUserId) {
+          await kv.put(`line:tenant2dest:${tenantId}`, defaultAccount.botUserId);
+        }
+      }
+    }
+
+    await kv.put(settingsKey, JSON.stringify(settings));
+    return c.json({ ok: true, tenantId, routing });
+  } catch (e: any) {
+    return c.json({ ok: false, error: "save_error", detail: String(e?.message ?? e) }, 500);
+  }
+});
+
+/* === /LINE_MULTI_ACCOUNT_V1 === */
 
 /* === /LINE_MESSAGING_ROUTES_V1 === */
 
