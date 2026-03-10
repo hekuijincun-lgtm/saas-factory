@@ -39,32 +39,72 @@ async function checkAiEnabled(tenantId: string): Promise<boolean> {
 async function checkDestinationMapping(
   apiBase: string,
   tenantId: string
-): Promise<{ mapped: boolean; destination: string | null }> {
-  // Read settings to get the LINE channel ID (which is the destination)
-  // Then check if destination-to-tenant KV has the mapping
+): Promise<{ mapped: boolean; destination: string | null; channelId: string | null }> {
+  // The destination-to-tenant KV uses bot's userId (Uxxxx), NOT channelId (numeric).
+  // Check via reverse mapping: line:tenant2dest:{tenantId} → botUserId
+  // Also get channelId from settings for display.
   const adminToken = getAdminToken();
+  let channelId: string | null = null;
+
   try {
+    // Get channelId from settings (for display)
     const url = `${apiBase}/admin/settings?tenantId=${encodeURIComponent(tenantId)}`;
     const headers: Record<string, string> = { Accept: "application/json" };
     if (adminToken) headers["X-Admin-Token"] = adminToken;
     const r = await fetch(url, { headers });
-    if (!r.ok) return { mapped: false, destination: null };
-    const json = (await r.json()) as any;
-    const s = json?.data ?? json;
-    const channelId = String(s?.integrations?.line?.channelId ?? "").trim();
-    if (!channelId) return { mapped: false, destination: null };
-
-    // Check if the destination-to-tenant mapping exists
-    const dr = await fetch(
-      `${apiBase}/line/destination-to-tenant?destination=${encodeURIComponent(channelId)}`
-    );
-    if (dr.ok) {
-      const dd = (await dr.json()) as any;
-      return { mapped: !!dd?.tenantId, destination: channelId };
+    if (r.ok) {
+      const json = (await r.json()) as any;
+      const s = json?.data ?? json;
+      channelId = String(s?.integrations?.line?.channelId ?? "").trim() || null;
     }
-    return { mapped: false, destination: channelId };
+  } catch {}
+
+  // Check reverse mapping (tenant → botUserId) by checking if any destination maps to this tenant
+  // Use the remap endpoint's underlying check: tenant2dest KV
+  // We can check by trying destination-to-tenant for known botUserId,
+  // or by just checking if channelId-based lookup works.
+  // Best approach: try both channelId and ask the admin endpoint for lineAccounts with botUserId
+  try {
+    // Try channelId first (some tenants store channelId as destination)
+    if (channelId) {
+      const dr = await fetch(
+        `${apiBase}/line/destination-to-tenant?destination=${encodeURIComponent(channelId)}`
+      );
+      if (dr.ok) {
+        const dd = (await dr.json()) as any;
+        if (dd?.tenantId) return { mapped: true, destination: channelId, channelId };
+      }
+    }
+
+    // Try fetching lineAccounts to find botUserId
+    if (adminToken) {
+      const ar = await fetch(
+        `${apiBase}/admin/integrations/line/accounts?tenantId=${encodeURIComponent(tenantId)}`,
+        { headers: { "X-Admin-Token": adminToken, Accept: "application/json" } }
+      );
+      if (ar.ok) {
+        const ad = (await ar.json()) as any;
+        const accounts = ad?.accounts ?? [];
+        for (const acct of accounts) {
+          const botUserId = String(acct?.botUserId ?? "").trim();
+          if (botUserId) {
+            const dr = await fetch(
+              `${apiBase}/line/destination-to-tenant?destination=${encodeURIComponent(botUserId)}`
+            );
+            if (dr.ok) {
+              const dd = (await dr.json()) as any;
+              if (dd?.tenantId) return { mapped: true, destination: botUserId, channelId };
+            }
+            // Found a botUserId but not mapped
+            return { mapped: false, destination: botUserId, channelId };
+          }
+        }
+      }
+    }
+
+    return { mapped: false, destination: null, channelId };
   } catch {
-    return { mapped: false, destination: null };
+    return { mapped: false, destination: null, channelId };
   }
 }
 
@@ -144,12 +184,12 @@ export async function GET(req: Request) {
   // 3. Check destination mapping
   const destCheck = apiBase
     ? await checkDestinationMapping(apiBase, tenantId)
-    : { mapped: false, destination: null };
+    : { mapped: false, destination: null, channelId: null };
   if (!destCheck.mapped) {
     problems.push(
       destCheck.destination
-        ? `destination ${destCheck.destination.slice(0, 8)}... not mapped to tenant — webhook without ?tenantId= will fail`
-        : "No channelId in settings — destination mapping cannot be checked"
+        ? `destination ${destCheck.destination.slice(0, 8)}... not mapped to tenant — will auto-remap`
+        : "No channelId/botUserId found — destination mapping cannot be checked"
     );
   }
 
@@ -214,6 +254,30 @@ export async function GET(req: Request) {
 
   const webhookUrl = `${origin}/api/line/webhook?tenantId=${encodeURIComponent(tenantId)}`;
 
+  // Auto-fix: if destination not mapped but we have token, try remap
+  let remapResult: any = null;
+  let destMappedAfterRemap = destCheck.mapped;
+  if (!destCheck.mapped && hasToken && apiBase && adminToken) {
+    try {
+      const r = await fetch(
+        `${apiBase}/admin/integrations/line/remap?tenantId=${encodeURIComponent(tenantId)}`,
+        {
+          method: "POST",
+          headers: { "X-Admin-Token": adminToken },
+        }
+      );
+      remapResult = await r.json().catch(() => ({ status: r.status }));
+      if (remapResult?.ok) {
+        const recheck = await checkDestinationMapping(apiBase, tenantId);
+        destMappedAfterRemap = recheck.mapped;
+        if (recheck.mapped) {
+          const idx = problems.findIndex(p => p.includes("not mapped to tenant") || p.includes("will auto-remap"));
+          if (idx >= 0) problems.splice(idx, 1);
+        }
+      }
+    } catch {}
+  }
+
   return NextResponse.json(
     {
       ok: problems.length === 0,
@@ -231,8 +295,10 @@ export async function GET(req: Request) {
         hasApiBase: !!apiBase,
       },
       destination: {
-        mapped: destCheck.mapped,
-        hasChannelId: !!destCheck.destination,
+        mapped: destMappedAfterRemap,
+        wasRemapped: remapResult?.ok === true,
+        hasChannelId: !!destCheck.channelId,
+        hasBotUserId: !!destCheck.destination,
       },
       ai: {
         enabled: aiEnabled,
@@ -249,6 +315,7 @@ export async function GET(req: Request) {
           }
         : null,
       lastResult,
+      remapResult: remapResult ?? undefined,
       problems,
     },
     {
