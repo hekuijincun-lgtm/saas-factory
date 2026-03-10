@@ -11,7 +11,7 @@ export const runtime = "edge";
 //             → ai:     waitUntil(AI+push+quickReply) → 即時 200 返却
 //   debug=1 → 実送信ゼロ・{ intent, bookingUrl, replyPlanned, pushPlanned, aiEnabled } 返却
 //   debug=2 → push のみ同期実送信して pushStatus + quickReply を返す（テスト用）
-const STAMP = "LINE_WEBHOOK_V13_20260310_VERIFY_FIX";
+const STAMP = "LINE_WEBHOOK_V14_20260310_SALES_FLOW";
 const where  = "api/line/webhook";
 
 const FALLBACK_TEXT = "少し時間をおいて再度お試しください。";
@@ -731,35 +731,90 @@ export async function POST(req: Request) {
   console.log(`[LINE_WEBHOOK] aiEnabled=${aiEnabled} tenant=${tenantId}`);
 
   if (!aiEnabled) {
-    // ── Minimal echo reply (AI disabled tenants) ──────────────────────────
-    // Temporary: sends a confirmation reply so the webhook path is verified.
-    // Will be replaced with sales conversation logic later.
-    const echoText = `メッセージ受け取りました：${textIn.slice(0, 200)}`;
-    let echoReplyOk = false;
-    let echoReplyStatus = 0;
-    let echoReplyBody = "";
+    // ── Sales LINE flow (AI disabled tenants) ─────────────────────────────
+    // Detects numbered replies (1-4) and classifies them.
+    // For any other text, sends a greeting with menu options.
+    const trimmed = textIn.trim();
+    const numberMatch = trimmed.match(/^[１-４1-4]$/);
+    // Normalize full-width to half-width
+    const num = numberMatch
+      ? trimmed.replace(/[１２３４]/g, (c) => String("１２３４".indexOf(c) + 1))
+      : null;
+
+    let replyText: string;
+    let label: string | null = null;
+
+    if (num === "1") {
+      label = "interested";
+      replyText = "ありがとうございます！\n無料診断のご案内をお送りしますね。\n\n担当者より改めてご連絡いたします。少々お待ちください🙏";
+    } else if (num === "2") {
+      label = "info_request";
+      replyText = "ありがとうございます！\n\nLumi Bookは眉毛サロン専用の予約管理ツールです。\n\n・LINE予約導線の最適化\n・予約の取りこぼし防止\n・顧客管理・リピート促進\n\n詳しい資料をお送りしますね📄\n担当者より改めてご連絡いたします。";
+    } else if (num === "3") {
+      label = "pricing_question";
+      replyText = "ありがとうございます！\n\n料金プラン：\n🔹 Starter: ¥3,980/月\n🔹 Pro: ¥9,800/月\n🔹 Enterprise: ご相談\n\n詳しくは担当者からご説明いたします。\nご都合の良い時間帯はありますか？";
+    } else if (num === "4") {
+      label = "demo_request";
+      replyText = "ありがとうございます！\n担当者より直接ご連絡いたします。\n\nご都合の良い曜日・時間帯があれば教えてください🙏";
+    } else {
+      // Default greeting
+      replyText = "ありがとうございます！Lumi Bookです✨\n\n眉毛サロン向けに\n・LINE予約導線の改善\n・予約の取りこぼしチェック\n・無料診断\nを行っています。\n\n気になるものを番号で返信してください。\n1. 無料診断したい\n2. どんなツールか知りたい\n3. 料金を知りたい\n4. 担当者と話したい";
+    }
+
+    // Send reply
+    let salesReplyOk = false;
+    let salesReplyStatus = 0;
+    let salesReplyBody = "";
     try {
       const rep = await replyLine(cfg.channelAccessToken, replyToken, [
-        { type: "text", text: echoText },
+        { type: "text", text: replyText },
       ]);
-      echoReplyOk = rep.ok;
-      echoReplyStatus = rep.status;
-      echoReplyBody = rep.bodyText.slice(0, 200);
+      salesReplyOk = rep.ok;
+      salesReplyStatus = rep.status;
+      salesReplyBody = rep.bodyText.slice(0, 200);
     } catch (e: any) {
-      echoReplyBody = String(e?.message ?? e).slice(0, 200);
+      salesReplyBody = String(e?.message ?? e).slice(0, 200);
     }
 
     console.log(
-      `[LINE_WEBHOOK_ECHO] tenant=${tenantId} uid=${lineUserId.slice(0, 6)}*** ` +
-      `replyOk=${echoReplyOk} replyStatus=${echoReplyStatus} body=${echoReplyBody}`
+      `[LINE_SALES] tenant=${tenantId} uid=${lineUserId.slice(0, 6)}*** ` +
+      `label=${label ?? "greeting"} replyOk=${salesReplyOk} st=${salesReplyStatus} ` +
+      `body=${salesReplyBody}`
     );
+
+    // Save to /owner/leads via internal endpoint (fire-and-forget)
+    if (apiBase && lineUserId) {
+      let internalToken = "";
+      try {
+        const cfEnv = (getRequestContext()?.env as any);
+        if (cfEnv?.LINE_INTERNAL_TOKEN) internalToken = String(cfEnv.LINE_INTERNAL_TOKEN);
+      } catch {}
+      if (!internalToken) internalToken = process.env.LINE_INTERNAL_TOKEN ?? "";
+
+      if (internalToken) {
+        fetch(`${apiBase}/internal/sales/lead-reply`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-internal-token": internalToken,
+          },
+          body: JSON.stringify({
+            tenantId,
+            lineUserId,
+            rawReply: textIn.slice(0, 500),
+            label: label ?? null,
+            displayName: "",
+          }),
+        }).catch((e) => console.error(`[LINE_SALES] lead-reply error: ${e}`));
+      }
+    }
 
     return NextResponse.json(
       {
         ok: true, stamp: STAMP, where, tenantId, source: cfg.source,
-        verified, aiEnabled: false, replied: echoReplyOk,
-        replyStatus: echoReplyStatus, resolvedBy, eventCount: events.length,
-        mode: "echo",
+        verified, aiEnabled: false, replied: salesReplyOk,
+        replyStatus: salesReplyStatus, resolvedBy, eventCount: events.length,
+        mode: "sales", label: label ?? "greeting",
       },
       { headers: { "x-stamp": STAMP } }
     );

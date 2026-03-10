@@ -5118,6 +5118,89 @@ app.post("/internal/line/last-user", async (c) => {
   } catch { return c.json({ ok: false }, 500); }
 });
 
+// ── POST /internal/sales/lead-reply ──────────────────────────────────────────
+// Internal endpoint for Pages webhook to upsert a sales lead from LINE conversation.
+// Protected by LINE_INTERNAL_TOKEN (same as other /internal/* endpoints).
+// Creates a new lead if none exists for this lineUserId+tenantId, or updates existing.
+// Also saves the reply classification to lead_reply_classifications.
+app.post("/internal/sales/lead-reply", async (c) => {
+  const env = c.env as any;
+  const expected = String(env?.LINE_INTERNAL_TOKEN ?? "").trim();
+  const provided = String(c.req.header("x-internal-token") ?? "").trim();
+  if (!expected || !provided || provided !== expected) {
+    return c.json({ ok: false, error: "unauthorized" }, 401);
+  }
+  const db = env?.DB;
+  if (!db) return c.json({ ok: false, error: "db_missing" }, 500);
+
+  try {
+    const body = await c.req.json().catch(() => ({} as any));
+    const tenantId = String(body?.tenantId ?? "").trim();
+    const lineUserId = String(body?.lineUserId ?? "").trim();
+    const rawReply = String(body?.rawReply ?? "").trim();
+    const label = String(body?.label ?? "").trim();
+    const displayName = String(body?.displayName ?? "").trim();
+
+    if (!tenantId || !lineUserId) {
+      return c.json({ ok: false, error: "tenantId and lineUserId required" }, 400);
+    }
+
+    const now = new Date().toISOString();
+
+    // Upsert lead: find existing by lineUserId + tenantId
+    let lead = await db.prepare(
+      "SELECT id, status FROM sales_leads WHERE tenant_id = ? AND line_user_id = ? LIMIT 1"
+    ).bind(tenantId, lineUserId).first() as any;
+
+    let leadId: string;
+    let created = false;
+
+    if (!lead) {
+      // Create new lead
+      leadId = crypto.randomUUID();
+      await db.prepare(
+        `INSERT INTO sales_leads (id, tenant_id, industry, store_name, line_user_id, status, notes, created_at, updated_at)
+         VALUES (?, ?, 'eyebrow', ?, ?, 'new', ?, ?, ?)`
+      ).bind(
+        leadId, tenantId,
+        displayName || `LINE:${lineUserId.slice(0, 8)}`,
+        lineUserId, null, now, now
+      ).run();
+      created = true;
+    } else {
+      leadId = lead.id;
+      // Update timestamp
+      await db.prepare("UPDATE sales_leads SET updated_at = ? WHERE id = ?").bind(now, leadId).run();
+    }
+
+    // Save classification if label provided
+    if (label && rawReply) {
+      await db.prepare(
+        `INSERT INTO lead_reply_classifications (id, lead_id, raw_reply, label, confidence, suggested_next_action, created_at)
+         VALUES (?, ?, ?, ?, 1.0, NULL, ?)`
+      ).bind(crypto.randomUUID(), leadId, rawReply, label, now).run();
+
+      // Auto-update lead status based on label
+      const statusMap: Record<string, string> = {
+        interested: "interested",
+        demo_request: "meeting",
+        pricing_question: "interested",
+        info_request: "contacted",
+      };
+      const newStatus = statusMap[label];
+      if (newStatus && (!lead || lead.status === "new")) {
+        await db.prepare("UPDATE sales_leads SET status = ?, updated_at = ? WHERE id = ?")
+          .bind(newStatus, now, leadId).run();
+      }
+    }
+
+    return c.json({ ok: true, leadId, created, tenantId, lineUserId: lineUserId.slice(0, 8) + "***" });
+  } catch (e: any) {
+    console.error("[internal/sales/lead-reply]", String(e?.message ?? e));
+    return c.json({ ok: false, error: String(e?.message ?? e).slice(0, 200) }, 500);
+  }
+});
+
 // ── GET /admin/integrations/line/last-webhook ───────────────────────────────
 // Returns the most recent webhook receipt log for diagnostic UI.
 app.get("/admin/integrations/line/last-webhook", async (c) => {
