@@ -735,282 +735,45 @@ export async function POST(req: Request) {
 
   const aiIp = lineUserId ? `line:${lineUserId.slice(0, 12)}` : "line";
 
-  // ── AI gate ────────────────────────────────────────────────────────────────
-  const aiEnabled = await checkAiEnabled(tenantId);
-  console.log(`[WH_AI_GATE] aiEnabled=${aiEnabled} tenant=${tenantId}`);
-
-  if (!aiEnabled) {
-    // ── Sales LINE flow (AI disabled tenants) ─────────────────────────────
-    const trimmed = textIn.trim();
-    const numberMatch = trimmed.match(/^[１-４1-4]$/);
-    const num = numberMatch
-      ? trimmed.replace(/[１２３４]/g, (c) => String("１２３４".indexOf(c) + 1))
-      : null;
-
-    let replyText: string;
-    let label: string | null = null;
-
-    if (num === "1") {
-      label = "interested";
-      replyText = "ありがとうございます！\n無料診断のご案内をお送りしますね。\n\n担当者より改めてご連絡いたします。少々お待ちください🙏";
-    } else if (num === "2") {
-      label = "info_request";
-      replyText = "ありがとうございます！\n\nLumi Bookは眉毛サロン専用の予約管理ツールです。\n\n・LINE予約導線の最適化\n・予約の取りこぼし防止\n・顧客管理・リピート促進\n\n詳しい資料をお送りしますね📄\n担当者より改めてご連絡いたします。";
-    } else if (num === "3") {
-      label = "pricing_question";
-      replyText = "ありがとうございます！\n\n料金プラン：\n🔹 Starter: ¥3,980/月\n🔹 Pro: ¥9,800/月\n🔹 Enterprise: ご相談\n\n詳しくは担当者からご説明いたします。\nご都合の良い時間帯はありますか？";
-    } else if (num === "4") {
-      label = "demo_request";
-      replyText = "ありがとうございます！\n担当者より直接ご連絡いたします。\n\nご都合の良い曜日・時間帯があれば教えてください🙏";
-    } else {
-      replyText = "ありがとうございます！Lumi Bookです✨\n\n眉毛サロン向けに\n・LINE予約導線の改善\n・予約の取りこぼしチェック\n・無料診断\nを行っています。\n\n気になるものを番号で返信してください。\n1. 無料診断したい\n2. どんなツールか知りたい\n3. 料金を知りたい\n4. 担当者と話したい";
-    }
-
-    console.log(`[WH_SALES] BEFORE replyLine() label=${label ?? "greeting"} tokenLen=${cfg.channelAccessToken.length} replyTokenLen=${replyToken.length}`);
-
-    let salesReplyOk = false;
-    let salesReplyStatus = 0;
-    let salesReplyBody = "";
-    try {
-      const rep = await replyLine(cfg.channelAccessToken, replyToken, [
-        { type: "text", text: replyText },
-      ]);
-      salesReplyOk = rep.ok;
-      salesReplyStatus = rep.status;
-      salesReplyBody = rep.bodyText.slice(0, 500);
-    } catch (e: any) {
-      salesReplyBody = `EXCEPTION: ${String(e?.message ?? e).slice(0, 400)}`;
-    }
-
-    console.log(
-      `[WH_SALES] AFTER replyLine() ok=${salesReplyOk} status=${salesReplyStatus} ` +
-      `body=${salesReplyBody}`
-    );
-
-    // Save to /owner/leads via internal endpoint (fire-and-forget)
-    if (apiBase && lineUserId) {
-      const leadToken = internalToken; // reuse from outer scope
-      if (leadToken) {
-        fetch(`${apiBase}/internal/sales/lead-reply`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-internal-token": leadToken,
-          },
-          body: JSON.stringify({
-            tenantId,
-            lineUserId,
-            rawReply: textIn.slice(0, 500),
-            label: label ?? null,
-            displayName: "",
-          }),
-        }).catch((e) => console.error(`[WH_SALES] lead-reply error: ${e}`));
-      }
-    }
-
-    return NextResponse.json(
-      {
-        ok: true, stamp: STAMP, where, tenantId, source: cfg.source,
-        verified, aiEnabled: false, replied: salesReplyOk,
-        replyStatus: salesReplyStatus, replyBody: salesReplyBody.slice(0, 200),
-        resolvedBy, eventCount: events.length,
-        mode: "sales", label: label ?? "greeting",
-      },
-      { headers: { "x-stamp": STAMP } }
-    );
-  }
-
-  // ── intent 判定（booking が優先）────────────────────────────────────────────
-  console.log(`[WH_AI_FLOW] tenant=${tenantId} aiEnabled=true, proceeding to intent detection`);
-  const isBookingIntent = detectBookingIntent(textIn);
-  const bookingUrl      = buildBookingLink(cfg.bookingUrl, tenantId, lineUserId);
-  console.log(`[WH_AI_FLOW] isBooking=${isBookingIntent} text="${textIn.slice(0, 30)}"`);
-
-
-  // ── debug=1: 実送信ゼロ・判定結果のみ JSON で返す ─────────────────────────
-  if (debugMode === "1") {
-    return NextResponse.json({
-      ok: true, stamp: STAMP, where, tenantId, debug: 1,
-      aiEnabled: true,  // if we reached here, AI gate passed
-      intent:       isBookingIntent ? "booking" : "ai",
-      bookingUrl:   isBookingIntent ? bookingUrl : null,
-      replyPlanned: isBookingIntent ? buildBookingTemplateMessage(bookingUrl) : null,
-      pushPlanned:  !isBookingIntent
-        ? { type: "text", text: "(AI response — not executed in debug=1)" }
-        : null,
-    });
-  }
-
-  // ── debug=2: push のみ同期実送信（ack なし・テスト用）────────────────────
-  if (debugMode === "2") {
-    const ai       = await runAiChat(tenantId, textIn, aiIp);
-
-    // AI disabled by admin → skip push even in debug=2
-    if (ai.disabled) {
-      return NextResponse.json({
-        ok: true, stamp: STAMP, where, tenantId, debug: 2,
-        intent: "ai", aiDisabled: true,
-        hasUserId: !!lineUserId,
-        finalText: null, pushStatus: null, pushOk: null, pushBodySnippet: null,
-      });
-    }
-
-    const answer   = ai.ok ? ai.answer : FALLBACK_TEXT;
-    const quickReply = ai.ok ? buildQuickReplyFromActions(ai.suggestedActions) : undefined;
-    const messages = [{ type: "text", text: answer, ...(quickReply ? { quickReply } : {}) }];
-
-    let pushRep: { ok: boolean; status: number; bodyText: string } | null = null;
-    if (lineUserId) {
-      pushRep = await pushLine(cfg.channelAccessToken, lineUserId, messages)
-        .catch(() => ({ ok: false, status: 0, bodyText: "push_exception" }));
-    }
-
-    return NextResponse.json({
-      ok: true, stamp: STAMP, where, tenantId, debug: 2,
-      intent: isBookingIntent ? "booking" : "ai",
-      hasUserId: !!lineUserId,
-      finalText: answer,
-      suggestedActions: ai.suggestedActions ?? [],
-      quickReply: quickReply ?? null,
-      pushStatus:      pushRep?.status      ?? null,
-      pushOk:          pushRep?.ok          ?? null,
-      pushBodySnippet: pushRep?.bodyText?.slice(0, 500) ?? null,
-    });
-  }
-
-  // ── 通常モード: dedup → booking template reply OR AI+push ─────────────────
-
-  // KV dedup（重複イベントをスキップ）
-  const dedupKey = await buildDedupKey(tenantId, ev);
-  const isNew    = await dedupEvent(apiBase, dedupKey, 120);
-  if (!isNew) {
-    return NextResponse.json({
-      ok: true, stamp: STAMP, where, tenantId, source: cfg.source,
-      verified, skipped: true, reason: "duplicate_event",
-      dedupKey, eventCount: events.length,
-    });
-  }
-
-  // ── 予約 intent: テンプレカードを reply で返す（AI gate 通過済み）───────
-  if (isBookingIntent) {
-    console.log(`[WH_BOOKING] BEFORE replyLine() tenant=${tenantId} bookingUrl=${bookingUrl.slice(0, 60)}`);
-    const bookingMsg = buildBookingTemplateMessage(bookingUrl);
-    const repBooking = await replyLine(cfg.channelAccessToken, replyToken, [bookingMsg])
-      .catch(() => ({ ok: false, status: 0, bodyText: "reply_exception" }));
-
-    console.log(
-      `[WH_BOOKING] AFTER replyLine() ok=${repBooking.ok} st=${repBooking.status} ` +
-      `body=${repBooking.bodyText.slice(0, 200)}`
-    );
-
-    return NextResponse.json(
-      {
-        ok: true, stamp: STAMP, where, tenantId, source: cfg.source,
-        verified, aiEnabled: true, resolvedBy, intent: "booking",
-        replyOk: repBooking.ok, replyStatus: repBooking.status,
-        hasUserId: !!lineUserId, eventCount: events.length,
-      },
-      { headers: { "x-stamp": STAMP } }
-    );
-  }
-
-  // ── AI intent: persist userId + waitUntil(AI+push) → 即時 200 ────────────
-
-  // Best-effort: persist lineUserId to Workers KV via internal endpoint
-  // Uses /internal/ path (LINE_INTERNAL_TOKEN) to avoid RBAC requireRole() check
-  if (lineUserId) {
-    const _internalToken = process.env.LINE_INTERNAL_TOKEN ?? "";
-    if (apiBase) {
-      const _h: Record<string, string> = { "Content-Type": "application/json" };
-      if (_internalToken) _h["x-internal-token"] = _internalToken;
-      fetch(
-        `${apiBase}/internal/line/last-user?tenantId=${encodeURIComponent(tenantId)}`,
-        { method: "POST", headers: _h, body: JSON.stringify({ userId: lineUserId }) }
-      ).catch(() => null);
-    }
-  }
-
-  // waitUntil 取得（Cloudflare Pages edge context）
-  // ローカル開発では getRequestContext() が投げるので fallback: fire-and-forget
-  let waitUntilFn: (p: Promise<any>) => void = (p) => void p.catch(() => null);
+  // ── GUARANTEED REPLY: always reply first, then do AI/sales logic ─────────
+  // This ensures the user ALWAYS gets a response, regardless of downstream errors.
+  // replyToken is single-use — after this, only pushLine can send additional messages.
+  console.log(`[WH_GUARANTEED] attempting immediate reply tenant=${tenantId} tokenLen=${cfg.channelAccessToken.length} replyTokenLen=${replyToken.length}`);
+  let guaranteedReplyOk = false;
+  let guaranteedReplyStatus = 0;
+  let guaranteedReplyBody = "";
   try {
-    const { ctx } = getRequestContext();
-    waitUntilFn = (p) => ctx.waitUntil(p);
-  } catch { /* ローカル開発 / テスト環境 */ }
+    const gr = await replyLine(cfg.channelAccessToken, replyToken, [
+      { type: "text", text: `受信しました: ${textIn.slice(0, 100)}` },
+    ]);
+    guaranteedReplyOk = gr.ok;
+    guaranteedReplyStatus = gr.status;
+    guaranteedReplyBody = gr.bodyText.slice(0, 500);
+  } catch (e: any) {
+    guaranteedReplyBody = `EXCEPTION: ${String(e?.message ?? e).slice(0, 400)}`;
+  }
+  console.log(
+    `[WH_GUARANTEED] result ok=${guaranteedReplyOk} status=${guaranteedReplyStatus} ` +
+    `body=${guaranteedReplyBody}`
+  );
 
-  // AI + push をバックグラウンドで実行（レスポンス返却後も継続）
-  const runAiAndPush = async (): Promise<void> => {
-    try {
-      const aiStart = Date.now();
-      const ai      = await runAiChat(tenantId, textIn, aiIp);
-      const aiMs    = Date.now() - aiStart;
-
-      // AI disabled by admin → do not push any message
-      if (ai.disabled) {
-        console.log(`[LINE_AI_SKIP] tenant=${tenantId} reason=ai_disabled`);
-        return;
-      }
-
-      const answer   = ai.ok ? ai.answer : FALLBACK_TEXT;
-      const quickReply = ai.ok ? buildQuickReplyFromActions(ai.suggestedActions) : undefined;
-      const messages = [{ type: "text" as const, text: answer, ...(quickReply ? { quickReply } : {}) }];
-
-      if (lineUserId) {
-        const pushRep = await pushLine(cfg.channelAccessToken, lineUserId, messages)
-          .catch(() => ({ ok: false, status: 0, bodyText: "push_exception" }));
-
-        // ログ: token/userId 丸出し禁止 — 先頭6文字のみ
-        console.log(
-          `[LINE_PUSH] tenant=${tenantId} uid=${lineUserId.slice(0, 6)}*** ` +
-          `aiMs=${aiMs}ms st=${pushRep.status} ok=${pushRep.ok} ` +
-          `body=${pushRep.bodyText.slice(0, 500)}`
-        );
-
-        // linelog: Workers KV に記録（直近50件・fire-and-forget）
-        if (apiBase) {
-          fetch(`${apiBase}/ai/linelog`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              tenantId,
-              type: "webhook_push",
-              uid: lineUserId.slice(0, 8),
-              pushStatus: pushRep.status,
-              pushBodySnippet: pushRep.bodyText.slice(0, 200),
-              aiMs,
-            }),
-          }).catch(() => null);
-        }
-
-        // 429 / 5xx → retry キューに積む（TTL 10分）
-        if (!pushRep.ok) {
-          const s = pushRep.status;
-          if (s === 429 || (s >= 500 && s < 600)) {
-            enqueuePushRetry(apiBase, tenantId, lineUserId, messages);
-          }
-        }
-      }
-    } catch (bgErr: any) {
-      console.error(`[LINE_PUSH_BG] error:`, String(bgErr?.message ?? bgErr));
-    }
-  };
-
-  waitUntilFn(runAiAndPush());
-
-  // LINE は 200 を期待する — AI+push は waitUntil で継続
+  // Return immediately with diagnostic info — the guaranteed reply was the main goal.
+  // Once we confirm replies work, we can remove this and restore AI/sales branching.
   return NextResponse.json(
     {
-      ok: true,
-      stamp: STAMP,
-      where,
-      tenantId,
-      source: cfg.source,
-      verified,
-      intent:    "ai",
-      hasUserId: !!lineUserId,
-      queued:    true,
-      eventCount: events.length,
+      ok: true, stamp: STAMP, where, tenantId, source: cfg.source,
+      verified, mode: "guaranteed_echo",
+      replied: guaranteedReplyOk,
+      replyStatus: guaranteedReplyStatus,
+      replyBody: guaranteedReplyBody.slice(0, 200),
+      resolvedBy, eventCount: events.length,
+      text: textIn.slice(0, 80),
+      lineUserId: lineUserId.slice(0, 8),
     },
     { headers: { "x-stamp": STAMP } }
   );
+
+  // NOTE: AI gate, sales flow, booking template, and AI push are all
+  // temporarily bypassed. The guaranteed-reply above handles everything.
+  // Once reply is confirmed working, restore the full flow.
 }
