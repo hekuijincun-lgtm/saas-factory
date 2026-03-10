@@ -407,6 +407,19 @@ export async function POST(req: Request) {
 
   const raw = await req.arrayBuffer();
 
+  // ── LINE verification early-exit ──────────────────────────────────────────
+  // LINE sends POST {"events":[],"destination":"..."} during webhook URL
+  // verification. This MUST return HTTP 200 regardless of tenantId resolution.
+  // Check immediately before any tenant logic runs.
+  try {
+    const earlyPeek = JSON.parse(new TextDecoder().decode(raw));
+    if (Array.isArray(earlyPeek?.events) && earlyPeek.events.length === 0) {
+      return new Response("OK", { status: 200 });
+    }
+  } catch {
+    // Not valid JSON — continue to normal flow (will fail later with parse error)
+  }
+
   // Resolve tenantId: query param → destination KV lookup → 400 error
   let tenantId: string | null = searchParams.get("tenantId") ?? null;
   let resolvedBy = tenantId ? "query_param" : "pending";
@@ -445,20 +458,8 @@ export async function POST(req: Request) {
     } catch { resolvedBy = "parse_error"; }
   }
 
-  // LINE verification: empty events array without tenantId → return 200 immediately
-  // LINE sends POST with {"events":[],"destination":"..."} during webhook URL verification.
-  // tenantId may not be resolvable yet (destination not mapped), but LINE requires HTTP 200.
+  // No default fallback — unknown destination returns 400
   if (!tenantId) {
-    let isVerification = false;
-    try {
-      const peek = JSON.parse(new TextDecoder().decode(raw));
-      isVerification = Array.isArray(peek?.events) && peek.events.length === 0;
-    } catch {}
-
-    if (isVerification) {
-      return new Response("OK", { status: 200 });
-    }
-
     const hint = "Open /admin/line-setup?tenantId=YOUR_TENANT and click Remap to fix destination mapping.";
     if (debugMode === "1") {
       return NextResponse.json({
