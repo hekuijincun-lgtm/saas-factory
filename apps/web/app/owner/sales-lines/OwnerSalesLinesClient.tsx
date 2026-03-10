@@ -42,13 +42,11 @@ const PURPOSE_LABELS: Record<string, string> = {
 // ── Component ───────────────────────────────────────────────────────────────
 
 export default function OwnerSalesLinesClient() {
-  // Resolve tenantId from URL query param, fallback to "default"
-  const [tenantId, setTenantId] = useState("default");
-  useEffect(() => {
-    const p = new URLSearchParams(window.location.search);
-    const tid = p.get("tenantId");
-    if (tid) setTenantId(tid);
-  }, []);
+  // Resolve tenantId from URL query param synchronously (lazy initializer)
+  const [tenantId] = useState(() => {
+    if (typeof window === "undefined") return "";
+    return new URLSearchParams(window.location.search).get("tenantId") || "";
+  });
 
   // --- State ---
   const [accounts, setAccounts] = useState<
@@ -108,6 +106,7 @@ export default function OwnerSalesLinesClient() {
   };
 
   useEffect(() => {
+    if (!tenantId) return; // wait until tenantId is resolved
     fetchAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId]);
@@ -201,6 +200,14 @@ export default function OwnerSalesLinesClient() {
     (a) => a.purpose === "sales" && a.status === "active" && !a.synthesized
   );
   const salesMap = ((routing.sales || {}) as Record<string, string>);
+
+  if (!tenantId) {
+    return (
+      <div className="max-w-5xl mx-auto py-12 text-center text-gray-500">
+        <p>tenantId が指定されていません。URLに ?tenantId=xxx を追加してください。</p>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-5xl mx-auto space-y-6">
