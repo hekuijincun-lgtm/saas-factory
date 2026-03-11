@@ -15,7 +15,11 @@ import {
   deleteLineAccount,
   fetchLineRouting,
   saveLineRouting,
+  fetchSalesAiConfig,
+  saveSalesAiConfig,
+  testSalesAi,
 } from "../../lib/adminApi";
+import type { SalesAiConfig, SalesAiIntent, SalesAiTestResponse } from "../../lib/adminApi";
 import { ApiClientError } from "../../lib/apiClient";
 
 // ── Constants ───────────────────────────────────────────────────────────────
@@ -81,6 +85,87 @@ export default function OwnerSalesLinesClient() {
   const [simText, setSimText] = useState("");
   const [simResult, setSimResult] = useState<any>(null);
   const [simLoading, setSimLoading] = useState(false);
+
+  // Sales AI Config
+  const [salesAiAccountId, setSalesAiAccountId] = useState<string | null>(null);
+  const [salesAiConfig, setSalesAiConfig] = useState<SalesAiConfig | null>(null);
+  const [salesAiLoading, setSalesAiLoading] = useState(false);
+  const [salesAiSaving, setSalesAiSaving] = useState(false);
+  const [salesAiTestText, setSalesAiTestText] = useState("");
+  const [salesAiTestResult, setSalesAiTestResult] = useState<SalesAiTestResponse | null>(null);
+  const [salesAiTestLoading, setSalesAiTestLoading] = useState(false);
+
+  const loadSalesAiConfig = async (accountId: string) => {
+    setSalesAiLoading(true);
+    setSalesAiAccountId(accountId);
+    setSalesAiTestResult(null);
+    try {
+      const res = await fetchSalesAiConfig(accountId, tenantId);
+      setSalesAiConfig(res.config);
+    } catch (e: any) {
+      setError(e?.message || "AI営業設定の取得に失敗しました");
+      setSalesAiConfig(null);
+    } finally {
+      setSalesAiLoading(false);
+    }
+  };
+
+  const handleSalesAiSave = async () => {
+    if (!salesAiAccountId || !salesAiConfig) return;
+    setSalesAiSaving(true);
+    try {
+      const res = await saveSalesAiConfig(salesAiAccountId, salesAiConfig, tenantId);
+      setSalesAiConfig(res.config);
+      showToast("AI営業設定を保存しました");
+    } catch (e: any) {
+      setError(e?.message || "AI営業設定の保存に失敗しました");
+    } finally {
+      setSalesAiSaving(false);
+    }
+  };
+
+  const handleSalesAiTest = async () => {
+    if (!salesAiAccountId || !salesAiTestText.trim()) return;
+    setSalesAiTestLoading(true);
+    try {
+      const res = await testSalesAi(salesAiAccountId, salesAiTestText.trim(), tenantId);
+      setSalesAiTestResult(res);
+    } catch (e: any) {
+      setSalesAiTestResult(null);
+      setError(e?.message || "テストに失敗しました");
+    } finally {
+      setSalesAiTestLoading(false);
+    }
+  };
+
+  const updateSalesAiField = <K extends keyof SalesAiConfig>(key: K, value: SalesAiConfig[K]) => {
+    if (!salesAiConfig) return;
+    setSalesAiConfig({ ...salesAiConfig, [key]: value });
+  };
+
+  const updateIntent = (index: number, patch: Partial<SalesAiIntent>) => {
+    if (!salesAiConfig) return;
+    const intents = [...salesAiConfig.intents];
+    intents[index] = { ...intents[index], ...patch };
+    setSalesAiConfig({ ...salesAiConfig, intents });
+  };
+
+  const addIntent = () => {
+    if (!salesAiConfig) return;
+    const newKey = `custom_${Date.now()}`;
+    setSalesAiConfig({
+      ...salesAiConfig,
+      intents: [...salesAiConfig.intents, {
+        key: newKey, label: "新規", keywords: [], reply: "", ctaLabel: "", ctaUrl: "",
+      }],
+    });
+  };
+
+  const removeIntent = (index: number) => {
+    if (!salesAiConfig) return;
+    const intents = salesAiConfig.intents.filter((_, i) => i !== index);
+    setSalesAiConfig({ ...salesAiConfig, intents });
+  };
 
   const fetchDiagnostics = async () => {
     if (!tenantId) return;
@@ -509,6 +594,14 @@ export default function OwnerSalesLinesClient() {
                             >
                               編集
                             </button>
+                            {acct.purpose === "sales" && acct.status === "active" && (
+                              <button
+                                onClick={() => loadSalesAiConfig(acct.id)}
+                                className="px-2.5 py-1 text-amber-600 hover:bg-amber-50 rounded text-xs font-medium"
+                              >
+                                AI営業設定
+                              </button>
+                            )}
                             {acct.status === "active" && (
                               <button
                                 onClick={() => handleDelete(acct.id)}
@@ -619,6 +712,286 @@ export default function OwnerSalesLinesClient() {
                 ))}
             </select>
           </div>
+        </div>
+      )}
+
+      {/* ─── Sales AI Config Panel ─── */}
+      {salesAiAccountId && salesAiConfig && (
+        <div className="bg-white rounded-xl shadow-sm border border-amber-200 overflow-hidden">
+          <div className="px-5 py-4 border-b border-amber-100 flex items-center justify-between">
+            <div>
+              <h2 className="text-sm font-semibold text-gray-900">
+                AI営業設定
+                <span className="ml-2 text-xs font-normal text-gray-500">
+                  ({accounts.find(a => a.id === salesAiAccountId)?.name || salesAiAccountId})
+                </span>
+              </h2>
+              <p className="text-xs text-gray-500 mt-0.5">
+                この設定は見込み客への営業LINE返信に使われます。テナント店舗のAI接客とは別の設定です。
+              </p>
+            </div>
+            <button
+              onClick={() => { setSalesAiAccountId(null); setSalesAiConfig(null); setSalesAiTestResult(null); }}
+              className="text-xs text-gray-400 hover:text-gray-600"
+            >
+              閉じる
+            </button>
+          </div>
+
+          {salesAiLoading ? (
+            <div className="p-5 text-sm text-gray-400 text-center">読み込み中...</div>
+          ) : (
+            <div className="p-5 space-y-5">
+              {/* Enabled toggle */}
+              <div className="flex items-center gap-3">
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={salesAiConfig.enabled}
+                    onChange={(e) => updateSalesAiField("enabled", e.target.checked)}
+                    className="sr-only peer"
+                  />
+                  <div className="w-9 h-5 bg-gray-200 peer-focus:ring-2 peer-focus:ring-amber-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-amber-500" />
+                </label>
+                <span className="text-sm font-medium text-gray-700">AI営業を有効化</span>
+              </div>
+
+              {/* Basic settings */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">トーン</label>
+                  <select
+                    value={salesAiConfig.tone}
+                    onChange={(e) => updateSalesAiField("tone", e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none"
+                  >
+                    <option value="friendly">フレンドリー</option>
+                    <option value="polite">丁寧・ビジネス</option>
+                    <option value="casual">カジュアル</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">ゴール</label>
+                  <select
+                    value={salesAiConfig.goal}
+                    onChange={(e) => updateSalesAiField("goal", e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none"
+                  >
+                    <option value="demo">デモ予約</option>
+                    <option value="document">資料請求</option>
+                    <option value="consultation">導入相談</option>
+                    <option value="lp">LP遷移</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Welcome message */}
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">
+                  ウェルカムメッセージ
+                  <span className="ml-1 font-normal text-gray-400">（初回 or intent不一致時）</span>
+                </label>
+                <textarea
+                  value={salesAiConfig.welcomeMessage}
+                  onChange={(e) => updateSalesAiField("welcomeMessage", e.target.value)}
+                  rows={4}
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none"
+                />
+              </div>
+
+              {/* Fallback message */}
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">
+                  フォールバックメッセージ
+                  <span className="ml-1 font-normal text-gray-400">（intent応答が空の場合）</span>
+                </label>
+                <textarea
+                  value={salesAiConfig.fallbackMessage}
+                  onChange={(e) => updateSalesAiField("fallbackMessage", e.target.value)}
+                  rows={3}
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none"
+                />
+              </div>
+
+              {/* Handoff message */}
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">
+                  ハンドオフメッセージ
+                  <span className="ml-1 font-normal text-gray-400">（人対応引き継ぎ時）</span>
+                </label>
+                <input
+                  value={salesAiConfig.handoffMessage}
+                  onChange={(e) => updateSalesAiField("handoffMessage", e.target.value)}
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none"
+                />
+              </div>
+
+              {/* CTA */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">CTA ラベル</label>
+                  <input
+                    value={salesAiConfig.cta?.label || ""}
+                    onChange={(e) => updateSalesAiField("cta", { ...salesAiConfig.cta, label: e.target.value })}
+                    placeholder="例: 無料デモを予約する"
+                    className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">CTA URL</label>
+                  <input
+                    value={salesAiConfig.cta?.url || ""}
+                    onChange={(e) => updateSalesAiField("cta", { ...salesAiConfig.cta, url: e.target.value })}
+                    placeholder="https://..."
+                    className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none"
+                  />
+                </div>
+              </div>
+
+              {/* ─── Intent list ─── */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-xs font-medium text-gray-600">キーワード別自動応答</label>
+                  <button
+                    onClick={addIntent}
+                    className="text-xs text-amber-600 hover:text-amber-700 font-medium"
+                  >
+                    + 追加
+                  </button>
+                </div>
+                <div className="space-y-3">
+                  {salesAiConfig.intents.map((intent, idx) => (
+                    <div key={intent.key} className="border border-gray-200 rounded-lg p-3 space-y-2">
+                      <div className="flex items-center gap-2">
+                        <input
+                          value={intent.label}
+                          onChange={(e) => updateIntent(idx, { label: e.target.value })}
+                          className="flex-1 px-2 py-1 text-sm font-medium border border-gray-200 rounded focus:ring-1 focus:ring-amber-500 outline-none"
+                          placeholder="ラベル名"
+                        />
+                        <input
+                          value={intent.key}
+                          onChange={(e) => updateIntent(idx, { key: e.target.value })}
+                          className="w-28 px-2 py-1 text-xs font-mono border border-gray-200 rounded focus:ring-1 focus:ring-amber-500 outline-none"
+                          placeholder="key"
+                        />
+                        <button
+                          onClick={() => removeIntent(idx)}
+                          className="text-xs text-red-500 hover:text-red-700"
+                        >
+                          削除
+                        </button>
+                      </div>
+                      <div>
+                        <label className="text-xs text-gray-500">キーワード（カンマ区切り）</label>
+                        <input
+                          value={intent.keywords.join(", ")}
+                          onChange={(e) => updateIntent(idx, {
+                            keywords: e.target.value.split(",").map(s => s.trim()).filter(Boolean),
+                          })}
+                          className="w-full px-2 py-1 text-xs border border-gray-200 rounded focus:ring-1 focus:ring-amber-500 outline-none"
+                          placeholder="料金, 費用, いくら"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs text-gray-500">返信テキスト</label>
+                        <textarea
+                          value={intent.reply}
+                          onChange={(e) => updateIntent(idx, { reply: e.target.value })}
+                          rows={3}
+                          className="w-full px-2 py-1 text-xs border border-gray-200 rounded focus:ring-1 focus:ring-amber-500 outline-none"
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="text-xs text-gray-500">CTA ラベル</label>
+                          <input
+                            value={intent.ctaLabel || ""}
+                            onChange={(e) => updateIntent(idx, { ctaLabel: e.target.value })}
+                            className="w-full px-2 py-1 text-xs border border-gray-200 rounded focus:ring-1 focus:ring-amber-500 outline-none"
+                            placeholder="任意"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-xs text-gray-500">CTA URL</label>
+                          <input
+                            value={intent.ctaUrl || ""}
+                            onChange={(e) => updateIntent(idx, { ctaUrl: e.target.value })}
+                            className="w-full px-2 py-1 text-xs border border-gray-200 rounded focus:ring-1 focus:ring-amber-500 outline-none"
+                            placeholder="https://..."
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Save button */}
+              <div className="flex gap-3 pt-2 border-t border-gray-100">
+                <button
+                  onClick={handleSalesAiSave}
+                  disabled={salesAiSaving}
+                  className="px-5 py-2 bg-amber-600 text-white text-sm font-medium rounded-lg hover:bg-amber-700 disabled:opacity-50 transition-colors"
+                >
+                  {salesAiSaving ? "保存中..." : "AI営業設定を保存"}
+                </button>
+              </div>
+
+              {/* ─── Test UI ─── */}
+              <div className="border-t border-gray-100 pt-4">
+                <div className="text-xs font-medium text-gray-700 mb-2">
+                  テスト送信
+                  <span className="ml-1 font-normal text-gray-400">（実際のLINE送信は行いません）</span>
+                </div>
+                <div className="flex gap-2">
+                  <input
+                    value={salesAiTestText}
+                    onChange={(e) => setSalesAiTestText(e.target.value)}
+                    placeholder="テストメッセージ（例: 料金を教えて）"
+                    className="flex-1 px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none"
+                    onKeyDown={(e) => e.key === "Enter" && handleSalesAiTest()}
+                  />
+                  <button
+                    onClick={handleSalesAiTest}
+                    disabled={salesAiTestLoading || !salesAiTestText.trim()}
+                    className="px-3 py-1.5 bg-amber-600 text-white text-xs font-medium rounded-lg hover:bg-amber-700 disabled:opacity-50 transition-colors"
+                  >
+                    {salesAiTestLoading ? "..." : "テスト"}
+                  </button>
+                </div>
+                {salesAiTestResult && (
+                  <div className="mt-2 p-3 bg-gray-50 rounded-lg text-xs space-y-1">
+                    <div>
+                      <span className="text-gray-500">ブランチ:</span>{" "}
+                      <span className="text-amber-700 font-semibold">{salesAiTestResult.branch}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-500">有効:</span> {String(salesAiTestResult.enabled)}
+                    </div>
+                    {salesAiTestResult.matchedIntent && (
+                      <div>
+                        <span className="text-gray-500">マッチ:</span>{" "}
+                        {salesAiTestResult.matchedIntent.label} ({salesAiTestResult.matchedIntent.key})
+                      </div>
+                    )}
+                    {salesAiTestResult.cta && (
+                      <div>
+                        <span className="text-gray-500">CTA:</span>{" "}
+                        {salesAiTestResult.cta.label} → {salesAiTestResult.cta.url}
+                      </div>
+                    )}
+                    <div className="pt-1 border-t border-gray-200">
+                      <span className="text-gray-500">返信:</span>
+                      <pre className="mt-1 whitespace-pre-wrap text-gray-700 bg-white p-2 rounded border border-gray-200">
+                        {salesAiTestResult.reply}
+                      </pre>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       )}
 

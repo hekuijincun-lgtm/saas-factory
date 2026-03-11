@@ -340,4 +340,205 @@ export function registerOwnerRoutes(app: Hono<{ Bindings: Record<string, unknown
       return c.json({ ok: false, error: "Internal error" }, 500);
     }
   });
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // ─── Sales AI Config (per LINE account) ─────────────────────────────────
+  // ══════════════════════════════════════════════════════════════════════════
+  //
+  // KV key: owner:sales-ai:{accountId}
+  // Completely separated from tenant AI接客 (ai:settings:{tenantId}).
+  //
+
+  /** Default sales AI config — used when no config exists yet */
+  const DEFAULT_SALES_AI_CONFIG = {
+    enabled: false,
+    welcomeMessage: "ご連絡ありがとうございます！\n気になる内容をそのまま送ってください。\n『料金』『機能』『デモ』『導入相談』\nと送っていただければ、すぐにご案内します😊",
+    fallbackMessage: "ありがとうございます。\n担当者より改めてご連絡いたします。\n\nお急ぎの場合は「導入相談」とお送りください。",
+    tone: "friendly" as string,
+    goal: "demo" as string,
+    cta: { label: "", url: "" },
+    qualificationQuestions: [] as string[],
+    handoffMessage: "担当者よりご連絡します。少々お待ちください。",
+    intents: [
+      {
+        key: "pricing",
+        label: "料金",
+        keywords: ["料金", "価格", "値段", "プラン", "月額", "いくら", "費用", "コスト", "pricing", "price"],
+        reply: "料金についてのご質問ありがとうございます！\n\nLumiBookの料金プランは以下の通りです：\n\n🔹 Starter — ¥3,980/月\n　個人サロン向け（スタッフ2名、メニュー10件）\n\n🔹 Pro — ¥9,800/月\n　成長中サロン向け（無制限、AI接客、リピート促進）\n\n🔹 Enterprise — 要相談\n　複数店舗・法人向け（専任サポート、カスタム機能）\n\n※ 初期費用0円、最低契約期間なし、いつでも解約OK\n\n詳しいご案内やお見積もりをご希望でしたら「相談」とお送りください😊",
+        ctaLabel: "",
+        ctaUrl: "",
+      },
+      {
+        key: "features",
+        label: "機能",
+        keywords: ["機能", "できること", "特徴", "何ができる", "feature", "features"],
+        reply: "LumiBookの主な機能をご紹介します！\n\n📅 予約受付・管理\n　LINE経由の自動予約、空き枠リアルタイム表示\n\n💬 LINE自動応答\n　AI接客で24時間お客様対応\n\n📊 顧客管理・KPI\n　リピート率・来店間隔を自動計算\n\n🔔 リマインド通知\n　予約前日にLINE自動通知\n\n🎨 メニュー・スタッフ管理\n　画像付きメニュー、スタッフ別スケジュール\n\nデモをご覧になりたい場合は「デモ」とお送りください😊",
+        ctaLabel: "",
+        ctaUrl: "",
+      },
+      {
+        key: "demo",
+        label: "デモ",
+        keywords: ["デモ", "demo", "お試し", "試し", "トライアル", "trial"],
+        reply: "デモのご希望ありがとうございます！\n\nLumiBookの操作感を実際にお試しいただけます。\n以下の方法でご案内可能です：\n\n1️⃣ オンラインデモ（画面共有、約15分）\n2️⃣ テスト環境のご案内（ご自身で操作可能）\n\nご都合の良い日時や、ご希望の方法があればこちらにお送りください。\n担当から折り返しご連絡いたします😊",
+        ctaLabel: "",
+        ctaUrl: "",
+      },
+      {
+        key: "consultation",
+        label: "導入相談",
+        keywords: ["導入", "相談", "問い合わせ", "問合せ", "導入相談", "consultation", "inquiry"],
+        reply: "導入相談のご連絡ありがとうございます！\n\n現在の課題やご状況をお聞かせいただければ、\n最適なプランや活用方法をご提案いたします。\n\n例えば：\n・現在の予約管理方法（電話？紙？他ツール？）\n・スタッフ人数、メニュー数\n・LINEの活用状況\n\n何でもお気軽にどうぞ！担当から詳しくご案内いたします😊",
+        ctaLabel: "",
+        ctaUrl: "",
+      },
+    ],
+    version: 1,
+    updatedAt: "",
+  };
+
+  // ── GET /owner/sales-ai/:accountId ────────────────────────────────────
+  app.get("/owner/sales-ai/:accountId", async (c) => {
+    const env = c.env as any;
+    const kv = env.SAAS_FACTORY;
+    if (!kv) return c.json({ ok: false, error: "Internal error" }, 500);
+
+    const accountId = c.req.param("accountId");
+    if (!accountId) return c.json({ ok: false, error: "missing accountId" }, 400);
+
+    try {
+      const raw = await kv.get(`owner:sales-ai:${accountId}`, "json");
+      const config = raw
+        ? { ...DEFAULT_SALES_AI_CONFIG, ...(raw as any) }
+        : { ...DEFAULT_SALES_AI_CONFIG };
+      return c.json({ ok: true, accountId, config });
+    } catch (e: any) {
+      console.error(`[owner/sales-ai GET] ${e?.message}`);
+      return c.json({ ok: false, error: "Internal error" }, 500);
+    }
+  });
+
+  // ── PUT /owner/sales-ai/:accountId ────────────────────────────────────
+  app.put("/owner/sales-ai/:accountId", async (c) => {
+    const env = c.env as any;
+    const kv = env.SAAS_FACTORY;
+    if (!kv) return c.json({ ok: false, error: "Internal error" }, 500);
+
+    const accountId = c.req.param("accountId");
+    if (!accountId) return c.json({ ok: false, error: "missing accountId" }, 400);
+
+    const body = await c.req.json().catch(() => null);
+    if (!body || typeof body !== "object") {
+      return c.json({ ok: false, error: "invalid body" }, 400);
+    }
+
+    try {
+      // Merge with existing config (don't clobber unset fields)
+      const existing = (await kv.get(`owner:sales-ai:${accountId}`, "json")) as any;
+      const merged = {
+        ...DEFAULT_SALES_AI_CONFIG,
+        ...(existing ?? {}),
+        ...(body as any),
+        updatedAt: new Date().toISOString(),
+      };
+
+      // Validate intents array
+      if (merged.intents && Array.isArray(merged.intents)) {
+        for (const intent of merged.intents) {
+          if (!intent.key || !intent.label) {
+            return c.json({ ok: false, error: "Each intent must have key and label" }, 400);
+          }
+          if (!Array.isArray(intent.keywords)) {
+            return c.json({ ok: false, error: `Intent "${intent.key}" must have keywords array` }, 400);
+          }
+        }
+      }
+
+      await kv.put(`owner:sales-ai:${accountId}`, JSON.stringify(merged));
+      console.log(`[owner/sales-ai PUT] saved accountId=${accountId}`);
+      return c.json({ ok: true, accountId, config: merged });
+    } catch (e: any) {
+      console.error(`[owner/sales-ai PUT] ${e?.message}`);
+      return c.json({ ok: false, error: "Internal error" }, 500);
+    }
+  });
+
+  // ── POST /owner/sales-ai/:accountId/test ──────────────────────────────
+  // Dry-run: resolves intent + returns what would be replied. No LINE API calls.
+  app.post("/owner/sales-ai/:accountId/test", async (c) => {
+    const env = c.env as any;
+    const kv = env.SAAS_FACTORY;
+    if (!kv) return c.json({ ok: false, error: "Internal error" }, 500);
+
+    const accountId = c.req.param("accountId");
+    if (!accountId) return c.json({ ok: false, error: "missing accountId" }, 400);
+
+    const body = await c.req.json<{ message?: string }>().catch(() => ({}));
+    const message = String(body?.message ?? "").trim();
+    if (!message) return c.json({ ok: false, error: "message is required" }, 400);
+
+    try {
+      const raw = await kv.get(`owner:sales-ai:${accountId}`, "json");
+      const config = raw
+        ? { ...DEFAULT_SALES_AI_CONFIG, ...(raw as any) }
+        : { ...DEFAULT_SALES_AI_CONFIG };
+
+      if (!config.enabled) {
+        return c.json({
+          ok: true, accountId, message, enabled: false,
+          matchedIntent: null,
+          reply: "(AI営業が無効のため返信されません)",
+          branch: "disabled",
+        });
+      }
+
+      // Normalize input
+      const normalized = message
+        .normalize("NFKC")
+        .replace(/[\s\u200B-\u200D\uFEFF]/g, "")
+        .toLowerCase();
+
+      // Intent matching
+      let matchedIntent: any = null;
+      for (const intent of config.intents ?? []) {
+        if (Array.isArray(intent.keywords) && intent.keywords.some((k: string) =>
+          normalized.includes(k.toLowerCase())
+        )) {
+          matchedIntent = intent;
+          break;
+        }
+      }
+
+      let reply: string;
+      let branch: string;
+      if (matchedIntent) {
+        reply = matchedIntent.reply || config.fallbackMessage;
+        branch = `sales_${matchedIntent.key}`;
+      } else {
+        // First message or unrecognized → welcomeMessage
+        reply = config.welcomeMessage || config.fallbackMessage;
+        branch = "sales_welcome";
+      }
+
+      // Append CTA if configured
+      let ctaInfo: any = null;
+      const cta = matchedIntent?.ctaUrl ? matchedIntent : (config.cta?.url ? config.cta : null);
+      if (cta?.url) {
+        ctaInfo = { label: cta.ctaLabel || cta.label || "詳しくはこちら", url: cta.ctaUrl || cta.url };
+      }
+
+      return c.json({
+        ok: true, accountId, message, enabled: true,
+        matchedIntent: matchedIntent ? { key: matchedIntent.key, label: matchedIntent.label } : null,
+        reply,
+        branch,
+        cta: ctaInfo,
+        tone: config.tone,
+        goal: config.goal,
+      });
+    } catch (e: any) {
+      console.error(`[owner/sales-ai test] ${e?.message}`);
+      return c.json({ ok: false, error: "Internal error" }, 500);
+    }
+  });
 }

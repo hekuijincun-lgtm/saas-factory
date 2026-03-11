@@ -569,3 +569,87 @@ export async function updateLeadStatus(
   }
 }
 
+// ============================================================================
+// Sales AI Config (Owner — per LINE account)
+// ============================================================================
+
+export interface SalesAiIntent {
+  key: string;
+  label: string;
+  keywords: string[];
+  reply: string;
+  ctaLabel?: string;
+  ctaUrl?: string;
+}
+
+export interface SalesAiConfig {
+  enabled: boolean;
+  welcomeMessage: string;
+  fallbackMessage: string;
+  tone: string;
+  goal: string;
+  cta: { label: string; url: string };
+  qualificationQuestions: string[];
+  handoffMessage: string;
+  intents: SalesAiIntent[];
+  version: number;
+  updatedAt: string;
+}
+
+export interface SalesAiConfigResponse {
+  ok: boolean;
+  accountId: string;
+  config: SalesAiConfig;
+}
+
+export interface SalesAiTestResponse {
+  ok: boolean;
+  accountId: string;
+  message: string;
+  enabled: boolean;
+  matchedIntent: { key: string; label: string } | null;
+  reply: string;
+  branch: string;
+  cta?: { label: string; url: string } | null;
+  tone?: string;
+  goal?: string;
+}
+
+export async function fetchSalesAiConfig(
+  accountId: string,
+  tenantId?: string,
+): Promise<SalesAiConfigResponse> {
+  try {
+    return await apiGet<SalesAiConfigResponse>(`/owner/sales-ai/${accountId}`, { tenantId });
+  } catch (error) {
+    if (error instanceof ApiClientError) throw error;
+    throw new ApiClientError('Failed to fetch sales AI config');
+  }
+}
+
+export async function saveSalesAiConfig(
+  accountId: string,
+  config: Partial<SalesAiConfig>,
+  tenantId?: string,
+): Promise<SalesAiConfigResponse> {
+  try {
+    return await apiPut<SalesAiConfigResponse>(`/owner/sales-ai/${accountId}`, config, { tenantId });
+  } catch (error) {
+    if (error instanceof ApiClientError) throw error;
+    throw new ApiClientError('Failed to save sales AI config');
+  }
+}
+
+export async function testSalesAi(
+  accountId: string,
+  message: string,
+  tenantId?: string,
+): Promise<SalesAiTestResponse> {
+  try {
+    return await apiPost<SalesAiTestResponse>(`/owner/sales-ai/${accountId}/test`, { message }, { tenantId });
+  } catch (error) {
+    if (error instanceof ApiClientError) throw error;
+    throw new ApiClientError('Failed to test sales AI');
+  }
+}
+

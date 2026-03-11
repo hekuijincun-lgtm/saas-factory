@@ -6385,6 +6385,22 @@ function resolveBookingUrl(storeSettings: any, env: any, tenantId: string): stri
     || (env?.WEB_BASE ? `${env.WEB_BASE}/booking?tenantId=${tenantId}` : "");
 }
 
+// GET /sales-ai/config — lightweight sales AI config read (no auth, single KV read)
+// Used by LINE webhook to load per-account sales AI configuration.
+// Completely separate from tenant AI接客 (ai:settings:{tenantId}).
+app.get("/sales-ai/config", async (c) => {
+  const accountId = (c.req.query("accountId") ?? "").trim();
+  if (!accountId) return c.json({ ok: false, error: "missing accountId" }, 400);
+  const kv = (c.env as any)?.SAAS_FACTORY;
+  if (!kv) return c.json({ ok: true, accountId, config: null });
+  try {
+    const raw = await kv.get(`owner:sales-ai:${accountId}`, "json");
+    return c.json({ ok: true, accountId, config: raw ?? null });
+  } catch {
+    return c.json({ ok: true, accountId, config: null });
+  }
+});
+
 // GET /ai/enabled — lightweight AI enabled check (no auth, single KV read)
 app.get("/ai/enabled", async (c) => {
   const tenantId = getTenantId(c, null);

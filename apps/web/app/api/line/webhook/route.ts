@@ -4,7 +4,7 @@ import { getRequestContext } from "@cloudflare/next-on-pages";
 export const runtime = "edge";
 
 // ─── version / stamps ────────────────────────────────────────────────────────
-const STAMP = "LINE_WEBHOOK_V19_20260311_AI_DEBUG";
+const STAMP = "LINE_WEBHOOK_V20_20260311_SALES_AI_CONFIG";
 const where  = "api/line/webhook";
 
 type LinePurpose = "booking" | "sales";
@@ -130,18 +130,103 @@ function salesIntentToLeadLabel(intent: string | null): string {
   }
 }
 
-/** Handle a text message on a SALES-purpose LINE account */
-async function handleSalesEvent(ctx: HandlerContext): Promise<HandlerResult> {
-  const { textIn, lineUserId } = ctx;
+// ─── Sales AI config loader ──────────────────────────────────────────────
+// Reads from GET /sales-ai/config?accountId= (no auth, single KV read).
+// Completely separate from tenant AI接客 config.
+async function loadSalesAiConfig(
+  apiBase: string,
+  accountId: string
+): Promise<any | null> {
+  if (!apiBase || !accountId) return null;
+  try {
+    const url = `${apiBase}/sales-ai/config?accountId=${encodeURIComponent(accountId)}`;
+    const r = await fetch(url, { headers: { Accept: "application/json" } });
+    if (!r.ok) {
+      console.log(`[SALES_AI_CFG] fetch failed status=${r.status} accountId=${accountId}`);
+      return null;
+    }
+    const d = (await r.json()) as any;
+    return d?.config ?? null;
+  } catch (e: any) {
+    console.log(`[SALES_AI_CFG] error: ${String(e?.message ?? e).slice(0, 80)}`);
+    return null;
+  }
+}
 
-  // Sales intent detection (no booking template — even "予約" is treated as sales context)
+/** Extract accountId from credSource (e.g. "lineAccount:abc123" → "abc123") */
+function extractAccountIdFromCredSource(credSource?: string): string | null {
+  if (!credSource) return null;
+  // Format: "lineAccount:{id}" or "lineAccount_purpose:{id}"
+  const m = credSource.match(/^lineAccount(?:_purpose)?:(.+)$/);
+  return m?.[1] ?? null;
+}
+
+/** Resolve sales intent from config intents */
+function resolveSalesIntent(
+  textIn: string,
+  intents: any[]
+): { intent: any; key: string; label: string } | null {
+  const normalized = textIn
+    .normalize("NFKC")
+    .replace(/[\s\u200B-\u200D\uFEFF]/g, "")
+    .toLowerCase();
+  for (const intent of intents) {
+    if (Array.isArray(intent.keywords) && intent.keywords.some((k: string) =>
+      normalized.includes(k.toLowerCase())
+    )) {
+      return { intent, key: intent.key, label: intent.label };
+    }
+  }
+  return null;
+}
+
+/** Build sales reply text from config + matched intent */
+function buildSalesReply(
+  config: any,
+  matched: { intent: any; key: string } | null
+): string {
+  if (matched?.intent?.reply) return matched.intent.reply;
+  return config?.welcomeMessage || config?.fallbackMessage || getSalesReplyText(null);
+}
+
+/** Handle a text message on a SALES-purpose LINE account.
+ *  Loads per-account sales AI config from KV; falls back to hardcoded defaults. */
+async function handleSalesEvent(ctx: HandlerContext): Promise<HandlerResult> {
+  const { textIn, lineUserId, cfg, apiBase } = ctx;
+
+  // 1. Try to load per-account sales AI config
+  const accountId = extractAccountIdFromCredSource(cfg.credSource);
+  let salesConfig: any = null;
+  if (accountId && apiBase) {
+    salesConfig = await loadSalesAiConfig(apiBase, accountId);
+    console.log(`[SALES_AI] loaded config accountId=${accountId} enabled=${salesConfig?.enabled}`);
+  }
+
+  // 2. If config exists and is enabled, use config-based resolution
+  if (salesConfig?.enabled && Array.isArray(salesConfig.intents)) {
+    const matched = resolveSalesIntent(textIn, salesConfig.intents);
+    const reply = buildSalesReply(salesConfig, matched);
+    const branch = matched ? `sales_${matched.key}` : "sales_welcome";
+    const leadLabel = matched ? salesIntentToLeadLabel(matched.key) : "info_request";
+
+    console.log(`[SALES_AI] config-based branch=${branch} matchKey=${matched?.key ?? "none"} replyLen=${reply.length}`);
+
+    return {
+      branch,
+      salesIntent: matched?.key ?? null,
+      replyMessages: [{ type: "text", text: reply }],
+      leadLabel,
+      leadCapture: true,
+    };
+  }
+
+  // 3. Fallback: hardcoded intent detection (backward compat when no config)
   const salesIntent = detectSalesIntent(textIn);
   const branch = salesIntent ? `sales_${salesIntent}` : "sales_generic";
-
   const replyMessages = [{ type: "text", text: getSalesReplyText(salesIntent) }];
-
-  // Lead capture label
   const leadLabel = salesIntentToLeadLabel(salesIntent);
+
+  console.log(`[SALES_AI] fallback branch=${branch} intent=${salesIntent ?? "none"}`);
 
   return { branch, salesIntent, replyMessages, leadLabel, leadCapture: true };
 }
