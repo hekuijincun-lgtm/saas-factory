@@ -4,7 +4,7 @@ import { getRequestContext } from "@cloudflare/next-on-pages";
 export const runtime = "edge";
 
 // ─── version / stamps ────────────────────────────────────────────────────────
-const STAMP = "LINE_WEBHOOK_V18E_20260311_PUSH_FALLBACK";
+const STAMP = "LINE_WEBHOOK_V18F_20260311_AI_ALL";
 const where  = "api/line/webhook";
 
 type LinePurpose = "booking" | "sales";
@@ -150,12 +150,10 @@ async function handleSalesEvent(ctx: HandlerContext): Promise<HandlerResult> {
 // ─── BOOKING handler ────────────────────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// Booking intent: minimal keyword set — everything else goes to AI接客
 const BOOKING_INTENT_KW = [
-  "予約", "よやく", "予約したい", "予約できる", "予約した", "予約を開始",
-  "booking", "reserve",
-  "空き", "あき", "空き状況", "空いてる", "空いてますか",
-  "最短", "明日行ける", "今日行ける", "来週行ける", "当日",
-  "いつ空いてる",
+  "予約", "よやく", "予約したい", "予約する", "予約できますか",
+  "空き", "空いてる",
 ] as const;
 
 function detectBookingIntent(textIn: string): boolean {
