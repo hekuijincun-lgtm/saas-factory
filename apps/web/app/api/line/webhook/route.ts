@@ -4,7 +4,7 @@ import { getRequestContext } from "@cloudflare/next-on-pages";
 export const runtime = "edge";
 
 // ─── version / stamps ────────────────────────────────────────────────────────
-const STAMP = "LINE_WEBHOOK_V18F_20260311_AI_ALL";
+const STAMP = "LINE_WEBHOOK_V19_20260311_AI_DEBUG";
 const where  = "api/line/webhook";
 
 type LinePurpose = "booking" | "sales";
@@ -213,10 +213,12 @@ async function handleBookingEvent(ctx: HandlerContext): Promise<HandlerResult> {
 
   // 2. AI接客 — call /ai/chat with 8s timeout (replyToken expires at ~30s)
   const aiIp = lineUserId ? `line:${lineUserId.slice(0, 12)}` : "line";
+  console.log(`[AI_DEBUG] checkAiEnabled start tenant=${tenantId} apiBase=${apiBase ? "yes" : "no"}`);
   const aiEnabled = await checkAiEnabled(tenantId);
+  console.log(`[AI_DEBUG] aiEnabled=${aiEnabled} tenant=${tenantId}`);
 
   if (aiEnabled && apiBase) {
-    console.log(`[BOOKING_AI] calling runAiChat tenant=${tenantId} text="${textIn.slice(0, 40)}"`);
+    console.log(`[AI_DEBUG] calling_ai tenant=${tenantId} text="${textIn.slice(0, 40)}"`);
     const AI_TIMEOUT_MS = 8000;
     type AiResult = { ok: boolean; answer: string; suggestedActions: any[]; disabled?: boolean };
     const EMPTY_AI: AiResult = { ok: false, answer: "", suggestedActions: [] };
@@ -244,7 +246,7 @@ async function handleBookingEvent(ctx: HandlerContext): Promise<HandlerResult> {
         const qr = buildQuickReplyFromActions(ai.suggestedActions);
         if (qr) msg.quickReply = qr;
       }
-      console.log(`[BOOKING_AI] success answerLen=${answer.length} actions=${ai.suggestedActions.length}`);
+      console.log(`[AI_DEBUG] ai_response_ok answerLen=${answer.length} actions=${ai.suggestedActions.length} answer="${answer.slice(0, 80)}"`);
       return {
         branch: "booking_ai",
         salesIntent: null,
@@ -254,7 +256,7 @@ async function handleBookingEvent(ctx: HandlerContext): Promise<HandlerResult> {
       };
     }
 
-    console.log(`[BOOKING_AI] failed ok=${ai.ok} disabled=${ai.disabled} answerLen=${ai.answer.length}`);
+    console.log(`[AI_DEBUG] ai_response_fail ok=${ai.ok} disabled=${ai.disabled} answerLen=${ai.answer.length}`);
   }
 
   // 3. Fallback — friendly store greeting with booking link
@@ -293,16 +295,24 @@ async function checkAiEnabled(tenantId: string): Promise<boolean> {
   const apiBase = (
     process.env.API_BASE ?? process.env.NEXT_PUBLIC_API_BASE ?? ""
   ).replace(/\/+$/, "");
-  if (!apiBase) return false;
+  if (!apiBase) {
+    console.log(`[AI_DEBUG] checkAiEnabled: no apiBase → false`);
+    return false;
+  }
   try {
-    const r = await fetch(
-      `${apiBase}/ai/enabled?tenantId=${encodeURIComponent(tenantId)}`,
-      { headers: { Accept: "application/json" } }
-    );
-    if (!r.ok) return false;
+    const url = `${apiBase}/ai/enabled?tenantId=${encodeURIComponent(tenantId)}`;
+    console.log(`[AI_DEBUG] checkAiEnabled: fetching ${url}`);
+    const r = await fetch(url, { headers: { Accept: "application/json" } });
+    if (!r.ok) {
+      console.log(`[AI_DEBUG] checkAiEnabled: status=${r.status} → false`);
+      return false;
+    }
     const d = (await r.json()) as any;
-    return d?.enabled === true;
-  } catch {
+    const enabled = d?.enabled === true;
+    console.log(`[AI_DEBUG] checkAiEnabled: response enabled=${enabled}`);
+    return enabled;
+  } catch (e: any) {
+    console.log(`[AI_DEBUG] checkAiEnabled: exception ${String(e?.message ?? e).slice(0, 80)}`);
     return false;
   }
 }
@@ -1215,7 +1225,7 @@ export async function POST(req: Request) {
     );
   }
 
-  // ── Persist last result to KV (AWAITED — fire-and-forget was silently lost) ─
+  // ── Persist last result to KV (fire-and-forget with 3s timeout — must not block 200) ─
   const lastResultPayload = {
     ts: new Date().toISOString(),
     stamp: STAMP,
@@ -1247,48 +1257,70 @@ export async function POST(req: Request) {
     pushFallbackUsed,
     pushFallbackOk,
   };
-  let lastResultSaved = false;
-  if (webhookLogApiBase && internalToken) {
-    try {
-      const lr = await fetch(
-        `${webhookLogApiBase}/internal/line/last-result?tenantId=${encodeURIComponent(tenantId)}`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-internal-token": internalToken,
-          },
-          body: JSON.stringify({ result: lastResultPayload }),
-        }
-      );
-      lastResultSaved = lr.ok;
-      console.log(`[WH_LAST_RESULT] saved ok=${lr.ok} status=${lr.status}`);
-    } catch (e: any) {
-      console.log(`[WH_LAST_RESULT] save failed: ${String(e?.message ?? e).slice(0, 100)}`);
-    }
-  }
 
-  // ── Response ──────────────────────────────────────────────────────────────
-  return NextResponse.json(
+  // Return 200 to LINE FIRST, then save lastResult via waitUntil (non-blocking)
+  const response = NextResponse.json(
     {
       ok: true, stamp: STAMP, where, tenantId, source: cfg.source,
-      verified, mode: "purpose_split_v18d",
+      verified, mode: "v18g_fast_200",
       purpose: cfg.purpose,
       resolvedPurposeBy: cfg.resolvedPurposeBy,
       credSource: cfg.credSource ?? "unknown",
       branch: result.branch,
       salesIntent: result.salesIntent,
-      replied: replyOk,
+      replied: replyOk || pushFallbackOk,
+      replyOk,
       replyStatus,
       replyBody: replyBody.slice(0, 200),
+      pushFallbackUsed,
+      pushFallbackOk,
       leadCaptureAttempted,
       resolvedBy, eventCount: events.length,
       text: textIn.slice(0, 80),
       lineUserId: lineUserId.slice(0, 8),
-      pushFallbackUsed,
-      pushFallbackOk,
-      lastResultSaved,
     },
     { headers: { "x-stamp": STAMP } }
   );
+
+  // Save lastResult after response — use waitUntil if available, else fire-and-forget with AbortController timeout
+  if (webhookLogApiBase && internalToken) {
+    const saveLastResult = async () => {
+      const ac = new AbortController();
+      const tid = setTimeout(() => ac.abort(), 3000);
+      try {
+        const lr = await fetch(
+          `${webhookLogApiBase}/internal/line/last-result?tenantId=${encodeURIComponent(tenantId)}`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "x-internal-token": internalToken,
+            },
+            body: JSON.stringify({ result: lastResultPayload }),
+            signal: ac.signal,
+          }
+        );
+        console.log(`[WH_LAST_RESULT] saved ok=${lr.ok} status=${lr.status}`);
+      } catch (e: any) {
+        console.log(`[WH_LAST_RESULT] save failed: ${String(e?.message ?? e).slice(0, 80)}`);
+      } finally {
+        clearTimeout(tid);
+      }
+    };
+
+    // Prefer waitUntil to keep the worker alive after response
+    try {
+      const ctx = getRequestContext();
+      if (ctx?.ctx?.waitUntil) {
+        ctx.ctx.waitUntil(saveLastResult());
+      } else {
+        // fire-and-forget — runtime may or may not complete it
+        saveLastResult().catch(() => null);
+      }
+    } catch {
+      saveLastResult().catch(() => null);
+    }
+  }
+
+  return response;
 }
