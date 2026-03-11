@@ -4,7 +4,7 @@ import { getRequestContext } from "@cloudflare/next-on-pages";
 export const runtime = "edge";
 
 // ─── version / stamps ────────────────────────────────────────────────────────
-const STAMP = "LINE_WEBHOOK_V18D_20260310_MULTI_CRED";
+const STAMP = "LINE_WEBHOOK_V18E_20260311_PUSH_FALLBACK";
 const where  = "api/line/webhook";
 
 type LinePurpose = "booking" | "sales";
@@ -1155,10 +1155,12 @@ export async function POST(req: Request) {
     `replyToken=${replyToken.slice(0, 12)}... text="${textIn.slice(0, 60)}"`
   );
 
-  // ── Send reply ────────────────────────────────────────────────────────────
+  // ── Send reply (with push fallback if replyToken fails) ──────────────────
   let replyOk = false;
   let replyStatus = 0;
   let replyBody = "";
+  let pushFallbackUsed = false;
+  let pushFallbackOk = false;
   try {
     const gr = await replyLine(cfg.channelAccessToken, replyToken, result.replyMessages);
     replyOk = gr.ok;
@@ -1171,6 +1173,23 @@ export async function POST(req: Request) {
     `[WH_REPLY] ok=${replyOk} status=${replyStatus} purpose=${cfg.purpose} ` +
     `branch=${result.branch} body=${replyBody.slice(0, 200)}`
   );
+
+  // ── Push fallback: if reply failed and we have a userId, push instead ────
+  if (!replyOk && lineUserId) {
+    console.log(`[WH_PUSH_FALLBACK] reply failed (status=${replyStatus}), attempting push to ${lineUserId.slice(0, 8)}...`);
+    pushFallbackUsed = true;
+    try {
+      // Filter to text-only messages for push (template messages may not work via push)
+      const pushMessages = result.replyMessages.map((m: any) =>
+        m.type === "text" ? m : { type: "text", text: m.altText ?? m.template?.text ?? FALLBACK_TEXT }
+      );
+      const pr = await pushLine(cfg.channelAccessToken, lineUserId, pushMessages);
+      pushFallbackOk = pr.ok;
+      console.log(`[WH_PUSH_FALLBACK] ok=${pr.ok} status=${pr.status} body=${pr.bodyText.slice(0, 200)}`);
+    } catch (e: any) {
+      console.log(`[WH_PUSH_FALLBACK] exception: ${String(e?.message ?? e).slice(0, 200)}`);
+    }
+  }
 
   // ── Lead capture (sales only) ─────────────────────────────────────────────
   let leadCaptureAttempted = false;
@@ -1198,7 +1217,7 @@ export async function POST(req: Request) {
     );
   }
 
-  // ── Persist last result to KV ─────────────────────────────────────────────
+  // ── Persist last result to KV (AWAITED — fire-and-forget was silently lost) ─
   const lastResultPayload = {
     ts: new Date().toISOString(),
     stamp: STAMP,
@@ -1227,19 +1246,28 @@ export async function POST(req: Request) {
       : "(short)",
     replyTokenLen: replyToken.length,
     replyTokenPreview: replyToken.slice(0, 12),
+    pushFallbackUsed,
+    pushFallbackOk,
   };
+  let lastResultSaved = false;
   if (webhookLogApiBase && internalToken) {
-    fetch(
-      `${webhookLogApiBase}/internal/line/last-result?tenantId=${encodeURIComponent(tenantId)}`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-internal-token": internalToken,
-        },
-        body: JSON.stringify({ result: lastResultPayload }),
-      }
-    ).catch(() => null);
+    try {
+      const lr = await fetch(
+        `${webhookLogApiBase}/internal/line/last-result?tenantId=${encodeURIComponent(tenantId)}`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-internal-token": internalToken,
+          },
+          body: JSON.stringify({ result: lastResultPayload }),
+        }
+      );
+      lastResultSaved = lr.ok;
+      console.log(`[WH_LAST_RESULT] saved ok=${lr.ok} status=${lr.status}`);
+    } catch (e: any) {
+      console.log(`[WH_LAST_RESULT] save failed: ${String(e?.message ?? e).slice(0, 100)}`);
+    }
   }
 
   // ── Response ──────────────────────────────────────────────────────────────
@@ -1259,6 +1287,9 @@ export async function POST(req: Request) {
       resolvedBy, eventCount: events.length,
       text: textIn.slice(0, 80),
       lineUserId: lineUserId.slice(0, 8),
+      pushFallbackUsed,
+      pushFallbackOk,
+      lastResultSaved,
     },
     { headers: { "x-stamp": STAMP } }
   );
