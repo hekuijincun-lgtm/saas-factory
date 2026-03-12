@@ -15,6 +15,9 @@ importers:
         specifier: ^0.561.0
         version: 0.561.0(react@19.2.4)
     devDependencies:
+      '@next/swc-linux-x64-gnu':
+        specifier: 15.5.2
+        version: 15.5.2
       '@typescript-eslint/eslint-plugin':
         specifier: ^7.18.0
         version: 7.18.0(@typescript-eslint/parser@7.18.0(eslint@8.57.1)(typescript@5.9.3))(eslint@8.57.1)(typescript@5.9.3)
@@ -4225,8 +4228,7 @@ snapshots:
   '@next/swc-linux-arm64-musl@15.5.2':
     optional: true
 
-  '@next/swc-linux-x64-gnu@15.5.2':
-    optional: true
+  '@next/swc-linux-x64-gnu@15.5.2': {}
 
   '@next/swc-linux-x64-musl@15.5.2':
     optional: true

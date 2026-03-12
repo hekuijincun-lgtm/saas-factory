@@ -8,6 +8,7 @@
     "clean": "turbo clean"
   },
   "devDependencies": {
+    "@next/swc-linux-x64-gnu": "15.5.2",
     "@typescript-eslint/eslint-plugin": "^7.18.0",
     "@typescript-eslint/parser": "^7.18.0",
     "esbuild": "^0.27.3",
