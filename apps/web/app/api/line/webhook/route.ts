@@ -4,7 +4,7 @@ import { getRequestContext } from "@cloudflare/next-on-pages";
 export const runtime = "edge";
 
 // ─── version / stamps ────────────────────────────────────────────────────────
-const STAMP = "LINE_WEBHOOK_V24_20260312_TENANTID_LOOKUP";
+const STAMP = "LINE_WEBHOOK_V25_20260312_SAFETY_NET";
 const where  = "api/line/webhook";
 
 type LinePurpose = "booking" | "sales";
@@ -1616,10 +1616,18 @@ export async function POST(req: Request) {
   } catch (e: any) {
     replyBody = `EXCEPTION: ${String(e?.message ?? e).slice(0, 400)}`;
   }
-  console.log(
-    `[WH_REPLY] ok=${replyOk} status=${replyStatus} purpose=${cfg.purpose} ` +
-    `branch=${result.branch} body=${replyBody.slice(0, 200)}`
-  );
+  console.log(`[WH_REPLY]`, JSON.stringify({
+    ok: replyOk,
+    status: replyStatus,
+    purpose: cfg.purpose,
+    branch: result.branch,
+    sendMode: result.sendMode ?? "sync",
+    replyMsgCount: result.replyMessages.length,
+    replyMsgTypes: result.replyMessages.map((m: any) => m.type),
+    userId: lineUserId?.slice(0, 12),
+    tenantId,
+    body: replyBody.slice(0, 200),
+  }));
 
   // ── Push fallback: if reply failed and we have a userId, push instead ────
   if (!replyOk && lineUserId) {
@@ -1635,6 +1643,18 @@ export async function POST(req: Request) {
       console.log(`[WH_PUSH_FALLBACK] ok=${pr.ok} status=${pr.status} body=${pr.bodyText.slice(0, 200)}`);
     } catch (e: any) {
       console.log(`[WH_PUSH_FALLBACK] exception: ${String(e?.message ?? e).slice(0, 200)}`);
+    }
+  }
+
+  // ── Safety net: if both reply and push fallback failed, last-resort push ──
+  if (!replyOk && !pushFallbackOk && lineUserId) {
+    console.log(`[WH_SAFETY_NET] both reply and push failed, last-resort push to ${lineUserId.slice(0, 8)}`);
+    try {
+      const safetyMsg = "すみません、うまく理解できませんでした。もう一度教えてください😊";
+      const sr = await pushLine(cfg.channelAccessToken, lineUserId, [{ type: "text", text: safetyMsg }]);
+      console.log(`[WH_SAFETY_NET] pushOk=${sr.ok} status=${sr.status} body=${sr.bodyText.slice(0, 200)}`);
+    } catch (e: any) {
+      console.log(`[WH_SAFETY_NET] exception: ${String(e?.message ?? e).slice(0, 200)}`);
     }
   }
 
