@@ -4,12 +4,28 @@ import { getRequestContext } from "@cloudflare/next-on-pages";
 export const runtime = "edge";
 
 // ─── version / stamps ────────────────────────────────────────────────────────
-const STAMP = "LINE_WEBHOOK_V27_20260312_GUARANTEED_REPLY";
+const STAMP = "LINE_WEBHOOK_V28_20260312_TIMEOUT_GUARD";
 const where  = "api/line/webhook";
 
 type LinePurpose = "booking" | "sales";
 
 const FALLBACK_TEXT = "少し時間をおいて再度お試しください。";
+
+// ─── timeout constants (ms) ─────────────────────────────────────────────────
+const TIMEOUT_TENANT_RESOLVE_MS = 3000;   // destination→tenant KV lookup
+const TIMEOUT_SETTINGS_FETCH_MS = 5000;   // getTenantLineConfig (Workers GET /admin/settings)
+const TIMEOUT_SALES_CONFIG_MS   = 5000;   // loadSalesAiConfig (Workers GET /sales-ai/config)
+const TIMEOUT_AI_CHAT_MS        = 8000;   // runAiChat (Workers POST /ai/chat → OpenAI)
+const TIMEOUT_LINE_REPLY_MS     = 10000;  // replyLine (LINE reply API)
+const TIMEOUT_LINE_PUSH_MS      = 10000;  // pushLine (LINE push API)
+
+/** fetch with AbortController timeout. Throws on timeout with clear message. */
+function fetchT(url: string, init: RequestInit & { timeout: number }): Promise<Response> {
+  const { timeout, ...rest } = init;
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), timeout);
+  return fetch(url, { ...rest, signal: ac.signal }).finally(() => clearTimeout(timer));
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // ─── SALES handler ──────────────────────────────────────────────────────────
@@ -170,7 +186,7 @@ async function loadSalesAiConfig(
     // Auto-seed LLM config on first access (idempotent)
     params.set("seed", "llm");
     const url = `${apiBase}/sales-ai/config?${params.toString()}`;
-    const r = await fetch(url, { headers: { Accept: "application/json" } });
+    const r = await fetchT(url, { headers: { Accept: "application/json" }, timeout: TIMEOUT_SALES_CONFIG_MS });
     if (!r.ok) {
       console.log(`[SALES_AI_CFG] fetch failed status=${r.status} params=${params.toString()}`);
       return null;
@@ -541,35 +557,19 @@ interface HandlerResult {
   };
 }
 
-// ─── AI enabled check ───────────────────────────────────────────────────────
-const AI_ENABLED_TIMEOUT_MS = 3000;
-
+// ─── AI enabled check (debug-only; not in production hot path) ──────────────
 async function checkAiEnabled(tenantId: string): Promise<boolean> {
   const apiBase = (
     process.env.API_BASE ?? process.env.NEXT_PUBLIC_API_BASE ?? ""
   ).replace(/\/+$/, "");
-  if (!apiBase) {
-    console.log(`[AI_ENABLED] no_api_base → false`);
-    return false;
-  }
+  if (!apiBase) return false;
   try {
     const url = `${apiBase}/ai/enabled?tenantId=${encodeURIComponent(tenantId)}`;
-    const r = await Promise.race([
-      fetch(url, { headers: { Accept: "application/json" } }),
-      new Promise<Response>((_, reject) =>
-        setTimeout(() => reject(new Error("timeout")), AI_ENABLED_TIMEOUT_MS)
-      ),
-    ]);
-    if (!r.ok) {
-      console.log(`[AI_ENABLED] status=${r.status} → false`);
-      return false;
-    }
+    const r = await fetchT(url, { headers: { Accept: "application/json" }, timeout: TIMEOUT_TENANT_RESOLVE_MS });
+    if (!r.ok) return false;
     const d = (await r.json()) as any;
-    const enabled = d?.enabled === true;
-    console.log(`[AI_ENABLED] tenant=${tenantId} enabled=${enabled}`);
-    return enabled;
-  } catch (e: any) {
-    console.log(`[AI_ENABLED] tenant=${tenantId} error=${String(e?.message ?? e).slice(0, 60)} → false`);
+    return d?.enabled === true;
+  } catch {
     return false;
   }
 }
@@ -630,13 +630,14 @@ async function replyLine(
     `msgCount=${messages.length}`
   );
   const reqBody = JSON.stringify({ replyToken, messages });
-  const res = await fetch("https://api.line.me/v2/bot/message/reply", {
+  const res = await fetchT("https://api.line.me/v2/bot/message/reply", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: "Bearer " + accessToken,
     },
     body: reqBody,
+    timeout: TIMEOUT_LINE_REPLY_MS,
   });
   const bodyText = await res.text().catch(() => "");
   console.log(
@@ -651,13 +652,14 @@ async function pushLine(
   userId: string,
   messages: any[]
 ): Promise<{ ok: boolean; status: number; bodyText: string }> {
-  const res = await fetch("https://api.line.me/v2/bot/message/push", {
+  const res = await fetchT("https://api.line.me/v2/bot/message/push", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: "Bearer " + accessToken,
     },
     body: JSON.stringify({ to: userId, messages }),
+    timeout: TIMEOUT_LINE_PUSH_MS,
   });
   const bodyText = await res.text().catch(() => "");
   return { ok: res.ok, status: res.status, bodyText };
@@ -726,7 +728,7 @@ async function runAiChat(
   if (!apiBase) return EMPTY_AI_RESULT;
 
   try {
-    const res = await fetch(`${apiBase}/ai/chat`, {
+    const res = await fetchT(`${apiBase}/ai/chat`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -734,6 +736,7 @@ async function runAiChat(
         "x-real-ip": ip,
       },
       body: JSON.stringify({ message, tenantId }),
+      timeout: TIMEOUT_AI_CHAT_MS,
     });
     const data = (await res.json().catch(() => null)) as any;
     if (data?.ok && data?.answer) {
@@ -862,7 +865,7 @@ async function getTenantLineConfig(
       const headers: Record<string, string> = { Accept: "application/json" };
       if (adminToken) headers["X-Admin-Token"] = adminToken;
 
-      const r = await fetch(url, { headers });
+      const r = await fetchT(url, { headers, timeout: TIMEOUT_SETTINGS_FETCH_MS });
       if (r.ok) {
         const json = (await r.json()) as any;
         const s = json?.data ?? json;
@@ -1092,6 +1095,7 @@ export async function GET(req: Request) {
 // ─── POST (LINE webhook) ────────────────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════════════
 export async function POST(req: Request) {
+  const t0 = Date.now(); // ── latency tracking ──
   const { searchParams, origin } = new URL(req.url);
 
   const debugMode    = searchParams.get("debug"); // "1" | "2" | null
@@ -1134,8 +1138,9 @@ export async function POST(req: Request) {
           process.env.API_BASE ?? process.env.NEXT_PUBLIC_API_BASE ?? ""
         ).replace(/\/+$/, "");
         if (apiBase) {
-          const r = await fetch(
-            `${apiBase}/line/destination-to-tenant?destination=${encodeURIComponent(destination)}`
+          const r = await fetchT(
+            `${apiBase}/line/destination-to-tenant?destination=${encodeURIComponent(destination)}`,
+            { timeout: TIMEOUT_TENANT_RESOLVE_MS }
           ).catch(() => null);
           if (r?.ok) {
             const d = await r.json() as any;
@@ -1228,7 +1233,9 @@ export async function POST(req: Request) {
   );
 
   // ── Phase 2: resolve config + sig check + PURPOSE ─────────────────────────
+  const tCfg0 = Date.now();
   const cfg = await getTenantLineConfig(tenantId, origin, queryPurpose, destination);
+  const tCfgMs = Date.now() - tCfg0;
   const verified = (sig && cfg.channelSecret)
     ? await verifyLineSignature(raw, sig, cfg.channelSecret).catch(() => false)
     : false;
@@ -1447,7 +1454,7 @@ export async function POST(req: Request) {
           const settingsUrl = `${apiBase}/admin/settings?tenantId=${encodeURIComponent(tenantId)}`;
           const headers: Record<string, string> = { Accept: "application/json" };
           if (adminToken) headers["X-Admin-Token"] = adminToken;
-          const r = await fetch(settingsUrl, { headers });
+          const r = await fetchT(settingsUrl, { headers, timeout: TIMEOUT_SETTINGS_FETCH_MS });
           if (r.ok) {
             const json = (await r.json()) as any;
             const s = json?.data ?? json;
@@ -1504,6 +1511,7 @@ export async function POST(req: Request) {
 
   const handlerCtx: HandlerContext = { textIn, lineUserId, tenantId, cfg, apiBase };
 
+  const tHandler0 = Date.now();
   let result: HandlerResult;
   try {
     result = cfg.purpose === "sales"
@@ -1664,21 +1672,26 @@ export async function POST(req: Request) {
   }
 
   // ── Send reply (with push fallback if replyToken fails) ──────────────────
+  const tHandlerMs = Date.now() - tHandler0;
+  const tReply0 = Date.now();
   let replyOk = false;
   let replyStatus = 0;
   let replyBody = "";
   let pushFallbackUsed = false;
   let pushFallbackOk = false;
+  let replyTimedOut = false;
   try {
     const gr = await replyLine(cfg.channelAccessToken, replyToken, result.replyMessages);
     replyOk = gr.ok;
     replyStatus = gr.status;
     replyBody = gr.bodyText.slice(0, 500);
   } catch (e: any) {
-    replyBody = `EXCEPTION: ${String(e?.message ?? e).slice(0, 400)}`;
+    replyTimedOut = e?.name === "AbortError";
+    replyBody = `EXCEPTION: ${replyTimedOut ? "TIMEOUT" : ""}${String(e?.message ?? e).slice(0, 400)}`;
   }
+  const tReplyMs = Date.now() - tReply0;
   console.log(`[WH_REPLY]`, JSON.stringify({
-    ok: replyOk,
+    ok: replyOk, timedOut: replyTimedOut,
     status: replyStatus,
     purpose: cfg.purpose,
     branch: result.branch,
@@ -1718,6 +1731,19 @@ export async function POST(req: Request) {
       console.log(`[WH_SAFETY_NET] exception: ${String(e?.message ?? e).slice(0, 200)}`);
     }
   }
+
+  // ── Comprehensive flow log ─────────────────────────────────────────────────
+  const totalMs = Date.now() - t0;
+  console.log(`[LINE_WEBHOOK_FLOW]`, JSON.stringify({
+    tenantId,
+    userId: lineUserId?.slice(0, 12),
+    text: textIn.slice(0, 40),
+    purpose: cfg.purpose,
+    branch: result.branch,
+    replyOk, replyTimedOut, pushFallbackUsed, pushFallbackOk,
+    latency: { totalMs, cfgMs: tCfgMs, handlerMs: tHandlerMs, replyMs: tReplyMs },
+    delivered: replyOk || pushFallbackOk,
+  }));
 
   // ── Lead capture (sales only) ─────────────────────────────────────────────
   let leadCaptureAttempted = false;
