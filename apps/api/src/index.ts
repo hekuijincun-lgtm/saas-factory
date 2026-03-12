@@ -6629,10 +6629,18 @@ app.post("/ai/chat", async (c) => {
       source: kv ? "kv" : "default",
     }));
 
+    // aiConfig snapshot — returned in ALL responses for webhook observability
+    const aiConfig = {
+      enabled: aiSettings.enabled === true,
+      voice: aiSettings.voice ?? "friendly",
+      answerLength: aiSettings.answerLength ?? "normal",
+      character: aiSettings.character ? String(aiSettings.character).slice(0, 50) : "",
+    };
+
     // 4.4 AI 有効判定（管理画面の「AI接客を有効化」トグルを反映）
     if (aiSettings.enabled !== true) {
       console.log(`[AI_GATE] tenant=${tenantId} enabled=false path=/ai/chat`);
-      return c.json({ ok: false, stamp: STAMP, tenantId, error: "ai_disabled", detail: "AI is disabled for this tenant" });
+      return c.json({ ok: false, stamp: STAMP, tenantId, error: "ai_disabled", aiConfig });
     }
 
     // 4.5 レート制限（KV, 60 req / 10 min per tenantId+IP）
@@ -6666,7 +6674,7 @@ app.post("/ai/chat", async (c) => {
         const suggestedActions = buildSuggestedActions(faqIntent, faqBookingUrl);
         const cta = buildCtaText(faqIntent, faqBookingUrl);
         if (cta) faqAnswer = faqAnswer + cta;
-        return c.json({ ok: true, stamp: STAMP, tenantId, answer: faqAnswer, suggestedActions, intent: faqIntent, source: "faq" });
+        return c.json({ ok: true, stamp: STAMP, tenantId, answer: faqAnswer, suggestedActions, intent: faqIntent, source: "faq", aiConfig });
       }
     }
 
@@ -6898,10 +6906,10 @@ app.post("/ai/chat", async (c) => {
       source: "openai",
     }));
 
-    return c.json({ ok: true, stamp: STAMP, tenantId, answer, suggestedActions, intent });
+    return c.json({ ok: true, stamp: STAMP, tenantId, answer, suggestedActions, intent, aiConfig });
 
   } catch (e: any) {
-    return c.json({ ok: false, stamp: STAMP, tenantId, error: "exception", detail: String(e?.message ?? e) });
+    return c.json({ ok: false, stamp: STAMP, tenantId, error: "exception", detail: String(e?.message ?? e), aiConfig: typeof aiConfig !== "undefined" ? aiConfig : undefined });
   }
 });
 

@@ -459,6 +459,17 @@ async function handleBookingEvent(ctx: HandlerContext): Promise<HandlerResult> {
       ai = { ...EMPTY_AI_RESULT, error: `handler_exception:${String(e?.message ?? e).slice(0, 60)}` };
     }
 
+    // ── [AI_CONFIG_LOAD] — log the AI settings that were loaded for this tenant ──
+    console.log(`[AI_CONFIG_LOAD]`, JSON.stringify({
+      tenantId,
+      aiEnabled: ai.aiConfig?.enabled ?? null,
+      voice: ai.aiConfig?.voice ?? null,
+      answerLength: ai.aiConfig?.answerLength ?? null,
+      character: ai.aiConfig?.character ? ai.aiConfig.character.slice(0, 30) : null,
+      source: ai.aiConfig ? "workers_kv" : "unavailable",
+      aiResult: ai.disabled ? "disabled" : ai.ok ? "ok" : ai.error ?? "unknown",
+    }));
+
     if (ai.disabled) {
       // AI disabled for this tenant — skip to fallback (no OpenAI was attempted)
       aiDisabled = true;
@@ -704,6 +715,12 @@ async function enqueuePushRetry(
 }
 
 // ─── AI chat caller ──────────────────────────────────────────────────────────
+type AiConfig = {
+  enabled: boolean;
+  voice: string;
+  answerLength: string;
+  character: string;
+};
 type AiChatResult = {
   ok: boolean;
   answer: string;
@@ -711,6 +728,7 @@ type AiChatResult = {
   disabled?: boolean;
   source?: "faq" | "openai" | "unknown";
   error?: string;
+  aiConfig?: AiConfig;
 };
 const EMPTY_AI_RESULT: AiChatResult = { ok: false, answer: "", suggestedActions: [] };
 
@@ -739,18 +757,20 @@ async function runAiChat(
       timeout: TIMEOUT_AI_CHAT_MS,
     });
     const data = (await res.json().catch(() => null)) as any;
+    const aiConfig: AiConfig | undefined = data?.aiConfig ?? undefined;
     if (data?.ok && data?.answer) {
       return {
         ok: true,
         answer: String(data.answer),
         suggestedActions: Array.isArray(data.suggestedActions) ? data.suggestedActions : [],
         source: data.source === "faq" ? "faq" : "openai",
+        aiConfig,
       };
     }
     if (data?.error === "ai_disabled") {
-      return { ...EMPTY_AI_RESULT, disabled: true };
+      return { ...EMPTY_AI_RESULT, disabled: true, aiConfig };
     }
-    return { ...EMPTY_AI_RESULT, error: data?.error ?? `http_${res.status}` };
+    return { ...EMPTY_AI_RESULT, error: data?.error ?? `http_${res.status}`, aiConfig };
   } catch (e: any) {
     return { ...EMPTY_AI_RESULT, error: `exception:${String(e?.message ?? e).slice(0, 60)}` };
   }
