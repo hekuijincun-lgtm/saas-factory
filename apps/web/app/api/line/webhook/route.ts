@@ -4,7 +4,7 @@ import { getRequestContext } from "@cloudflare/next-on-pages";
 export const runtime = "edge";
 
 // ─── version / stamps ────────────────────────────────────────────────────────
-const STAMP = "LINE_WEBHOOK_V26_20260312_STABLE_FALLBACK";
+const STAMP = "LINE_WEBHOOK_V27_20260312_GUARANTEED_REPLY";
 const where  = "api/line/webhook";
 
 type LinePurpose = "booking" | "sales";
@@ -389,16 +389,20 @@ function getBookingFallbackText(bookingUrl: string): string {
 }
 
 /** Handle a text message on a BOOKING-purpose LINE account.
- *  Flow: booking intent → template card
- *        otherwise → AI接客 (if enabled) → fallback */
+ *  Priority: booking intent → AI concierge (FAQ + OpenAI) → fallback
+ *  GUARANTEE: every text message gets exactly one reply. No silent paths. */
 async function handleBookingEvent(ctx: HandlerContext): Promise<HandlerResult> {
   const { textIn, cfg, tenantId, lineUserId, apiBase } = ctx;
+  const uid = lineUserId.slice(0, 12);
+  const txt = textIn.slice(0, 40);
 
   // ── 1. Booking intent → template card (highest priority, always synchronous) ──
   if (detectBookingIntent(textIn)) {
     console.log(`[LINE_AI_ROUTING]`, JSON.stringify({
-      tenantId, userId: lineUserId.slice(0, 12), text: textIn.slice(0, 40),
-      matchedIntent: "booking", aiEnabled: "skipped", replyMode: "reply", replySent: true,
+      tenantId, userId: uid, text: txt,
+      matchedIntent: "booking", aiEnabled: "skipped",
+      faqMatched: false, bookingMatched: true,
+      replyMode: "reply", openaiAttempted: false, openaiSucceeded: false, replySent: true,
     }));
     const bookingLink = buildBookingLink(cfg.bookingUrl, tenantId, lineUserId);
     return {
@@ -410,73 +414,93 @@ async function handleBookingEvent(ctx: HandlerContext): Promise<HandlerResult> {
     };
   }
 
-  // ── 2. AI concierge — always attempted as default fallback ────────────────
-  const aiIp = lineUserId ? `line:${lineUserId.slice(0, 12)}` : "line";
-  const aiEnabled = await checkAiEnabled(tenantId);
-
+  // ── 2. AI concierge — call POST /ai/chat directly (no separate checkAiEnabled round trip) ──
+  //    POST /ai/chat checks enabled internally; eliminates 1 network hop (saves 200ms-3s)
   let openaiAttempted = false;
   let openaiSucceeded = false;
+  let aiDisabled = false;
+  let faqMatched = false;
+  let aiError: string | null = null;
 
-  if (aiEnabled && apiBase) {
-    openaiAttempted = true;
+  if (apiBase) {
+    const aiIp = lineUserId ? `line:${uid}` : "line";
     const AI_TIMEOUT_MS = 8000;
-    type AiResult = { ok: boolean; answer: string; suggestedActions: any[]; disabled?: boolean };
-    const EMPTY_AI: AiResult = { ok: false, answer: "", suggestedActions: [] };
+    const TIMEOUT_RESULT: AiChatResult = { ...EMPTY_AI_RESULT, error: "timeout" };
 
-    let ai: AiResult;
+    let ai: AiChatResult;
     try {
       ai = await Promise.race([
         runAiChat(tenantId, textIn, aiIp),
-        new Promise<typeof EMPTY_AI>(resolve =>
+        new Promise<AiChatResult>(resolve =>
           setTimeout(() => {
             console.log(`[BOOKING_AI] timeout ${AI_TIMEOUT_MS}ms tenant=${tenantId}`);
-            resolve(EMPTY_AI);
+            resolve(TIMEOUT_RESULT);
           }, AI_TIMEOUT_MS)
         ),
       ]);
     } catch (e: any) {
       console.log(`[BOOKING_AI] exception tenant=${tenantId}: ${String(e?.message ?? e).slice(0, 100)}`);
-      ai = EMPTY_AI;
+      ai = { ...EMPTY_AI_RESULT, error: `handler_exception:${String(e?.message ?? e).slice(0, 60)}` };
     }
 
-    if (ai.ok && ai.answer) {
+    if (ai.disabled) {
+      // AI disabled for this tenant — skip to fallback (no OpenAI was attempted)
+      aiDisabled = true;
+      aiError = "ai_disabled";
+    } else if (ai.ok && ai.answer) {
+      // Success — AI or FAQ answered
+      openaiAttempted = true;
       openaiSucceeded = true;
+      faqMatched = ai.source === "faq";
+
       const msg: any = { type: "text", text: ai.answer };
       if (ai.suggestedActions.length > 0) {
         const qr = buildQuickReplyFromActions(ai.suggestedActions);
         if (qr) msg.quickReply = qr;
       }
+
+      if (faqMatched) {
+        console.log(`[LINE_FAQ_MATCH]`, JSON.stringify({
+          tenantId, userId: uid, text: txt, source: "faq",
+        }));
+      }
       console.log(`[LINE_AI_ROUTING]`, JSON.stringify({
-        tenantId, userId: lineUserId.slice(0, 12), text: textIn.slice(0, 40),
-        matchedIntent: "ai", aiEnabled: true, replyMode: "reply",
-        openaiAttempted: true, openaiSucceeded: true, replySent: true,
-        answerLen: ai.answer.length,
+        tenantId, userId: uid, text: txt,
+        matchedIntent: faqMatched ? "faq" : "ai",
+        aiEnabled: true, faqMatched, bookingMatched: false,
+        replyMode: "reply", openaiAttempted: true, openaiSucceeded: true,
+        replySent: true, answerLen: ai.answer.length, source: ai.source,
       }));
       return {
-        branch: "booking_ai",
+        branch: faqMatched ? "booking_faq" : "booking_ai",
         salesIntent: null,
         replyMessages: [msg],
         leadLabel: null,
         leadCapture: false,
       };
+    } else {
+      // AI attempted but failed/empty
+      openaiAttempted = !ai.disabled;
+      aiError = ai.error ?? (ai.ok ? "empty_answer" : "api_error");
+      console.log(`[LINE_AI_ERROR]`, JSON.stringify({
+        tenantId, userId: uid, text: txt, error: aiError,
+      }));
     }
-
-    // AI called but failed/empty — log and fall through to fallback
-    console.log(`[LINE_AI_ERROR]`, JSON.stringify({
-      tenantId, userId: lineUserId.slice(0, 12), text: textIn.slice(0, 40),
-      error: ai.disabled ? "ai_disabled" : ai.ok ? "empty_answer" : "api_error",
-    }));
   }
 
   // ── 3. Fallback — ALWAYS reached if booking intent and AI both missed ─────
   //    guaranteed reply so no message goes unanswered
   const bookingLink = buildBookingLink(cfg.bookingUrl, tenantId, lineUserId);
-  const branch = openaiAttempted ? "booking_ai_fallback" : (aiEnabled ? "booking_ai_fallback" : "booking_fallback");
+  const branch = aiDisabled ? "booking_fallback"
+    : openaiAttempted ? "booking_ai_fallback"
+    : "booking_fallback";
 
   console.log(`[LINE_AI_ROUTING]`, JSON.stringify({
-    tenantId, userId: lineUserId.slice(0, 12), text: textIn.slice(0, 40),
-    matchedIntent: "fallback", aiEnabled, replyMode: "reply",
-    openaiAttempted, openaiSucceeded, replySent: true,
+    tenantId, userId: uid, text: txt,
+    matchedIntent: "fallback", aiEnabled: !aiDisabled,
+    faqMatched: false, bookingMatched: false,
+    replyMode: "reply", openaiAttempted, openaiSucceeded: false,
+    replySent: true, aiError,
   }));
   return {
     branch,
@@ -678,20 +702,28 @@ async function enqueuePushRetry(
 }
 
 // ─── AI chat caller ──────────────────────────────────────────────────────────
+type AiChatResult = {
+  ok: boolean;
+  answer: string;
+  suggestedActions: any[];
+  disabled?: boolean;
+  source?: "faq" | "openai" | "unknown";
+  error?: string;
+};
+const EMPTY_AI_RESULT: AiChatResult = { ok: false, answer: "", suggestedActions: [] };
+
 async function runAiChat(
   tenantId: string,
   message: string,
   ip: string
-): Promise<{ ok: boolean; answer: string; suggestedActions: any[]; disabled?: boolean }> {
-  const EMPTY = { ok: false, answer: "", suggestedActions: [] };
-
+): Promise<AiChatResult> {
   const apiBase = (
     process.env.API_BASE ??
     process.env.NEXT_PUBLIC_API_BASE ??
     ""
   ).replace(/\/+$/, "");
 
-  if (!apiBase) return EMPTY;
+  if (!apiBase) return EMPTY_AI_RESULT;
 
   try {
     const res = await fetch(`${apiBase}/ai/chat`, {
@@ -709,14 +741,15 @@ async function runAiChat(
         ok: true,
         answer: String(data.answer),
         suggestedActions: Array.isArray(data.suggestedActions) ? data.suggestedActions : [],
+        source: data.source === "faq" ? "faq" : "openai",
       };
     }
     if (data?.error === "ai_disabled") {
-      return { ...EMPTY, disabled: true };
+      return { ...EMPTY_AI_RESULT, disabled: true };
     }
-    return EMPTY;
-  } catch {
-    return EMPTY;
+    return { ...EMPTY_AI_RESULT, error: data?.error ?? `http_${res.status}` };
+  } catch (e: any) {
+    return { ...EMPTY_AI_RESULT, error: `exception:${String(e?.message ?? e).slice(0, 60)}` };
   }
 }
 
