@@ -4,7 +4,7 @@ import { getRequestContext } from "@cloudflare/next-on-pages";
 export const runtime = "edge";
 
 // ─── version / stamps ────────────────────────────────────────────────────────
-const STAMP = "LINE_WEBHOOK_V25_20260312_SAFETY_NET";
+const STAMP = "LINE_WEBHOOK_V26_20260312_STABLE_FALLBACK";
 const where  = "api/line/webhook";
 
 type LinePurpose = "booking" | "sales";
@@ -394,8 +394,12 @@ function getBookingFallbackText(bookingUrl: string): string {
 async function handleBookingEvent(ctx: HandlerContext): Promise<HandlerResult> {
   const { textIn, cfg, tenantId, lineUserId, apiBase } = ctx;
 
-  // 1. Booking intent → template card (highest priority, always synchronous)
+  // ── 1. Booking intent → template card (highest priority, always synchronous) ──
   if (detectBookingIntent(textIn)) {
+    console.log(`[LINE_AI_ROUTING]`, JSON.stringify({
+      tenantId, userId: lineUserId.slice(0, 12), text: textIn.slice(0, 40),
+      matchedIntent: "booking", aiEnabled: "skipped", replyMode: "reply", replySent: true,
+    }));
     const bookingLink = buildBookingLink(cfg.bookingUrl, tenantId, lineUserId);
     return {
       branch: "booking_template",
@@ -406,14 +410,15 @@ async function handleBookingEvent(ctx: HandlerContext): Promise<HandlerResult> {
     };
   }
 
-  // 2. AI接客 — call /ai/chat with 8s timeout (replyToken expires at ~30s)
+  // ── 2. AI concierge — always attempted as default fallback ────────────────
   const aiIp = lineUserId ? `line:${lineUserId.slice(0, 12)}` : "line";
-  console.log(`[AI_DEBUG] checkAiEnabled start tenant=${tenantId} apiBase=${apiBase ? "yes" : "no"}`);
   const aiEnabled = await checkAiEnabled(tenantId);
-  console.log(`[AI_DEBUG] aiEnabled=${aiEnabled} tenant=${tenantId}`);
+
+  let openaiAttempted = false;
+  let openaiSucceeded = false;
 
   if (aiEnabled && apiBase) {
-    console.log(`[AI_DEBUG] calling_ai tenant=${tenantId} text="${textIn.slice(0, 40)}"`);
+    openaiAttempted = true;
     const AI_TIMEOUT_MS = 8000;
     type AiResult = { ok: boolean; answer: string; suggestedActions: any[]; disabled?: boolean };
     const EMPTY_AI: AiResult = { ok: false, answer: "", suggestedActions: [] };
@@ -424,24 +429,29 @@ async function handleBookingEvent(ctx: HandlerContext): Promise<HandlerResult> {
         runAiChat(tenantId, textIn, aiIp),
         new Promise<typeof EMPTY_AI>(resolve =>
           setTimeout(() => {
-            console.log(`[BOOKING_AI] timeout after ${AI_TIMEOUT_MS}ms`);
+            console.log(`[BOOKING_AI] timeout ${AI_TIMEOUT_MS}ms tenant=${tenantId}`);
             resolve(EMPTY_AI);
           }, AI_TIMEOUT_MS)
         ),
       ]);
     } catch (e: any) {
-      console.log(`[BOOKING_AI] exception: ${String(e?.message ?? e).slice(0, 100)}`);
+      console.log(`[BOOKING_AI] exception tenant=${tenantId}: ${String(e?.message ?? e).slice(0, 100)}`);
       ai = EMPTY_AI;
     }
 
     if (ai.ok && ai.answer) {
-      const answer = ai.answer;
-      const msg: any = { type: "text", text: answer };
+      openaiSucceeded = true;
+      const msg: any = { type: "text", text: ai.answer };
       if (ai.suggestedActions.length > 0) {
         const qr = buildQuickReplyFromActions(ai.suggestedActions);
         if (qr) msg.quickReply = qr;
       }
-      console.log(`[AI_DEBUG] ai_response_ok answerLen=${answer.length} actions=${ai.suggestedActions.length} answer="${answer.slice(0, 80)}"`);
+      console.log(`[LINE_AI_ROUTING]`, JSON.stringify({
+        tenantId, userId: lineUserId.slice(0, 12), text: textIn.slice(0, 40),
+        matchedIntent: "ai", aiEnabled: true, replyMode: "reply",
+        openaiAttempted: true, openaiSucceeded: true, replySent: true,
+        answerLen: ai.answer.length,
+      }));
       return {
         branch: "booking_ai",
         salesIntent: null,
@@ -451,13 +461,25 @@ async function handleBookingEvent(ctx: HandlerContext): Promise<HandlerResult> {
       };
     }
 
-    console.log(`[AI_DEBUG] ai_response_fail ok=${ai.ok} disabled=${ai.disabled} answerLen=${ai.answer.length}`);
+    // AI called but failed/empty — log and fall through to fallback
+    console.log(`[LINE_AI_ERROR]`, JSON.stringify({
+      tenantId, userId: lineUserId.slice(0, 12), text: textIn.slice(0, 40),
+      error: ai.disabled ? "ai_disabled" : ai.ok ? "empty_answer" : "api_error",
+    }));
   }
 
-  // 3. Fallback — friendly store greeting with booking link
+  // ── 3. Fallback — ALWAYS reached if booking intent and AI both missed ─────
+  //    guaranteed reply so no message goes unanswered
   const bookingLink = buildBookingLink(cfg.bookingUrl, tenantId, lineUserId);
+  const branch = openaiAttempted ? "booking_ai_fallback" : (aiEnabled ? "booking_ai_fallback" : "booking_fallback");
+
+  console.log(`[LINE_AI_ROUTING]`, JSON.stringify({
+    tenantId, userId: lineUserId.slice(0, 12), text: textIn.slice(0, 40),
+    matchedIntent: "fallback", aiEnabled, replyMode: "reply",
+    openaiAttempted, openaiSucceeded, replySent: true,
+  }));
   return {
-    branch: aiEnabled ? "booking_ai_fallback" : "booking_fallback",
+    branch,
     salesIntent: null,
     replyMessages: [{ type: "text", text: getBookingFallbackText(bookingLink) }],
     leadLabel: null,
@@ -496,28 +518,34 @@ interface HandlerResult {
 }
 
 // ─── AI enabled check ───────────────────────────────────────────────────────
+const AI_ENABLED_TIMEOUT_MS = 3000;
+
 async function checkAiEnabled(tenantId: string): Promise<boolean> {
   const apiBase = (
     process.env.API_BASE ?? process.env.NEXT_PUBLIC_API_BASE ?? ""
   ).replace(/\/+$/, "");
   if (!apiBase) {
-    console.log(`[AI_DEBUG] checkAiEnabled: no apiBase → false`);
+    console.log(`[AI_ENABLED] no_api_base → false`);
     return false;
   }
   try {
     const url = `${apiBase}/ai/enabled?tenantId=${encodeURIComponent(tenantId)}`;
-    console.log(`[AI_DEBUG] checkAiEnabled: fetching ${url}`);
-    const r = await fetch(url, { headers: { Accept: "application/json" } });
+    const r = await Promise.race([
+      fetch(url, { headers: { Accept: "application/json" } }),
+      new Promise<Response>((_, reject) =>
+        setTimeout(() => reject(new Error("timeout")), AI_ENABLED_TIMEOUT_MS)
+      ),
+    ]);
     if (!r.ok) {
-      console.log(`[AI_DEBUG] checkAiEnabled: status=${r.status} → false`);
+      console.log(`[AI_ENABLED] status=${r.status} → false`);
       return false;
     }
     const d = (await r.json()) as any;
     const enabled = d?.enabled === true;
-    console.log(`[AI_DEBUG] checkAiEnabled: response enabled=${enabled}`);
+    console.log(`[AI_ENABLED] tenant=${tenantId} enabled=${enabled}`);
     return enabled;
   } catch (e: any) {
-    console.log(`[AI_DEBUG] checkAiEnabled: exception ${String(e?.message ?? e).slice(0, 80)}`);
+    console.log(`[AI_ENABLED] tenant=${tenantId} error=${String(e?.message ?? e).slice(0, 60)} → false`);
     return false;
   }
 }
