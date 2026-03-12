@@ -511,6 +511,8 @@ export interface OutreachSourceCandidate {
   rejection_reason?: string | null;
   accepted_at?: string | null;
   rejected_at?: string | null;
+  // Phase 8.2: Source key
+  source_key?: string | null;
 }
 
 export interface SourceSearchResult {
@@ -695,4 +697,52 @@ export function qualityLabel(score: number | null | undefined): { text: string; 
   if (score >= 0.8) return { text: "High", color: "text-green-600" };
   if (score >= 0.4) return { text: "Medium", color: "text-amber-600" };
   return { text: "Low", color: "text-red-500" };
+}
+
+// ── Phase 8.2: Source Quality Daily + Trends ──────────────────────────
+
+export interface BatchActionResult {
+  updated: number;
+  skipped: number;
+}
+
+export interface AcceptedImportResult {
+  created: number;
+  skipped: number;
+  invalid: number;
+  accepted: number;
+  autoErrors: Array<{ leadId: string; error: string }>;
+}
+
+export interface AcceptedCountResult {
+  accepted: number;
+  pending: number;
+  rejected: number;
+  importable: number;
+}
+
+export interface SourceTrendPoint {
+  day: string;
+  candidate_count: number;
+  accepted_count: number;
+  imported_count: number;
+  avg_quality_score: number;
+  reply_rate: number;
+  meeting_rate: number;
+  won_rate: number;
+}
+
+export interface SourceTrendBreakdown {
+  source_type: string;
+  source_key: string;
+  niche: string | null;
+  area: string | null;
+  total_candidates: number;
+  total_accepted: number;
+  total_imported: number;
+  avg_quality: number;
+  avg_reply_rate: number;
+  avg_meeting_rate: number;
+  avg_won_rate: number;
+  sample_size: number;
 }

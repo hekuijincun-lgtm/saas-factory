@@ -412,6 +412,8 @@ export interface OutreachSourceCandidate {
   rejection_reason: string | null;
   accepted_at: string | null;
   rejected_at: string | null;
+  // Phase 8.2: Source key for granular tracking
+  source_key: string | null;
 }
 
 export interface SourceAnalytics {

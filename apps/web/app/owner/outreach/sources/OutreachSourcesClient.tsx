@@ -9,12 +9,18 @@ import {
   importSourceCandidates,
   acceptSourceCandidate,
   rejectSourceCandidate,
+  batchAcceptCandidates,
+  batchRejectCandidates,
+  batchResetCandidates,
+  importAcceptedCandidates,
 } from "@/app/lib/outreachApi";
 import type {
   OutreachSourceRun,
   OutreachSourceCandidate,
   SourceSearchResult,
   SourceImportResult,
+  AcceptedImportResult,
+  AcceptanceStatus,
 } from "@/src/types/outreach";
 import {
   SOURCE_TYPE_LABELS,
@@ -24,6 +30,8 @@ import {
   ACCEPTANCE_STATUS_COLORS,
   qualityLabel,
 } from "@/src/types/outreach";
+
+type AcceptanceFilter = "all" | AcceptanceStatus;
 
 export default function OutreachSourcesClient() {
   const { tenantId, loading: tenantLoading } = useOwnerTenantId();
@@ -40,6 +48,10 @@ export default function OutreachSourcesClient() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState<SourceImportResult | null>(null);
+  const [acceptedImportResult, setAcceptedImportResult] = useState<AcceptedImportResult | null>(null);
+
+  // Acceptance filter
+  const [acceptanceFilter, setAcceptanceFilter] = useState<AcceptanceFilter>("all");
 
   // History
   const [runs, setRuns] = useState<OutreachSourceRun[]>([]);
@@ -54,6 +66,11 @@ export default function OutreachSourcesClient() {
   const [rejectTarget, setRejectTarget] = useState<string | null>(null);
   const [rejectReason, setRejectReason] = useState("");
 
+  // Batch actions
+  const [batchLoading, setBatchLoading] = useState(false);
+  const [batchRejectReason, setBatchRejectReason] = useState("");
+  const [showBatchReject, setShowBatchReject] = useState(false);
+
   const [toast, setToast] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [error, setError] = useState("");
 
@@ -66,6 +83,7 @@ export default function OutreachSourcesClient() {
     setError("");
     setSearchResult(null);
     setImportResult(null);
+    setAcceptedImportResult(null);
     setSelectedIds(new Set());
     try {
       const result = await searchSources(tenantId, {
@@ -75,7 +93,6 @@ export default function OutreachSourcesClient() {
         niche: niche.trim() || undefined,
       });
       setSearchResult(result);
-      // Auto-select all "new" candidates
       const newIds = new Set(
         result.candidates
           .filter((c) => c.import_status === "new")
@@ -100,11 +117,7 @@ export default function OutreachSourcesClient() {
         Array.from(selectedIds)
       );
       setImportResult(result);
-      setToast({
-        type: "success",
-        text: `${result.created}件のリードを作成しました`,
-      });
-      // Update candidate statuses locally
+      setToast({ type: "success", text: `${result.created}件のリードを作成しました` });
       if (searchResult) {
         setSearchResult({
           ...searchResult,
@@ -116,6 +129,31 @@ export default function OutreachSourcesClient() {
         });
       }
       setSelectedIds(new Set());
+    } catch (err: any) {
+      setError(err.message || "インポートに失敗しました");
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const handleImportAccepted = async () => {
+    const runId = searchResult?.runId ?? historyRun?.id;
+    if (!runId) return;
+    setImporting(true);
+    setError("");
+    try {
+      const result = await importAcceptedCandidates(tenantId, runId);
+      setAcceptedImportResult(result);
+      setToast({ type: "success", text: `承認済み ${result.created}件をインポートしました` });
+      // Update local candidates
+      const updateImported = (c: OutreachSourceCandidate) =>
+        c.acceptance_status === "accepted" && c.import_status === "new"
+          ? { ...c, import_status: "imported" as const }
+          : c;
+      if (searchResult) {
+        setSearchResult({ ...searchResult, candidates: searchResult.candidates.map(updateImported) });
+      }
+      setHistoryCandidates((prev) => prev.map(updateImported));
     } catch (err: any) {
       setError(err.message || "インポートに失敗しました");
     } finally {
@@ -146,6 +184,60 @@ export default function OutreachSourcesClient() {
       setRejectReason("");
     } catch (err: any) {
       setToast({ type: "error", text: err.message || "却下に失敗しました" });
+    }
+  };
+
+  // Batch actions
+  const handleBatchAccept = async () => {
+    if (selectedIds.size === 0) return;
+    setBatchLoading(true);
+    try {
+      const result = await batchAcceptCandidates(tenantId, Array.from(selectedIds));
+      for (const id of selectedIds) {
+        updateCandidateLocally(id, { acceptance_status: "accepted" as const });
+      }
+      setToast({ type: "success", text: `${result.updated}件を承認しました` });
+      setSelectedIds(new Set());
+    } catch (err: any) {
+      setToast({ type: "error", text: err.message || "一括承認に失敗しました" });
+    } finally {
+      setBatchLoading(false);
+    }
+  };
+
+  const handleBatchReject = async () => {
+    if (selectedIds.size === 0) return;
+    setBatchLoading(true);
+    try {
+      const result = await batchRejectCandidates(tenantId, Array.from(selectedIds), batchRejectReason || undefined);
+      for (const id of selectedIds) {
+        updateCandidateLocally(id, { acceptance_status: "rejected" as const, rejection_reason: batchRejectReason || null });
+      }
+      setToast({ type: "success", text: `${result.updated}件を却下しました` });
+      setSelectedIds(new Set());
+      setShowBatchReject(false);
+      setBatchRejectReason("");
+    } catch (err: any) {
+      setToast({ type: "error", text: err.message || "一括却下に失敗しました" });
+    } finally {
+      setBatchLoading(false);
+    }
+  };
+
+  const handleBatchReset = async () => {
+    if (selectedIds.size === 0) return;
+    setBatchLoading(true);
+    try {
+      const result = await batchResetCandidates(tenantId, Array.from(selectedIds));
+      for (const id of selectedIds) {
+        updateCandidateLocally(id, { acceptance_status: "pending" as const, rejection_reason: null });
+      }
+      setToast({ type: "success", text: `${result.updated}件を保留に戻しました` });
+      setSelectedIds(new Set());
+    } catch (err: any) {
+      setToast({ type: "error", text: err.message || "リセットに失敗しました" });
+    } finally {
+      setBatchLoading(false);
     }
   };
 
@@ -197,21 +289,35 @@ export default function OutreachSourcesClient() {
 
   const toggleAll = useCallback(() => {
     if (!searchResult) return;
-    const importable = searchResult.candidates.filter((c) => c.import_status === "new");
-    if (selectedIds.size === importable.length) {
+    const visible = getFilteredCandidates(searchResult.candidates);
+    if (selectedIds.size === visible.length && visible.length > 0) {
       setSelectedIds(new Set());
     } else {
-      setSelectedIds(new Set(importable.map((c) => c.id)));
+      setSelectedIds(new Set(visible.map((c) => c.id)));
     }
-  }, [searchResult, selectedIds.size]);
+  }, [searchResult, selectedIds.size, acceptanceFilter]);
+
+  const getFilteredCandidates = (candidates: OutreachSourceCandidate[]) => {
+    if (acceptanceFilter === "all") return candidates;
+    return candidates.filter((c) => (c.acceptance_status ?? "pending") === acceptanceFilter);
+  };
 
   if (!tenantId || tenantLoading) {
     return <div className="p-6 text-sm text-gray-500">読み込み中...</div>;
   }
 
-  const importableCount = searchResult
-    ? searchResult.candidates.filter((c) => c.import_status === "new").length
+  const filteredCandidates = searchResult ? getFilteredCandidates(searchResult.candidates) : [];
+  const acceptedNewCount = searchResult
+    ? searchResult.candidates.filter((c) => c.acceptance_status === "accepted" && c.import_status === "new").length
     : 0;
+
+  // Acceptance summary counts
+  const acceptanceSummary = searchResult ? {
+    all: searchResult.candidates.length,
+    pending: searchResult.candidates.filter((c) => (c.acceptance_status ?? "pending") === "pending").length,
+    accepted: searchResult.candidates.filter((c) => c.acceptance_status === "accepted").length,
+    rejected: searchResult.candidates.filter((c) => c.acceptance_status === "rejected").length,
+  } : null;
 
   return (
     <>
@@ -293,7 +399,7 @@ export default function OutreachSourcesClient() {
           </button>
         </div>
 
-        {/* Import Result Banner */}
+        {/* Import Result Banners */}
         {importResult && (
           <div className="bg-green-50 border border-green-200 rounded-xl p-5 space-y-2">
             <h2 className="font-semibold text-sm text-green-700">インポート完了</h2>
@@ -311,24 +417,92 @@ export default function OutreachSourcesClient() {
                 <div className="text-xl font-semibold text-red-600">{importResult.invalid}</div>
               </div>
             </div>
-            {importResult.autoErrors.length > 0 && (
-              <div className="text-xs text-yellow-600 mt-2">
-                自動解析エラー: {importResult.autoErrors.length}件 (リード作成は成功)
-              </div>
-            )}
           </div>
         )}
 
-        {/* Search Results / Candidate Preview */}
+        {acceptedImportResult && (
+          <div className="bg-green-50 border border-green-200 rounded-xl p-5 space-y-2">
+            <h2 className="font-semibold text-sm text-green-700">承認済みインポート完了</h2>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+              <div className="bg-white rounded-lg p-3">
+                <div className="text-xs text-gray-500">承認済み対象</div>
+                <div className="text-xl font-semibold text-blue-600">{acceptedImportResult.accepted}</div>
+              </div>
+              <div className="bg-white rounded-lg p-3">
+                <div className="text-xs text-gray-500">新規作成</div>
+                <div className="text-xl font-semibold text-green-600">{acceptedImportResult.created}</div>
+              </div>
+              <div className="bg-white rounded-lg p-3">
+                <div className="text-xs text-gray-500">スキップ</div>
+                <div className="text-xl font-semibold text-gray-600">{acceptedImportResult.skipped}</div>
+              </div>
+              <div className="bg-white rounded-lg p-3">
+                <div className="text-xs text-gray-500">無効</div>
+                <div className="text-xl font-semibold text-red-600">{acceptedImportResult.invalid}</div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Search Results */}
         {searchResult && (
           <div className="space-y-4">
-            {/* Summary */}
-            <div className="flex items-center gap-4 text-xs text-gray-600 bg-gray-50 rounded-lg px-4 py-2">
-              <span>全 <strong>{searchResult.summary.total}</strong> 件</span>
-              <span className="text-green-600">新規: {searchResult.summary.new}</span>
-              <span className="text-yellow-600">重複: {searchResult.summary.duplicate}</span>
-              <span className="text-red-600">無効: {searchResult.summary.invalid}</span>
+            {/* Summary + Acceptance Filter */}
+            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 bg-gray-50 rounded-lg px-4 py-3">
+              <div className="flex items-center gap-4 text-xs text-gray-600">
+                <span>全 <strong>{searchResult.summary.total}</strong> 件</span>
+                <span className="text-green-600">新規: {searchResult.summary.new}</span>
+                <span className="text-yellow-600">重複: {searchResult.summary.duplicate}</span>
+              </div>
+              <div className="flex gap-1 ml-auto">
+                {(["all", "pending", "accepted", "rejected"] as AcceptanceFilter[]).map((f) => (
+                  <button
+                    key={f}
+                    onClick={() => setAcceptanceFilter(f)}
+                    className={`px-2.5 py-1 text-[10px] rounded-full border ${
+                      acceptanceFilter === f ? "bg-blue-100 text-blue-700 border-blue-300" : "bg-white text-gray-500 border-gray-200"
+                    }`}
+                  >
+                    {f === "all" ? "全て" : ACCEPTANCE_STATUS_LABELS[f]}
+                    {acceptanceSummary && (
+                      <span className="ml-1 opacity-60">
+                        ({acceptanceSummary[f === "all" ? "all" : f]})
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
             </div>
+
+            {/* Batch Actions Bar */}
+            {selectedIds.size > 0 && (
+              <div className="flex items-center gap-2 bg-blue-50 rounded-lg px-4 py-2">
+                <span className="text-xs text-blue-700 font-medium">{selectedIds.size}件選択中</span>
+                <div className="flex gap-1 ml-auto">
+                  <button
+                    onClick={handleBatchAccept}
+                    disabled={batchLoading}
+                    className="text-[10px] px-3 py-1 bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50"
+                  >
+                    一括承認
+                  </button>
+                  <button
+                    onClick={() => setShowBatchReject(true)}
+                    disabled={batchLoading}
+                    className="text-[10px] px-3 py-1 bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50"
+                  >
+                    一括却下
+                  </button>
+                  <button
+                    onClick={handleBatchReset}
+                    disabled={batchLoading}
+                    className="text-[10px] px-3 py-1 bg-gray-500 text-white rounded hover:bg-gray-600 disabled:opacity-50"
+                  >
+                    保留に戻す
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* Candidate Table */}
             <div className="overflow-x-auto border rounded-xl">
@@ -338,7 +512,7 @@ export default function OutreachSourcesClient() {
                     <th className="py-2 px-3">
                       <input
                         type="checkbox"
-                        checked={importableCount > 0 && selectedIds.size === importableCount}
+                        checked={filteredCandidates.length > 0 && selectedIds.size === filteredCandidates.length}
                         onChange={toggleAll}
                         className="w-3.5 h-3.5"
                       />
@@ -355,20 +529,18 @@ export default function OutreachSourcesClient() {
                   </tr>
                 </thead>
                 <tbody>
-                  {searchResult.candidates.map((cand) => {
+                  {filteredCandidates.map((cand) => {
                     const ql = qualityLabel(cand.quality_score);
                     const accStatus = cand.acceptance_status ?? "pending";
                     return (
                       <tr key={cand.id} className="border-b last:border-0">
                         <td className="py-2 px-3">
-                          {cand.import_status === "new" && (
-                            <input
-                              type="checkbox"
-                              checked={selectedIds.has(cand.id)}
-                              onChange={() => toggleSelect(cand.id)}
-                              className="w-3.5 h-3.5"
-                            />
-                          )}
+                          <input
+                            type="checkbox"
+                            checked={selectedIds.has(cand.id)}
+                            onChange={() => toggleSelect(cand.id)}
+                            className="w-3.5 h-3.5"
+                          />
                         </td>
                         <td className="py-2 px-3">
                           <span className={`px-2 py-0.5 rounded-full text-xs ${CANDIDATE_STATUS_COLORS[cand.import_status]}`}>
@@ -427,18 +599,34 @@ export default function OutreachSourcesClient() {
               </table>
             </div>
 
-            {/* Import Button */}
-            <div className="flex items-center justify-between">
+            {/* Import Buttons */}
+            <div className="flex items-center justify-between flex-wrap gap-2">
               <span className="text-xs text-gray-500">
                 {selectedIds.size}件 選択中
+                {acceptedNewCount > 0 && (
+                  <span className="ml-2 text-green-600">
+                    (承認済み未取込: {acceptedNewCount}件)
+                  </span>
+                )}
               </span>
-              <button
-                onClick={handleImport}
-                disabled={importing || selectedIds.size === 0}
-                className="px-6 py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
-              >
-                {importing ? "インポート中..." : `${selectedIds.size}件をリードに取込`}
-              </button>
+              <div className="flex gap-2">
+                {acceptedNewCount > 0 && (
+                  <button
+                    onClick={handleImportAccepted}
+                    disabled={importing}
+                    className="px-5 py-2 text-sm bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50"
+                  >
+                    {importing ? "インポート中..." : `承認済み ${acceptedNewCount}件をインポート`}
+                  </button>
+                )}
+                <button
+                  onClick={handleImport}
+                  disabled={importing || selectedIds.size === 0}
+                  className="px-5 py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
+                >
+                  {importing ? "インポート中..." : `選択 ${selectedIds.size}件を取込`}
+                </button>
+              </div>
             </div>
           </div>
         )}
@@ -480,10 +668,21 @@ export default function OutreachSourcesClient() {
 
             {/* History run detail */}
             {historyRun && historyCandidates.length > 0 && (
-              <div className="mt-4 border-t pt-4">
-                <h3 className="text-xs font-medium text-gray-600 mb-2">
-                  {historyRun.query || historyRun.niche || "-"} の候補 ({historyCandidates.length}件)
-                </h3>
+              <div className="mt-4 border-t pt-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-xs font-medium text-gray-600">
+                    {historyRun.query || historyRun.niche || "-"} の候補 ({historyCandidates.length}件)
+                  </h3>
+                  {historyCandidates.some((c) => c.acceptance_status === "accepted" && c.import_status === "new") && (
+                    <button
+                      onClick={handleImportAccepted}
+                      disabled={importing}
+                      className="text-[11px] px-3 py-1 bg-emerald-600 text-white rounded hover:bg-emerald-700 disabled:opacity-50"
+                    >
+                      承認済みをインポート
+                    </button>
+                  )}
+                </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-xs">
                     <thead>
@@ -546,7 +745,7 @@ export default function OutreachSourcesClient() {
           </div>
         )}
 
-        {/* Reject Reason Modal */}
+        {/* Reject Reason Modal (single) */}
         {rejectTarget && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
             <div className="bg-white rounded-xl p-5 max-w-sm w-full shadow-xl space-y-3">
@@ -569,6 +768,36 @@ export default function OutreachSourcesClient() {
                   className="px-3 py-1.5 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700"
                 >
                   却下
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Batch Reject Modal */}
+        {showBatchReject && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+            <div className="bg-white rounded-xl p-5 max-w-sm w-full shadow-xl space-y-3">
+              <h3 className="text-sm font-semibold">一括却下 ({selectedIds.size}件)</h3>
+              <input
+                value={batchRejectReason}
+                onChange={(e) => setBatchRejectReason(e.target.value)}
+                placeholder="却下理由 (任意)"
+                className="w-full border rounded-lg px-3 py-1.5 text-sm"
+              />
+              <div className="flex gap-2 justify-end">
+                <button
+                  onClick={() => { setShowBatchReject(false); setBatchRejectReason(""); }}
+                  className="px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100 rounded-lg"
+                >
+                  キャンセル
+                </button>
+                <button
+                  onClick={handleBatchReject}
+                  disabled={batchLoading}
+                  className="px-3 py-1.5 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
+                >
+                  {batchLoading ? "処理中..." : "一括却下"}
                 </button>
               </div>
             </div>

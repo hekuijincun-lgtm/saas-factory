@@ -7437,6 +7437,27 @@ async function scheduled(_event: any, env: Env, _ctx: any): Promise<void> {
     }
   }
 
+  // ── Phase 8.2: Source Quality Daily Aggregation (JST midnight) ──────────
+  if (db) {
+    const SQD_STAMP = "SOURCE_QUALITY_DAILY_V1";
+    try {
+      const sqdNowJst = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Tokyo" }));
+      const sqdHour = sqdNowJst.getHours();
+      // Run at JST 1-2 AM (after learning refresh at 0-1)
+      if (sqdHour >= 1 && sqdHour <= 2) {
+        const { aggregateSourceQualityDaily } = await import("./outreach/source-quality-daily");
+        const sqdUid = () => `sqd_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+        const sqdNow = () => new Date().toISOString();
+        const result = await aggregateSourceQualityDaily(db, sqdUid, sqdNow);
+        if (result.rowsUpserted > 0) {
+          console.log(`[${SQD_STAMP}] ${result.tenantsProcessed} tenants, ${result.rowsUpserted} rows upserted`);
+        }
+      }
+    } catch (sqdErr: any) {
+      console.error(`[${SQD_STAMP}] error:`, String(sqdErr?.message ?? sqdErr));
+    }
+  }
+
   // ── LINE 1日前リマインド ────────────────────────────────────────────────────
   if (db) {
     const REM_STAMP = "LINE_REMINDER_V1";

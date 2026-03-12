@@ -39,6 +39,11 @@ import type {
   SourceQualityRow,
   SourceQualitySummary,
   TopSourceRow,
+  BatchActionResult,
+  AcceptedImportResult,
+  AcceptedCountResult,
+  SourceTrendPoint,
+  SourceTrendBreakdown,
 } from "@/src/types/outreach";
 
 // ── Leads ──────────────────────────────────────────────────────────────────
@@ -715,6 +720,99 @@ export async function backfillSourceQuality(
   const res = await apiPost<{ ok: boolean; data: { updated: number } }>(
     "/admin/outreach/source-candidates/backfill-quality",
     { runId },
+    { tenantId }
+  );
+  return res.data;
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// Phase 8.2: Batch Actions + Accepted Import + Trends
+// ══════════════════════════════════════════════════════════════════════════
+
+export async function batchAcceptCandidates(
+  tenantId: string,
+  candidateIds: string[]
+): Promise<BatchActionResult> {
+  const res = await apiPost<{ ok: boolean; data: BatchActionResult }>(
+    "/admin/outreach/source-candidates/batch-accept",
+    { candidateIds },
+    { tenantId }
+  );
+  return res.data;
+}
+
+export async function batchRejectCandidates(
+  tenantId: string,
+  candidateIds: string[],
+  reason?: string
+): Promise<BatchActionResult> {
+  const res = await apiPost<{ ok: boolean; data: BatchActionResult }>(
+    "/admin/outreach/source-candidates/batch-reject",
+    { candidateIds, reason },
+    { tenantId }
+  );
+  return res.data;
+}
+
+export async function batchResetCandidates(
+  tenantId: string,
+  candidateIds: string[]
+): Promise<BatchActionResult> {
+  const res = await apiPost<{ ok: boolean; data: BatchActionResult }>(
+    "/admin/outreach/source-candidates/batch-reset",
+    { candidateIds },
+    { tenantId }
+  );
+  return res.data;
+}
+
+export async function fetchAcceptedCount(
+  tenantId: string,
+  runId: string
+): Promise<AcceptedCountResult> {
+  const res = await apiGet<{ ok: boolean; data: AcceptedCountResult }>(
+    `/admin/outreach/sources/runs/${runId}/accepted-count`,
+    { tenantId }
+  );
+  return res.data;
+}
+
+export async function importAcceptedCandidates(
+  tenantId: string,
+  runId: string
+): Promise<AcceptedImportResult> {
+  const res = await apiPost<{ ok: boolean; data: AcceptedImportResult }>(
+    `/admin/outreach/sources/runs/${runId}/import-accepted`,
+    {},
+    { tenantId, timeout: 60000 }
+  );
+  return res.data;
+}
+
+export async function fetchSourceTrends(
+  tenantId: string,
+  params?: { days?: number; sourceType?: string; niche?: string; area?: string }
+): Promise<SourceTrendPoint[]> {
+  const sp = new URLSearchParams();
+  if (params?.days) sp.set("days", String(params.days));
+  if (params?.sourceType) sp.set("sourceType", params.sourceType);
+  if (params?.niche) sp.set("niche", params.niche);
+  if (params?.area) sp.set("area", params.area);
+  const qs = sp.toString();
+  const res = await apiGet<{ ok: boolean; data: SourceTrendPoint[] }>(
+    `/admin/outreach/source-quality/trends${qs ? `?${qs}` : ""}`,
+    { tenantId }
+  );
+  return res.data;
+}
+
+export async function fetchSourceBreakdown(
+  tenantId: string,
+  days?: number
+): Promise<SourceTrendBreakdown[]> {
+  const qs = days ? `?days=${days}` : "";
+  const res = await apiGet<{ ok: boolean; data: SourceTrendBreakdown[] }>(
+    `/admin/outreach/source-quality/breakdown${qs}`,
     { tenantId }
   );
   return res.data;

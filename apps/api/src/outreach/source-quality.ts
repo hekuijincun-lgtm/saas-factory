@@ -1,8 +1,8 @@
-// Outreach OS — Source Quality Service (Phase 8.1)
+// Outreach OS — Source Quality Service (Phase 8.1 + 8.2)
 // ============================================================
 // Rule-based quality scoring for source candidates.
 // Aggregation of source-level performance metrics.
-// Designed for future Phase 8.2 (auto-prospecting) extension.
+// Batch accept/reject + accepted-only import helpers.
 
 import type { D1Database } from "@cloudflare/workers-types";
 import type { OutreachSourceCandidate } from "./types";
@@ -137,6 +137,116 @@ export async function rejectCandidate(
     .run();
 
   return (result.meta?.changes ?? 0) > 0;
+}
+
+// ── Phase 8.2: Batch Actions ─────────────────────────────────────────────
+
+export interface BatchActionResult {
+  updated: number;
+  skipped: number;
+}
+
+/**
+ * Batch accept multiple candidates. Only updates pending/rejected → accepted.
+ */
+export async function batchAcceptCandidates(
+  db: D1Database,
+  tenantId: string,
+  candidateIds: string[],
+  now: string
+): Promise<BatchActionResult> {
+  let updated = 0;
+  let skipped = 0;
+  for (const id of candidateIds) {
+    const result = await db
+      .prepare(
+        `UPDATE outreach_source_candidates
+         SET acceptance_status = 'accepted', accepted_at = ?1, rejected_at = NULL, rejection_reason = NULL, updated_at = ?1
+         WHERE id = ?2 AND tenant_id = ?3 AND acceptance_status != 'accepted'`
+      )
+      .bind(now, id, tenantId)
+      .run();
+    if ((result.meta?.changes ?? 0) > 0) updated++;
+    else skipped++;
+  }
+  return { updated, skipped };
+}
+
+/**
+ * Batch reject multiple candidates. Only updates pending/accepted → rejected.
+ */
+export async function batchRejectCandidates(
+  db: D1Database,
+  tenantId: string,
+  candidateIds: string[],
+  reason: string | null,
+  now: string
+): Promise<BatchActionResult> {
+  let updated = 0;
+  let skipped = 0;
+  for (const id of candidateIds) {
+    const result = await db
+      .prepare(
+        `UPDATE outreach_source_candidates
+         SET acceptance_status = 'rejected', rejected_at = ?1, rejection_reason = ?2, accepted_at = NULL, updated_at = ?1
+         WHERE id = ?3 AND tenant_id = ?4 AND acceptance_status != 'rejected'`
+      )
+      .bind(now, reason, id, tenantId)
+      .run();
+    if ((result.meta?.changes ?? 0) > 0) updated++;
+    else skipped++;
+  }
+  return { updated, skipped };
+}
+
+/**
+ * Batch reset candidates back to pending.
+ */
+export async function batchResetCandidates(
+  db: D1Database,
+  tenantId: string,
+  candidateIds: string[],
+  now: string
+): Promise<BatchActionResult> {
+  let updated = 0;
+  let skipped = 0;
+  for (const id of candidateIds) {
+    const result = await db
+      .prepare(
+        `UPDATE outreach_source_candidates
+         SET acceptance_status = 'pending', accepted_at = NULL, rejected_at = NULL, rejection_reason = NULL, updated_at = ?1
+         WHERE id = ?2 AND tenant_id = ?3 AND acceptance_status != 'pending'`
+      )
+      .bind(now, id, tenantId)
+      .run();
+    if ((result.meta?.changes ?? 0) > 0) updated++;
+    else skipped++;
+  }
+  return { updated, skipped };
+}
+
+/**
+ * Get count of accepted candidates for a run that are eligible for import.
+ * Excludes already imported, duplicate, and invalid candidates.
+ */
+export async function getAcceptedImportableCount(
+  db: D1Database,
+  tenantId: string,
+  runId: string
+): Promise<{ accepted: number; pending: number; rejected: number; importable: number }> {
+  const row = await db
+    .prepare(`
+      SELECT
+        SUM(CASE WHEN acceptance_status = 'accepted' THEN 1 ELSE 0 END) as accepted,
+        SUM(CASE WHEN acceptance_status = 'pending' THEN 1 ELSE 0 END) as pending,
+        SUM(CASE WHEN acceptance_status = 'rejected' THEN 1 ELSE 0 END) as rejected,
+        SUM(CASE WHEN acceptance_status = 'accepted' AND import_status = 'new' THEN 1 ELSE 0 END) as importable
+      FROM outreach_source_candidates
+      WHERE tenant_id = ?1 AND run_id = ?2
+    `)
+    .bind(tenantId, runId)
+    .first<{ accepted: number; pending: number; rejected: number; importable: number }>();
+  return row ?? { accepted: 0, pending: 0, rejected: 0, importable: 0 };
 }
 
 // ── Source Quality Aggregation ───────────────────────────────────────────

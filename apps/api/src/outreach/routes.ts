@@ -32,7 +32,15 @@ import {
   rejectCandidate,
   aggregateSourceQuality,
   getTopSources,
+  batchAcceptCandidates,
+  batchRejectCandidates,
+  batchResetCandidates,
+  getAcceptedImportableCount,
 } from "./source-quality";
+import {
+  getSourceQualityTrends,
+  getSourceQualityBreakdown,
+} from "./source-quality-daily";
 import type { LearningPattern } from "./learning";
 import { generateCampaignDraft } from "./campaign-generator";
 import type { CandidateResult } from "./source-providers/types";
@@ -2262,6 +2270,9 @@ export function createOutreachRoutes(getTenantId: GetTenantId) {
         dedupReason = "store_name が空です";
       }
 
+      // Phase 8.2: Generate source_key for granular tracking
+      const sourceKey = [sourceType, body.query ?? "", body.location ?? ""].filter(Boolean).join(":").toLowerCase();
+
       // Phase 8.1: Compute quality score at candidate creation
       const qualityCandidate = {
         website_url: c2.websiteUrl ?? null,
@@ -2279,8 +2290,8 @@ export function createOutreachRoutes(getTenantId: GetTenantId) {
         `INSERT INTO outreach_source_candidates
          (id, tenant_id, run_id, source_type, external_id, store_name, category, area, address,
           website_url, phone, email, rating, review_count, source_url, normalized_domain,
-          import_status, dedup_reason, dedup_lead_id, raw_payload_json, quality_score, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)`
+          import_status, dedup_reason, dedup_lead_id, raw_payload_json, quality_score, source_key, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)`
       ).bind(
         candId, tenantId, runId, sourceType,
         c2.externalId ?? null, c2.storeName, c2.category ?? null, c2.area ?? null, c2.address ?? null,
@@ -2289,7 +2300,7 @@ export function createOutreachRoutes(getTenantId: GetTenantId) {
         c2.sourceUrl ?? null, domain,
         importStatus, dedupReason, dedupLeadId,
         c2.rawPayload ? JSON.stringify(c2.rawPayload) : null,
-        qualityScore,
+        qualityScore, sourceKey,
         ts, ts
       ).run();
 
@@ -2304,6 +2315,7 @@ export function createOutreachRoutes(getTenantId: GetTenantId) {
         raw_payload_json: c2.rawPayload ? JSON.stringify(c2.rawPayload) : null,
         quality_score: qualityScore, acceptance_status: "pending" as const,
         rejection_reason: null, accepted_at: null, rejected_at: null,
+        source_key: sourceKey,
         created_at: ts, updated_at: ts,
       });
     }
@@ -2575,6 +2587,169 @@ export function createOutreachRoutes(getTenantId: GetTenantId) {
     const body = await c.req.json<{ runId?: string }>().catch(() => ({}));
     const updated = await backfillCandidateQualityScores(db, tenantId, body.runId);
     return c.json({ ok: true, tenantId, data: { updated } });
+  });
+
+  // ── Phase 8.2: Batch Actions + Accepted-Only Import + Trends ─────────
+
+  // POST /source-candidates/batch-accept
+  app.post("/source-candidates/batch-accept", async (c) => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    const body = await c.req.json<{ candidateIds: string[] }>();
+    if (!body.candidateIds?.length) return c.json({ ok: false, error: "candidateIds required" }, 400);
+    const result = await batchAcceptCandidates(db, tenantId, body.candidateIds, now());
+    return c.json({ ok: true, tenantId, data: result });
+  });
+
+  // POST /source-candidates/batch-reject
+  app.post("/source-candidates/batch-reject", async (c) => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    const body = await c.req.json<{ candidateIds: string[]; reason?: string }>();
+    if (!body.candidateIds?.length) return c.json({ ok: false, error: "candidateIds required" }, 400);
+    const result = await batchRejectCandidates(db, tenantId, body.candidateIds, body.reason ?? null, now());
+    return c.json({ ok: true, tenantId, data: result });
+  });
+
+  // POST /source-candidates/batch-reset
+  app.post("/source-candidates/batch-reset", async (c) => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    const body = await c.req.json<{ candidateIds: string[] }>();
+    if (!body.candidateIds?.length) return c.json({ ok: false, error: "candidateIds required" }, 400);
+    const result = await batchResetCandidates(db, tenantId, body.candidateIds, now());
+    return c.json({ ok: true, tenantId, data: result });
+  });
+
+  // GET /sources/runs/:id/accepted-count — Count accepted importable candidates
+  app.get("/sources/runs/:id/accepted-count", async (c) => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    const runId = c.req.param("id");
+    const counts = await getAcceptedImportableCount(db, tenantId, runId);
+    return c.json({ ok: true, tenantId, data: counts });
+  });
+
+  // POST /sources/runs/:id/import-accepted — Import only accepted candidates
+  app.post("/sources/runs/:id/import-accepted", async (c) => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    const kv = c.env.SAAS_FACTORY;
+    const runId = c.req.param("id");
+
+    // Verify run exists
+    const run = await db
+      .prepare("SELECT * FROM outreach_source_runs WHERE id = ?1 AND tenant_id = ?2")
+      .bind(runId, tenantId).first<OutreachSourceRun>();
+    if (!run) return c.json({ ok: false, error: "Run not found" }, 404);
+
+    // Get accepted + new candidates
+    const candidates = await db
+      .prepare(`SELECT * FROM outreach_source_candidates
+        WHERE tenant_id = ?1 AND run_id = ?2 AND acceptance_status = 'accepted' AND import_status = 'new'`)
+      .bind(tenantId, runId).all<OutreachSourceCandidate>();
+
+    const cands = candidates.results ?? [];
+    if (!cands.length) {
+      return c.json({ ok: true, tenantId, data: { created: 0, skipped: 0, invalid: 0, accepted: 0, autoErrors: [] } });
+    }
+
+    const settings = await getOutreachSettings(kv, tenantId);
+    let created = 0, skipped = 0, invalid = 0;
+    const createdLeadIds: string[] = [];
+
+    for (const cand of cands) {
+      if (cand.import_status === "imported") { skipped++; continue; }
+      if (cand.import_status === "invalid") { invalid++; continue; }
+      if (cand.import_status === "duplicate") { skipped++; continue; }
+
+      const leadId = uid();
+      const ts = now();
+      await db.prepare(
+        `INSERT INTO sales_leads
+         (id, tenant_id, store_name, industry, website_url, contact_email, category, area,
+          rating, review_count, has_booking_link, status, pipeline_stage,
+          domain, normalized_domain, import_source, source_type, source_run_id, source_ref, imported_at,
+          created_at, updated_at)
+         VALUES (?1, ?2, ?3, 'shared', ?4, ?5, ?6, ?7, ?8, ?9, 0, 'new', 'new', ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)`
+      ).bind(
+        leadId, tenantId, cand.store_name,
+        cand.website_url, cand.email,
+        cand.category, cand.area,
+        cand.rating, cand.review_count,
+        cand.normalized_domain, cand.normalized_domain,
+        cand.source_type, cand.source_type, runId, cand.external_id ?? cand.id,
+        ts, ts, ts
+      ).run();
+
+      await db.prepare(
+        "UPDATE outreach_source_candidates SET import_status = 'imported', updated_at = ?1 WHERE id = ?2 AND tenant_id = ?3"
+      ).bind(ts, cand.id, tenantId).run();
+
+      created++;
+      createdLeadIds.push(leadId);
+    }
+
+    // Update run imported_count
+    if (created > 0) {
+      await db.prepare(
+        "UPDATE outreach_source_runs SET imported_count = imported_count + ?1, updated_at = ?2 WHERE id = ?3 AND tenant_id = ?4"
+      ).bind(created, now(), runId, tenantId).run();
+    }
+
+    // Auto-analyze / auto-score
+    const autoErrors: Array<{ leadId: string; error: string }> = [];
+    if (created > 0 && (settings.autoAnalyzeOnImport || settings.autoScoreOnImport)) {
+      for (const leadId of createdLeadIds) {
+        try {
+          const lead = await db
+            .prepare("SELECT * FROM sales_leads WHERE id = ?1 AND tenant_id = ?2")
+            .bind(leadId, tenantId).first<OutreachLead>();
+          if (!lead) continue;
+
+          if (settings.autoScoreOnImport) {
+            const scoreResult = computeLeadScore(lead);
+            await db.prepare(
+              "UPDATE sales_leads SET score = ?1, features_json = ?2, updated_at = ?3 WHERE id = ?4 AND tenant_id = ?5"
+            ).bind(scoreResult.score, JSON.stringify(scoreResult.components), now(), leadId, tenantId).run();
+          }
+        } catch (err: any) {
+          autoErrors.push({ leadId, error: err.message ?? "auto-process failed" });
+        }
+      }
+    }
+
+    await logAudit(db, tenantId, "system", "outreach.source_import_accepted", {
+      runId, created, skipped, invalid, accepted: cands.length, autoErrors: autoErrors.length,
+    });
+
+    return c.json({
+      ok: true, tenantId,
+      data: { created, skipped, invalid, accepted: cands.length, autoErrors },
+    });
+  });
+
+  // GET /source-quality/trends — Daily trend data
+  app.get("/source-quality/trends", async (c) => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    const days = parseInt(c.req.query("days") ?? "30", 10);
+    const sourceType = c.req.query("sourceType") || undefined;
+    const niche = c.req.query("niche") || undefined;
+    const area = c.req.query("area") || undefined;
+
+    const trends = await getSourceQualityTrends(db, tenantId, days, { sourceType, niche, area });
+    return c.json({ ok: true, tenantId, data: trends });
+  });
+
+  // GET /source-quality/breakdown — Source breakdown summary
+  app.get("/source-quality/breakdown", async (c) => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    const days = parseInt(c.req.query("days") ?? "30", 10);
+
+    const breakdown = await getSourceQualityBreakdown(db, tenantId, days);
+    return c.json({ ok: true, tenantId, data: breakdown });
   });
 
   // ── GET /analytics/sources — Source performance analytics ──────────────

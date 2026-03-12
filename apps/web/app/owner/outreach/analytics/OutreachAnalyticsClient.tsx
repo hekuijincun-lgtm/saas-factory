@@ -2,8 +2,8 @@
 
 import { useState, useEffect } from "react";
 import { useOwnerTenantId } from "@/src/lib/useOwnerTenantId";
-import { fetchOutreachAnalytics, fetchLearningAnalytics, fetchCampaignAnalytics, fetchSourceAnalytics, fetchWinningPatterns, refreshWinningPatterns, fetchCampaignInsights, fetchSourceQuality, fetchTopSources } from "@/app/lib/outreachApi";
-import type { OutreachAnalytics, LearningAnalytics, CampaignAnalytics, SourceAnalytics, WinningPatternsData, CampaignInsightsData, SourceQualityRow, SourceQualitySummary, TopSourceRow } from "@/src/types/outreach";
+import { fetchOutreachAnalytics, fetchLearningAnalytics, fetchCampaignAnalytics, fetchSourceAnalytics, fetchWinningPatterns, refreshWinningPatterns, fetchCampaignInsights, fetchSourceQuality, fetchTopSources, fetchSourceTrends, fetchSourceBreakdown } from "@/app/lib/outreachApi";
+import type { OutreachAnalytics, LearningAnalytics, CampaignAnalytics, SourceAnalytics, WinningPatternsData, CampaignInsightsData, SourceQualityRow, SourceQualitySummary, TopSourceRow, SourceTrendPoint, SourceTrendBreakdown } from "@/src/types/outreach";
 import { SOURCE_TYPE_LABELS, PATTERN_TYPE_LABELS } from "@/src/types/outreach";
 import { PIPELINE_LABELS } from "@/src/types/outreach";
 
@@ -36,6 +36,8 @@ export default function OutreachAnalyticsClient() {
   const [sourceQuality, setSourceQuality] = useState<SourceQualityRow[]>([]);
   const [sourceQualitySummary, setSourceQualitySummary] = useState<SourceQualitySummary | null>(null);
   const [topSources, setTopSources] = useState<TopSourceRow[]>([]);
+  const [sourceTrends, setSourceTrends] = useState<SourceTrendPoint[]>([]);
+  const [sourceBreakdown, setSourceBreakdown] = useState<SourceTrendBreakdown[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -52,8 +54,10 @@ export default function OutreachAnalyticsClient() {
       fetchCampaignInsights(tenantId).catch(() => null),
       fetchSourceQuality(tenantId).catch(() => ({ data: [], summary: null })),
       fetchTopSources(tenantId).catch(() => []),
+      fetchSourceTrends(tenantId, { days: 30 }).catch(() => []),
+      fetchSourceBreakdown(tenantId, 30).catch(() => []),
     ])
-      .then(([a, l, c, s, w, ci, sq, ts]) => {
+      .then(([a, l, c, s, w, ci, sq, ts, trends, breakdown]) => {
         setAnalytics(a);
         setLearning(l);
         setCampaignAnalytics(c);
@@ -65,6 +69,8 @@ export default function OutreachAnalyticsClient() {
           setSourceQualitySummary((sq as any).summary ?? null);
         }
         setTopSources(Array.isArray(ts) ? ts : []);
+        setSourceTrends(Array.isArray(trends) ? trends : []);
+        setSourceBreakdown(Array.isArray(breakdown) ? breakdown : []);
       })
       .catch((err) => setError(err.message || "読み込みに失敗しました"))
       .finally(() => setLoading(false));
@@ -407,6 +413,98 @@ export default function OutreachAnalyticsClient() {
                 {sourceQuality.length === 0 && topSources.length === 0 && (
                   <div className="text-sm text-gray-400 py-4 text-center">
                     ソース品質データがありません。リードを取り込むとデータが蓄積されます。
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Phase 8.2: Source Quality Trends */}
+            {(sourceTrends.length > 0 || sourceBreakdown.length > 0) && (
+              <div className="space-y-4">
+                <h3 className="text-sm font-medium text-gray-700">ソース品質トレンド (30日)</h3>
+
+                {/* Daily trend table */}
+                {sourceTrends.length > 0 && (
+                  <div>
+                    <h4 className="text-xs font-medium text-gray-600 mb-2">日次推移</h4>
+                    <div className="overflow-x-auto border rounded-xl">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="bg-gray-50 text-left text-xs text-gray-500 border-b">
+                            <th className="py-2 px-3">日付</th>
+                            <th className="py-2 px-3 text-right">候補数</th>
+                            <th className="py-2 px-3 text-right">承認数</th>
+                            <th className="py-2 px-3 text-right">取込数</th>
+                            <th className="py-2 px-3 text-right">品質</th>
+                            <th className="py-2 px-3 text-right">返信率</th>
+                            <th className="py-2 px-3 text-right">商談率</th>
+                            <th className="py-2 px-3 text-right">成約率</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {sourceTrends.map((t) => (
+                            <tr key={t.day} className="border-b last:border-0">
+                              <td className="py-1.5 px-3 text-gray-600">{t.day}</td>
+                              <td className="py-1.5 px-3 text-right">{t.candidate_count}</td>
+                              <td className="py-1.5 px-3 text-right text-green-600">{t.accepted_count}</td>
+                              <td className="py-1.5 px-3 text-right text-blue-600">{t.imported_count}</td>
+                              <td className="py-1.5 px-3 text-right">{t.avg_quality_score.toFixed(2)}</td>
+                              <td className="py-1.5 px-3 text-right">{(t.reply_rate * 100).toFixed(1)}%</td>
+                              <td className="py-1.5 px-3 text-right">{(t.meeting_rate * 100).toFixed(1)}%</td>
+                              <td className="py-1.5 px-3 text-right">{(t.won_rate * 100).toFixed(1)}%</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* Source breakdown */}
+                {sourceBreakdown.length > 0 && (
+                  <div>
+                    <h4 className="text-xs font-medium text-gray-600 mb-2">ソース別サマリー</h4>
+                    <div className="overflow-x-auto border rounded-xl">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="bg-gray-50 text-left text-xs text-gray-500 border-b">
+                            <th className="py-2 px-3">ソース</th>
+                            <th className="py-2 px-3">キー</th>
+                            <th className="py-2 px-3">ニッチ</th>
+                            <th className="py-2 px-3">エリア</th>
+                            <th className="py-2 px-3 text-right">候補</th>
+                            <th className="py-2 px-3 text-right">承認</th>
+                            <th className="py-2 px-3 text-right">取込</th>
+                            <th className="py-2 px-3 text-right">品質</th>
+                            <th className="py-2 px-3 text-right">返信率</th>
+                            <th className="py-2 px-3 text-right">商談率</th>
+                            <th className="py-2 px-3 text-right">サンプル</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {sourceBreakdown.map((b, i) => (
+                            <tr key={`${b.source_key}-${i}`} className="border-b last:border-0">
+                              <td className="py-1.5 px-3">{SOURCE_TYPE_LABELS[b.source_type] ?? b.source_type}</td>
+                              <td className="py-1.5 px-3 text-gray-500 text-xs truncate max-w-[100px]" title={b.source_key}>
+                                {b.source_key}
+                              </td>
+                              <td className="py-1.5 px-3 text-gray-500">{b.niche ?? "-"}</td>
+                              <td className="py-1.5 px-3 text-gray-500">{b.area ?? "-"}</td>
+                              <td className="py-1.5 px-3 text-right">{b.total_candidates}</td>
+                              <td className="py-1.5 px-3 text-right text-green-600">{b.total_accepted}</td>
+                              <td className="py-1.5 px-3 text-right text-blue-600">{b.total_imported}</td>
+                              <td className="py-1.5 px-3 text-right">{b.avg_quality.toFixed(2)}</td>
+                              <td className="py-1.5 px-3 text-right">{(b.avg_reply_rate * 100).toFixed(1)}%</td>
+                              <td className="py-1.5 px-3 text-right">{(b.avg_meeting_rate * 100).toFixed(1)}%</td>
+                              <td className="py-1.5 px-3 text-right text-gray-400">
+                                {b.sample_size}
+                                {b.sample_size < 5 && <span className="ml-1 text-[10px] text-amber-500">参考値</span>}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
                 )}
               </div>
