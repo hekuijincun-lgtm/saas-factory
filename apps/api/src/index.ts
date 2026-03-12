@@ -6397,7 +6397,7 @@ app.get("/sales-ai/config", async (c) => {
   const kv = (c.env as any)?.SAAS_FACTORY;
   if (!kv) return c.json({ ok: true, accountId: accountId || null, config: null });
 
-  // Reverse lookup: tenantId → first active sales lineAccount
+  // Reverse lookup: tenantId → first active sales lineAccount → fallback to tenantId as accountId
   if (!accountId && tenantId) {
     try {
       const settings = await kv.get(`settings:${tenantId}`, "json") as any;
@@ -6409,6 +6409,11 @@ app.get("/sales-ai/config", async (c) => {
         console.log(`[SALES_AI_CFG] tenantId reverse lookup: ${tenantId} → accountId=${accountId}`);
       }
     } catch {}
+    // Legacy single-account fallback: use tenantId as accountId
+    if (!accountId) {
+      accountId = tenantId;
+      console.log(`[SALES_AI_CFG] legacy fallback: using tenantId=${tenantId} as accountId`);
+    }
   }
 
   if (!accountId) return c.json({ ok: false, error: "missing accountId (no sales lineAccount found)" }, 400);
@@ -6461,7 +6466,7 @@ app.post("/sales-ai/chat", async (c) => {
   const kv = env?.SAAS_FACTORY;
   if (!kv) return c.json({ ok: false, error: "kv_unavailable" }, 500);
 
-  // Reverse lookup: tenantId → first active sales lineAccount
+  // Reverse lookup: tenantId → first active sales lineAccount → fallback to tenantId as accountId
   if (!accountId && tenantId) {
     try {
       const settings = await kv.get(`settings:${tenantId}`, "json") as any;
@@ -6473,6 +6478,11 @@ app.post("/sales-ai/chat", async (c) => {
         console.log(`[SALES_AI_CHAT] tenantId reverse lookup: ${tenantId} → accountId=${accountId}`);
       }
     } catch {}
+    // Legacy single-account fallback: use tenantId as accountId
+    if (!accountId) {
+      accountId = tenantId;
+      console.log(`[SALES_AI_CHAT] legacy fallback: using tenantId=${tenantId} as accountId`);
+    }
   }
 
   if (!accountId) return c.json({ ok: false, error: "missing accountId (no sales lineAccount found)" }, 400);
