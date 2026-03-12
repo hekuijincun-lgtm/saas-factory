@@ -6781,13 +6781,28 @@ app.post("/ai/chat", async (c) => {
       ? "\n\n## 禁止トピック: " + (aiPolicy.prohibitedTopics as string[]).join(", ")
       : "";
 
+    // voice / answerLength を具体的な日本語指示に変換
+    const voiceMap: Record<string, string> = {
+      friendly: "親しみやすく温かい口調で話してください。絵文字を適度に使い、お客様との距離が近い接客をしてください。",
+      formal: "丁寧で礼儀正しい敬語を使ってください。「です・ます」調で、落ち着いた品のある接客をしてください。",
+      casual: "気さくでカジュアルな口調で話してください。堅苦しくない、友達のような自然体の接客をしてください。",
+      professional: "専門的で信頼感のある口調で話してください。的確で簡潔に、プロフェッショナルな接客をしてください。",
+    };
+    const answerLengthMap: Record<string, string> = {
+      short: "回答は1〜2文の簡潔なものにしてください。",
+      normal: "回答は適度な長さ（3〜4文程度）にしてください。",
+      long: "回答は丁寧に詳しく説明してください。",
+    };
+    const voiceInstruction = voiceMap[aiSettings.voice] ?? voiceMap.friendly;
+    const lengthInstruction = answerLengthMap[aiSettings.answerLength] ?? answerLengthMap.normal;
+
     const systemContent = [
       storeSettings?.storeName
         ? `あなたは「${storeSettings.storeName}」のAIアシスタントです。`
         : "あなたはお店のAIアシスタントです。",
       aiSettings.character ? `キャラクター設定: ${aiSettings.character}` : "",
-      `口調: ${aiSettings.voice}`,
-      `回答の長さ: ${aiSettings.answerLength}`,
+      voiceInstruction,
+      lengthInstruction,
       storeBlock,
       "",
       "## 絶対に守るルール",
