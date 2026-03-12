@@ -508,6 +508,15 @@ app.get('/admin/rbac/audit', async (c) => {
       storeAddress: "",
       consentText: "予約内容を確認し、同意の上で予約を確定します",
       staffSelectionEnabled: true,
+      eyebrow: {
+        surveyEnabled: true,
+        surveyQuestions: [
+          { id: "q_default_1", label: "眉毛のお悩みはありますか？",           type: "text", enabled: true },
+          { id: "q_default_2", label: "ご希望の仕上がりを教えてください",     type: "text", enabled: true },
+          { id: "q_default_3", label: "普段、自己処理はされていますか？",     type: "text", enabled: true },
+          { id: "q_default_4", label: "お肌で気になることはありますか？",     type: "text", enabled: true },
+        ],
+      },
     }
 
     const deepMerge = (a: any, b: any) => {
