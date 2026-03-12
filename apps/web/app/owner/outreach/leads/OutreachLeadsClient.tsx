@@ -1,8 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { useAdminTenantId } from "@/src/lib/useAdminTenantId";
-import AdminTopBar from "@/app/_components/ui/AdminTopBar";
+import { useSearchParams } from "next/navigation";
 import {
   fetchOutreachLeads,
   createOutreachLead,
@@ -595,7 +594,8 @@ function LeadDrawer({
 // ── Main component ─────────────────────────────────────────────────────────
 
 export default function OutreachLeadsClient() {
-  const { tenantId, status: tenantStatus } = useAdminTenantId();
+  const searchParams = useSearchParams();
+  const tenantId = searchParams.get("tenantId") ?? "";
   const [leads, setLeads] = useState<OutreachLead[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -606,7 +606,7 @@ export default function OutreachLeadsClient() {
   const [toast, setToast] = useState("");
 
   const load = useCallback(async () => {
-    if (tenantStatus !== "ready") return;
+    if (!tenantId) return;
     setLoading(true);
     try {
       const data = await fetchOutreachLeads(tenantId, {
@@ -622,7 +622,7 @@ export default function OutreachLeadsClient() {
     } finally {
       setLoading(false);
     }
-  }, [tenantId, tenantStatus, sortBy, filterStage]);
+  }, [tenantId, sortBy, filterStage]);
 
   useEffect(() => {
     load();
@@ -634,25 +634,12 @@ export default function OutreachLeadsClient() {
     load();
   };
 
-  if (tenantStatus === "loading") {
+  if (!tenantId) {
     return <div className="p-6 text-sm text-gray-500">読み込み中...</div>;
   }
 
   return (
     <>
-      <AdminTopBar
-        title="リード管理"
-        subtitle={`${total}件のリード`}
-        right={
-          <button
-            onClick={() => setShowCreate(true)}
-            className="px-4 py-2 text-sm text-white bg-blue-600 hover:bg-blue-700 rounded-lg"
-          >
-            リード追加
-          </button>
-        }
-      />
-
       <div className="px-6 space-y-4">
         {toast && (
           <div className="bg-green-50 text-green-700 px-3 py-2 rounded text-sm">

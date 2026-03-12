@@ -11,6 +11,13 @@ import {
   Shield,
   MessageCircle,
   Target,
+  CheckSquare,
+  Kanban,
+  BarChart3,
+  Search,
+  Upload,
+  Megaphone,
+  Settings2,
 } from "lucide-react";
 
 function Sidebar({
@@ -28,6 +35,14 @@ function Sidebar({
     { href: "/owner", label: "概要", icon: LayoutDashboard },
     { href: "/owner/leads", label: "営業リード管理", icon: Target },
     { href: "/owner/sales-lines", label: "営業LINE管理", icon: MessageCircle },
+    { href: "/owner/outreach/leads", label: "営業リード", icon: Target },
+    { href: "/owner/outreach/review", label: "レビューキュー", icon: CheckSquare },
+    { href: "/owner/outreach/crm", label: "CRM", icon: Kanban },
+    { href: "/owner/outreach/analytics", label: "営業分析", icon: BarChart3 },
+    { href: "/owner/outreach/sources", label: "ソース検索", icon: Search },
+    { href: "/owner/outreach/import", label: "CSVインポート", icon: Upload },
+    { href: "/owner/outreach/campaigns", label: "キャンペーン", icon: Megaphone },
+    { href: "/owner/outreach/settings", label: "配信設定", icon: Settings2 },
   ];
 
   return (
@@ -73,7 +88,10 @@ function Sidebar({
         {/* Nav */}
         <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
           {navItems.map(({ href, label, icon: Icon }) => {
-            const isActive = pathname === href;
+            const isActive =
+              href === "/owner"
+                ? pathname === "/owner"
+                : pathname === href || pathname?.startsWith(href + "/");
             return (
               <Link
                 key={href}

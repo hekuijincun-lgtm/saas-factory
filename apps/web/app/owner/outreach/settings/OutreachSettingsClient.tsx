@@ -1,8 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { useAdminTenantId } from "@/src/lib/useAdminTenantId";
-import AdminTopBar from "@/app/_components/ui/AdminTopBar";
+import { useSearchParams } from "next/navigation";
 import {
   fetchOutreachSettings,
   saveOutreachSettings,
@@ -14,7 +13,8 @@ import {
 import type { OutreachSettings, SendStats, UnsubscribedLead } from "@/src/types/outreach";
 
 export default function OutreachSettingsClient() {
-  const { tenantId, status: tenantStatus } = useAdminTenantId();
+  const searchParams = useSearchParams();
+  const tenantId = searchParams.get("tenantId") ?? "";
   const [settings, setSettings] = useState<OutreachSettings | null>(null);
   const [stats, setStats] = useState<SendStats | null>(null);
   const [unsubs, setUnsubs] = useState<UnsubscribedLead[]>([]);
@@ -29,7 +29,7 @@ export default function OutreachSettingsClient() {
   const [requireApproval, setRequireApproval] = useState(true);
 
   const loadAll = useCallback(async () => {
-    if (tenantStatus !== "ready") return;
+    if (!tenantId) return;
     setLoading(true);
     try {
       const [s, st, u] = await Promise.all([
@@ -48,7 +48,7 @@ export default function OutreachSettingsClient() {
     } finally {
       setLoading(false);
     }
-  }, [tenantId, tenantStatus]);
+  }, [tenantId]);
 
   useEffect(() => {
     loadAll();
@@ -56,7 +56,7 @@ export default function OutreachSettingsClient() {
 
   // Auto-refresh stats every 30s
   useEffect(() => {
-    if (tenantStatus !== "ready") return;
+    if (!tenantId) return;
     const timer = setInterval(async () => {
       try {
         const st = await fetchSendStats(tenantId);
@@ -64,7 +64,7 @@ export default function OutreachSettingsClient() {
       } catch { /* silent */ }
     }, 30000);
     return () => clearInterval(timer);
-  }, [tenantId, tenantStatus]);
+  }, [tenantId]);
 
   const handleSave = async (patch: Partial<OutreachSettings>) => {
     setSaving(true);
@@ -105,7 +105,7 @@ export default function OutreachSettingsClient() {
     }
   };
 
-  if (tenantStatus === "loading" || loading) {
+  if (!tenantId || loading) {
     return <div className="p-6 text-sm text-gray-500">読み込み中...</div>;
   }
 
@@ -114,8 +114,6 @@ export default function OutreachSettingsClient() {
 
   return (
     <>
-      <AdminTopBar title="配信設定" subtitle="送信モード・上限・配信停止管理" />
-
       <div className="px-6 space-y-6">
         {toast && (
           <div

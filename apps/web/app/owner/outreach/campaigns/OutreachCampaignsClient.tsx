@@ -1,8 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { useAdminTenantId } from "@/src/lib/useAdminTenantId";
-import AdminTopBar from "@/app/_components/ui/AdminTopBar";
+import { useSearchParams } from "next/navigation";
 import {
   fetchCampaigns,
   createCampaign,
@@ -24,7 +23,8 @@ import {
 } from "@/src/types/outreach";
 
 export default function OutreachCampaignsClient() {
-  const { tenantId, status: tenantStatus } = useAdminTenantId();
+  const searchParams = useSearchParams();
+  const tenantId = searchParams.get("tenantId") ?? "";
   const [campaigns, setCampaigns] = useState<OutreachCampaign[]>([]);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState<{ type: "success" | "error"; text: string } | null>(null);
@@ -50,7 +50,7 @@ export default function OutreachCampaignsClient() {
   const [variantTone, setVariantTone] = useState("friendly");
 
   const load = useCallback(async () => {
-    if (tenantStatus !== "ready") return;
+    if (!tenantId) return;
     setLoading(true);
     try {
       setCampaigns(await fetchCampaigns(tenantId));
@@ -59,7 +59,7 @@ export default function OutreachCampaignsClient() {
     } finally {
       setLoading(false);
     }
-  }, [tenantId, tenantStatus]);
+  }, [tenantId]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -147,7 +147,7 @@ export default function OutreachCampaignsClient() {
     }
   };
 
-  if (tenantStatus === "loading") {
+  if (!tenantId) {
     return <div className="p-6 text-sm text-gray-500">読み込み中...</div>;
   }
 
@@ -155,8 +155,6 @@ export default function OutreachCampaignsClient() {
 
   return (
     <>
-      <AdminTopBar title="キャンペーン" subtitle="ターゲット別の営業キャンペーン管理" />
-
       <div className="px-6 space-y-6">
         {toast && (
           <div className={`px-3 py-2 rounded text-sm ${

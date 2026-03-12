@@ -1,8 +1,7 @@
 "use client";
 
 import { useState, useRef } from "react";
-import { useAdminTenantId } from "@/src/lib/useAdminTenantId";
-import AdminTopBar from "@/app/_components/ui/AdminTopBar";
+import { useSearchParams } from "next/navigation";
 import { importPreview, importExecute } from "@/app/lib/outreachApi";
 import type { ImportPreviewRow, ImportPreviewSummary, ImportResult } from "@/src/types/outreach";
 
@@ -21,7 +20,8 @@ const STATUS_LABELS: Record<string, string> = {
 };
 
 export default function OutreachImportClient() {
-  const { tenantId, status: tenantStatus } = useAdminTenantId();
+  const searchParams = useSearchParams();
+  const tenantId = searchParams.get("tenantId") ?? "";
   const fileRef = useRef<HTMLInputElement>(null);
   const [csvText, setCsvText] = useState("");
   const [preview, setPreview] = useState<ImportPreviewRow[] | null>(null);
@@ -81,14 +81,12 @@ export default function OutreachImportClient() {
     }
   };
 
-  if (tenantStatus === "loading") {
+  if (!tenantId) {
     return <div className="p-6 text-sm text-gray-500">読み込み中...</div>;
   }
 
   return (
     <>
-      <AdminTopBar title="CSVインポート" subtitle="リードの一括取り込み" />
-
       <div className="px-6 space-y-6">
         {error && (
           <div className="bg-red-50 text-red-700 px-3 py-2 rounded text-sm">

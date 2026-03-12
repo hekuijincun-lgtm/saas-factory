@@ -1,8 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { useAdminTenantId } from "@/src/lib/useAdminTenantId";
-import AdminTopBar from "@/app/_components/ui/AdminTopBar";
+import { useSearchParams } from "next/navigation";
 import { fetchOutreachLeads, updateOutreachLead, recordReply } from "@/app/lib/outreachApi";
 import type { OutreachLead, PipelineStage } from "@/src/types/outreach";
 import {
@@ -24,7 +23,8 @@ function ScoreBadge({ score }: { score: number | null }) {
 }
 
 export default function OutreachCrmClient() {
-  const { tenantId, status: tenantStatus } = useAdminTenantId();
+  const searchParams = useSearchParams();
+  const tenantId = searchParams.get("tenantId") ?? "";
   const [leadsByStage, setLeadsByStage] = useState<Record<PipelineStage, OutreachLead[]>>(
     {} as Record<PipelineStage, OutreachLead[]>
   );
@@ -36,7 +36,7 @@ export default function OutreachCrmClient() {
   const [replySaving, setReplySaving] = useState(false);
 
   const load = useCallback(async () => {
-    if (tenantStatus !== "ready") return;
+    if (!tenantId) return;
     setLoading(true);
     try {
       const data = await fetchOutreachLeads(tenantId, { limit: 200, sort: "score", order: "desc" });
@@ -57,7 +57,7 @@ export default function OutreachCrmClient() {
     } finally {
       setLoading(false);
     }
-  }, [tenantId, tenantStatus]);
+  }, [tenantId]);
 
   useEffect(() => {
     load();
@@ -95,14 +95,12 @@ export default function OutreachCrmClient() {
     }
   };
 
-  if (tenantStatus === "loading") {
+  if (!tenantId) {
     return <div className="p-6 text-sm text-gray-500">読み込み中...</div>;
   }
 
   return (
     <>
-      <AdminTopBar title="CRMパイプライン" subtitle="リードのステージ管理" />
-
       <div className="px-6 space-y-4">
         {toast && (
           <div className="bg-red-50 text-red-700 px-3 py-2 rounded text-sm">

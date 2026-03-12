@@ -1,8 +1,7 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import { useAdminTenantId } from "@/src/lib/useAdminTenantId";
-import AdminTopBar from "@/app/_components/ui/AdminTopBar";
+import { useSearchParams } from "next/navigation";
 import {
   searchSources,
   fetchSourceRuns,
@@ -22,7 +21,8 @@ import {
 } from "@/src/types/outreach";
 
 export default function OutreachSourcesClient() {
-  const { tenantId, status: tenantStatus } = useAdminTenantId();
+  const searchParams = useSearchParams();
+  const tenantId = searchParams.get("tenantId") ?? "";
 
   // Search form
   const [sourceType, setSourceType] = useState("directory");
@@ -157,7 +157,7 @@ export default function OutreachSourcesClient() {
     }
   }, [searchResult, selectedIds.size]);
 
-  if (tenantStatus === "loading") {
+  if (!tenantId) {
     return <div className="p-6 text-sm text-gray-500">読み込み中...</div>;
   }
 
@@ -167,8 +167,6 @@ export default function OutreachSourcesClient() {
 
   return (
     <>
-      <AdminTopBar title="ソース検索" subtitle="Map / Directory からリード候補を取得" />
-
       <div className="px-6 space-y-6">
         {toast && (
           <div className={`px-3 py-2 rounded text-sm ${toast.type === "success" ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"}`}>

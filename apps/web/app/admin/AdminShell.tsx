@@ -18,14 +18,6 @@ import {
   LogOut,
   CreditCard,
   LifeBuoy,
-  Target,
-  CheckSquare,
-  Kanban,
-  BarChart3,
-  Settings2,
-  Upload,
-  Megaphone,
-  Search,
 } from "lucide-react";
 import { adminNavItems } from "./nav.config";
 
@@ -44,14 +36,6 @@ const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   "/admin/customers":    UserCircle,
   "/admin/ai":           Bot,
   "/admin/billing":      CreditCard,
-  "/admin/outreach/leads":     Target,
-  "/admin/outreach/review":    CheckSquare,
-  "/admin/outreach/crm":       Kanban,
-  "/admin/outreach/analytics": BarChart3,
-  "/admin/outreach/sources":   Search,
-  "/admin/outreach/import":    Upload,
-  "/admin/outreach/campaigns": Megaphone,
-  "/admin/outreach/settings":  Settings2,
   // temporarily hidden — re-enable with nav.config.ts
   // "/admin/admins":       Shield,
   // "/admin/security":     KeyRound,

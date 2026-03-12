@@ -1,8 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useAdminTenantId } from "@/src/lib/useAdminTenantId";
-import AdminTopBar from "@/app/_components/ui/AdminTopBar";
+import { useSearchParams } from "next/navigation";
 import { fetchOutreachAnalytics, fetchLearningAnalytics, fetchCampaignAnalytics, fetchSourceAnalytics } from "@/app/lib/outreachApi";
 import type { OutreachAnalytics, LearningAnalytics, CampaignAnalytics, SourceAnalytics } from "@/src/types/outreach";
 import { SOURCE_TYPE_LABELS } from "@/src/types/outreach";
@@ -27,7 +26,8 @@ function KpiCard({
 }
 
 export default function OutreachAnalyticsClient() {
-  const { tenantId, status: tenantStatus } = useAdminTenantId();
+  const searchParams = useSearchParams();
+  const tenantId = searchParams.get("tenantId") ?? "";
   const [analytics, setAnalytics] = useState<OutreachAnalytics | null>(null);
   const [learning, setLearning] = useState<LearningAnalytics | null>(null);
   const [campaignAnalytics, setCampaignAnalytics] = useState<CampaignAnalytics | null>(null);
@@ -36,7 +36,7 @@ export default function OutreachAnalyticsClient() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    if (tenantStatus !== "ready") return;
+    if (!tenantId) return;
     setLoading(true);
     Promise.all([
       fetchOutreachAnalytics(tenantId),
@@ -52,16 +52,14 @@ export default function OutreachAnalyticsClient() {
       })
       .catch((err) => setError(err.message || "読み込みに失敗しました"))
       .finally(() => setLoading(false));
-  }, [tenantId, tenantStatus]);
+  }, [tenantId]);
 
-  if (tenantStatus === "loading") {
+  if (!tenantId) {
     return <div className="p-6 text-sm text-gray-500">読み込み中...</div>;
   }
 
   return (
     <>
-      <AdminTopBar title="営業分析" subtitle="アウトリーチ活動の概況" />
-
       <div className="px-6 space-y-6">
         {error && (
           <div className="bg-red-50 text-red-700 px-3 py-2 rounded text-sm">{error}</div>
