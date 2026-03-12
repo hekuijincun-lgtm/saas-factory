@@ -150,6 +150,14 @@ export interface SubscriptionInfo {
   createdAt: number;
 }
 
+/** AI接客コア設定 */
+export interface AISettings {
+  enabled: boolean;
+  voice: string;
+  answerLength: string;
+  character: string;
+}
+
 export interface AdminSettings {
   storeName?: string; // 店舗名（表示用）
   storeAddress?: string; // 店舗住所（LINE通知等に使用）
@@ -179,6 +187,8 @@ export interface AdminSettings {
   lineAccounts?: LineAccount[];
   /** LINEルーティング（用途別デフォルトアカウント） */
   lineRouting?: LineRouting;
+  /** AI接客コア設定（settings:{tenantId}.ai に統合） */
+  ai?: AISettings;
 }
 
 /**

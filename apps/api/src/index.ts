@@ -6,6 +6,7 @@ import type { PlanId, SubscriptionInfo } from "./settings";
 import { getRepeatConfig, getStyleLabel, buildRepeatMessage, eyebrowOnboardingChecks } from "./verticals/eyebrow";
 import { registerOwnerRoutes, getOwnerIds, bootstrapOwnerIfEmpty, isPrincipalAllowed } from "./routes/owner";
 import { registerOwnerLeadRoutes } from "./routes/ownerLeads";
+import { createOutreachRoutes } from "./outreach/routes";
 
 // test helper (lock reproduction)
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
@@ -690,6 +691,11 @@ app.get('/admin/rbac/audit', async (c) => {
       }
     }
 
+    // ai: deep merge
+    if (body.ai != null && typeof body.ai === 'object') {
+      const existingAi = existing.ai || {};
+      patch.ai = { ...existingAi, ...body.ai };
+    }
     // lineAccounts: full array replacement (managed via dedicated endpoints)
     if (body.lineAccounts != null) patch.lineAccounts = body.lineAccounts;
     // lineRouting: shallow merge
@@ -3379,6 +3385,10 @@ app.get("/my/reservations", async (c) => {
     return c.json({ ok: false, error: "db_error" }, 500);
   }
 });
+
+// ── Outreach OS routes ──────────────────────────────────────────────────────
+// Mounted at /admin/outreach/* — protected by existing admin auth middleware.
+app.route("/admin/outreach", createOutreachRoutes(getTenantId));
 
 export default { fetch: app.fetch, queue, scheduled };
 
@@ -6126,16 +6136,20 @@ app.get("/admin/ai", async (c) => {
   try {
     const kv = (c.env as any).SAAS_FACTORY;
     if (!kv) return c.json({ ok: false, stamp: STAMP, error: "kv_missing" }, 500);
-    const [s, p, r] = await Promise.all([
+    const [sLegacy, p, r, settingsDoc] = await Promise.all([
       aiGetJson(kv, `ai:settings:${tenantId}`),
       aiGetJson(kv, `ai:policy:${tenantId}`),
       aiGetJson(kv, `ai:retention:${tenantId}`),
+      aiGetJson(kv, `settings:${tenantId}`),
     ]);
+    // Prefer unified settings.ai, fall back to legacy ai:settings:{tenantId}
+    const s = settingsDoc?.ai || sLegacy;
     return c.json({
       ok: true, tenantId, stamp: STAMP,
       settings: { ...AI_DEFAULT_SETTINGS, ...(s || {}) },
       policy: { ...AI_DEFAULT_POLICY, ...(p || {}) },
       retention: { ...AI_DEFAULT_RETENTION, ...(r || {}) },
+      source: settingsDoc?.ai ? "unified" : (sLegacy ? "legacy" : "default"),
     });
   } catch (e: any) {
     return c.json({ ok: false, stamp: STAMP, tenantId, error: "exception", detail: String(e?.message ?? e) }, 500);
@@ -6155,9 +6169,23 @@ app.put("/admin/ai", async (c) => {
     if (!body) return c.json({ ok: false, stamp: STAMP, error: "bad_json" }, 400);
     const saved: string[] = [];
     if (body.settings != null && typeof body.settings === "object") {
-      const key = `ai:settings:${tenantId}`;
-      const ex = (await aiGetJson(kv, key)) || {};
-      await kv.put(key, JSON.stringify({ ...AI_DEFAULT_SETTINGS, ...ex, ...body.settings }));
+      const legacyKey = `ai:settings:${tenantId}`;
+      const ex = (await aiGetJson(kv, legacyKey)) || {};
+      const mergedAi = { ...AI_DEFAULT_SETTINGS, ...ex, ...body.settings };
+      await kv.put(legacyKey, JSON.stringify(mergedAi));
+
+      // dual-write: settings:{tenantId}.ai に統合
+      const settingsKey = `settings:${tenantId}`;
+      let settingsDoc: any = {};
+      try { const raw = await kv.get(settingsKey, "json"); if (raw && typeof raw === "object") settingsDoc = raw; } catch {}
+      settingsDoc.ai = {
+        enabled: mergedAi.enabled === true,
+        voice: mergedAi.voice ?? "friendly",
+        answerLength: mergedAi.answerLength ?? "normal",
+        character: mergedAi.character ?? "",
+      };
+      await kv.put(settingsKey, JSON.stringify(settingsDoc));
+
       saved.push("settings");
     }
     if (body.policy != null && typeof body.policy === "object") {
@@ -6560,11 +6588,18 @@ app.post("/sales-ai/chat", async (c) => {
 app.get("/ai/enabled", async (c) => {
   const tenantId = getTenantId(c, null);
   const kv = (c.env as any)?.SAAS_FACTORY;
-  if (!kv) return c.json({ ok: true, tenantId, enabled: false });
+  if (!kv) return c.json({ ok: true, tenantId, enabled: false, source: "no_kv" });
+  // Prefer unified settings:{tenantId}.ai, fall back to legacy ai:settings:{tenantId}
+  const settingsDoc = await aiGetJson(kv, `settings:${tenantId}`);
+  if (settingsDoc?.ai?.enabled !== undefined) {
+    const enabled = settingsDoc.ai.enabled === true;
+    console.log(`[AI_GATE] tenant=${tenantId} enabled=${enabled} source=unified path=/ai/enabled`);
+    return c.json({ ok: true, tenantId, enabled, source: "unified" });
+  }
   const s = await aiGetJson(kv, `ai:settings:${tenantId}`);
-  const enabled = s?.enabled === true;  // strict: only true when explicitly enabled
-  console.log(`[AI_GATE] tenant=${tenantId} enabled=${enabled} path=/ai/enabled`);
-  return c.json({ ok: true, tenantId, enabled });
+  const enabled = s?.enabled === true;
+  console.log(`[AI_GATE] tenant=${tenantId} enabled=${enabled} source=legacy path=/ai/enabled`);
+  return c.json({ ok: true, tenantId, enabled, source: "legacy" });
 });
 
 // POST /ai/chat — OpenAI Responses API (AI_CHAT_V4)
@@ -6612,7 +6647,13 @@ app.post("/ai/chat", async (c) => {
         aiGetJson(kv, `settings:${tenantId}`),
         aiGetJson(kv, `admin:menu:list:${tenantId}`),
       ]);
-      if (s && typeof s === "object") aiSettings = { ...aiSettings, ...s };
+      // Prefer unified settings.ai, fall back to legacy ai:settings:{tenantId}
+      const unifiedAi = ss?.ai;
+      const legacyAi = s;
+      const aiSource = unifiedAi ? "unified" : (legacyAi ? "legacy" : "default");
+      const effectiveAi = unifiedAi || legacyAi;
+      if (effectiveAi && typeof effectiveAi === "object") aiSettings = { ...aiSettings, ...effectiveAi };
+
       if (p && typeof p === "object") aiPolicy = { ...aiPolicy, ...p };
       if (Array.isArray(f)) aiFaq = f.filter((x: any) => x.enabled !== false);
       if (u && typeof u === "object") aiUpsell = { ...AI_DEFAULT_UPSELL, ...u };
@@ -6626,7 +6667,7 @@ app.post("/ai/chat", async (c) => {
       voice: aiSettings.voice,
       answerLength: aiSettings.answerLength,
       characterPresent: !!aiSettings.character,
-      source: kv ? "kv" : "default",
+      source: kv ? (storeSettings?.ai ? "unified" : "legacy") : "default",
     }));
 
     // aiConfig snapshot — returned in ALL responses for webhook observability

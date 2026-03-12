@@ -382,7 +382,7 @@ function buildBookingTemplateMessage(bookingUrl: string): object {
     template: {
       type: "buttons",
       title: "予約ページ",
-      text: "下のボタンから予約を開始してね😊",
+      text: "ご予約はこちらからどうぞ",
       actions: [
         { type: "uri", label: "予約を開始", uri: bookingUrl },
       ],
@@ -430,15 +430,31 @@ async function handleBookingEvent(ctx: HandlerContext): Promise<HandlerResult> {
     };
   }
 
-  // ── 2. AI concierge — call POST /ai/chat directly (no separate checkAiEnabled round trip) ──
-  //    POST /ai/chat checks enabled internally; eliminates 1 network hop (saves 200ms-3s)
+  // ── 2. AI concierge ──
   let openaiAttempted = false;
   let openaiSucceeded = false;
   let aiDisabled = false;
   let faqMatched = false;
   let aiError: string | null = null;
 
-  if (apiBase) {
+  // Fast-path: AI enabled check from settingsData (no network hop)
+  const aiFromSettings = cfg.settingsData?.ai;
+  const aiEnabledFast = aiFromSettings?.enabled === true;
+
+  console.log(`[AI_CONFIG_LOAD]`, JSON.stringify({
+    tenantId,
+    aiEnabled: aiEnabledFast,
+    voice: aiFromSettings?.voice ?? null,
+    answerLength: aiFromSettings?.answerLength ?? null,
+    character: aiFromSettings?.character ? String(aiFromSettings.character).slice(0, 30) : null,
+    source: aiFromSettings ? "settingsData" : "missing",
+  }));
+
+  if (aiFromSettings && !aiEnabledFast) {
+    // AI明示的に無効 → runAiChat() をスキップしてfallbackへ
+    aiDisabled = true;
+    aiError = "ai_disabled_fast";
+  } else if (apiBase) {
     const aiIp = lineUserId ? `line:${uid}` : "line";
     const AI_TIMEOUT_MS = 8000;
     const TIMEOUT_RESULT: AiChatResult = { ...EMPTY_AI_RESULT, error: "timeout" };
@@ -459,8 +475,8 @@ async function handleBookingEvent(ctx: HandlerContext): Promise<HandlerResult> {
       ai = { ...EMPTY_AI_RESULT, error: `handler_exception:${String(e?.message ?? e).slice(0, 60)}` };
     }
 
-    // ── [AI_CONFIG_LOAD] — log the AI settings that were loaded for this tenant ──
-    console.log(`[AI_CONFIG_LOAD]`, JSON.stringify({
+    // ── [AI_CHAT_RESULT] — log the AI chat response for this tenant ──
+    console.log(`[AI_CHAT_RESULT]`, JSON.stringify({
       tenantId,
       aiEnabled: ai.aiConfig?.enabled ?? null,
       voice: ai.aiConfig?.voice ?? null,
@@ -880,7 +896,9 @@ async function getTenantLineConfig(
   if (!adminToken) adminToken = process.env.ADMIN_TOKEN ?? "";
 
   if (apiBase) {
-    try {
+    // Retry once on failure (Workers cold start can cause intermittent timeouts)
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
       const url = `${apiBase}/admin/settings?tenantId=${encodeURIComponent(tenantId)}`;
       const headers: Record<string, string> = { Accept: "application/json" };
       if (adminToken) headers["X-Admin-Token"] = adminToken;
@@ -965,9 +983,16 @@ async function getTenantLineConfig(
           return { channelSecret, channelAccessToken, bookingUrl, source: "kv", purpose, resolvedPurposeBy, settingsData: s, credSource };
         }
       }
-    } catch {
-      // fall through
+    } catch (e: any) {
+      // Retry once on transient failure (cold start, network glitch)
+      if (attempt === 0) {
+        console.log(`[CFG_RETRY] attempt=0 failed, retrying: ${String(e?.message ?? e).slice(0, 80)}`);
+        continue;
+      }
+      // fall through after final attempt
     }
+    break; // success or non-retryable — exit loop
+    } // end retry loop
   }
 
   const channelSecret      = process.env.LINE_CHANNEL_SECRET      ?? "";
@@ -1032,7 +1057,7 @@ export async function GET(req: Request) {
       ? await handleSalesEvent(ctx)
       : await handleBookingEvent(ctx);
 
-    const aiEnabled = await checkAiEnabled(tenantId);
+    const aiEnabled = cfg.settingsData?.ai?.enabled === true || await checkAiEnabled(tenantId);
 
     // Resolve internal token for /sales-ai/chat auth
     let debugInternalToken = "";
@@ -1306,7 +1331,7 @@ export async function POST(req: Request) {
   // ── debug=1 POST: full pipeline dry-run ──────────────────────────────────
   if (debugMode === "1") {
     await new Promise(r => setTimeout(r, 500));
-    const _d1AiEnabled = await checkAiEnabled(tenantId);
+    const _d1AiEnabled = cfg.settingsData?.ai?.enabled === true || await checkAiEnabled(tenantId);
     const _d1Ev = events.find((x: any) =>
       x?.type === "message" && x?.message?.type === "text" && x?.replyToken);
     const _d1Text = _d1Ev ? String(_d1Ev.message?.text ?? "") : null;
