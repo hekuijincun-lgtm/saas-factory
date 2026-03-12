@@ -4,7 +4,7 @@ import { getRequestContext } from "@cloudflare/next-on-pages";
 export const runtime = "edge";
 
 // ─── version / stamps ────────────────────────────────────────────────────────
-const STAMP = "LINE_WEBHOOK_V20_20260311_SALES_AI_CONFIG";
+const STAMP = "LINE_WEBHOOK_V21_20260312_SALES_AI_DIAG";
 const where  = "api/line/webhook";
 
 type LinePurpose = "booking" | "sales";
@@ -15,12 +15,13 @@ const FALLBACK_TEXT = "少し時間をおいて再度お試しください。";
 // ─── SALES handler ──────────────────────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════════════
 
-// sales intent keywords
+// sales intent keywords (greeting must be LAST — other intents take priority)
 const SALES_INTENT_MAP: { label: string; keywords: string[] }[] = [
   { label: "pricing",      keywords: ["料金", "価格", "値段", "プラン", "月額", "いくら", "費用", "コスト", "料金体系", "費用感", "お値段", "pricing", "price", "cost"] },
   { label: "features",     keywords: ["機能", "できること", "特徴", "何ができる", "使い方", "feature", "features"] },
   { label: "demo",         keywords: ["デモ", "demo", "お試し", "試し", "トライアル", "trial", "体験", "見てみたい"] },
   { label: "consultation", keywords: ["導入", "相談", "問い合わせ", "問合せ", "導入相談", "詳しく", "話したい", "聞きたい", "consultation", "inquiry"] },
+  { label: "greeting",     keywords: ["こんにちは", "こんばんは", "おはよう", "はじめまして", "よろしく", "hello", "hi", "hey"] },
 ];
 
 function detectSalesIntent(textIn: string): string | null {
@@ -107,15 +108,33 @@ function getSalesReplyText(intent: string | null): string {
         "何でもお気軽にどうぞ！担当から詳しくご案内いたします😊",
       ].join("\n");
 
+    case "greeting":
+      return [
+        "こんにちは！LumiBookにご興味ありがとうございます😊",
+        "",
+        "サロン向けの予約・LINE対応・顧客管理をまとめて効率化できるツールです。",
+        "",
+        "何でもお気軽にどうぞ！例えば：",
+        "・「料金」— プランと費用のご案内",
+        "・「機能」— 何ができるかのご紹介",
+        "・「デモ」— 実際にお試し",
+        "・「導入相談」— お気軽にご相談",
+        "",
+        "▼ サービス詳細はこちら",
+        "https://lumibook.jp",
+      ].join("\n");
+
     default:
       return [
-        "ご連絡ありがとうございます！",
+        "ありがとうございます！",
         "",
-        "LumiBookは、サロン向けの予約受付・LINE対応・顧客管理をまとめて効率化できるツールです。",
+        "申し訳ありませんが、内容を読み取れませんでした。",
+        "以下のキーワードを送っていただければ、すぐにご案内します：",
         "",
-        "気になる内容をそのまま送ってください：",
-        "『料金』『機能』『デモ』『導入相談』",
-        "と送っていただければ、すぐにご案内します😊",
+        "・「料金」— プランと費用",
+        "・「機能」— できること一覧",
+        "・「デモ」— 無料体験",
+        "・「導入相談」— 個別のご相談",
         "",
         "▼ サービス詳細はこちら",
         "https://lumibook.jp",
@@ -129,6 +148,7 @@ function salesIntentToLeadLabel(intent: string | null): string {
     case "features":     return "info_request";
     case "demo":         return "demo_request";
     case "consultation": return "interested";
+    case "greeting":     return "info_request";
     default:             return "info_request";
   }
 }
@@ -200,10 +220,29 @@ async function handleSalesEvent(ctx: HandlerContext): Promise<HandlerResult> {
   // 1. Try to load per-account sales AI config
   const accountId = extractAccountIdFromCredSource(cfg.credSource);
   let salesConfig: any = null;
-  if (accountId && apiBase) {
+  let configSource = "none"; // Track why config was or wasn't loaded
+
+  if (!accountId) {
+    configSource = `no_account_id(credSource=${cfg.credSource ?? "empty"})`;
+  } else if (!apiBase) {
+    configSource = `no_api_base(accountId=${accountId})`;
+  } else {
     salesConfig = await loadSalesAiConfig(apiBase, accountId);
-    console.log(`[SALES_AI] loaded config accountId=${accountId} enabled=${salesConfig?.enabled}`);
+    if (!salesConfig) {
+      configSource = `fetch_null(accountId=${accountId})`;
+    } else if (!salesConfig.enabled) {
+      configSource = `disabled(accountId=${accountId})`;
+    } else if (!Array.isArray(salesConfig.intents)) {
+      configSource = `no_intents_array(accountId=${accountId})`;
+    } else {
+      configSource = `ok(accountId=${accountId},intents=${salesConfig.intents.length})`;
+    }
   }
+
+  console.log(
+    `[SALES_AI] configSource=${configSource} enabled=${salesConfig?.enabled ?? "N/A"} ` +
+    `text="${textIn.slice(0, 30)}" uid=${lineUserId.slice(0, 8)}`
+  );
 
   // 2. If config exists and is enabled, use config-based resolution
   if (salesConfig?.enabled && Array.isArray(salesConfig.intents)) {
@@ -220,6 +259,7 @@ async function handleSalesEvent(ctx: HandlerContext): Promise<HandlerResult> {
       replyMessages: [{ type: "text", text: reply }],
       leadLabel,
       leadCapture: true,
+      salesConfigSource: configSource,
     };
   }
 
@@ -229,9 +269,9 @@ async function handleSalesEvent(ctx: HandlerContext): Promise<HandlerResult> {
   const replyMessages = [{ type: "text", text: getSalesReplyText(salesIntent) }];
   const leadLabel = salesIntentToLeadLabel(salesIntent);
 
-  console.log(`[SALES_AI] fallback branch=${branch} intent=${salesIntent ?? "none"}`);
+  console.log(`[SALES_AI] fallback branch=${branch} intent=${salesIntent ?? "none"} reason=${configSource}`);
 
-  return { branch, salesIntent, replyMessages, leadLabel, leadCapture: true };
+  return { branch, salesIntent, replyMessages, leadLabel, leadCapture: true, salesConfigSource: configSource };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -376,6 +416,7 @@ interface HandlerResult {
   replyMessages: any[];
   leadLabel: string | null;
   leadCapture: boolean;
+  salesConfigSource?: string; // diagnostic: why config was/wasn't used
 }
 
 // ─── AI enabled check ───────────────────────────────────────────────────────
@@ -1328,6 +1369,7 @@ export async function POST(req: Request) {
     lineUserId: lineUserId.slice(0, 8),
     branch: result.branch,
     salesIntent: result.salesIntent ?? "none",
+    salesConfigSource: result.salesConfigSource ?? "N/A",
     replyAttempted: true,
     replyOk,
     replyStatus,
@@ -1356,6 +1398,7 @@ export async function POST(req: Request) {
       credSource: cfg.credSource ?? "unknown",
       branch: result.branch,
       salesIntent: result.salesIntent,
+      salesConfigSource: result.salesConfigSource ?? "N/A",
       replied: replyOk || pushFallbackOk,
       replyOk,
       replyStatus,

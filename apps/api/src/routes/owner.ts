@@ -353,7 +353,7 @@ export function registerOwnerRoutes(app: Hono<{ Bindings: Record<string, unknown
   const DEFAULT_SALES_AI_CONFIG = {
     enabled: false,
     welcomeMessage: "ご連絡ありがとうございます！\n気になる内容をそのまま送ってください。\n『料金』『機能』『デモ』『導入相談』\nと送っていただければ、すぐにご案内します😊",
-    fallbackMessage: "ありがとうございます。\n担当者より改めてご連絡いたします。\n\nお急ぎの場合は「導入相談」とお送りください。",
+    fallbackMessage: "ありがとうございます！\n\n以下のキーワードを送っていただければ、すぐにご案内します：\n・「料金」— プランと費用\n・「機能」— できること一覧\n・「デモ」— 無料体験\n・「導入相談」— 個別のご相談\n\n▼ サービス詳細はこちら\nhttps://lumibook.jp",
     tone: "friendly" as string,
     goal: "demo" as string,
     cta: { label: "", url: "" },
@@ -389,6 +389,14 @@ export function registerOwnerRoutes(app: Hono<{ Bindings: Record<string, unknown
         label: "導入相談",
         keywords: ["導入", "相談", "問い合わせ", "問合せ", "導入相談", "詳しく", "話したい", "聞きたい", "consultation", "inquiry"],
         reply: "導入相談のご連絡ありがとうございます！\n\n現在の課題やご状況をお聞かせいただければ、\n最適なプランや活用方法をご提案いたします。\n\n例えば：\n・現在の予約管理方法（電話？紙？他ツール？）\n・スタッフ人数、メニュー数\n・LINEの活用状況\n\n何でもお気軽にどうぞ！担当から詳しくご案内いたします😊",
+        ctaLabel: "",
+        ctaUrl: "",
+      },
+      {
+        key: "greeting",
+        label: "挨拶",
+        keywords: ["こんにちは", "こんばんは", "おはよう", "はじめまして", "よろしく", "hello", "hi", "hey"],
+        reply: "こんにちは！LumiBookにご興味ありがとうございます😊\n\nサロン向けの予約・LINE対応・顧客管理をまとめて効率化できるツールです。\n\n何でもお気軽にどうぞ！例えば：\n・「料金」— プランと費用のご案内\n・「機能」— 何ができるかのご紹介\n・「デモ」— 実際にお試し\n・「導入相談」— お気軽にご相談\n\n▼ サービス詳細はこちら\nhttps://lumibook.jp",
         ctaLabel: "",
         ctaUrl: "",
       },
