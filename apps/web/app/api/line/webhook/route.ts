@@ -4,7 +4,7 @@ import { getRequestContext } from "@cloudflare/next-on-pages";
 export const runtime = "edge";
 
 // ─── version / stamps ────────────────────────────────────────────────────────
-const STAMP = "LINE_WEBHOOK_V28_20260312_TIMEOUT_GUARD";
+const STAMP = "LINE_WEBHOOK_V29_20260312_EVENT_AUDIT";
 const where  = "api/line/webhook";
 
 type LinePurpose = "booking" | "sales";
@@ -1232,6 +1232,20 @@ export async function POST(req: Request) {
     `hasReplyToken=${!!firstEvent?.replyToken} firstText="${String(firstEvent?.message?.text ?? "").slice(0, 40)}"`
   );
 
+  // ── traceId for per-event audit ─────────────────────────────────────────
+  const traceId = crypto.randomUUID().slice(0, 8);
+
+  // ── Log ALL received events for delivery audit ─────────────────────────
+  console.log(`[LINE_EVENTS_RECEIVED]`, JSON.stringify({
+    traceId,
+    eventCount: events.length,
+    events: events.map((e: any, i: number) => ({
+      idx: i, type: e?.type, msgType: e?.message?.type,
+      text: e?.message?.text?.slice(0, 30),
+      hasRT: !!e?.replyToken, uid: e?.source?.userId?.slice(0, 8),
+    })),
+  }));
+
   // ── Phase 2: resolve config + sig check + PURPOSE ─────────────────────────
   const tCfg0 = Date.now();
   const cfg = await getTenantLineConfig(tenantId, origin, queryPurpose, destination);
@@ -1410,20 +1424,15 @@ export async function POST(req: Request) {
     );
   }
 
-  // ── Find first text message event with replyToken ─────────────────────────
-  const ev = events.find(
+  // ── Filter ALL text message events (not just first) ────────────────────
+  const textEvents = events.filter(
     (x: any) =>
       x?.type === "message" && x?.message?.type === "text" && x?.replyToken
   );
 
-  const textIn     = ev ? String(ev.message.text ?? "") : "";
-  const replyToken = ev ? String(ev.replyToken) : "";
-  const lineUserId = ev ? String(ev.source?.userId ?? "").trim() : "";
-
   console.log(
-    `[WH_EVENT] hasTextEvent=${!!ev} text="${textIn.slice(0, 40)}" ` +
-    `uid=${lineUserId.slice(0, 8)} replyToken=${replyToken.slice(0, 8)}... ` +
-    `purpose=${cfg.purpose}`
+    `[WH_EVENT] traceId=${traceId} textEventCount=${textEvents.length} ` +
+    `totalEvents=${events.length} purpose=${cfg.purpose}`
   );
 
   // ── Postback handling (rich menu: 店舗情報) — booking only ────────────────
@@ -1468,406 +1477,340 @@ export async function POST(req: Request) {
         const pbRep = await replyLine(cfg.channelAccessToken, String(postbackEv.replyToken), [
           { type: "text", text: replyText },
         ]);
-        console.log(`[WH_POSTBACK] store_info replyOk=${pbRep.ok} st=${pbRep.status} body=${pbRep.bodyText.slice(0, 120)}`);
+        console.log(`[WH_POSTBACK] store_info replyOk=${pbRep.ok} st=${pbRep.status} traceId=${traceId}`);
 
         return NextResponse.json({
           ok: true, stamp: STAMP, where, tenantId, source: cfg.source,
-          purpose: cfg.purpose,
+          purpose: cfg.purpose, traceId,
           verified, replied: true, action: "store_info",
         });
       } catch (err: any) {
-        console.error(`[WH_POSTBACK] store_info error: ${err.message}`);
+        console.error(`[WH_POSTBACK] store_info error: ${err.message} traceId=${traceId}`);
         return NextResponse.json({
           ok: true, stamp: STAMP, where, tenantId, source: cfg.source,
-          purpose: cfg.purpose,
+          purpose: cfg.purpose, traceId,
           verified, replied: false, action: "store_info", error: String(err.message),
         });
       }
     }
   }
 
-  if (!ev) {
-    console.log(`[WH_SKIP] no text event found. eventTypes=${events.map((e: any) => e?.type).join(",")}`);
+  if (textEvents.length === 0) {
+    console.log(`[WH_SKIP] traceId=${traceId} no text event. eventTypes=${events.map((e: any) => e?.type).join(",")}`);
     return NextResponse.json({
       ok: true, stamp: STAMP, where, tenantId, source: cfg.source,
-      purpose: cfg.purpose,
+      purpose: cfg.purpose, traceId,
       verified, replied: false, eventCount: events.length,
     });
   }
 
-  console.log(
-    `[WH_TEXT] tenant=${tenantId} purpose=${cfg.purpose} resolvedBy=${resolvedBy} ` +
-    `text="${textIn.slice(0, 40)}" uid=${lineUserId.slice(0, 8)} ` +
-    `replyToken=${replyToken.slice(0, 8)}... cfgSource=${cfg.source}`
-  );
+  if (textEvents.length > 1) {
+    console.log(`[LINE_MULTI_EVENT] traceId=${traceId} count=${textEvents.length} — processing ALL events`);
+  }
 
   const apiBase = (
     process.env.API_BASE ?? process.env.NEXT_PUBLIC_API_BASE ?? ""
   ).replace(/\/+$/, "");
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // ── PURPOSE-BASED DISPATCH ────────────────────────────────────────────────
+  // ── PER-EVENT AUDIT TYPE ──────────────────────────────────────────────────
   // ═══════════════════════════════════════════════════════════════════════════
+  type EventAudit = {
+    traceId: string; eventIndex: number;
+    eventType: string; messageType: string; messageTextPreview: string;
+    tenantId: string; userId: string; replyTokenTail: string;
+    routeSelected: string;
+    aiStarted: boolean; aiFinished: boolean; aiOk: boolean; aiLatencyMs: number;
+    replyAttempted: boolean; replyStatus: number; replyOk: boolean;
+    pushAttempted: boolean; pushStatus: number; pushOk: boolean;
+    finalDelivery: "reply_ok" | "push_ok" | "push_pending" | "no_delivery";
+    errorClass: string | null; errorMessage: string | null;
+  };
+  const audits: EventAudit[] = [];
+  let lastResult: HandlerResult | null = null;
+  let lastLineUserId = "";
+  let lastTextIn = "";
 
-  const handlerCtx: HandlerContext = { textIn, lineUserId, tenantId, cfg, apiBase };
+  // ═══════════════════════════════════════════════════════════════════════════
+  // ── PER-EVENT PROCESSING LOOP ─────────────────────────────────────────────
+  // ═══════════════════════════════════════════════════════════════════════════
+  for (let ei = 0; ei < textEvents.length; ei++) {
+    const ev = textEvents[ei];
+    const textIn     = String(ev.message.text ?? "");
+    const replyToken = String(ev.replyToken);
+    const lineUserId = String(ev.source?.userId ?? "").trim();
+    lastTextIn = textIn;
+    lastLineUserId = lineUserId;
 
-  const tHandler0 = Date.now();
-  let result: HandlerResult;
-  try {
-    result = cfg.purpose === "sales"
-      ? await handleSalesEvent(handlerCtx)
-      : await handleBookingEvent(handlerCtx);
-  } catch (handlerErr: any) {
-    // Handler crashed — guaranteed fallback reply so user always gets a response
-    console.error(
-      `[WH_HANDLER_CRASH] purpose=${cfg.purpose} error=${String(handlerErr?.message ?? handlerErr).slice(0, 200)}`
-    );
-    const bookingLink = buildBookingLink(cfg.bookingUrl, tenantId, lineUserId);
-    result = {
-      branch: "handler_crash_fallback",
-      salesIntent: null,
-      replyMessages: [{ type: "text", text: getBookingFallbackText(bookingLink) }],
-      leadLabel: null,
-      leadCapture: false,
-    };
-  }
+    // per-event audit fields
+    let routeSelected = "unknown";
+    let aiStarted = false, aiFinished = false, aiOk = false, aiLatencyMs = 0;
+    let replyAttempted = false, replyStatus = 0, replyOk = false;
+    let pushAttempted = false, pushStatus = 0, pushOk = false;
+    let errorClass: string | null = null, errorMessage: string | null = null;
+    let finalDelivery: "reply_ok" | "push_ok" | "push_pending" | "no_delivery" = "no_delivery";
 
-  const tokenPreviewMain = cfg.channelAccessToken.length > 8
-    ? `${cfg.channelAccessToken.slice(0, 4)}...${cfg.channelAccessToken.slice(-4)}`
-    : `(empty:${cfg.channelAccessToken.length})`;
-  console.log(
-    `[WH_DISPATCH] purpose=${cfg.purpose} branch=${result.branch} ` +
-    `salesIntent=${result.salesIntent} leadCapture=${result.leadCapture} ` +
-    `tokenPreview=${tokenPreviewMain} tokenLen=${cfg.channelAccessToken.length} ` +
-    `replyToken=${replyToken.slice(0, 12)}... text="${textIn.slice(0, 60)}"`
-  );
-
-  // ── Async LLM path: skip replyLine, use waitUntil to call /sales-ai/chat + push ──
-  if (result.sendMode === "async" && result.asyncPayload && lineUserId) {
-    const { accountId: asyncAcctId, tenantId: asyncTenantId, message: asyncMsg, channelAccessToken: asyncToken, fallbackMessage: asyncFallback } = result.asyncPayload;
-
-    const runLlmAndPush = async () => {
-      let _openaiOk = false;
-      let _pushOk = false;
-      let _fallbackReason: string | null = null;
-      try {
-        const chatRes = await fetch(`${apiBase}/sales-ai/chat`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-internal-token": internalToken,
-          },
-          body: JSON.stringify({ accountId: asyncAcctId || undefined, tenantId: asyncTenantId, message: asyncMsg }),
-        });
-        const chatData = (await chatRes.json()) as any;
-        _openaiOk = chatData?.ok === true;
-
-        if (!_openaiOk) {
-          _fallbackReason = chatData?.error ?? "unknown";
-          console.log(`[SALES_LLM_CHAT] openai_failed`, JSON.stringify({
-            chatHttpStatus: chatRes.status,
-            error: _fallbackReason,
-            openaiHttpStatus: chatData?.openaiHttpStatus,
-            openaiErrorPreview: chatData?.openaiErrorPreview?.slice(0, 200),
-            tenantId: asyncTenantId,
-            accountId: asyncAcctId,
-          }));
-        }
-
-        const pushText = _openaiOk && chatData?.answer
-          ? String(chatData.answer)
-          : asyncFallback;
-
-        const pr = await pushLine(asyncToken, lineUserId, [{ type: "text", text: pushText }]);
-        _pushOk = pr.ok;
-        console.log(`[SALES_LLM_PUSH]`, JSON.stringify({
-          status: pr.status,
-          body: pr.bodyText.slice(0, 300),
-          pushOk: pr.ok,
-          salesReplyMode: _openaiOk ? "llm_async_push" : "fallback_async_push",
-          openaiSucceeded: _openaiOk,
-          llmAnswerLength: chatData?.answer?.length ?? 0,
-          userId: lineUserId,
-          tenantId: asyncTenantId,
-          fallbackReason: _fallbackReason,
-          tokenLen: asyncToken?.length ?? 0,
-        }));
-      } catch (e: any) {
-        _fallbackReason = `exception: ${String(e?.message ?? e).slice(0, 150)}`;
-        console.log(`[SALES_LLM_PUSH] error`, JSON.stringify({
-          reason: _fallbackReason,
-          salesReplyMode: "error_fallback",
-          userId: lineUserId,
-          tenantId: asyncTenantId,
-        }));
-        // Best-effort fallback push
-        try {
-          const pr2 = await pushLine(asyncToken, lineUserId, [{ type: "text", text: asyncFallback }]);
-          _pushOk = pr2.ok;
-          console.log(`[SALES_LLM_PUSH] fallback_push`, JSON.stringify({
-            status: pr2.status,
-            body: pr2.bodyText.slice(0, 300),
-            pushOk: pr2.ok,
-          }));
-        } catch (e2: any) {
-          console.log(`[SALES_LLM_PUSH] fallback_push_error: ${String(e2?.message ?? e2).slice(0, 100)}`);
-        }
-      }
-    };
-
-    // Fire via waitUntil (non-blocking) and return 200 immediately
     try {
-      const ctx = getRequestContext();
-      if (ctx?.ctx?.waitUntil) {
-        ctx.ctx.waitUntil(runLlmAndPush());
-      } else {
-        runLlmAndPush().catch(() => null);
-      }
-    } catch {
-      runLlmAndPush().catch(() => null);
-    }
-
-    console.log(`[WH_ASYNC_LLM] dispatched accountId=${asyncAcctId} uid=${lineUserId.slice(0, 8)}`);
-
-    // Save webhook log + return 200 immediately (same pattern as sync path)
-    const asyncResponse = NextResponse.json(
-      {
-        ok: true, stamp: STAMP, where, tenantId, source: cfg.source,
-        verified, mode: "v23_async_llm",
-        purpose: cfg.purpose,
-        branch: result.branch,
-        salesIntent: result.salesIntent,
-        salesConfigSource: result.salesConfigSource ?? "N/A",
-        replied: false, // async push pending
-        sendMode: "async",
-        salesReplyMode: "llm_async_push",
-        openaiAttempted: true,
-        // openaiSucceeded/pushSent are resolved asynchronously — not available in sync response
-        resolvedBy, eventCount: events.length,
-        text: textIn.slice(0, 80),
-        lineUserId: lineUserId.slice(0, 8),
-      },
-      { headers: { "x-stamp": STAMP } }
-    );
-
-    // Lead capture (fire-and-forget)
-    if (result.leadCapture && apiBase && internalToken && lineUserId) {
-      fetch(`${apiBase}/internal/sales/lead-reply`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-internal-token": internalToken,
-        },
-        body: JSON.stringify({
-          tenantId,
-          lineUserId,
-          rawReply: textIn.slice(0, 500),
-          label: result.leadLabel ?? "info_request",
-          displayName: "",
-        }),
-      }).catch(() => null);
-    }
-
-    return asyncResponse;
-  }
-
-  // ── Send reply (with push fallback if replyToken fails) ──────────────────
-  const tHandlerMs = Date.now() - tHandler0;
-  const tReply0 = Date.now();
-  let replyOk = false;
-  let replyStatus = 0;
-  let replyBody = "";
-  let pushFallbackUsed = false;
-  let pushFallbackOk = false;
-  let replyTimedOut = false;
-  try {
-    const gr = await replyLine(cfg.channelAccessToken, replyToken, result.replyMessages);
-    replyOk = gr.ok;
-    replyStatus = gr.status;
-    replyBody = gr.bodyText.slice(0, 500);
-  } catch (e: any) {
-    replyTimedOut = e?.name === "AbortError";
-    replyBody = `EXCEPTION: ${replyTimedOut ? "TIMEOUT" : ""}${String(e?.message ?? e).slice(0, 400)}`;
-  }
-  const tReplyMs = Date.now() - tReply0;
-  console.log(`[WH_REPLY]`, JSON.stringify({
-    ok: replyOk, timedOut: replyTimedOut,
-    status: replyStatus,
-    purpose: cfg.purpose,
-    branch: result.branch,
-    sendMode: result.sendMode ?? "sync",
-    replyMsgCount: result.replyMessages.length,
-    replyMsgTypes: result.replyMessages.map((m: any) => m.type),
-    userId: lineUserId?.slice(0, 12),
-    tenantId,
-    body: replyBody.slice(0, 200),
-  }));
-
-  // ── Push fallback: if reply failed and we have a userId, push instead ────
-  if (!replyOk && lineUserId) {
-    console.log(`[WH_PUSH_FALLBACK] reply failed (status=${replyStatus}), attempting push to ${lineUserId.slice(0, 8)}...`);
-    pushFallbackUsed = true;
-    try {
-      // Filter to text-only messages for push (template messages may not work via push)
-      const pushMessages = result.replyMessages.map((m: any) =>
-        m.type === "text" ? m : { type: "text", text: m.altText ?? m.template?.text ?? FALLBACK_TEXT }
+      console.log(
+        `[WH_TEXT] traceId=${traceId} ei=${ei}/${textEvents.length} tenant=${tenantId} ` +
+        `purpose=${cfg.purpose} text="${textIn.slice(0, 40)}" uid=${lineUserId.slice(0, 8)} ` +
+        `replyToken=...${replyToken.slice(-8)}`
       );
-      const pr = await pushLine(cfg.channelAccessToken, lineUserId, pushMessages);
-      pushFallbackOk = pr.ok;
-      console.log(`[WH_PUSH_FALLBACK] ok=${pr.ok} status=${pr.status} body=${pr.bodyText.slice(0, 200)}`);
-    } catch (e: any) {
-      console.log(`[WH_PUSH_FALLBACK] exception: ${String(e?.message ?? e).slice(0, 200)}`);
-    }
-  }
 
-  // ── Safety net: if both reply and push fallback failed, last-resort push ──
-  if (!replyOk && !pushFallbackOk && lineUserId) {
-    console.log(`[WH_SAFETY_NET] both reply and push failed, last-resort push to ${lineUserId.slice(0, 8)}`);
-    try {
-      const safetyMsg = "すみません、うまく理解できませんでした。もう一度教えてください😊";
-      const sr = await pushLine(cfg.channelAccessToken, lineUserId, [{ type: "text", text: safetyMsg }]);
-      console.log(`[WH_SAFETY_NET] pushOk=${sr.ok} status=${sr.status} body=${sr.bodyText.slice(0, 200)}`);
-    } catch (e: any) {
-      console.log(`[WH_SAFETY_NET] exception: ${String(e?.message ?? e).slice(0, 200)}`);
+      // ── Handler dispatch ──────────────────────────────────────────────
+      const handlerCtx: HandlerContext = { textIn, lineUserId, tenantId, cfg, apiBase };
+      const tH0 = Date.now();
+      let result: HandlerResult;
+      try {
+        if (cfg.purpose === "sales") {
+          result = await handleSalesEvent(handlerCtx);
+        } else {
+          aiStarted = true;
+          result = await handleBookingEvent(handlerCtx);
+          aiFinished = true;
+          aiOk = (result.branch?.includes("ai") || result.branch?.includes("faq")) ?? false;
+        }
+      } catch (handlerErr: any) {
+        errorClass = handlerErr?.name ?? "Error";
+        errorMessage = String(handlerErr?.message ?? handlerErr).slice(0, 200);
+        console.error(`[WH_HANDLER_CRASH] traceId=${traceId} ei=${ei} error=${errorMessage}`);
+        const bookingLink = buildBookingLink(cfg.bookingUrl, tenantId, lineUserId);
+        result = {
+          branch: "handler_crash_fallback",
+          salesIntent: null,
+          replyMessages: [{ type: "text", text: getBookingFallbackText(bookingLink) }],
+          leadLabel: null,
+          leadCapture: false,
+        };
+      }
+      aiLatencyMs = Date.now() - tH0;
+      routeSelected = result.branch ?? "unknown";
+      lastResult = result;
+
+      // ── Async LLM path (sales only) ──────────────────────────────────
+      if (result.sendMode === "async" && result.asyncPayload && lineUserId) {
+        const { accountId: asyncAcctId, tenantId: asyncTenantId, message: asyncMsg,
+                channelAccessToken: asyncToken, fallbackMessage: asyncFallback } = result.asyncPayload;
+        pushAttempted = true;
+
+        const runLlmAndPush = async () => {
+          let _openaiOk = false;
+          let _pushOk = false;
+          let _fallbackReason: string | null = null;
+          try {
+            const chatRes = await fetch(`${apiBase}/sales-ai/chat`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "x-internal-token": internalToken },
+              body: JSON.stringify({ accountId: asyncAcctId || undefined, tenantId: asyncTenantId, message: asyncMsg }),
+            });
+            const chatData = (await chatRes.json()) as any;
+            _openaiOk = chatData?.ok === true;
+            if (!_openaiOk) {
+              _fallbackReason = chatData?.error ?? "unknown";
+              console.log(`[SALES_LLM_CHAT] openai_failed`, JSON.stringify({
+                chatHttpStatus: chatRes.status, error: _fallbackReason,
+                tenantId: asyncTenantId, accountId: asyncAcctId, traceId, ei,
+              }));
+            }
+            const pushText = _openaiOk && chatData?.answer ? String(chatData.answer) : asyncFallback;
+            const pr = await pushLine(asyncToken, lineUserId, [{ type: "text", text: pushText }]);
+            _pushOk = pr.ok;
+            console.log(`[SALES_LLM_PUSH]`, JSON.stringify({
+              status: pr.status, body: pr.bodyText.slice(0, 300), pushOk: pr.ok,
+              salesReplyMode: _openaiOk ? "llm_async_push" : "fallback_async_push",
+              userId: lineUserId, tenantId: asyncTenantId, traceId, ei,
+            }));
+          } catch (e: any) {
+            _fallbackReason = `exception: ${String(e?.message ?? e).slice(0, 150)}`;
+            console.log(`[SALES_LLM_PUSH] error`, JSON.stringify({
+              reason: _fallbackReason, traceId, ei,
+            }));
+            try {
+              const pr2 = await pushLine(asyncToken, lineUserId, [{ type: "text", text: asyncFallback }]);
+              _pushOk = pr2.ok;
+            } catch {}
+          }
+        };
+
+        try {
+          const ctx = getRequestContext();
+          if (ctx?.ctx?.waitUntil) ctx.ctx.waitUntil(runLlmAndPush());
+          else runLlmAndPush().catch(() => null);
+        } catch { runLlmAndPush().catch(() => null); }
+
+        finalDelivery = "push_pending"; // async — can't verify synchronously
+
+      } else {
+        // ── Sync reply path ──────────────────────────────────────────────
+        replyAttempted = true;
+        try {
+          const gr = await replyLine(cfg.channelAccessToken, replyToken, result.replyMessages);
+          replyOk = gr.ok;
+          replyStatus = gr.status;
+          console.log(`[WH_REPLY]`, JSON.stringify({
+            ok: gr.ok, status: gr.status, body: gr.bodyText.slice(0, 200),
+            traceId, ei, branch: result.branch,
+          }));
+        } catch (e: any) {
+          const timedOut = e?.name === "AbortError";
+          errorClass = e?.name ?? "Error";
+          errorMessage = `reply_exception:${timedOut ? "TIMEOUT:" : ""}${String(e?.message ?? e).slice(0, 200)}`;
+          console.log(`[WH_REPLY] exception traceId=${traceId} ei=${ei} error=${errorMessage}`);
+        }
+
+        // ── Push fallback if reply failed ──────────────────────────────
+        if (!replyOk && lineUserId) {
+          pushAttempted = true;
+          try {
+            const pushMessages = result.replyMessages.map((m: any) =>
+              m.type === "text" ? m : { type: "text", text: m.altText ?? m.template?.text ?? FALLBACK_TEXT }
+            );
+            const pr = await pushLine(cfg.channelAccessToken, lineUserId, pushMessages);
+            pushOk = pr.ok;
+            pushStatus = pr.status;
+            console.log(`[WH_PUSH_FALLBACK]`, JSON.stringify({
+              ok: pr.ok, status: pr.status, body: pr.bodyText.slice(0, 200), traceId, ei,
+            }));
+          } catch (e: any) {
+            console.log(`[WH_PUSH_FALLBACK] exception traceId=${traceId} ei=${ei}: ${String(e?.message ?? e).slice(0, 200)}`);
+          }
+        }
+
+        // ── Safety net push ──────────────────────────────────────────────
+        if (!replyOk && !pushOk && lineUserId) {
+          pushAttempted = true;
+          try {
+            const safetyMsg = "すみません、うまく理解できませんでした。もう一度教えてください😊";
+            const sr = await pushLine(cfg.channelAccessToken, lineUserId, [{ type: "text", text: safetyMsg }]);
+            pushOk = sr.ok;
+            pushStatus = sr.status;
+            console.log(`[WH_SAFETY_NET]`, JSON.stringify({
+              ok: sr.ok, status: sr.status, traceId, ei,
+            }));
+          } catch (e: any) {
+            console.log(`[WH_SAFETY_NET] exception traceId=${traceId} ei=${ei}: ${String(e?.message ?? e).slice(0, 200)}`);
+          }
+        }
+
+        finalDelivery = replyOk ? "reply_ok" : pushOk ? "push_ok" : "no_delivery";
+      }
+
+    } catch (eventErr: any) {
+      // Per-event catch — one event failure doesn't block others
+      errorClass = errorClass ?? eventErr?.name ?? "Error";
+      errorMessage = errorMessage ?? String(eventErr?.message ?? eventErr).slice(0, 200);
+      finalDelivery = "no_delivery";
+      console.error(`[WH_EVENT_CRASH] traceId=${traceId} ei=${ei} error=${errorMessage}`);
     }
+
+    // ── [LINE_EVENT_AUDIT] — per-event structured audit log ────────────
+    const audit: EventAudit = {
+      traceId, eventIndex: ei,
+      eventType: "message", messageType: "text",
+      messageTextPreview: textIn.slice(0, 30),
+      tenantId, userId: lineUserId.slice(0, 12),
+      replyTokenTail: replyToken.slice(-8),
+      routeSelected, aiStarted, aiFinished, aiOk, aiLatencyMs,
+      replyAttempted, replyStatus, replyOk,
+      pushAttempted, pushStatus, pushOk,
+      finalDelivery, errorClass, errorMessage,
+    };
+    console.log(`[LINE_EVENT_AUDIT]`, JSON.stringify(audit));
+
+    if (finalDelivery === "no_delivery") {
+      console.error(
+        `[LINE_NO_DELIVERY] traceId=${traceId} ei=${ei} tenant=${tenantId} ` +
+        `text="${textIn.slice(0, 30)}" uid=${lineUserId.slice(0, 12)} ` +
+        `replyStatus=${replyStatus} errorClass=${errorClass} errorMessage=${errorMessage}`
+      );
+    }
+
+    audits.push(audit);
   }
+  // ── end per-event loop ────────────────────────────────────────────────────
 
   // ── Comprehensive flow log ─────────────────────────────────────────────────
   const totalMs = Date.now() - t0;
+  const allDelivered = audits.every(a => a.finalDelivery !== "no_delivery");
   console.log(`[LINE_WEBHOOK_FLOW]`, JSON.stringify({
-    tenantId,
-    userId: lineUserId?.slice(0, 12),
-    text: textIn.slice(0, 40),
-    purpose: cfg.purpose,
-    branch: result.branch,
-    replyOk, replyTimedOut, pushFallbackUsed, pushFallbackOk,
-    latency: { totalMs, cfgMs: tCfgMs, handlerMs: tHandlerMs, replyMs: tReplyMs },
-    delivered: replyOk || pushFallbackOk,
+    traceId, tenantId, purpose: cfg.purpose,
+    textEventCount: textEvents.length,
+    allDelivered,
+    latency: { totalMs, cfgMs: tCfgMs },
+    audits: audits.map(a => ({ ei: a.eventIndex, route: a.routeSelected, fd: a.finalDelivery })),
   }));
 
-  // ── Lead capture (sales only) ─────────────────────────────────────────────
-  let leadCaptureAttempted = false;
-  if (result.leadCapture && apiBase && internalToken && lineUserId) {
-    leadCaptureAttempted = true;
+  // ── Lead capture (last event, sales only) ─────────────────────────────────
+  if (lastResult?.leadCapture && apiBase && internalToken && lastLineUserId) {
     fetch(`${apiBase}/internal/sales/lead-reply`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-internal-token": internalToken,
-      },
+      headers: { "Content-Type": "application/json", "x-internal-token": internalToken },
       body: JSON.stringify({
-        tenantId,
-        lineUserId,
-        rawReply: textIn.slice(0, 500),
-        label: result.leadLabel ?? "info_request",
+        tenantId, lineUserId: lastLineUserId,
+        rawReply: lastTextIn.slice(0, 500),
+        label: lastResult.leadLabel ?? "info_request",
         displayName: "",
       }),
     })
-      .then(r => console.log(`[WH_LEAD] status=${r.status} ok=${r.ok}`))
-      .catch(e => console.log(`[WH_LEAD] error: ${String(e?.message ?? e).slice(0, 100)}`));
-  } else if (result.leadCapture) {
-    console.log(
-      `[WH_LEAD] skipped: apiBase=${!!apiBase} internalToken=${!!internalToken} lineUserId=${!!lineUserId}`
-    );
+      .then(r => console.log(`[WH_LEAD] status=${r.status}`))
+      .catch(() => null);
   }
 
-  // ── Persist last result to KV (fire-and-forget with 3s timeout — must not block 200) ─
-  const lastResultPayload = {
-    ts: new Date().toISOString(),
-    stamp: STAMP,
-    tenantId,
-    resolvedBy,
-    purpose: cfg.purpose,
-    resolvedPurposeBy: cfg.resolvedPurposeBy,
-    credSource: cfg.credSource ?? "unknown",
-    eventType: "message",
-    messageType: "text",
-    messageText: textIn.slice(0, 100),
-    lineUserId: lineUserId.slice(0, 8),
-    branch: result.branch,
-    salesIntent: result.salesIntent ?? "none",
-    salesConfigSource: result.salesConfigSource ?? "N/A",
-    replyAttempted: true,
-    replyOk,
-    replyStatus,
-    replyBody: replyBody.slice(0, 200),
-    errorReason: replyOk ? null : replyBody.slice(0, 200),
-    leadCaptureAttempted,
-    sigVerified: verified,
-    cfgSource: cfg.source,
-    tokenLen: cfg.channelAccessToken.length,
-    tokenPreview: cfg.channelAccessToken.length > 8
-      ? `${cfg.channelAccessToken.slice(0, 4)}...${cfg.channelAccessToken.slice(-4)}`
-      : "(short)",
-    replyTokenLen: replyToken.length,
-    replyTokenPreview: replyToken.slice(0, 12),
-    pushFallbackUsed,
-    pushFallbackOk,
-  };
-
-  // Return 200 to LINE FIRST, then save lastResult via waitUntil (non-blocking)
+  // ── Build response ─────────────────────────────────────────────────────────
+  const firstAudit = audits[0];
   const response = NextResponse.json(
     {
       ok: true, stamp: STAMP, where, tenantId, source: cfg.source,
-      verified, mode: "v18g_fast_200",
-      purpose: cfg.purpose,
-      resolvedPurposeBy: cfg.resolvedPurposeBy,
-      credSource: cfg.credSource ?? "unknown",
-      branch: result.branch,
-      salesIntent: result.salesIntent,
-      salesConfigSource: result.salesConfigSource ?? "N/A",
-      replied: replyOk || pushFallbackOk,
-      replyOk,
-      replyStatus,
-      replyBody: replyBody.slice(0, 200),
-      pushFallbackUsed,
-      pushFallbackOk,
-      leadCaptureAttempted,
+      verified, mode: "v29_event_audit",
+      purpose: cfg.purpose, traceId,
+      textEventCount: textEvents.length,
+      allDelivered,
+      branch: firstAudit?.routeSelected ?? "none",
+      finalDelivery: firstAudit?.finalDelivery ?? "no_delivery",
+      audits: audits.map(a => ({
+        ei: a.eventIndex, route: a.routeSelected, fd: a.finalDelivery,
+        replyOk: a.replyOk, pushOk: a.pushOk,
+      })),
       resolvedBy, eventCount: events.length,
-      text: textIn.slice(0, 80),
-      lineUserId: lineUserId.slice(0, 8),
+      text: lastTextIn.slice(0, 80),
+      lineUserId: lastLineUserId.slice(0, 8),
     },
     { headers: { "x-stamp": STAMP } }
   );
 
-  // Save lastResult after response — use waitUntil if available, else fire-and-forget with AbortController timeout
-  if (webhookLogApiBase && internalToken) {
+  // ── KV last result save (fire-and-forget, last event) ──────────────────────
+  if (webhookLogApiBase && internalToken && firstAudit) {
+    const lastResultPayload = {
+      ts: new Date().toISOString(), stamp: STAMP, traceId,
+      tenantId, resolvedBy, purpose: cfg.purpose,
+      textEventCount: textEvents.length,
+      branch: firstAudit.routeSelected,
+      finalDelivery: firstAudit.finalDelivery,
+      replyOk: firstAudit.replyOk, replyStatus: firstAudit.replyStatus,
+      pushOk: firstAudit.pushOk, pushStatus: firstAudit.pushStatus,
+      allDelivered,
+      errorClass: firstAudit.errorClass, errorMessage: firstAudit.errorMessage,
+    };
     const saveLastResult = async () => {
       const ac = new AbortController();
       const tid = setTimeout(() => ac.abort(), 3000);
       try {
-        const lr = await fetch(
+        await fetch(
           `${webhookLogApiBase}/internal/line/last-result?tenantId=${encodeURIComponent(tenantId)}`,
           {
             method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "x-internal-token": internalToken,
-            },
+            headers: { "Content-Type": "application/json", "x-internal-token": internalToken },
             body: JSON.stringify({ result: lastResultPayload }),
             signal: ac.signal,
           }
         );
-        console.log(`[WH_LAST_RESULT] saved ok=${lr.ok} status=${lr.status}`);
-      } catch (e: any) {
-        console.log(`[WH_LAST_RESULT] save failed: ${String(e?.message ?? e).slice(0, 80)}`);
-      } finally {
-        clearTimeout(tid);
-      }
+      } catch {} finally { clearTimeout(tid); }
     };
-
-    // Prefer waitUntil to keep the worker alive after response
     try {
       const ctx = getRequestContext();
-      if (ctx?.ctx?.waitUntil) {
-        ctx.ctx.waitUntil(saveLastResult());
-      } else {
-        // fire-and-forget — runtime may or may not complete it
-        saveLastResult().catch(() => null);
-      }
-    } catch {
-      saveLastResult().catch(() => null);
-    }
+      if (ctx?.ctx?.waitUntil) ctx.ctx.waitUntil(saveLastResult());
+      else saveLastResult().catch(() => null);
+    } catch { saveLastResult().catch(() => null); }
   }
 
   return response;
