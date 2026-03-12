@@ -30,16 +30,22 @@ export interface OwnerMembersStore {
 //   line:U1234567890abcdef
 // For backward compat, bare strings (no colon) are treated as-is.
 
+/** Normalize a principal for safe comparison: trim + lowercase. */
+export function normalizePrincipal(value: string): string {
+  return value.trim().toLowerCase();
+}
+
 export function parsePrincipalList(raw: string): string[] {
   return raw
     .split(",")
-    .map((s) => s.trim())
+    .map((s) => normalizePrincipal(s))
     .filter(Boolean);
 }
 
 export function isPrincipalAllowed(userId: string, allowedList: string[]): boolean {
   if (!userId) return false;
-  return allowedList.includes(userId);
+  const normalized = normalizePrincipal(userId);
+  return allowedList.some((p) => normalizePrincipal(p) === normalized);
 }
 
 /**
@@ -63,7 +69,7 @@ export async function getOwnerIds(kv: KVNamespace | null, envFallback: string): 
  * seed the KV with that single owner. Returns true if bootstrap occurred.
  */
 export async function bootstrapOwnerIfEmpty(kv: KVNamespace, userId: string): Promise<boolean> {
-  if (userId !== BOOTSTRAP_OWNER_ID) return false;
+  if (normalizePrincipal(userId) !== normalizePrincipal(BOOTSTRAP_OWNER_ID)) return false;
   try {
     const raw = await kv.get("owner:members", "json") as OwnerMembersStore | null;
     if (raw?.owners?.length) return false; // already has owners — no bootstrap
@@ -109,7 +115,7 @@ export function registerOwnerRoutes(app: Hono<{ Bindings: Record<string, unknown
     // Check owner list (KV primary, env fallback deprecated)
     const ownerIds = await getOwnerIds(kv, env?.OWNER_USER_IDS ?? "");
     if (!isPrincipalAllowed(userId, ownerIds)) {
-      console.warn(`[owner-auth] denied userId=${userId.slice(0, 20)}...`);
+      console.warn(`[owner-auth] denied uid=${normalizePrincipal(userId).slice(0, 30)} ownerCount=${ownerIds.length}`);
       return c.json({ ok: false, error: "Forbidden" }, 403);
     }
     // TODO: rate limit — KV key `owner:rl:{userId}`, 120 req/10min

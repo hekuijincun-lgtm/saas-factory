@@ -4,7 +4,7 @@ import Stripe from "stripe";
 import { resolveVertical, DEFAULT_ADMIN_SETTINGS, mergeSettings } from "./settings";
 import type { PlanId, SubscriptionInfo } from "./settings";
 import { getRepeatConfig, getStyleLabel, buildRepeatMessage, eyebrowOnboardingChecks } from "./verticals/eyebrow";
-import { registerOwnerRoutes, getOwnerIds, bootstrapOwnerIfEmpty, isPrincipalAllowed } from "./routes/owner";
+import { registerOwnerRoutes, getOwnerIds, bootstrapOwnerIfEmpty, isPrincipalAllowed, normalizePrincipal } from "./routes/owner";
 import { registerOwnerLeadRoutes } from "./routes/ownerLeads";
 import { createOutreachRoutes } from "./outreach/routes";
 
@@ -174,6 +174,7 @@ app.get("/auth/owner-check", async (c) => {
   // Check owner list (KV primary, env fallback deprecated)
   const ownerIds = await getOwnerIds(kv, env?.OWNER_USER_IDS ?? "");
   const isOwner = isPrincipalAllowed(userId, ownerIds);
+  console.log(`[owner-check] uid=${normalizePrincipal(userId).slice(0, 30)} isOwner=${isOwner} ownerCount=${ownerIds.length}`);
 
   return c.json({ ok: true, isOwner, ...(bootstrapped ? { bootstrapped: true } : {}) });
 });

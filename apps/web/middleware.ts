@@ -165,7 +165,7 @@ export async function middleware(req: NextRequest) {
     }
 
     if (!userId) {
-      return NextResponse.redirect(new URL("/admin?error=not_owner", req.nextUrl.origin));
+      return NextResponse.redirect(new URL("/login?reason=not_owner", req.nextUrl.origin));
     }
 
     // Check owner_ok cache cookie (value = userId that was verified)
@@ -197,13 +197,14 @@ export async function middleware(req: NextRequest) {
       } catch {}
     }
 
-    // Deprecated fallback: OWNER_USER_IDS env var
+    // Deprecated fallback: OWNER_USER_IDS env var (normalized comparison)
     if (!isOwner) {
+      const normalizedUserId = userId.trim().toLowerCase();
       const ownerIds = (process.env.OWNER_USER_IDS ?? "")
         .split(",")
-        .map((s) => s.trim())
+        .map((s) => s.trim().toLowerCase())
         .filter(Boolean);
-      isOwner = ownerIds.includes(userId);
+      isOwner = ownerIds.includes(normalizedUserId);
     }
 
     if (isOwner) {
@@ -218,11 +219,12 @@ export async function middleware(req: NextRequest) {
       return res;
     }
 
+    // Owner-specific rejection — do NOT redirect to /admin
     const params = new URLSearchParams({
-      error: "not_owner",
+      reason: "not_owner",
       ...(userId ? { uid: userId } : {}),
     });
-    return NextResponse.redirect(new URL(`/admin?${params}`, req.nextUrl.origin));
+    return NextResponse.redirect(new URL(`/login?${params}`, req.nextUrl.origin));
   }
 
   // ── Billing gate (only when BILLING_REQUIRED=1) ──────────────────────────
