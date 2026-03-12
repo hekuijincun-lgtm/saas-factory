@@ -381,6 +381,8 @@ export interface OutreachSourceRun {
   updated_at: string;
 }
 
+export type AcceptanceStatus = "pending" | "accepted" | "rejected";
+
 export interface OutreachSourceCandidate {
   id: string;
   tenant_id: string;
@@ -404,6 +406,12 @@ export interface OutreachSourceCandidate {
   raw_payload_json: string | null;
   created_at: string;
   updated_at: string;
+  // Phase 8.1: Quality Layer
+  quality_score: number | null;
+  acceptance_status: AcceptanceStatus;
+  rejection_reason: string | null;
+  accepted_at: string | null;
+  rejected_at: string | null;
 }
 
 export interface SourceAnalytics {

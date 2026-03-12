@@ -7,6 +7,8 @@ import {
   fetchSourceRuns,
   fetchSourceRunDetail,
   importSourceCandidates,
+  acceptSourceCandidate,
+  rejectSourceCandidate,
 } from "@/app/lib/outreachApi";
 import type {
   OutreachSourceRun,
@@ -18,6 +20,9 @@ import {
   SOURCE_TYPE_LABELS,
   CANDIDATE_STATUS_LABELS,
   CANDIDATE_STATUS_COLORS,
+  ACCEPTANCE_STATUS_LABELS,
+  ACCEPTANCE_STATUS_COLORS,
+  qualityLabel,
 } from "@/src/types/outreach";
 
 export default function OutreachSourcesClient() {
@@ -44,6 +49,10 @@ export default function OutreachSourcesClient() {
   // Selected historical run
   const [historyRun, setHistoryRun] = useState<OutreachSourceRun | null>(null);
   const [historyCandidates, setHistoryCandidates] = useState<OutreachSourceCandidate[]>([]);
+
+  // Reject modal
+  const [rejectTarget, setRejectTarget] = useState<string | null>(null);
+  const [rejectReason, setRejectReason] = useState("");
 
   const [toast, setToast] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [error, setError] = useState("");
@@ -112,6 +121,46 @@ export default function OutreachSourcesClient() {
     } finally {
       setImporting(false);
     }
+  };
+
+  const handleAccept = async (candidateId: string) => {
+    try {
+      await acceptSourceCandidate(tenantId, candidateId);
+      updateCandidateLocally(candidateId, { acceptance_status: "accepted" as const });
+      setToast({ type: "success", text: "承認しました" });
+    } catch (err: any) {
+      setToast({ type: "error", text: err.message || "承認に失敗しました" });
+    }
+  };
+
+  const handleReject = async () => {
+    if (!rejectTarget) return;
+    try {
+      await rejectSourceCandidate(tenantId, rejectTarget, rejectReason || undefined);
+      updateCandidateLocally(rejectTarget, {
+        acceptance_status: "rejected" as const,
+        rejection_reason: rejectReason || null,
+      });
+      setToast({ type: "success", text: "却下しました" });
+      setRejectTarget(null);
+      setRejectReason("");
+    } catch (err: any) {
+      setToast({ type: "error", text: err.message || "却下に失敗しました" });
+    }
+  };
+
+  const updateCandidateLocally = (id: string, updates: Partial<OutreachSourceCandidate>) => {
+    if (searchResult) {
+      setSearchResult({
+        ...searchResult,
+        candidates: searchResult.candidates.map((c) =>
+          c.id === id ? { ...c, ...updates } : c
+        ),
+      });
+    }
+    setHistoryCandidates((prev) =>
+      prev.map((c) => (c.id === id ? { ...c, ...updates } : c))
+    );
   };
 
   const loadHistory = async () => {
@@ -295,46 +344,85 @@ export default function OutreachSourcesClient() {
                       />
                     </th>
                     <th className="py-2 px-3">状態</th>
+                    <th className="py-2 px-3">品質</th>
                     <th className="py-2 px-3">店舗名</th>
                     <th className="py-2 px-3">カテゴリ</th>
                     <th className="py-2 px-3">エリア</th>
                     <th className="py-2 px-3">評価</th>
-                    <th className="py-2 px-3">レビュー</th>
                     <th className="py-2 px-3">URL</th>
+                    <th className="py-2 px-3">承認</th>
                     <th className="py-2 px-3">備考</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {searchResult.candidates.map((cand) => (
-                    <tr key={cand.id} className="border-b last:border-0">
-                      <td className="py-2 px-3">
-                        {cand.import_status === "new" && (
-                          <input
-                            type="checkbox"
-                            checked={selectedIds.has(cand.id)}
-                            onChange={() => toggleSelect(cand.id)}
-                            className="w-3.5 h-3.5"
-                          />
-                        )}
-                      </td>
-                      <td className="py-2 px-3">
-                        <span className={`px-2 py-0.5 rounded-full text-xs ${CANDIDATE_STATUS_COLORS[cand.import_status]}`}>
-                          {CANDIDATE_STATUS_LABELS[cand.import_status]}
-                        </span>
-                      </td>
-                      <td className="py-2 px-3 font-medium">{cand.store_name}</td>
-                      <td className="py-2 px-3 text-gray-500">{cand.category ?? "-"}</td>
-                      <td className="py-2 px-3 text-gray-500">{cand.area ?? "-"}</td>
-                      <td className="py-2 px-3 text-gray-500">{cand.rating ?? "-"}</td>
-                      <td className="py-2 px-3 text-gray-500">{cand.review_count ?? 0}</td>
-                      <td className="py-2 px-3 text-gray-500 truncate max-w-[120px]">{cand.website_url ?? "-"}</td>
-                      <td className="py-2 px-3">
-                        {cand.dedup_reason && (
-                          <span className="text-xs text-yellow-600">{cand.dedup_reason}</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
+                  {searchResult.candidates.map((cand) => {
+                    const ql = qualityLabel(cand.quality_score);
+                    const accStatus = cand.acceptance_status ?? "pending";
+                    return (
+                      <tr key={cand.id} className="border-b last:border-0">
+                        <td className="py-2 px-3">
+                          {cand.import_status === "new" && (
+                            <input
+                              type="checkbox"
+                              checked={selectedIds.has(cand.id)}
+                              onChange={() => toggleSelect(cand.id)}
+                              className="w-3.5 h-3.5"
+                            />
+                          )}
+                        </td>
+                        <td className="py-2 px-3">
+                          <span className={`px-2 py-0.5 rounded-full text-xs ${CANDIDATE_STATUS_COLORS[cand.import_status]}`}>
+                            {CANDIDATE_STATUS_LABELS[cand.import_status]}
+                          </span>
+                        </td>
+                        <td className="py-2 px-3">
+                          <span className={`text-xs font-medium ${ql.color}`}>
+                            {ql.text}
+                          </span>
+                          {cand.quality_score != null && (
+                            <span className="text-[10px] text-gray-400 ml-1">
+                              {cand.quality_score.toFixed(1)}
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-2 px-3 font-medium">{cand.store_name}</td>
+                        <td className="py-2 px-3 text-gray-500">{cand.category ?? "-"}</td>
+                        <td className="py-2 px-3 text-gray-500">{cand.area ?? "-"}</td>
+                        <td className="py-2 px-3 text-gray-500">{cand.rating ?? "-"}</td>
+                        <td className="py-2 px-3 text-gray-500 truncate max-w-[120px]">{cand.website_url ?? "-"}</td>
+                        <td className="py-2 px-3">
+                          {accStatus === "pending" ? (
+                            <div className="flex gap-1">
+                              <button
+                                onClick={() => handleAccept(cand.id)}
+                                className="text-[10px] px-2 py-0.5 bg-green-100 text-green-700 rounded hover:bg-green-200"
+                              >
+                                Accept
+                              </button>
+                              <button
+                                onClick={() => { setRejectTarget(cand.id); setRejectReason(""); }}
+                                className="text-[10px] px-2 py-0.5 bg-red-100 text-red-600 rounded hover:bg-red-200"
+                              >
+                                Reject
+                              </button>
+                            </div>
+                          ) : (
+                            <span className={`px-2 py-0.5 rounded-full text-[10px] ${ACCEPTANCE_STATUS_COLORS[accStatus]}`}>
+                              {ACCEPTANCE_STATUS_LABELS[accStatus]}
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-2 px-3">
+                          {cand.dedup_reason && (
+                            <span className="text-xs text-yellow-600">{cand.dedup_reason}</span>
+                          )}
+                          {cand.rejection_reason && (
+                            <span className="text-xs text-red-500">{cand.rejection_reason}</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -401,29 +489,89 @@ export default function OutreachSourcesClient() {
                     <thead>
                       <tr className="text-left text-gray-500 border-b">
                         <th className="py-1 px-2">状態</th>
+                        <th className="py-1 px-2">品質</th>
                         <th className="py-1 px-2">店舗名</th>
                         <th className="py-1 px-2">エリア</th>
                         <th className="py-1 px-2">評価</th>
+                        <th className="py-1 px-2">承認</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {historyCandidates.map((c) => (
-                        <tr key={c.id} className="border-b last:border-0">
-                          <td className="py-1 px-2">
-                            <span className={`px-1.5 py-0.5 rounded text-[10px] ${CANDIDATE_STATUS_COLORS[c.import_status]}`}>
-                              {CANDIDATE_STATUS_LABELS[c.import_status]}
-                            </span>
-                          </td>
-                          <td className="py-1 px-2">{c.store_name}</td>
-                          <td className="py-1 px-2 text-gray-500">{c.area ?? "-"}</td>
-                          <td className="py-1 px-2 text-gray-500">{c.rating ?? "-"}</td>
-                        </tr>
-                      ))}
+                      {historyCandidates.map((c) => {
+                        const ql = qualityLabel(c.quality_score);
+                        const accStatus = c.acceptance_status ?? "pending";
+                        return (
+                          <tr key={c.id} className="border-b last:border-0">
+                            <td className="py-1 px-2">
+                              <span className={`px-1.5 py-0.5 rounded text-[10px] ${CANDIDATE_STATUS_COLORS[c.import_status]}`}>
+                                {CANDIDATE_STATUS_LABELS[c.import_status]}
+                              </span>
+                            </td>
+                            <td className="py-1 px-2">
+                              <span className={`font-medium ${ql.color}`}>{ql.text}</span>
+                            </td>
+                            <td className="py-1 px-2">{c.store_name}</td>
+                            <td className="py-1 px-2 text-gray-500">{c.area ?? "-"}</td>
+                            <td className="py-1 px-2 text-gray-500">{c.rating ?? "-"}</td>
+                            <td className="py-1 px-2">
+                              {accStatus === "pending" ? (
+                                <div className="flex gap-1">
+                                  <button
+                                    onClick={() => handleAccept(c.id)}
+                                    className="text-[10px] px-1.5 py-0.5 bg-green-100 text-green-700 rounded hover:bg-green-200"
+                                  >
+                                    Accept
+                                  </button>
+                                  <button
+                                    onClick={() => { setRejectTarget(c.id); setRejectReason(""); }}
+                                    className="text-[10px] px-1.5 py-0.5 bg-red-100 text-red-600 rounded hover:bg-red-200"
+                                  >
+                                    Reject
+                                  </button>
+                                </div>
+                              ) : (
+                                <span className={`px-1.5 py-0.5 rounded text-[10px] ${ACCEPTANCE_STATUS_COLORS[accStatus]}`}>
+                                  {ACCEPTANCE_STATUS_LABELS[accStatus]}
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
               </div>
             )}
+          </div>
+        )}
+
+        {/* Reject Reason Modal */}
+        {rejectTarget && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+            <div className="bg-white rounded-xl p-5 max-w-sm w-full shadow-xl space-y-3">
+              <h3 className="text-sm font-semibold">却下理由</h3>
+              <input
+                value={rejectReason}
+                onChange={(e) => setRejectReason(e.target.value)}
+                placeholder="理由 (任意)"
+                className="w-full border rounded-lg px-3 py-1.5 text-sm"
+              />
+              <div className="flex gap-2 justify-end">
+                <button
+                  onClick={() => setRejectTarget(null)}
+                  className="px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100 rounded-lg"
+                >
+                  キャンセル
+                </button>
+                <button
+                  onClick={handleReject}
+                  className="px-3 py-1.5 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700"
+                >
+                  却下
+                </button>
+              </div>
+            </div>
           </div>
         )}
       </div>

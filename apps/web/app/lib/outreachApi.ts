@@ -36,6 +36,9 @@ import type {
   CampaignDraftResult,
   OutreachNicheTemplate,
   CampaignInsightsData,
+  SourceQualityRow,
+  SourceQualitySummary,
+  TopSourceRow,
 } from "@/src/types/outreach";
 
 // ── Leads ──────────────────────────────────────────────────────────────────
@@ -649,6 +652,69 @@ export async function fetchCampaignInsights(
 ): Promise<CampaignInsightsData> {
   const res = await apiGet<{ ok: boolean; data: CampaignInsightsData }>(
     "/admin/outreach/analytics/campaign-insights",
+    { tenantId }
+  );
+  return res.data;
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// Phase 8.1: Source Quality Layer
+// ══════════════════════════════════════════════════════════════════════════
+
+export async function fetchSourceQuality(
+  tenantId: string,
+  params?: { niche?: string; area?: string; sourceType?: string }
+): Promise<{ data: SourceQualityRow[]; summary: SourceQualitySummary }> {
+  const sp = new URLSearchParams();
+  if (params?.niche) sp.set("niche", params.niche);
+  if (params?.area) sp.set("area", params.area);
+  if (params?.sourceType) sp.set("sourceType", params.sourceType);
+  const qs = sp.toString();
+  const res = await apiGet<{ ok: boolean; data: SourceQualityRow[]; summary: SourceQualitySummary }>(
+    `/admin/outreach/source-quality${qs ? `?${qs}` : ""}`,
+    { tenantId }
+  );
+  return { data: res.data, summary: res.summary };
+}
+
+export async function fetchTopSources(
+  tenantId: string,
+  limit?: number
+): Promise<TopSourceRow[]> {
+  const qs = limit ? `?limit=${limit}` : "";
+  const res = await apiGet<{ ok: boolean; data: TopSourceRow[] }>(
+    `/admin/outreach/source-quality/top${qs}`,
+    { tenantId }
+  );
+  return res.data;
+}
+
+export async function acceptSourceCandidate(
+  tenantId: string,
+  candidateId: string
+): Promise<void> {
+  await apiPost(`/admin/outreach/source-candidates/${candidateId}/accept`, {}, { tenantId });
+}
+
+export async function rejectSourceCandidate(
+  tenantId: string,
+  candidateId: string,
+  rejectionReason?: string
+): Promise<void> {
+  await apiPost(
+    `/admin/outreach/source-candidates/${candidateId}/reject`,
+    { rejectionReason },
+    { tenantId }
+  );
+}
+
+export async function backfillSourceQuality(
+  tenantId: string,
+  runId?: string
+): Promise<{ updated: number }> {
+  const res = await apiPost<{ ok: boolean; data: { updated: number } }>(
+    "/admin/outreach/source-candidates/backfill-quality",
+    { runId },
     { tenantId }
   );
   return res.data;

@@ -480,6 +480,8 @@ export interface OutreachSourceRun {
   updated_at: string;
 }
 
+export type AcceptanceStatus = "pending" | "accepted" | "rejected";
+
 export interface OutreachSourceCandidate {
   id: string;
   tenant_id: string;
@@ -503,6 +505,12 @@ export interface OutreachSourceCandidate {
   raw_payload_json: string | null;
   created_at: string;
   updated_at: string;
+  // Phase 8.1: Quality Layer
+  quality_score?: number | null;
+  acceptance_status?: AcceptanceStatus;
+  rejection_reason?: string | null;
+  accepted_at?: string | null;
+  rejected_at?: string | null;
 }
 
 export interface SourceSearchResult {
@@ -641,4 +649,50 @@ export interface CampaignInsightsData {
   campaigns: CampaignInsight[];
   refreshHistory: LearningRefreshLog[];
   templateStats: TemplateStats[];
+}
+
+// ── Phase 8.1: Source Quality Layer ──────────────────────────────────────
+
+export interface SourceQualityRow {
+  source_type: string;
+  source_key: string;
+  niche: string | null;
+  area: string | null;
+  leads_imported: number;
+  reply_count: number;
+  meeting_count: number;
+  won_count: number;
+  quality_score: number;
+}
+
+export interface SourceQualitySummary {
+  totalSources: number;
+  totalImported: number;
+  totalReplies: number;
+  totalMeetings: number;
+  totalWon: number;
+  avgQuality: number;
+}
+
+export interface TopSourceRow extends SourceQualityRow {
+  composite_score: number;
+}
+
+export const ACCEPTANCE_STATUS_LABELS: Record<AcceptanceStatus, string> = {
+  pending: "保留",
+  accepted: "承認",
+  rejected: "却下",
+};
+
+export const ACCEPTANCE_STATUS_COLORS: Record<AcceptanceStatus, string> = {
+  pending: "bg-gray-100 text-gray-600",
+  accepted: "bg-green-100 text-green-700",
+  rejected: "bg-red-100 text-red-700",
+};
+
+export function qualityLabel(score: number | null | undefined): { text: string; color: string } {
+  if (score == null) return { text: "—", color: "text-gray-400" };
+  if (score >= 0.8) return { text: "High", color: "text-green-600" };
+  if (score >= 0.4) return { text: "Medium", color: "text-amber-600" };
+  return { text: "Low", color: "text-red-500" };
 }

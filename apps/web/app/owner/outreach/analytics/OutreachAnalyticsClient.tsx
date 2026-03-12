@@ -2,8 +2,8 @@
 
 import { useState, useEffect } from "react";
 import { useOwnerTenantId } from "@/src/lib/useOwnerTenantId";
-import { fetchOutreachAnalytics, fetchLearningAnalytics, fetchCampaignAnalytics, fetchSourceAnalytics, fetchWinningPatterns, refreshWinningPatterns, fetchCampaignInsights } from "@/app/lib/outreachApi";
-import type { OutreachAnalytics, LearningAnalytics, CampaignAnalytics, SourceAnalytics, WinningPatternsData, CampaignInsightsData } from "@/src/types/outreach";
+import { fetchOutreachAnalytics, fetchLearningAnalytics, fetchCampaignAnalytics, fetchSourceAnalytics, fetchWinningPatterns, refreshWinningPatterns, fetchCampaignInsights, fetchSourceQuality, fetchTopSources } from "@/app/lib/outreachApi";
+import type { OutreachAnalytics, LearningAnalytics, CampaignAnalytics, SourceAnalytics, WinningPatternsData, CampaignInsightsData, SourceQualityRow, SourceQualitySummary, TopSourceRow } from "@/src/types/outreach";
 import { SOURCE_TYPE_LABELS, PATTERN_TYPE_LABELS } from "@/src/types/outreach";
 import { PIPELINE_LABELS } from "@/src/types/outreach";
 
@@ -33,6 +33,9 @@ export default function OutreachAnalyticsClient() {
   const [sourceAnalytics, setSourceAnalytics] = useState<SourceAnalytics | null>(null);
   const [winningPatterns, setWinningPatterns] = useState<WinningPatternsData | null>(null);
   const [campaignInsights, setCampaignInsights] = useState<CampaignInsightsData | null>(null);
+  const [sourceQuality, setSourceQuality] = useState<SourceQualityRow[]>([]);
+  const [sourceQualitySummary, setSourceQualitySummary] = useState<SourceQualitySummary | null>(null);
+  const [topSources, setTopSources] = useState<TopSourceRow[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -47,14 +50,21 @@ export default function OutreachAnalyticsClient() {
       fetchSourceAnalytics(tenantId).catch(() => null),
       fetchWinningPatterns(tenantId).catch(() => null),
       fetchCampaignInsights(tenantId).catch(() => null),
+      fetchSourceQuality(tenantId).catch(() => ({ data: [], summary: null })),
+      fetchTopSources(tenantId).catch(() => []),
     ])
-      .then(([a, l, c, s, w, ci]) => {
+      .then(([a, l, c, s, w, ci, sq, ts]) => {
         setAnalytics(a);
         setLearning(l);
         setCampaignAnalytics(c);
         setSourceAnalytics(s);
         setWinningPatterns(w);
         setCampaignInsights(ci);
+        if (sq && typeof sq === "object" && "data" in sq) {
+          setSourceQuality((sq as any).data ?? []);
+          setSourceQualitySummary((sq as any).summary ?? null);
+        }
+        setTopSources(Array.isArray(ts) ? ts : []);
       })
       .catch((err) => setError(err.message || "読み込みに失敗しました"))
       .finally(() => setLoading(false));
@@ -313,6 +323,90 @@ export default function OutreachAnalyticsClient() {
                         {SOURCE_TYPE_LABELS[r.source_type] ?? r.source_type}: {r.runs}回検索 / {r.total_results}件取得 / {r.total_imported}件取込
                       </span>
                     ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Phase 8.1: Source Quality */}
+            {(sourceQuality.length > 0 || topSources.length > 0) && (
+              <div className="space-y-4">
+                <h3 className="text-sm font-medium text-gray-700">ソース品質分析</h3>
+
+                {/* Summary cards */}
+                {sourceQualitySummary && (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+                    <div className="bg-white border rounded-xl p-3">
+                      <div className="text-xs text-gray-500">ソース数</div>
+                      <div className="text-lg font-semibold">{sourceQualitySummary.totalSources}</div>
+                    </div>
+                    <div className="bg-white border rounded-xl p-3">
+                      <div className="text-xs text-gray-500">取込数</div>
+                      <div className="text-lg font-semibold">{sourceQualitySummary.totalImported}</div>
+                    </div>
+                    <div className="bg-white border rounded-xl p-3">
+                      <div className="text-xs text-gray-500">返信</div>
+                      <div className="text-lg font-semibold text-blue-600">{sourceQualitySummary.totalReplies}</div>
+                    </div>
+                    <div className="bg-white border rounded-xl p-3">
+                      <div className="text-xs text-gray-500">商談</div>
+                      <div className="text-lg font-semibold text-purple-600">{sourceQualitySummary.totalMeetings}</div>
+                    </div>
+                    <div className="bg-white border rounded-xl p-3">
+                      <div className="text-xs text-gray-500">成約</div>
+                      <div className="text-lg font-semibold text-emerald-600">{sourceQualitySummary.totalWon}</div>
+                    </div>
+                    <div className="bg-white border rounded-xl p-3">
+                      <div className="text-xs text-gray-500">平均品質</div>
+                      <div className="text-lg font-semibold">{sourceQualitySummary.avgQuality.toFixed(2)}</div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Top sources */}
+                {topSources.length > 0 && (
+                  <div>
+                    <h4 className="text-xs font-medium text-gray-600 mb-2">トップソース</h4>
+                    <div className="overflow-x-auto border rounded-xl">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="bg-gray-50 text-left text-xs text-gray-500 border-b">
+                            <th className="py-2 px-3">ソース</th>
+                            <th className="py-2 px-3">ニッチ</th>
+                            <th className="py-2 px-3">エリア</th>
+                            <th className="py-2 px-3 text-right">取込</th>
+                            <th className="py-2 px-3 text-right">返信</th>
+                            <th className="py-2 px-3 text-right">商談</th>
+                            <th className="py-2 px-3 text-right">成約</th>
+                            <th className="py-2 px-3 text-right">品質</th>
+                            <th className="py-2 px-3 text-right">総合</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {topSources.map((s, i) => (
+                            <tr key={`${s.source_type}-${s.niche}-${s.area}-${i}`} className="border-b last:border-0">
+                              <td className="py-2 px-3 font-medium">
+                                {SOURCE_TYPE_LABELS[s.source_type] ?? s.source_type}
+                              </td>
+                              <td className="py-2 px-3 text-gray-500">{s.niche ?? "-"}</td>
+                              <td className="py-2 px-3 text-gray-500">{s.area ?? "-"}</td>
+                              <td className="py-2 px-3 text-right">{s.leads_imported}</td>
+                              <td className="py-2 px-3 text-right">{s.reply_count}</td>
+                              <td className="py-2 px-3 text-right">{s.meeting_count}</td>
+                              <td className="py-2 px-3 text-right">{s.won_count}</td>
+                              <td className="py-2 px-3 text-right">{s.quality_score.toFixed(2)}</td>
+                              <td className="py-2 px-3 text-right font-semibold">{s.composite_score.toFixed(2)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {sourceQuality.length === 0 && topSources.length === 0 && (
+                  <div className="text-sm text-gray-400 py-4 text-center">
+                    ソース品質データがありません。リードを取り込むとデータが蓄積されます。
                   </div>
                 )}
               </div>

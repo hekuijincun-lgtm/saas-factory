@@ -25,6 +25,14 @@ import { classifyReply } from "./reply-classifier";
 import { parseCsv, buildPreview, buildMergeSets, normalizeDomain as importNormalizeDomain } from "./importer";
 import { resolveSourceProvider } from "./source-providers/provider-factory";
 import { refreshLearningPatterns, getLearningContext, generateNicheTemplates } from "./learning";
+import {
+  computeCandidateQualityScore,
+  backfillCandidateQualityScores,
+  acceptCandidate,
+  rejectCandidate,
+  aggregateSourceQuality,
+  getTopSources,
+} from "./source-quality";
 import type { LearningPattern } from "./learning";
 import { generateCampaignDraft } from "./campaign-generator";
 import type { CandidateResult } from "./source-providers/types";
@@ -2254,12 +2262,25 @@ export function createOutreachRoutes(getTenantId: GetTenantId) {
         dedupReason = "store_name が空です";
       }
 
+      // Phase 8.1: Compute quality score at candidate creation
+      const qualityCandidate = {
+        website_url: c2.websiteUrl ?? null,
+        email: c2.email ?? null,
+        phone: c2.phone ?? null,
+        import_status: importStatus as any,
+        category: c2.category ?? null,
+        area: c2.area ?? null,
+        rating: c2.rating ?? null,
+        review_count: c2.reviewCount ?? 0,
+      };
+      const qualityScore = computeCandidateQualityScore(qualityCandidate);
+
       await db.prepare(
         `INSERT INTO outreach_source_candidates
          (id, tenant_id, run_id, source_type, external_id, store_name, category, area, address,
           website_url, phone, email, rating, review_count, source_url, normalized_domain,
-          import_status, dedup_reason, dedup_lead_id, raw_payload_json, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)`
+          import_status, dedup_reason, dedup_lead_id, raw_payload_json, quality_score, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)`
       ).bind(
         candId, tenantId, runId, sourceType,
         c2.externalId ?? null, c2.storeName, c2.category ?? null, c2.area ?? null, c2.address ?? null,
@@ -2268,6 +2289,7 @@ export function createOutreachRoutes(getTenantId: GetTenantId) {
         c2.sourceUrl ?? null, domain,
         importStatus, dedupReason, dedupLeadId,
         c2.rawPayload ? JSON.stringify(c2.rawPayload) : null,
+        qualityScore,
         ts, ts
       ).run();
 
@@ -2280,6 +2302,8 @@ export function createOutreachRoutes(getTenantId: GetTenantId) {
         source_url: c2.sourceUrl ?? null, normalized_domain: domain,
         import_status: importStatus as any, dedup_reason: dedupReason, dedup_lead_id: dedupLeadId,
         raw_payload_json: c2.rawPayload ? JSON.stringify(c2.rawPayload) : null,
+        quality_score: qualityScore, acceptance_status: "pending" as const,
+        rejection_reason: null, accepted_at: null, rejected_at: null,
         created_at: ts, updated_at: ts,
       });
     }
@@ -2484,6 +2508,73 @@ export function createOutreachRoutes(getTenantId: GetTenantId) {
       ok: true, tenantId,
       data: { created, skipped, invalid, autoErrors },
     });
+  });
+
+  // ── Phase 8.1: Source Quality Layer ──────────────────────────────────────
+
+  // POST /source-candidates/:id/accept
+  app.post("/source-candidates/:id/accept", async (c) => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    const candidateId = c.req.param("id");
+    const ok = await acceptCandidate(db, candidateId, tenantId, now());
+    if (!ok) return c.json({ ok: false, error: "Candidate not found" }, 404);
+    return c.json({ ok: true, tenantId });
+  });
+
+  // POST /source-candidates/:id/reject
+  app.post("/source-candidates/:id/reject", async (c) => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    const candidateId = c.req.param("id");
+    const body = await c.req.json<{ rejectionReason?: string }>().catch(() => ({}));
+    const ok = await rejectCandidate(db, candidateId, tenantId, body.rejectionReason ?? null, now());
+    if (!ok) return c.json({ ok: false, error: "Candidate not found" }, 404);
+    return c.json({ ok: true, tenantId });
+  });
+
+  // GET /source-quality — Aggregated source quality metrics
+  app.get("/source-quality", async (c) => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    const niche = c.req.query("niche") || undefined;
+    const area = c.req.query("area") || undefined;
+    const sourceType = c.req.query("sourceType") || undefined;
+
+    const rows = await aggregateSourceQuality(db, tenantId, { niche, area, sourceType });
+
+    // Summary
+    const summary = {
+      totalSources: rows.length,
+      totalImported: rows.reduce((s, r) => s + r.leads_imported, 0),
+      totalReplies: rows.reduce((s, r) => s + r.reply_count, 0),
+      totalMeetings: rows.reduce((s, r) => s + r.meeting_count, 0),
+      totalWon: rows.reduce((s, r) => s + r.won_count, 0),
+      avgQuality: rows.length > 0
+        ? Math.round((rows.reduce((s, r) => s + r.quality_score, 0) / rows.length) * 100) / 100
+        : 0,
+    };
+
+    return c.json({ ok: true, tenantId, data: rows, summary });
+  });
+
+  // GET /source-quality/top — Top performing sources
+  app.get("/source-quality/top", async (c) => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    const limit = parseInt(c.req.query("limit") ?? "10", 10);
+
+    const rows = await getTopSources(db, tenantId, limit);
+    return c.json({ ok: true, tenantId, data: rows });
+  });
+
+  // POST /source-candidates/backfill-quality — Backfill quality scores for existing candidates
+  app.post("/source-candidates/backfill-quality", async (c) => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    const body = await c.req.json<{ runId?: string }>().catch(() => ({}));
+    const updated = await backfillCandidateQualityScores(db, tenantId, body.runId);
+    return c.json({ ok: true, tenantId, data: { updated } });
   });
 
   // ── GET /analytics/sources — Source performance analytics ──────────────
