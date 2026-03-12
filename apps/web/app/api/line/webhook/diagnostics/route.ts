@@ -172,6 +172,7 @@ export async function GET(req: Request) {
   let hasBookingUrl = false;
   let cfgSource: "kv" | "env" | "none" = "none";
   let rawToken = "";  // kept in memory only for verification, never returned
+  let settingsData: any = null;
 
   if (apiBase) {
     try {
@@ -182,6 +183,7 @@ export async function GET(req: Request) {
       if (r.ok) {
         const json = (await r.json()) as any;
         const s = json?.data ?? json;
+        settingsData = s;
         const line = s?.integrations?.line;
         const secret = String(line?.channelSecret ?? "").trim();
         const token = String(line?.channelAccessToken ?? "").trim();
@@ -224,9 +226,12 @@ export async function GET(req: Request) {
     );
   }
 
-  // 4. Check AI enabled
+  // 4. Check AI enabled + sales accounts
   const aiEnabled = await checkAiEnabled(tenantId);
-  const salesFlowAvailable = !aiEnabled;
+  const salesAccounts = (settingsData?.lineAccounts ?? []).filter(
+    (a: any) => a?.purpose === "sales" && a?.status === "active"
+  );
+  const salesFlowAvailable = salesAccounts.length > 0;
 
   // 5. Check internal token
   let hasInternalToken = false;
@@ -367,6 +372,8 @@ export async function GET(req: Request) {
       ai: {
         enabled: aiEnabled,
         salesFlowAvailable,
+        salesAccountCount: salesAccounts.length,
+        salesAccountIds: salesAccounts.map((a: any) => a.id).slice(0, 5),
       },
       lastWebhook: lastWebhook
         ? {

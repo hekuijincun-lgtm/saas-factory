@@ -4,7 +4,7 @@ import { getRequestContext } from "@cloudflare/next-on-pages";
 export const runtime = "edge";
 
 // ─── version / stamps ────────────────────────────────────────────────────────
-const STAMP = "LINE_WEBHOOK_V21_20260312_SALES_AI_DIAG";
+const STAMP = "LINE_WEBHOOK_V22_20260312_SALES_ACCT_FALLBACK";
 const where  = "api/line/webhook";
 
 type LinePurpose = "booking" | "sales";
@@ -218,7 +218,20 @@ async function handleSalesEvent(ctx: HandlerContext): Promise<HandlerResult> {
   const { textIn, lineUserId, cfg, apiBase } = ctx;
 
   // 1. Try to load per-account sales AI config
-  const accountId = extractAccountIdFromCredSource(cfg.credSource);
+  let accountId = extractAccountIdFromCredSource(cfg.credSource);
+
+  // Fallback: if credSource didn't yield an accountId (legacy/env credentials),
+  // look for any active sales lineAccount in settings to resolve accountId.
+  if (!accountId && cfg.settingsData) {
+    const salesAcct = (cfg.settingsData.lineAccounts ?? []).find(
+      (a: any) => a?.purpose === "sales" && a?.status === "active" && a?.id
+    );
+    if (salesAcct) {
+      accountId = salesAcct.id;
+      console.log(`[SALES_AI] accountId fallback from settingsData lineAccount id=${accountId}`);
+    }
+  }
+
   let salesConfig: any = null;
   let configSource = "none"; // Track why config was or wasn't loaded
 
@@ -882,6 +895,7 @@ export async function GET(req: Request) {
         handler: cfg.purpose,
         branch: result.branch,
         salesIntent: result.salesIntent,
+        salesConfigSource: result.salesConfigSource ?? "N/A",
         leadCapture: result.leadCapture,
         replyPreview: result.replyMessages[0]?.text?.slice(0, 200)
           ?? result.replyMessages[0]?.altText
