@@ -164,7 +164,7 @@ export default async function EyebrowLandingPage() {
     <div className="min-h-screen bg-white font-sans antialiased text-gray-900">
       <LpNavbar />
       <main>
-        <HeroSection target={target} />
+        <HeroSection />
         {/* Gradient bridge: dark hero → light problem */}
         <div aria-hidden="true" className="h-24 sm:h-32 bg-gradient-to-b from-slate-950 via-[#1e1b3a] to-slate-50" />
         <ProblemSection target={target} />
@@ -269,7 +269,7 @@ function LpNavbar() {
 // ──────────────────────────────────────────────────────────────────────────────
 // Hero
 // ──────────────────────────────────────────────────────────────────────────────
-function HeroSection({ target }: { target?: SalesLineTarget }) {
+function HeroSection() {
   return (
     <section
       className="relative overflow-hidden bg-slate-950 text-white"
@@ -314,13 +314,8 @@ function HeroSection({ target }: { target?: SalesLineTarget }) {
           ダブルブッキング防止から予約台帳まで、すべてひとつで管理。
         </p>
 
-        {/* CTA buttons */}
-        <div className="flex flex-col sm:flex-row gap-4 justify-center items-center">
-          <SalesLineCTA
-            variant="hero"
-            subtitle="導入相談・デモ相談OK"
-            target={target}
-          />
+        {/* CTA button */}
+        <div className="flex justify-center">
           <Link
             href={DEMO_HREF}
             className="group inline-flex items-center gap-2 px-8 py-4 bg-white text-gray-900 font-bold rounded-full text-base hover:bg-gray-100 transition-all duration-200 shadow-xl shadow-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
