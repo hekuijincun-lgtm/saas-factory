@@ -498,7 +498,7 @@ app.get('/admin/rbac/audit', async (c) => {
     }
 
     const DEFAULT_SETTINGS: any = {
-      businessName: "Default Shop",
+      businessName: "Lumière Brow",
       slotMinutes: 30,
       timezone: "Asia/Tokyo",
       closedWeekdays: [],
@@ -792,7 +792,7 @@ const parseHHMM = (s: string) => {
     const overlaps = (a0:number,a1:number,b0:number,b1:number) => a0 < b1 && a1 > b0
 
     const DEFAULT_SETTINGS: any = {
-      businessName: "Default Shop",
+      businessName: "Lumière Brow",
       slotMinutes: 30,
       timezone: "Asia/Tokyo",
       closedWeekdays: [],
@@ -7151,8 +7151,108 @@ async function scheduled(_event: any, env: Env, _ctx: any): Promise<void> {
   const kv = (env as any).SAAS_FACTORY;
   if (!kv) return;
 
-  // ── AI followup (D1 が必要) ────────────────────────────────────────────────
+  // ── Outreach followup automation (Phase 4) ────────────────────────────────
   const db = (env as any).DB;
+  if (db) {
+    const OUTREACH_STAMP = "OUTREACH_FOLLOWUP_CRON_V1";
+    try {
+      const nowIso = new Date().toISOString();
+      // Phase 4.5: Clear stale processing locks (older than 5 minutes)
+      const staleCutoff = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+      await db.prepare(
+        "UPDATE outreach_followups SET processing_at = NULL WHERE status = 'scheduled' AND processing_at IS NOT NULL AND processing_at < ?"
+      ).bind(staleCutoff).run();
+
+      // Find scheduled followups that are due and not being processed
+      const followups = await db.prepare(
+        `SELECT f.id, f.tenant_id, f.lead_id, f.step, f.attempt_count
+         FROM outreach_followups f
+         WHERE f.status = 'scheduled' AND f.scheduled_at <= ? AND f.processing_at IS NULL
+         LIMIT 20`
+      ).bind(nowIso).all();
+
+      for (const row of (followups.results ?? []) as any[]) {
+        const { id: fId, tenant_id: fTenantId, lead_id: fLeadId, step: fStep, attempt_count: fAttempts } = row;
+        try {
+          // Phase 4.5: Acquire processing lock
+          await db.prepare(
+            "UPDATE outreach_followups SET processing_at = ?, attempt_count = ? WHERE id = ? AND processing_at IS NULL"
+          ).bind(nowIso, (fAttempts ?? 0) + 1, fId).run();
+          // Check lead is still in contactable state
+          const lead = await db.prepare(
+            "SELECT id, pipeline_stage, store_name, contact_email, line_url FROM sales_leads WHERE id = ? AND tenant_id = ?"
+          ).bind(fLeadId, fTenantId).first();
+
+          if (!lead || ['lost', 'customer', 'meeting'].includes((lead as any).pipeline_stage)) {
+            await db.prepare("UPDATE outreach_followups SET status = 'skipped' WHERE id = ?").bind(fId).run();
+            continue;
+          }
+
+          // Check unsub
+          const unsubKey = `outreach:unsub:${fTenantId}:${fLeadId}`;
+          if (await kv.get(unsubKey) === "1") {
+            await db.prepare("UPDATE outreach_followups SET status = 'skipped' WHERE id = ?").bind(fId).run();
+            continue;
+          }
+
+          // Read outreach settings for send mode
+          let sendMode = "safe";
+          try {
+            const settingsRaw = await kv.get(`outreach:settings:${fTenantId}`);
+            if (settingsRaw) sendMode = JSON.parse(settingsRaw).sendMode ?? "safe";
+          } catch { /* default safe */ }
+
+          // Generate followup message via template (no AI call in cron to avoid latency)
+          const stepLabel = fStep === "first_followup" ? "1回目" : "2回目";
+          const subject = `${(lead as any).store_name}様 — フォローアップ（${stepLabel}）`;
+          const body = `${(lead as any).store_name}様\n\n先日ご連絡させていただいた件につきまして、${stepLabel}のフォローアップをお送りいたします。\nご興味がございましたら、お気軽にご返信ください。`;
+
+          // Save as draft with status sent (followup auto-sends in safe mode)
+          const msgId = `ol_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+          await db.prepare(
+            `INSERT INTO lead_message_drafts (id, lead_id, tenant_id, kind, subject, body, status, tone, created_at)
+             VALUES (?, ?, ?, 'email', ?, ?, 'sent', 'friendly', ?)`
+          ).bind(msgId, fLeadId, fTenantId, subject, body, nowIso).run();
+
+          // Record delivery event
+          const evtId = `ol_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+          await db.prepare(
+            `INSERT INTO outreach_delivery_events (id, tenant_id, lead_id, message_id, channel, event_type, status, metadata_json, created_at)
+             VALUES (?, ?, ?, ?, 'email', 'sent', 'sent', ?, ?)`
+          ).bind(evtId, fTenantId, fLeadId, msgId, JSON.stringify({ provider: "safe_mode", sendMode, step: fStep }), nowIso).run();
+
+          // Update followup record (Phase 4.5: include provider_message_id, clear processing_at)
+          await db.prepare(
+            "UPDATE outreach_followups SET status = 'sent', sent_at = ?, message_id = ?, provider_message_id = ?, processing_at = NULL WHERE id = ?"
+          ).bind(nowIso, msgId, `safe_followup_${fId}`, fId).run();
+
+          // Phase 4.5: Record normalized outreach event
+          const oEvtId = `ol_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+          await db.prepare(
+            `INSERT INTO outreach_events (id, tenant_id, lead_id, type, metadata, created_at)
+             VALUES (?, ?, ?, 'followup_send', ?, ?)`
+          ).bind(oEvtId, fTenantId, fLeadId, JSON.stringify({ step: fStep, messageId: msgId, sendMode }), nowIso).run();
+
+          // Update last_contacted_at
+          await db.prepare(
+            "UPDATE sales_leads SET last_contacted_at = ?, updated_at = ? WHERE id = ? AND tenant_id = ?"
+          ).bind(nowIso, nowIso, fLeadId, fTenantId).run();
+
+          console.log(`[${OUTREACH_STAMP}] Sent ${fStep} to ${fLeadId} (${sendMode})`);
+        } catch (itemErr: any) {
+          console.error(`[${OUTREACH_STAMP}] Error processing followup ${fId}:`, itemErr?.message);
+          // Phase 4.5: Clear processing lock so it can be retried next cron
+          try {
+            await db.prepare("UPDATE outreach_followups SET processing_at = NULL WHERE id = ?").bind(fId).run();
+          } catch { /* ignore cleanup error */ }
+        }
+      }
+    } catch (cronErr: any) {
+      console.error(`[${OUTREACH_STAMP}] Cron error:`, cronErr?.message);
+    }
+  }
+
+  // ── AI followup (D1 が必要) ────────────────────────────────────────────────
   if (db) {
     const STAMP = "AI_FOLLOWUP_CRON_V1";
     try {
