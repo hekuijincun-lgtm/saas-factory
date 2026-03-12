@@ -278,8 +278,8 @@ async function handleSalesEvent(ctx: HandlerContext): Promise<HandlerResult> {
       };
     }
 
-    // No intent matched — check LLM fallback
-    if (salesConfig.llm?.enabled && accountId) {
+    // No intent matched — always try LLM first (accountId is guaranteed non-null here)
+    if (salesConfig.llm?.enabled) {
       console.log(`[SALES_AI] llm_fallback accountId=${accountId} text="${textIn.slice(0, 30)}"`);
 
       return {
@@ -291,7 +291,7 @@ async function handleSalesEvent(ctx: HandlerContext): Promise<HandlerResult> {
         salesConfigSource: configSource,
         sendMode: "async",
         asyncPayload: {
-          accountId,
+          accountId: accountId!,
           message: textIn,
           lineUserId,
           channelAccessToken: cfg.channelAccessToken,
@@ -300,12 +300,12 @@ async function handleSalesEvent(ctx: HandlerContext): Promise<HandlerResult> {
       };
     }
 
-    // No LLM — use welcomeMessage
-    const reply = salesConfig.welcomeMessage || salesConfig.fallbackMessage;
-    console.log(`[SALES_AI] config-based branch=sales_welcome matchKey=none replyLen=${reply.length}`);
+    // LLM disabled — use fallbackMessage
+    const reply = salesConfig.fallbackMessage || salesConfig.welcomeMessage;
+    console.log(`[SALES_AI] no_llm branch=sales_fallback matchKey=none replyLen=${reply.length}`);
 
     return {
-      branch: "sales_welcome",
+      branch: "sales_fallback",
       salesIntent: null,
       replyMessages: [{ type: "text", text: reply }],
       leadLabel: "info_request",
