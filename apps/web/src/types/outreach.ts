@@ -513,6 +513,15 @@ export interface OutreachSourceCandidate {
   rejected_at?: string | null;
   // Phase 8.2: Source key
   source_key?: string | null;
+  // Phase 8.3: Quality learning + automation
+  quality_score_v2?: number | null;
+  quality_score_base?: number | null;
+  quality_score_lift?: number | null;
+  automation_status?: string;
+  analyze_status?: string;
+  score_status?: string;
+  last_automation_error?: string | null;
+  automation_updated_at?: string | null;
 }
 
 export interface SourceSearchResult {
@@ -746,3 +755,47 @@ export interface SourceTrendBreakdown {
   avg_won_rate: number;
   sample_size: number;
 }
+
+// ── Phase 8.3: Candidate Quality Learning ──────────────────────────────
+
+export interface LearnedInsight {
+  feature_key: string;
+  feature_value: string;
+  quality_lift: number;
+  sample_size: number;
+  reply_rate: number;
+  meeting_rate: number;
+}
+
+export interface LearnedInsightsResult {
+  positive_signals: LearnedInsight[];
+  negative_signals: LearnedInsight[];
+  avg_base_score: number;
+  avg_lift: number;
+  avg_final_score: number;
+  total_sample_size: number;
+}
+
+export interface QualityLearningRefreshResult {
+  updated: number;
+  deleted: number;
+}
+
+export interface QualityV2BackfillResult {
+  updated: number;
+  skipped: number;
+}
+
+export const AUTOMATION_STATUS_LABELS: Record<string, string> = {
+  none: "—",
+  processing: "処理中",
+  done: "完了",
+  error: "エラー",
+};
+
+export const AUTOMATION_STATUS_COLORS: Record<string, string> = {
+  none: "text-gray-400",
+  processing: "text-blue-500",
+  done: "text-green-600",
+  error: "text-red-500",
+};

@@ -41,6 +41,12 @@ import {
   getSourceQualityTrends,
   getSourceQualityBreakdown,
 } from "./source-quality-daily";
+import {
+  refreshQualityPatterns,
+  computeLearnedQualityScore,
+  backfillQualityV2,
+  getLearnedQualityInsights,
+} from "./candidate-quality-learning";
 import type { LearningPattern } from "./learning";
 import { generateCampaignDraft } from "./campaign-generator";
 import type { CandidateResult } from "./source-providers/types";
@@ -2697,24 +2703,142 @@ export function createOutreachRoutes(getTenantId: GetTenantId) {
       ).bind(created, now(), runId, tenantId).run();
     }
 
-    // Auto-analyze / auto-score
+    // Auto-analyze / auto-score + automation tracking on candidates
     const autoErrors: Array<{ leadId: string; error: string }> = [];
     if (created > 0 && (settings.autoAnalyzeOnImport || settings.autoScoreOnImport)) {
-      for (const leadId of createdLeadIds) {
+      for (let i = 0; i < createdLeadIds.length; i++) {
+        const leadId = createdLeadIds[i];
+        const candId = cands[i]?.id;
         try {
           const lead = await db
             .prepare("SELECT * FROM sales_leads WHERE id = ?1 AND tenant_id = ?2")
             .bind(leadId, tenantId).first<OutreachLead>();
           if (!lead) continue;
 
-          if (settings.autoScoreOnImport) {
+          // Track automation status on candidate
+          if (candId) {
+            await db.prepare(
+              "UPDATE outreach_source_candidates SET automation_status = 'processing', automation_updated_at = ?1 WHERE id = ?2 AND tenant_id = ?3"
+            ).bind(now(), candId, tenantId).run();
+          }
+
+          if (settings.autoAnalyzeOnImport && lead.website_url) {
+            // Update analyze_status
+            if (candId) {
+              await db.prepare(
+                "UPDATE outreach_source_candidates SET analyze_status = 'running', automation_updated_at = ?1 WHERE id = ?2 AND tenant_id = ?3"
+              ).bind(now(), candId, tenantId).run();
+            }
+
+            const analyzer = new DefaultWebsiteAnalyzer();
+            const features = await analyzer.analyze({
+              websiteUrl: lead.website_url,
+              instagramUrl: lead.instagram_url,
+              lineUrl: lead.line_url,
+            });
+            const hypotheses = generatePainHypotheses(features);
+
+            // Save features
+            const featureId = uid();
+            const fts = now();
+            await db.prepare("DELETE FROM outreach_lead_features WHERE tenant_id = ?1 AND lead_id = ?2")
+              .bind(tenantId, leadId).run();
+            await db.prepare(
+              `INSERT INTO outreach_lead_features
+               (id, tenant_id, lead_id, has_website, has_instagram, has_line_link, has_booking_link,
+                contact_email_found, phone_found, menu_count_guess, price_info_found,
+                booking_cta_count, booking_cta_depth_guess, title_found, meta_description_found,
+                raw_signals_json, analyzed_at, created_at, updated_at)
+               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)`
+            ).bind(
+              featureId, tenantId, leadId,
+              features.hasWebsite ? 1 : 0, features.hasInstagram ? 1 : 0,
+              features.hasLineLink ? 1 : 0, features.hasBookingLink ? 1 : 0,
+              features.contactEmailFound ? 1 : 0, features.phoneFound ? 1 : 0,
+              features.menuCountGuess, features.priceInfoFound ? 1 : 0,
+              features.bookingCtaCount, features.bookingCtaDepthGuess,
+              features.titleFound ? 1 : 0, features.metaDescriptionFound ? 1 : 0,
+              JSON.stringify(features.rawSignals), fts, fts, fts
+            ).run();
+
+            // Save hypotheses
+            await db.prepare("DELETE FROM outreach_pain_hypotheses WHERE tenant_id = ?1 AND lead_id = ?2")
+              .bind(tenantId, leadId).run();
+            for (const h of hypotheses) {
+              await db.prepare(
+                `INSERT INTO outreach_pain_hypotheses (id, tenant_id, lead_id, code, label, severity, reason, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`
+              ).bind(uid(), tenantId, leadId, h.code, h.label, h.severity, h.reason, fts).run();
+            }
+
+            if (candId) {
+              await db.prepare(
+                "UPDATE outreach_source_candidates SET analyze_status = 'done', automation_updated_at = ?1 WHERE id = ?2 AND tenant_id = ?3"
+              ).bind(now(), candId, tenantId).run();
+            }
+
+            // Compute V2 score with features + hypotheses
+            if (candId) {
+              await db.prepare(
+                "UPDATE outreach_source_candidates SET score_status = 'running', automation_updated_at = ?1 WHERE id = ?2 AND tenant_id = ?3"
+              ).bind(now(), candId, tenantId).run();
+            }
+
+            const featureRow = await db.prepare(
+              "SELECT * FROM outreach_lead_features WHERE tenant_id = ?1 AND lead_id = ?2"
+            ).bind(tenantId, leadId).first<OutreachLeadFeatureRow>();
+            if (featureRow) {
+              const scoreResult = computeLeadScoreV2(lead, featureRow, hypotheses as any);
+              await db.prepare(
+                "UPDATE sales_leads SET score = ?1, features_json = ?2, pain_points = ?3, updated_at = ?4 WHERE id = ?5 AND tenant_id = ?6"
+              ).bind(
+                scoreResult.score,
+                JSON.stringify(scoreResult.components),
+                hypotheses.map((h: any) => h.label).join(", "),
+                now(), leadId, tenantId
+              ).run();
+            }
+
+            if (candId) {
+              await db.prepare(
+                "UPDATE outreach_source_candidates SET score_status = 'done', automation_status = 'done', automation_updated_at = ?1 WHERE id = ?2 AND tenant_id = ?3"
+              ).bind(now(), candId, tenantId).run();
+            }
+          } else if (settings.autoScoreOnImport) {
+            // V1 score only
+            if (candId) {
+              await db.prepare(
+                "UPDATE outreach_source_candidates SET score_status = 'running', automation_updated_at = ?1 WHERE id = ?2 AND tenant_id = ?3"
+              ).bind(now(), candId, tenantId).run();
+            }
+
             const scoreResult = computeLeadScore(lead);
             await db.prepare(
               "UPDATE sales_leads SET score = ?1, features_json = ?2, updated_at = ?3 WHERE id = ?4 AND tenant_id = ?5"
             ).bind(scoreResult.score, JSON.stringify(scoreResult.components), now(), leadId, tenantId).run();
+
+            if (candId) {
+              await db.prepare(
+                "UPDATE outreach_source_candidates SET score_status = 'done', automation_status = 'done', automation_updated_at = ?1 WHERE id = ?2 AND tenant_id = ?3"
+              ).bind(now(), candId, tenantId).run();
+            }
+          } else {
+            // No auto-process, mark done
+            if (candId) {
+              await db.prepare(
+                "UPDATE outreach_source_candidates SET automation_status = 'done', automation_updated_at = ?1 WHERE id = ?2 AND tenant_id = ?3"
+              ).bind(now(), candId, tenantId).run();
+            }
           }
         } catch (err: any) {
           autoErrors.push({ leadId, error: err.message ?? "auto-process failed" });
+          if (candId) {
+            try {
+              await db.prepare(
+                "UPDATE outreach_source_candidates SET automation_status = 'error', last_automation_error = ?1, automation_updated_at = ?2 WHERE id = ?3 AND tenant_id = ?4"
+              ).bind(err.message ?? "auto-process failed", now(), candId, tenantId).run();
+            } catch { /* ignore tracking error */ }
+          }
         }
       }
     }
@@ -2991,6 +3115,35 @@ export function createOutreachRoutes(getTenantId: GetTenantId) {
         templateStats: templateStats.results ?? [],
       },
     });
+  });
+
+  // ── Phase 8.3: Candidate Quality Learning ──────────────────────────────
+
+  // POST /quality-learning/refresh — Refresh quality patterns from lead outcomes
+  app.post("/quality-learning/refresh", async (c) => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    const result = await refreshQualityPatterns(db, uid, now, tenantId);
+    await logAudit(db, tenantId, "system", "outreach.quality_learning_refresh", result);
+    return c.json({ ok: true, tenantId, data: result });
+  });
+
+  // POST /quality-learning/backfill-v2 — Backfill V2 quality scores
+  app.post("/quality-learning/backfill-v2", async (c) => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    const body = await c.req.json<{ runId?: string }>().catch(() => ({}));
+    const result = await backfillQualityV2(db, tenantId, (body as any).runId);
+    await logAudit(db, tenantId, "system", "outreach.quality_v2_backfill", result);
+    return c.json({ ok: true, tenantId, data: result });
+  });
+
+  // GET /quality-learning/insights — Learned quality insights for analytics
+  app.get("/quality-learning/insights", async (c) => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    const insights = await getLearnedQualityInsights(db, tenantId);
+    return c.json({ ok: true, tenantId, data: insights });
   });
 
   return app;

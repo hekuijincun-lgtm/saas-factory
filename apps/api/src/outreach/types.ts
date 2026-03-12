@@ -414,6 +414,15 @@ export interface OutreachSourceCandidate {
   rejected_at: string | null;
   // Phase 8.2: Source key for granular tracking
   source_key: string | null;
+  // Phase 8.3: Quality learning + automation
+  quality_score_v2: number | null;
+  quality_score_base: number | null;
+  quality_score_lift: number | null;
+  automation_status: string;
+  analyze_status: string;
+  score_status: string;
+  last_automation_error: string | null;
+  automation_updated_at: string | null;
 }
 
 export interface SourceAnalytics {

@@ -2,8 +2,8 @@
 
 import { useState, useEffect } from "react";
 import { useOwnerTenantId } from "@/src/lib/useOwnerTenantId";
-import { fetchOutreachAnalytics, fetchLearningAnalytics, fetchCampaignAnalytics, fetchSourceAnalytics, fetchWinningPatterns, refreshWinningPatterns, fetchCampaignInsights, fetchSourceQuality, fetchTopSources, fetchSourceTrends, fetchSourceBreakdown } from "@/app/lib/outreachApi";
-import type { OutreachAnalytics, LearningAnalytics, CampaignAnalytics, SourceAnalytics, WinningPatternsData, CampaignInsightsData, SourceQualityRow, SourceQualitySummary, TopSourceRow, SourceTrendPoint, SourceTrendBreakdown } from "@/src/types/outreach";
+import { fetchOutreachAnalytics, fetchLearningAnalytics, fetchCampaignAnalytics, fetchSourceAnalytics, fetchWinningPatterns, refreshWinningPatterns, fetchCampaignInsights, fetchSourceQuality, fetchTopSources, fetchSourceTrends, fetchSourceBreakdown, fetchLearnedInsights, refreshQualityLearning, backfillQualityV2 } from "@/app/lib/outreachApi";
+import type { OutreachAnalytics, LearningAnalytics, CampaignAnalytics, SourceAnalytics, WinningPatternsData, CampaignInsightsData, SourceQualityRow, SourceQualitySummary, TopSourceRow, SourceTrendPoint, SourceTrendBreakdown, LearnedInsightsResult } from "@/src/types/outreach";
 import { SOURCE_TYPE_LABELS, PATTERN_TYPE_LABELS } from "@/src/types/outreach";
 import { PIPELINE_LABELS } from "@/src/types/outreach";
 
@@ -38,7 +38,10 @@ export default function OutreachAnalyticsClient() {
   const [topSources, setTopSources] = useState<TopSourceRow[]>([]);
   const [sourceTrends, setSourceTrends] = useState<SourceTrendPoint[]>([]);
   const [sourceBreakdown, setSourceBreakdown] = useState<SourceTrendBreakdown[]>([]);
+  const [learnedInsights, setLearnedInsights] = useState<LearnedInsightsResult | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [learningRefreshing, setLearningRefreshing] = useState(false);
+  const [backfilling, setBackfilling] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -56,8 +59,9 @@ export default function OutreachAnalyticsClient() {
       fetchTopSources(tenantId).catch(() => []),
       fetchSourceTrends(tenantId, { days: 30 }).catch(() => []),
       fetchSourceBreakdown(tenantId, 30).catch(() => []),
+      fetchLearnedInsights(tenantId).catch(() => null),
     ])
-      .then(([a, l, c, s, w, ci, sq, ts, trends, breakdown]) => {
+      .then(([a, l, c, s, w, ci, sq, ts, trends, breakdown, li]) => {
         setAnalytics(a);
         setLearning(l);
         setCampaignAnalytics(c);
@@ -71,6 +75,7 @@ export default function OutreachAnalyticsClient() {
         setTopSources(Array.isArray(ts) ? ts : []);
         setSourceTrends(Array.isArray(trends) ? trends : []);
         setSourceBreakdown(Array.isArray(breakdown) ? breakdown : []);
+        setLearnedInsights(li);
       })
       .catch((err) => setError(err.message || "読み込みに失敗しました"))
       .finally(() => setLoading(false));
@@ -704,6 +709,144 @@ export default function OutreachAnalyticsClient() {
             </div>
           </>
         ) : null}
+
+        {/* ── Phase 8.3: Learned Quality Insights ── */}
+        <div className="bg-white border rounded-xl p-5">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-semibold">品質学習インサイト</h2>
+            <div className="flex gap-2">
+              <button
+                onClick={async () => {
+                  setLearningRefreshing(true);
+                  try {
+                    const r = await refreshQualityLearning(tenantId);
+                    alert(`パターン更新: ${r.updated}件`);
+                    const li = await fetchLearnedInsights(tenantId);
+                    setLearnedInsights(li);
+                  } catch (e: any) { alert(e.message); }
+                  finally { setLearningRefreshing(false); }
+                }}
+                disabled={learningRefreshing}
+                className="text-[11px] px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+              >
+                {learningRefreshing ? "更新中..." : "学習更新"}
+              </button>
+              <button
+                onClick={async () => {
+                  setBackfilling(true);
+                  try {
+                    const r = await backfillQualityV2(tenantId);
+                    alert(`V2スコア補完: ${r.updated}件更新, ${r.skipped}件スキップ`);
+                  } catch (e: any) { alert(e.message); }
+                  finally { setBackfilling(false); }
+                }}
+                disabled={backfilling}
+                className="text-[11px] px-3 py-1 bg-gray-600 text-white rounded hover:bg-gray-700 disabled:opacity-50"
+              >
+                {backfilling ? "処理中..." : "V2スコア補完"}
+              </button>
+            </div>
+          </div>
+
+          {learnedInsights ? (
+            <>
+              <div className="grid grid-cols-4 gap-3 mb-4">
+                <div className="bg-gray-50 rounded p-3 text-center">
+                  <div className="text-[10px] text-gray-500">平均ベース</div>
+                  <div className="text-lg font-semibold">{learnedInsights.avg_base_score.toFixed(2)}</div>
+                </div>
+                <div className="bg-gray-50 rounded p-3 text-center">
+                  <div className="text-[10px] text-gray-500">平均リフト</div>
+                  <div className={`text-lg font-semibold ${learnedInsights.avg_lift >= 0 ? "text-green-600" : "text-red-500"}`}>
+                    {learnedInsights.avg_lift >= 0 ? "+" : ""}{learnedInsights.avg_lift.toFixed(2)}
+                  </div>
+                </div>
+                <div className="bg-gray-50 rounded p-3 text-center">
+                  <div className="text-[10px] text-gray-500">平均V2スコア</div>
+                  <div className="text-lg font-semibold text-blue-600">{learnedInsights.avg_final_score.toFixed(2)}</div>
+                </div>
+                <div className="bg-gray-50 rounded p-3 text-center">
+                  <div className="text-[10px] text-gray-500">サンプル数</div>
+                  <div className="text-lg font-semibold">{learnedInsights.total_sample_size}</div>
+                </div>
+              </div>
+
+              {learnedInsights.positive_signals.length > 0 && (
+                <div className="mb-3">
+                  <h3 className="text-xs font-medium text-green-700 mb-2">ポジティブシグナル</h3>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="text-left text-gray-500 border-b">
+                          <th className="py-1 px-2">特徴</th>
+                          <th className="py-1 px-2">値</th>
+                          <th className="py-1 px-2 text-right">リフト</th>
+                          <th className="py-1 px-2 text-right">返信率</th>
+                          <th className="py-1 px-2 text-right">商談率</th>
+                          <th className="py-1 px-2 text-right">n</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {learnedInsights.positive_signals.map((s, i) => (
+                          <tr key={i} className="border-b last:border-0">
+                            <td className="py-1 px-2">{s.feature_key}</td>
+                            <td className="py-1 px-2">{s.feature_value}</td>
+                            <td className="py-1 px-2 text-right text-green-600">+{s.quality_lift.toFixed(2)}</td>
+                            <td className="py-1 px-2 text-right">{(s.reply_rate * 100).toFixed(1)}%</td>
+                            <td className="py-1 px-2 text-right">{(s.meeting_rate * 100).toFixed(1)}%</td>
+                            <td className="py-1 px-2 text-right text-gray-400">{s.sample_size}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {learnedInsights.negative_signals.length > 0 && (
+                <div>
+                  <h3 className="text-xs font-medium text-red-600 mb-2">ネガティブシグナル</h3>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="text-left text-gray-500 border-b">
+                          <th className="py-1 px-2">特徴</th>
+                          <th className="py-1 px-2">値</th>
+                          <th className="py-1 px-2 text-right">リフト</th>
+                          <th className="py-1 px-2 text-right">返信率</th>
+                          <th className="py-1 px-2 text-right">商談率</th>
+                          <th className="py-1 px-2 text-right">n</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {learnedInsights.negative_signals.map((s, i) => (
+                          <tr key={i} className="border-b last:border-0">
+                            <td className="py-1 px-2">{s.feature_key}</td>
+                            <td className="py-1 px-2">{s.feature_value}</td>
+                            <td className="py-1 px-2 text-right text-red-500">{s.quality_lift.toFixed(2)}</td>
+                            <td className="py-1 px-2 text-right">{(s.reply_rate * 100).toFixed(1)}%</td>
+                            <td className="py-1 px-2 text-right">{(s.meeting_rate * 100).toFixed(1)}%</td>
+                            <td className="py-1 px-2 text-right text-gray-400">{s.sample_size}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {learnedInsights.positive_signals.length === 0 && learnedInsights.negative_signals.length === 0 && (
+                <div className="text-sm text-gray-400 py-4 text-center">
+                  学習パターンがありません。「学習更新」を実行してください。
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="text-sm text-gray-400 py-4 text-center">
+              品質学習データを読み込み中...
+            </div>
+          )}
+        </div>
       </div>
     </>
   );

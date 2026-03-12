@@ -44,6 +44,9 @@ import type {
   AcceptedCountResult,
   SourceTrendPoint,
   SourceTrendBreakdown,
+  LearnedInsightsResult,
+  QualityLearningRefreshResult,
+  QualityV2BackfillResult,
 } from "@/src/types/outreach";
 
 // ── Leads ──────────────────────────────────────────────────────────────────
@@ -813,6 +816,41 @@ export async function fetchSourceBreakdown(
   const qs = days ? `?days=${days}` : "";
   const res = await apiGet<{ ok: boolean; data: SourceTrendBreakdown[] }>(
     `/admin/outreach/source-quality/breakdown${qs}`,
+    { tenantId }
+  );
+  return res.data;
+}
+
+// ── Phase 8.3: Quality Learning ──────────────────────────────────────────
+
+export async function refreshQualityLearning(
+  tenantId: string
+): Promise<QualityLearningRefreshResult> {
+  const res = await apiPost<{ ok: boolean; data: QualityLearningRefreshResult }>(
+    `/admin/outreach/quality-learning/refresh`,
+    {},
+    { tenantId }
+  );
+  return res.data;
+}
+
+export async function backfillQualityV2(
+  tenantId: string,
+  runId?: string
+): Promise<QualityV2BackfillResult> {
+  const res = await apiPost<{ ok: boolean; data: QualityV2BackfillResult }>(
+    `/admin/outreach/quality-learning/backfill-v2`,
+    runId ? { runId } : {},
+    { tenantId }
+  );
+  return res.data;
+}
+
+export async function fetchLearnedInsights(
+  tenantId: string
+): Promise<LearnedInsightsResult> {
+  const res = await apiGet<{ ok: boolean; data: LearnedInsightsResult }>(
+    `/admin/outreach/quality-learning/insights`,
     { tenantId }
   );
   return res.data;

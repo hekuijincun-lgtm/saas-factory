@@ -28,6 +28,8 @@ import {
   CANDIDATE_STATUS_COLORS,
   ACCEPTANCE_STATUS_LABELS,
   ACCEPTANCE_STATUS_COLORS,
+  AUTOMATION_STATUS_LABELS,
+  AUTOMATION_STATUS_COLORS,
   qualityLabel,
 } from "@/src/types/outreach";
 
@@ -523,6 +525,7 @@ export default function OutreachSourcesClient() {
                     <th className="py-2 px-3">カテゴリ</th>
                     <th className="py-2 px-3">エリア</th>
                     <th className="py-2 px-3">評価</th>
+                    <th className="py-2 px-3">自動処理</th>
                     <th className="py-2 px-3">URL</th>
                     <th className="py-2 px-3">承認</th>
                     <th className="py-2 px-3">備考</th>
@@ -530,8 +533,10 @@ export default function OutreachSourcesClient() {
                 </thead>
                 <tbody>
                   {filteredCandidates.map((cand) => {
-                    const ql = qualityLabel(cand.quality_score);
+                    const displayScore = cand.quality_score_v2 ?? cand.quality_score;
+                    const ql = qualityLabel(displayScore);
                     const accStatus = cand.acceptance_status ?? "pending";
+                    const autoStatus = cand.automation_status ?? "none";
                     return (
                       <tr key={cand.id} className="border-b last:border-0">
                         <td className="py-2 px-3">
@@ -551,9 +556,12 @@ export default function OutreachSourcesClient() {
                           <span className={`text-xs font-medium ${ql.color}`}>
                             {ql.text}
                           </span>
-                          {cand.quality_score != null && (
+                          {displayScore != null && (
                             <span className="text-[10px] text-gray-400 ml-1">
-                              {cand.quality_score.toFixed(1)}
+                              {displayScore.toFixed(2)}
+                              {cand.quality_score_v2 != null && (
+                                <span className="text-blue-400" title={`base:${cand.quality_score_base?.toFixed(2)} lift:${cand.quality_score_lift?.toFixed(2)}`}>v2</span>
+                              )}
                             </span>
                           )}
                         </td>
@@ -590,6 +598,16 @@ export default function OutreachSourcesClient() {
                           )}
                           {cand.rejection_reason && (
                             <span className="text-xs text-red-500">{cand.rejection_reason}</span>
+                          )}
+                        </td>
+                        <td className="py-2 px-3">
+                          <span className={`text-[10px] ${AUTOMATION_STATUS_COLORS[autoStatus] ?? "text-gray-400"}`}>
+                            {AUTOMATION_STATUS_LABELS[autoStatus] ?? "—"}
+                          </span>
+                          {autoStatus === "error" && cand.last_automation_error && (
+                            <span className="text-[10px] text-red-400 block truncate max-w-[100px]" title={cand.last_automation_error}>
+                              {cand.last_automation_error}
+                            </span>
                           )}
                         </td>
                       </tr>
@@ -697,7 +715,8 @@ export default function OutreachSourcesClient() {
                     </thead>
                     <tbody>
                       {historyCandidates.map((c) => {
-                        const ql = qualityLabel(c.quality_score);
+                        const histScore = c.quality_score_v2 ?? c.quality_score;
+                        const ql = qualityLabel(histScore);
                         const accStatus = c.acceptance_status ?? "pending";
                         return (
                           <tr key={c.id} className="border-b last:border-0">
