@@ -6620,6 +6620,15 @@ app.post("/ai/chat", async (c) => {
       if (Array.isArray(ml)) menuList = ml.filter((m: any) => m.active !== false);
     }
 
+    console.log(`[AI_SETTINGS_LOAD]`, JSON.stringify({
+      tenantId,
+      enabled: aiSettings.enabled ?? false,
+      voice: aiSettings.voice,
+      answerLength: aiSettings.answerLength,
+      characterPresent: !!aiSettings.character,
+      source: kv ? "kv" : "default",
+    }));
+
     // 4.4 AI 有効判定（管理画面の「AI接客を有効化」トグルを反映）
     if (aiSettings.enabled !== true) {
       console.log(`[AI_GATE] tenant=${tenantId} enabled=false path=/ai/chat`);
@@ -6733,6 +6742,18 @@ app.post("/ai/chat", async (c) => {
       hardRulesBlock,
       prohibitedBlock,
     ].filter(Boolean).join("\n");
+
+    console.log(`[AI_PROMPT_BUILD]`, JSON.stringify({
+      tenantId,
+      voice: aiSettings.voice,
+      answerLength: aiSettings.answerLength,
+      characterPreview: String(aiSettings.character ?? "").slice(0, 40) || "(none)",
+      usedDefaultCharacter: !aiSettings.character,
+      storeBlockLen: storeBlock.length,
+      faqCount: aiFaq.length,
+      model,
+      systemPromptLen: systemContent.length,
+    }));
 
     // 6. OpenAI Responses API 呼び出し
     // - background は送らない（reasoning モデルの incomplete 回避）
@@ -6866,6 +6887,16 @@ app.post("/ai/chat", async (c) => {
         if (upsellText) answer = answer + "\n\n" + upsellText;
       }
     }
+
+    console.log(`[LINE_AI_REPLY]`, JSON.stringify({
+      tenantId,
+      intent,
+      answerLen: answer.length,
+      model,
+      voice: aiSettings.voice,
+      answerLength: aiSettings.answerLength,
+      source: "openai",
+    }));
 
     return c.json({ ok: true, stamp: STAMP, tenantId, answer, suggestedActions, intent });
 
