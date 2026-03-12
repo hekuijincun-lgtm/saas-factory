@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef } from "react";
-import { useSearchParams } from "next/navigation";
+import { useOwnerTenantId } from "@/src/lib/useOwnerTenantId";
 import { importPreview, importExecute } from "@/app/lib/outreachApi";
 import type { ImportPreviewRow, ImportPreviewSummary, ImportResult } from "@/src/types/outreach";
 
@@ -20,8 +20,7 @@ const STATUS_LABELS: Record<string, string> = {
 };
 
 export default function OutreachImportClient() {
-  const searchParams = useSearchParams();
-  const tenantId = searchParams.get("tenantId") ?? "";
+  const { tenantId, loading: tenantLoading } = useOwnerTenantId();
   const fileRef = useRef<HTMLInputElement>(null);
   const [csvText, setCsvText] = useState("");
   const [preview, setPreview] = useState<ImportPreviewRow[] | null>(null);
@@ -81,7 +80,7 @@ export default function OutreachImportClient() {
     }
   };
 
-  if (!tenantId) {
+  if (!tenantId || tenantLoading) {
     return <div className="p-6 text-sm text-gray-500">読み込み中...</div>;
   }
 

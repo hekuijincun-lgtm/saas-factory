@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { useSearchParams } from "next/navigation";
+import { useOwnerTenantId } from "@/src/lib/useOwnerTenantId";
 import { fetchOutreachLeads, updateOutreachLead, recordReply } from "@/app/lib/outreachApi";
 import type { OutreachLead, PipelineStage } from "@/src/types/outreach";
 import {
@@ -23,8 +23,7 @@ function ScoreBadge({ score }: { score: number | null }) {
 }
 
 export default function OutreachCrmClient() {
-  const searchParams = useSearchParams();
-  const tenantId = searchParams.get("tenantId") ?? "";
+  const { tenantId, loading: tenantLoading } = useOwnerTenantId();
   const [leadsByStage, setLeadsByStage] = useState<Record<PipelineStage, OutreachLead[]>>(
     {} as Record<PipelineStage, OutreachLead[]>
   );
@@ -95,7 +94,7 @@ export default function OutreachCrmClient() {
     }
   };
 
-  if (!tenantId) {
+  if (!tenantId || tenantLoading) {
     return <div className="p-6 text-sm text-gray-500">読み込み中...</div>;
   }
 

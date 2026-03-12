@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import { useSearchParams } from "next/navigation";
+import { useOwnerTenantId } from "@/src/lib/useOwnerTenantId";
 import {
   searchSources,
   fetchSourceRuns,
@@ -21,8 +21,7 @@ import {
 } from "@/src/types/outreach";
 
 export default function OutreachSourcesClient() {
-  const searchParams = useSearchParams();
-  const tenantId = searchParams.get("tenantId") ?? "";
+  const { tenantId, loading: tenantLoading } = useOwnerTenantId();
 
   // Search form
   const [sourceType, setSourceType] = useState("directory");
@@ -157,7 +156,7 @@ export default function OutreachSourcesClient() {
     }
   }, [searchResult, selectedIds.size]);
 
-  if (!tenantId) {
+  if (!tenantId || tenantLoading) {
     return <div className="p-6 text-sm text-gray-500">読み込み中...</div>;
   }
 

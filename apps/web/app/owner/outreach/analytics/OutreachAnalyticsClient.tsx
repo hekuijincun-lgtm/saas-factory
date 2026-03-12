@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useSearchParams } from "next/navigation";
+import { useOwnerTenantId } from "@/src/lib/useOwnerTenantId";
 import { fetchOutreachAnalytics, fetchLearningAnalytics, fetchCampaignAnalytics, fetchSourceAnalytics } from "@/app/lib/outreachApi";
 import type { OutreachAnalytics, LearningAnalytics, CampaignAnalytics, SourceAnalytics } from "@/src/types/outreach";
 import { SOURCE_TYPE_LABELS } from "@/src/types/outreach";
@@ -26,8 +26,7 @@ function KpiCard({
 }
 
 export default function OutreachAnalyticsClient() {
-  const searchParams = useSearchParams();
-  const tenantId = searchParams.get("tenantId") ?? "";
+  const { tenantId, loading: tenantLoading } = useOwnerTenantId();
   const [analytics, setAnalytics] = useState<OutreachAnalytics | null>(null);
   const [learning, setLearning] = useState<LearningAnalytics | null>(null);
   const [campaignAnalytics, setCampaignAnalytics] = useState<CampaignAnalytics | null>(null);
@@ -54,7 +53,7 @@ export default function OutreachAnalyticsClient() {
       .finally(() => setLoading(false));
   }, [tenantId]);
 
-  if (!tenantId) {
+  if (!tenantId || tenantLoading) {
     return <div className="p-6 text-sm text-gray-500">読み込み中...</div>;
   }
 

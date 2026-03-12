@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { useSearchParams } from "next/navigation";
+import { useOwnerTenantId } from "@/src/lib/useOwnerTenantId";
 import {
   fetchOutreachSettings,
   saveOutreachSettings,
@@ -13,8 +13,7 @@ import {
 import type { OutreachSettings, SendStats, UnsubscribedLead } from "@/src/types/outreach";
 
 export default function OutreachSettingsClient() {
-  const searchParams = useSearchParams();
-  const tenantId = searchParams.get("tenantId") ?? "";
+  const { tenantId, loading: tenantLoading } = useOwnerTenantId();
   const [settings, setSettings] = useState<OutreachSettings | null>(null);
   const [stats, setStats] = useState<SendStats | null>(null);
   const [unsubs, setUnsubs] = useState<UnsubscribedLead[]>([]);
@@ -105,7 +104,7 @@ export default function OutreachSettingsClient() {
     }
   };
 
-  if (!tenantId || loading) {
+  if (!tenantId || tenantLoading || loading) {
     return <div className="p-6 text-sm text-gray-500">読み込み中...</div>;
   }
 

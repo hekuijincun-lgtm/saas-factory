@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { useSearchParams } from "next/navigation";
+import { useOwnerTenantId } from "@/src/lib/useOwnerTenantId";
 import {
   fetchCampaigns,
   createCampaign,
@@ -23,8 +23,7 @@ import {
 } from "@/src/types/outreach";
 
 export default function OutreachCampaignsClient() {
-  const searchParams = useSearchParams();
-  const tenantId = searchParams.get("tenantId") ?? "";
+  const { tenantId, loading: tenantLoading } = useOwnerTenantId();
   const [campaigns, setCampaigns] = useState<OutreachCampaign[]>([]);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState<{ type: "success" | "error"; text: string } | null>(null);
@@ -147,7 +146,7 @@ export default function OutreachCampaignsClient() {
     }
   };
 
-  if (!tenantId) {
+  if (!tenantId || tenantLoading) {
     return <div className="p-6 text-sm text-gray-500">読み込み中...</div>;
   }
 

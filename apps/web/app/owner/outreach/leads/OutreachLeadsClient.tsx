@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { useSearchParams } from "next/navigation";
+import { useOwnerTenantId } from "@/src/lib/useOwnerTenantId";
 import {
   fetchOutreachLeads,
   createOutreachLead,
@@ -594,8 +594,7 @@ function LeadDrawer({
 // ── Main component ─────────────────────────────────────────────────────────
 
 export default function OutreachLeadsClient() {
-  const searchParams = useSearchParams();
-  const tenantId = searchParams.get("tenantId") ?? "";
+  const { tenantId, loading: tenantLoading } = useOwnerTenantId();
   const [leads, setLeads] = useState<OutreachLead[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -634,7 +633,7 @@ export default function OutreachLeadsClient() {
     load();
   };
 
-  if (!tenantId) {
+  if (!tenantId || tenantLoading) {
     return <div className="p-6 text-sm text-gray-500">読み込み中...</div>;
   }
 
