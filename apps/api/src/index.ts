@@ -6388,14 +6388,30 @@ function resolveBookingUrl(storeSettings: any, env: any, tenantId: string): stri
 // GET /sales-ai/config — lightweight sales AI config read (no auth, single KV read)
 // Used by LINE webhook to load per-account sales AI configuration.
 // Completely separate from tenant AI接客 (ai:settings:{tenantId}).
+// Returns only fields needed by webhook (no internal metadata like version/updatedAt/qualificationQuestions).
 app.get("/sales-ai/config", async (c) => {
   const accountId = (c.req.query("accountId") ?? "").trim();
   if (!accountId) return c.json({ ok: false, error: "missing accountId" }, 400);
   const kv = (c.env as any)?.SAAS_FACTORY;
   if (!kv) return c.json({ ok: true, accountId, config: null });
   try {
-    const raw = await kv.get(`owner:sales-ai:${accountId}`, "json");
-    return c.json({ ok: true, accountId, config: raw ?? null });
+    const raw = await kv.get(`owner:sales-ai:${accountId}`, "json") as any;
+    if (!raw) return c.json({ ok: true, accountId, config: null });
+    // Return only webhook-relevant fields (exclude internal metadata)
+    const config = {
+      enabled: raw.enabled ?? false,
+      welcomeMessage: raw.welcomeMessage ?? "",
+      fallbackMessage: raw.fallbackMessage ?? "",
+      handoffMessage: raw.handoffMessage ?? "",
+      tone: raw.tone ?? "friendly",
+      goal: raw.goal ?? "demo",
+      cta: raw.cta ?? { label: "", url: "" },
+      intents: Array.isArray(raw.intents) ? raw.intents.map((i: any) => ({
+        key: i.key, label: i.label, keywords: i.keywords ?? [],
+        reply: i.reply ?? "", ctaLabel: i.ctaLabel ?? "", ctaUrl: i.ctaUrl ?? "",
+      })) : [],
+    };
+    return c.json({ ok: true, accountId, config });
   } catch {
     return c.json({ ok: true, accountId, config: null });
   }

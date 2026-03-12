@@ -17,10 +17,10 @@ const FALLBACK_TEXT = "少し時間をおいて再度お試しください。";
 
 // sales intent keywords
 const SALES_INTENT_MAP: { label: string; keywords: string[] }[] = [
-  { label: "pricing",      keywords: ["料金", "価格", "値段", "プラン", "月額", "いくら", "費用", "コスト", "pricing", "price"] },
-  { label: "features",     keywords: ["機能", "できること", "特徴", "何ができる", "feature", "features"] },
-  { label: "demo",         keywords: ["デモ", "demo", "お試し", "試し", "トライアル", "trial"] },
-  { label: "consultation", keywords: ["導入", "相談", "問い合わせ", "問合せ", "導入相談", "consultation", "inquiry"] },
+  { label: "pricing",      keywords: ["料金", "価格", "値段", "プラン", "月額", "いくら", "費用", "コスト", "料金体系", "費用感", "お値段", "pricing", "price", "cost"] },
+  { label: "features",     keywords: ["機能", "できること", "特徴", "何ができる", "使い方", "feature", "features"] },
+  { label: "demo",         keywords: ["デモ", "demo", "お試し", "試し", "トライアル", "trial", "体験", "見てみたい"] },
+  { label: "consultation", keywords: ["導入", "相談", "問い合わせ", "問合せ", "導入相談", "詳しく", "話したい", "聞きたい", "consultation", "inquiry"] },
 ];
 
 function detectSalesIntent(textIn: string): string | null {
@@ -116,6 +116,9 @@ function getSalesReplyText(intent: string | null): string {
         "気になる内容をそのまま送ってください：",
         "『料金』『機能』『デモ』『導入相談』",
         "と送っていただければ、すぐにご案内します😊",
+        "",
+        "▼ サービス詳細はこちら",
+        "https://lumibook.jp",
       ].join("\n");
   }
 }

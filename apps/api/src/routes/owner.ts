@@ -363,7 +363,7 @@ export function registerOwnerRoutes(app: Hono<{ Bindings: Record<string, unknown
       {
         key: "pricing",
         label: "料金",
-        keywords: ["料金", "価格", "値段", "プラン", "月額", "いくら", "費用", "コスト", "pricing", "price"],
+        keywords: ["料金", "価格", "値段", "プラン", "月額", "いくら", "費用", "コスト", "料金体系", "費用感", "お値段", "pricing", "price", "cost"],
         reply: "料金についてのご質問ありがとうございます！\n\nLumiBookの料金プランは以下の通りです：\n\n🔹 Starter — ¥3,980/月\n　個人サロン向け（スタッフ2名、メニュー10件）\n\n🔹 Pro — ¥9,800/月\n　成長中サロン向け（無制限、AI接客、リピート促進）\n\n🔹 Enterprise — 要相談\n　複数店舗・法人向け（専任サポート、カスタム機能）\n\n※ 初期費用0円、最低契約期間なし、いつでも解約OK\n\n詳しいご案内やお見積もりをご希望でしたら「相談」とお送りください😊",
         ctaLabel: "",
         ctaUrl: "",
@@ -371,7 +371,7 @@ export function registerOwnerRoutes(app: Hono<{ Bindings: Record<string, unknown
       {
         key: "features",
         label: "機能",
-        keywords: ["機能", "できること", "特徴", "何ができる", "feature", "features"],
+        keywords: ["機能", "できること", "特徴", "何ができる", "使い方", "feature", "features"],
         reply: "LumiBookの主な機能をご紹介します！\n\n📅 予約受付・管理\n　LINE経由の自動予約、空き枠リアルタイム表示\n\n💬 LINE自動応答\n　AI接客で24時間お客様対応\n\n📊 顧客管理・KPI\n　リピート率・来店間隔を自動計算\n\n🔔 リマインド通知\n　予約前日にLINE自動通知\n\n🎨 メニュー・スタッフ管理\n　画像付きメニュー、スタッフ別スケジュール\n\nデモをご覧になりたい場合は「デモ」とお送りください😊",
         ctaLabel: "",
         ctaUrl: "",
@@ -379,7 +379,7 @@ export function registerOwnerRoutes(app: Hono<{ Bindings: Record<string, unknown
       {
         key: "demo",
         label: "デモ",
-        keywords: ["デモ", "demo", "お試し", "試し", "トライアル", "trial"],
+        keywords: ["デモ", "demo", "お試し", "試し", "トライアル", "trial", "体験", "見てみたい"],
         reply: "デモのご希望ありがとうございます！\n\nLumiBookの操作感を実際にお試しいただけます。\n以下の方法でご案内可能です：\n\n1️⃣ オンラインデモ（画面共有、約15分）\n2️⃣ テスト環境のご案内（ご自身で操作可能）\n\nご都合の良い日時や、ご希望の方法があればこちらにお送りください。\n担当から折り返しご連絡いたします😊",
         ctaLabel: "",
         ctaUrl: "",
@@ -387,7 +387,7 @@ export function registerOwnerRoutes(app: Hono<{ Bindings: Record<string, unknown
       {
         key: "consultation",
         label: "導入相談",
-        keywords: ["導入", "相談", "問い合わせ", "問合せ", "導入相談", "consultation", "inquiry"],
+        keywords: ["導入", "相談", "問い合わせ", "問合せ", "導入相談", "詳しく", "話したい", "聞きたい", "consultation", "inquiry"],
         reply: "導入相談のご連絡ありがとうございます！\n\n現在の課題やご状況をお聞かせいただければ、\n最適なプランや活用方法をご提案いたします。\n\n例えば：\n・現在の予約管理方法（電話？紙？他ツール？）\n・スタッフ人数、メニュー数\n・LINEの活用状況\n\n何でもお気軽にどうぞ！担当から詳しくご案内いたします😊",
         ctaLabel: "",
         ctaUrl: "",
@@ -520,11 +520,14 @@ export function registerOwnerRoutes(app: Hono<{ Bindings: Record<string, unknown
         branch = "sales_welcome";
       }
 
-      // Append CTA if configured
+      // Append CTA if configured (only when URL is non-empty)
       let ctaInfo: any = null;
-      const cta = matchedIntent?.ctaUrl ? matchedIntent : (config.cta?.url ? config.cta : null);
-      if (cta?.url) {
-        ctaInfo = { label: cta.ctaLabel || cta.label || "詳しくはこちら", url: cta.ctaUrl || cta.url };
+      const intentCtaUrl = (matchedIntent?.ctaUrl ?? "").trim();
+      const globalCtaUrl = (config.cta?.url ?? "").trim();
+      if (intentCtaUrl) {
+        ctaInfo = { label: matchedIntent.ctaLabel || matchedIntent.label || "詳しくはこちら", url: intentCtaUrl };
+      } else if (globalCtaUrl) {
+        ctaInfo = { label: (config.cta?.label ?? "").trim() || "詳しくはこちら", url: globalCtaUrl };
       }
 
       return c.json({

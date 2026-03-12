@@ -832,7 +832,7 @@ export default function OwnerSalesLinesClient() {
                   <label className="block text-xs font-medium text-gray-600 mb-1">CTA ラベル</label>
                   <input
                     value={salesAiConfig.cta?.label || ""}
-                    onChange={(e) => updateSalesAiField("cta", { ...salesAiConfig.cta, label: e.target.value })}
+                    onChange={(e) => updateSalesAiField("cta", { ...(salesAiConfig.cta ?? { label: "", url: "" }), label: e.target.value })}
                     placeholder="例: 無料デモを予約する"
                     className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none"
                   />
@@ -841,7 +841,7 @@ export default function OwnerSalesLinesClient() {
                   <label className="block text-xs font-medium text-gray-600 mb-1">CTA URL</label>
                   <input
                     value={salesAiConfig.cta?.url || ""}
-                    onChange={(e) => updateSalesAiField("cta", { ...salesAiConfig.cta, url: e.target.value })}
+                    onChange={(e) => updateSalesAiField("cta", { ...(salesAiConfig.cta ?? { label: "", url: "" }), url: e.target.value })}
                     placeholder="https://..."
                     className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none"
                   />
