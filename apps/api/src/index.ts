@@ -511,10 +511,10 @@ app.get('/admin/rbac/audit', async (c) => {
       eyebrow: {
         surveyEnabled: true,
         surveyQuestions: [
-          { id: "q_default_1", label: "眉毛のお悩みはありますか？",           type: "text", enabled: true },
-          { id: "q_default_2", label: "ご希望の仕上がりを教えてください",     type: "text", enabled: true },
-          { id: "q_default_3", label: "普段、自己処理はされていますか？",     type: "text", enabled: true },
-          { id: "q_default_4", label: "お肌で気になることはありますか？",     type: "text", enabled: true },
+          { id: "q_default_1", label: "理想の眉デザインやご希望の仕上がりはありますか？",                         type: "text", enabled: true },
+          { id: "q_default_2", label: "2〜3週間以内に眉毛の自己処理をされましたか？",                           type: "text", enabled: true },
+          { id: "q_default_3", label: "お肌が敏感、または赤みが出やすいなど気になることはありますか？",         type: "text", enabled: true },
+          { id: "q_default_4", label: "眉毛のお悩み（左右差・薄さ・濃さ・形など）があれば教えてください",       type: "text", enabled: true },
         ],
       },
     }
