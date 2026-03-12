@@ -401,6 +401,7 @@ export function registerOwnerRoutes(app: Hono<{ Bindings: Record<string, unknown
         ctaUrl: "",
       },
     ],
+    llm: { enabled: false, model: "", systemPrompt: "", temperature: 0.7, maxTokens: 800 },
     version: 1,
     updatedAt: "",
   };
@@ -443,10 +444,12 @@ export function registerOwnerRoutes(app: Hono<{ Bindings: Record<string, unknown
     try {
       // Merge with existing config (don't clobber unset fields)
       const existing = (await kv.get(`owner:sales-ai:${accountId}`, "json")) as any;
+      const base = { ...DEFAULT_SALES_AI_CONFIG, ...(existing ?? {}) };
       const merged = {
-        ...DEFAULT_SALES_AI_CONFIG,
-        ...(existing ?? {}),
+        ...base,
         ...(body as any),
+        // Deep-merge llm sub-object so partial updates don't clobber existing fields
+        llm: { ...(base.llm ?? DEFAULT_SALES_AI_CONFIG.llm), ...((body as any).llm ?? {}) },
         updatedAt: new Date().toISOString(),
       };
 
@@ -519,9 +522,65 @@ export function registerOwnerRoutes(app: Hono<{ Bindings: Record<string, unknown
 
       let reply: string;
       let branch: string;
+      let llmUsed = false;
+      let llmModel: string | undefined;
+      let llmAnswer: string | undefined;
+
       if (matchedIntent) {
         reply = matchedIntent.reply || config.fallbackMessage;
         branch = `sales_${matchedIntent.key}`;
+      } else if (config.llm?.enabled) {
+        // LLM fallback: call OpenAI synchronously for test endpoint
+        branch = "sales_llm";
+        const openaiKey = (env as any)?.OPENAI_API_KEY;
+        if (!openaiKey) {
+          reply = config.fallbackMessage || config.welcomeMessage;
+          llmAnswer = "(OPENAI_API_KEY not set)";
+        } else {
+          const model = config.llm.model?.trim() || "gpt-4o";
+          const intentSummary = (config.intents ?? []).map((i: any) => `${i.label}(${i.key})`).join(", ");
+          const systemPrompt = [
+            `あなたはLumiBookの営業アシスタントです。トーン: ${config.tone ?? "friendly"}。ゴール: ${config.goal ?? "demo"}。`,
+            `既存のキーワード応答（${intentSummary}）にマッチしなかったメッセージに対して、自然で有用な返答を生成してください。`,
+            `CTAがある場合: ${config.cta?.url || "なし"}`,
+            config.llm.systemPrompt ? `\nカスタム指示:\n${config.llm.systemPrompt}` : "",
+          ].filter(Boolean).join("\n");
+
+          try {
+            const openaiRes = await fetch("https://api.openai.com/v1/responses", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${openaiKey}`,
+              },
+              body: JSON.stringify({
+                model,
+                input: [
+                  { role: "system", content: systemPrompt },
+                  { role: "user", content: message },
+                ],
+                temperature: config.llm.temperature ?? 0.7,
+                max_output_tokens: config.llm.maxTokens ?? 800,
+              }),
+            });
+            const openaiData = await openaiRes.json() as any;
+            const text = openaiData?.output_text
+              ?? openaiData?.choices?.[0]?.message?.content
+              ?? "";
+            if (text) {
+              reply = text;
+              llmUsed = true;
+              llmModel = model;
+              llmAnswer = text;
+            } else {
+              reply = config.fallbackMessage || config.welcomeMessage;
+              llmAnswer = "(empty response)";
+            }
+          } catch (e: any) {
+            reply = config.fallbackMessage || config.welcomeMessage;
+            llmAnswer = `(error: ${String(e?.message ?? e).slice(0, 100)})`;
+          }
+        }
       } else {
         // First message or unrecognized → welcomeMessage
         reply = config.welcomeMessage || config.fallbackMessage;
@@ -546,6 +605,7 @@ export function registerOwnerRoutes(app: Hono<{ Bindings: Record<string, unknown
         cta: ctaInfo,
         tone: config.tone,
         goal: config.goal,
+        ...(llmUsed ? { llmUsed, llmModel, llmAnswer } : {}),
       });
     } catch (e: any) {
       console.error(`[owner/sales-ai test] ${e?.message}`);

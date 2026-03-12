@@ -927,6 +927,89 @@ export default function OwnerSalesLinesClient() {
                 </div>
               </div>
 
+              {/* ─── LLM Fallback Settings ─── */}
+              <div className="border border-gray-200 rounded-lg p-4 space-y-3">
+                <div className="flex items-center gap-3">
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={salesAiConfig.llm?.enabled ?? false}
+                      onChange={(e) => updateSalesAiField("llm", {
+                        ...(salesAiConfig.llm ?? { enabled: false, model: "", systemPrompt: "", temperature: 0.7, maxTokens: 800 }),
+                        enabled: e.target.checked,
+                      })}
+                      className="sr-only peer"
+                    />
+                    <div className="w-9 h-5 bg-gray-200 peer-focus:ring-2 peer-focus:ring-amber-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-amber-500" />
+                  </label>
+                  <span className="text-sm font-medium text-gray-700">LLMフォールバックを有効化</span>
+                  <span className="text-xs text-gray-400">（キーワード不一致時にChatGPTが自動応答）</span>
+                </div>
+
+                {salesAiConfig.llm?.enabled && (
+                  <div className="space-y-3 pl-1">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">モデル</label>
+                      <input
+                        value={salesAiConfig.llm?.model ?? ""}
+                        onChange={(e) => updateSalesAiField("llm", {
+                          ...(salesAiConfig.llm ?? { enabled: true, model: "", systemPrompt: "", temperature: 0.7, maxTokens: 800 }),
+                          model: e.target.value,
+                        })}
+                        placeholder="gpt-4o (デフォルト)"
+                        className="w-full max-w-xs px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">カスタムシステムプロンプト</label>
+                      <textarea
+                        value={salesAiConfig.llm?.systemPrompt ?? ""}
+                        onChange={(e) => updateSalesAiField("llm", {
+                          ...(salesAiConfig.llm ?? { enabled: true, model: "", systemPrompt: "", temperature: 0.7, maxTokens: 800 }),
+                          systemPrompt: e.target.value,
+                        })}
+                        rows={3}
+                        placeholder="追加の指示を入力（トーン・ゴール・CTA情報は自動で含まれます）"
+                        className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none"
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">
+                          Temperature: {salesAiConfig.llm?.temperature ?? 0.7}
+                        </label>
+                        <input
+                          type="range"
+                          min="0"
+                          max="2"
+                          step="0.1"
+                          value={salesAiConfig.llm?.temperature ?? 0.7}
+                          onChange={(e) => updateSalesAiField("llm", {
+                            ...(salesAiConfig.llm ?? { enabled: true, model: "", systemPrompt: "", temperature: 0.7, maxTokens: 800 }),
+                            temperature: parseFloat(e.target.value),
+                          })}
+                          className="w-full accent-amber-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">最大トークン数</label>
+                        <input
+                          type="number"
+                          min={100}
+                          max={2000}
+                          value={salesAiConfig.llm?.maxTokens ?? 800}
+                          onChange={(e) => updateSalesAiField("llm", {
+                            ...(salesAiConfig.llm ?? { enabled: true, model: "", systemPrompt: "", temperature: 0.7, maxTokens: 800 }),
+                            maxTokens: parseInt(e.target.value) || 800,
+                          })}
+                          className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
               {/* Save button */}
               <div className="flex gap-3 pt-2 border-t border-gray-100">
                 <button
@@ -962,9 +1045,14 @@ export default function OwnerSalesLinesClient() {
                 </div>
                 {salesAiTestResult && (
                   <div className="mt-2 p-3 bg-gray-50 rounded-lg text-xs space-y-1">
-                    <div>
+                    <div className="flex items-center gap-2">
                       <span className="text-gray-500">ブランチ:</span>{" "}
                       <span className="text-amber-700 font-semibold">{salesAiTestResult.branch}</span>
+                      {salesAiTestResult.llmUsed && (
+                        <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 text-[10px] font-medium">
+                          LLM
+                        </span>
+                      )}
                     </div>
                     <div>
                       <span className="text-gray-500">有効:</span> {String(salesAiTestResult.enabled)}
@@ -973,6 +1061,12 @@ export default function OwnerSalesLinesClient() {
                       <div>
                         <span className="text-gray-500">マッチ:</span>{" "}
                         {salesAiTestResult.matchedIntent.label} ({salesAiTestResult.matchedIntent.key})
+                      </div>
+                    )}
+                    {salesAiTestResult.llmUsed && salesAiTestResult.llmModel && (
+                      <div>
+                        <span className="text-gray-500">LLMモデル:</span>{" "}
+                        <span className="font-mono">{salesAiTestResult.llmModel}</span>
                       </div>
                     )}
                     {salesAiTestResult.cta && (

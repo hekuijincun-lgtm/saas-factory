@@ -4,7 +4,7 @@ import { getRequestContext } from "@cloudflare/next-on-pages";
 export const runtime = "edge";
 
 // ─── version / stamps ────────────────────────────────────────────────────────
-const STAMP = "LINE_WEBHOOK_V22_20260312_SALES_ACCT_FALLBACK";
+const STAMP = "LINE_WEBHOOK_V23_20260312_SALES_LLM_HARDENED";
 const where  = "api/line/webhook";
 
 type LinePurpose = "booking" | "sales";
@@ -260,17 +260,55 @@ async function handleSalesEvent(ctx: HandlerContext): Promise<HandlerResult> {
   // 2. If config exists and is enabled, use config-based resolution
   if (salesConfig?.enabled && Array.isArray(salesConfig.intents)) {
     const matched = resolveSalesIntent(textIn, salesConfig.intents);
-    const reply = buildSalesReply(salesConfig, matched);
-    const branch = matched ? `sales_${matched.key}` : "sales_welcome";
-    const leadLabel = matched ? salesIntentToLeadLabel(matched.key) : "info_request";
 
-    console.log(`[SALES_AI] config-based branch=${branch} matchKey=${matched?.key ?? "none"} replyLen=${reply.length}`);
+    if (matched) {
+      const reply = buildSalesReply(salesConfig, matched);
+      const branch = `sales_${matched.key}`;
+      const leadLabel = salesIntentToLeadLabel(matched.key);
+
+      console.log(`[SALES_AI] config-based branch=${branch} matchKey=${matched.key} replyLen=${reply.length}`);
+
+      return {
+        branch,
+        salesIntent: matched.key,
+        replyMessages: [{ type: "text", text: reply }],
+        leadLabel,
+        leadCapture: true,
+        salesConfigSource: configSource,
+      };
+    }
+
+    // No intent matched — check LLM fallback
+    if (salesConfig.llm?.enabled && accountId) {
+      console.log(`[SALES_AI] llm_fallback accountId=${accountId} text="${textIn.slice(0, 30)}"`);
+
+      return {
+        branch: "sales_llm",
+        salesIntent: null,
+        replyMessages: [], // empty — async push will handle reply
+        leadLabel: "info_request",
+        leadCapture: true,
+        salesConfigSource: configSource,
+        sendMode: "async",
+        asyncPayload: {
+          accountId,
+          message: textIn,
+          lineUserId,
+          channelAccessToken: cfg.channelAccessToken,
+          fallbackMessage: salesConfig.fallbackMessage || salesConfig.welcomeMessage || getSalesReplyText(null),
+        },
+      };
+    }
+
+    // No LLM — use welcomeMessage
+    const reply = salesConfig.welcomeMessage || salesConfig.fallbackMessage;
+    console.log(`[SALES_AI] config-based branch=sales_welcome matchKey=none replyLen=${reply.length}`);
 
     return {
-      branch,
-      salesIntent: matched?.key ?? null,
+      branch: "sales_welcome",
+      salesIntent: null,
       replyMessages: [{ type: "text", text: reply }],
-      leadLabel,
+      leadLabel: "info_request",
       leadCapture: true,
       salesConfigSource: configSource,
     };
@@ -430,6 +468,14 @@ interface HandlerResult {
   leadLabel: string | null;
   leadCapture: boolean;
   salesConfigSource?: string; // diagnostic: why config was/wasn't used
+  sendMode?: "sync" | "async"; // "async" = skip replyLine, use waitUntil push instead
+  asyncPayload?: {
+    accountId: string;
+    message: string;
+    lineUserId: string;
+    channelAccessToken: string;
+    fallbackMessage: string;
+  };
 }
 
 // ─── AI enabled check ───────────────────────────────────────────────────────
@@ -887,6 +933,54 @@ export async function GET(req: Request) {
 
     const aiEnabled = await checkAiEnabled(tenantId);
 
+    // Resolve internal token for /sales-ai/chat auth
+    let debugInternalToken = "";
+    try {
+      const cfEnv = (getRequestContext()?.env as any);
+      if (cfEnv?.LINE_INTERNAL_TOKEN) debugInternalToken = String(cfEnv.LINE_INTERNAL_TOKEN);
+    } catch {}
+    if (!debugInternalToken) debugInternalToken = process.env.LINE_INTERNAL_TOKEN ?? "";
+
+    // For async LLM results in debug mode, call LLM synchronously to show answer
+    let llmDebug: any = undefined;
+    let openaiAttempted = false;
+    let openaiSucceeded = false;
+    let llmFallbackReason: string | null = null;
+
+    if (result.sendMode === "async" && result.asyncPayload && debugApiBase) {
+      openaiAttempted = true;
+      try {
+        const chatRes = await fetch(`${debugApiBase}/sales-ai/chat`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-internal-token": debugInternalToken,
+          },
+          body: JSON.stringify({
+            accountId: result.asyncPayload.accountId,
+            message: result.asyncPayload.message,
+          }),
+        });
+        const chatData = (await chatRes.json()) as any;
+        openaiSucceeded = chatData?.ok === true;
+        if (!openaiSucceeded) llmFallbackReason = chatData?.error ?? "unknown";
+        llmDebug = {
+          llmUsed: openaiSucceeded,
+          llmModel: chatData?.model ?? null,
+          llmAnswer: chatData?.answer?.slice(0, 300) ?? null,
+          llmError: chatData?.error ?? null,
+        };
+      } catch (e: any) {
+        llmFallbackReason = `exception: ${String(e?.message ?? e).slice(0, 80)}`;
+        llmDebug = { llmUsed: false, llmError: llmFallbackReason };
+      }
+    }
+
+    // Determine salesReplyMode
+    const salesReplyMode = result.sendMode === "async" ? "llm_async_push"
+      : result.branch?.startsWith("sales_") ? "intent_sync_reply"
+      : "sync_reply";
+
     return NextResponse.json(
       {
         ...base,
@@ -897,9 +991,16 @@ export async function GET(req: Request) {
         salesIntent: result.salesIntent,
         salesConfigSource: result.salesConfigSource ?? "N/A",
         leadCapture: result.leadCapture,
+        sendMode: result.sendMode ?? "sync",
+        salesReplyMode,
+        openaiAttempted,
+        openaiSucceeded,
+        llmFallbackReason,
+        pushSent: false, // debug=GET never actually pushes
         replyPreview: result.replyMessages[0]?.text?.slice(0, 200)
           ?? result.replyMessages[0]?.altText
-          ?? "(template)",
+          ?? (result.sendMode === "async" ? "(async LLM push)" : "(template)"),
+        ...(llmDebug ?? {}),
       },
       { headers: cacheHeaders }
     );
@@ -1104,6 +1205,46 @@ export async function POST(req: Request) {
         : await handleBookingEvent(ctx);
     }
 
+    // For async LLM in debug=1, call LLM synchronously to show answer
+    let _d1LlmDebug: any = undefined;
+    let _d1OpenaiAttempted = false;
+    let _d1OpenaiSucceeded = false;
+    let _d1LlmFallbackReason: string | null = null;
+
+    if (_d1Result?.sendMode === "async" && _d1Result.asyncPayload && webhookLogApiBase) {
+      _d1OpenaiAttempted = true;
+      try {
+        const chatRes = await fetch(`${webhookLogApiBase}/sales-ai/chat`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-internal-token": internalToken,
+          },
+          body: JSON.stringify({
+            accountId: _d1Result.asyncPayload.accountId,
+            message: _d1Result.asyncPayload.message,
+          }),
+        });
+        const chatData = (await chatRes.json()) as any;
+        _d1OpenaiSucceeded = chatData?.ok === true;
+        if (!_d1OpenaiSucceeded) _d1LlmFallbackReason = chatData?.error ?? "unknown";
+        _d1LlmDebug = {
+          llmUsed: _d1OpenaiSucceeded,
+          llmModel: chatData?.model ?? null,
+          llmAnswer: chatData?.answer?.slice(0, 300) ?? null,
+          llmError: chatData?.error ?? null,
+        };
+      } catch (e: any) {
+        _d1LlmFallbackReason = `exception: ${String(e?.message ?? e).slice(0, 80)}`;
+        _d1LlmDebug = { llmUsed: false, llmError: _d1LlmFallbackReason };
+      }
+    }
+
+    // Determine salesReplyMode
+    const _d1SalesReplyMode = _d1Result?.sendMode === "async" ? "llm_async_push"
+      : _d1Result?.branch?.startsWith("sales_") ? "intent_sync_reply"
+      : "sync_reply";
+
     return NextResponse.json({
       ok: true, stamp: STAMP, where, debug: 1,
       step: "full_dry_run",
@@ -1123,10 +1264,17 @@ export async function POST(req: Request) {
       branch: _d1Result?.branch ?? "no_text_event",
       salesIntent: _d1Result?.salesIntent ?? null,
       leadCapture: _d1Result?.leadCapture ?? false,
+      sendMode: _d1Result?.sendMode ?? "sync",
+      salesReplyMode: _d1SalesReplyMode,
+      openaiAttempted: _d1OpenaiAttempted,
+      openaiSucceeded: _d1OpenaiSucceeded,
+      llmFallbackReason: _d1LlmFallbackReason,
+      pushSent: false, // debug=1 never actually pushes
       actionIfLive: _d1Result ? `would_reply_${_d1Result.branch}` : "no_text_event",
       replyPreview: _d1Result?.replyMessages[0]?.text?.slice(0, 200)
         ?? _d1Result?.replyMessages[0]?.altText
-        ?? null,
+        ?? (_d1Result?.sendMode === "async" ? "(async LLM push)" : null),
+      ...(_d1LlmDebug ?? {}),
       logPostAttempt: !!webhookLogApiBase && !!internalToken,
       logPostOk: _logPostOk, logPostStatus: _logPostStatus,
       logHasApiBase: !!webhookLogApiBase, logHasToken: !!internalToken,
@@ -1305,6 +1453,104 @@ export async function POST(req: Request) {
     `tokenPreview=${tokenPreviewMain} tokenLen=${cfg.channelAccessToken.length} ` +
     `replyToken=${replyToken.slice(0, 12)}... text="${textIn.slice(0, 60)}"`
   );
+
+  // ── Async LLM path: skip replyLine, use waitUntil to call /sales-ai/chat + push ──
+  if (result.sendMode === "async" && result.asyncPayload && lineUserId) {
+    const { accountId: asyncAcctId, message: asyncMsg, channelAccessToken: asyncToken, fallbackMessage: asyncFallback } = result.asyncPayload;
+
+    const runLlmAndPush = async () => {
+      let _openaiOk = false;
+      let _pushOk = false;
+      let _fallbackReason: string | null = null;
+      try {
+        const chatRes = await fetch(`${apiBase}/sales-ai/chat`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-internal-token": internalToken,
+          },
+          body: JSON.stringify({ accountId: asyncAcctId, message: asyncMsg }),
+        });
+        const chatData = (await chatRes.json()) as any;
+        _openaiOk = chatData?.ok === true;
+
+        const pushText = _openaiOk && chatData?.answer
+          ? String(chatData.answer)
+          : asyncFallback;
+        if (!_openaiOk) _fallbackReason = chatData?.error ?? "unknown";
+
+        const pr = await pushLine(asyncToken, lineUserId, [{ type: "text", text: pushText }]);
+        _pushOk = pr.ok;
+        console.log(
+          `[SALES_LLM_PUSH] pushOk=${pr.ok} status=${pr.status} openaiOk=${_openaiOk} ` +
+          `answerLen=${chatData?.answer?.length ?? 0} fallbackReason=${_fallbackReason}`
+        );
+      } catch (e: any) {
+        _fallbackReason = `exception: ${String(e?.message ?? e).slice(0, 150)}`;
+        console.log(`[SALES_LLM_PUSH] error: ${_fallbackReason}`);
+        // Best-effort fallback push
+        try {
+          const pr2 = await pushLine(asyncToken, lineUserId, [{ type: "text", text: asyncFallback }]);
+          _pushOk = pr2.ok;
+        } catch {}
+      }
+    };
+
+    // Fire via waitUntil (non-blocking) and return 200 immediately
+    try {
+      const ctx = getRequestContext();
+      if (ctx?.ctx?.waitUntil) {
+        ctx.ctx.waitUntil(runLlmAndPush());
+      } else {
+        runLlmAndPush().catch(() => null);
+      }
+    } catch {
+      runLlmAndPush().catch(() => null);
+    }
+
+    console.log(`[WH_ASYNC_LLM] dispatched accountId=${asyncAcctId} uid=${lineUserId.slice(0, 8)}`);
+
+    // Save webhook log + return 200 immediately (same pattern as sync path)
+    const asyncResponse = NextResponse.json(
+      {
+        ok: true, stamp: STAMP, where, tenantId, source: cfg.source,
+        verified, mode: "v23_async_llm",
+        purpose: cfg.purpose,
+        branch: result.branch,
+        salesIntent: result.salesIntent,
+        salesConfigSource: result.salesConfigSource ?? "N/A",
+        replied: false, // async push pending
+        sendMode: "async",
+        salesReplyMode: "llm_async_push",
+        openaiAttempted: true,
+        // openaiSucceeded/pushSent are resolved asynchronously — not available in sync response
+        resolvedBy, eventCount: events.length,
+        text: textIn.slice(0, 80),
+        lineUserId: lineUserId.slice(0, 8),
+      },
+      { headers: { "x-stamp": STAMP } }
+    );
+
+    // Lead capture (fire-and-forget)
+    if (result.leadCapture && apiBase && internalToken && lineUserId) {
+      fetch(`${apiBase}/internal/sales/lead-reply`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-internal-token": internalToken,
+        },
+        body: JSON.stringify({
+          tenantId,
+          lineUserId,
+          rawReply: textIn.slice(0, 500),
+          label: result.leadLabel ?? "info_request",
+          displayName: "",
+        }),
+      }).catch(() => null);
+    }
+
+    return asyncResponse;
+  }
 
   // ── Send reply (with push fallback if replyToken fails) ──────────────────
   let replyOk = false;

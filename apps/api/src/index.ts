@@ -6410,10 +6410,79 @@ app.get("/sales-ai/config", async (c) => {
         key: i.key, label: i.label, keywords: i.keywords ?? [],
         reply: i.reply ?? "", ctaLabel: i.ctaLabel ?? "", ctaUrl: i.ctaUrl ?? "",
       })) : [],
+      llm: raw.llm ?? { enabled: false, model: "", systemPrompt: "", temperature: 0.7, maxTokens: 800 },
     };
     return c.json({ ok: true, accountId, config });
   } catch {
     return c.json({ ok: true, accountId, config: null });
+  }
+});
+
+// POST /sales-ai/chat — LLM fallback for sales LINE (internal only, x-internal-token auth)
+// Completely separate from tenant AI接客 (POST /ai/chat).
+app.post("/sales-ai/chat", async (c) => {
+  const env = c.env as any;
+
+  // ── Auth: require LINE_INTERNAL_TOKEN (same as /internal/* routes) ──
+  const expected = String(env?.LINE_INTERNAL_TOKEN ?? "").trim();
+  const provided = String(c.req.header("x-internal-token") ?? "").trim();
+  if (!expected || !provided || provided !== expected) {
+    return c.json({ ok: false, error: "unauthorized" }, 401);
+  }
+
+  const apiKey: string | undefined = env?.OPENAI_API_KEY;
+  if (!apiKey) return c.json({ ok: false, error: "not_configured" });
+
+  const body: any = await c.req.json().catch(() => ({}));
+  const accountId = String(body?.accountId ?? "").trim();
+  const message = String(body?.message ?? "").trim();
+  if (!accountId || !message) return c.json({ ok: false, error: "missing accountId or message" }, 400);
+
+  const kv = env?.SAAS_FACTORY;
+  if (!kv) return c.json({ ok: false, error: "kv_unavailable" }, 500);
+
+  try {
+    const raw = await kv.get(`owner:sales-ai:${accountId}`, "json") as any;
+    if (!raw?.llm?.enabled) return c.json({ ok: false, error: "llm_disabled" });
+
+    const config = raw;
+    const model = config.llm.model?.trim() || "gpt-4o";
+    const intentSummary = (config.intents ?? []).map((i: any) => `${i.label}(${i.key})`).join(", ");
+    const systemPrompt = [
+      `あなたはLumiBookの営業アシスタントです。トーン: ${config.tone ?? "friendly"}。ゴール: ${config.goal ?? "demo"}。`,
+      `既存のキーワード応答（${intentSummary}）にマッチしなかったメッセージに対して、自然で有用な返答を生成してください。`,
+      `CTAがある場合: ${config.cta?.url || "なし"}`,
+      config.llm.systemPrompt ? `\nカスタム指示:\n${config.llm.systemPrompt}` : "",
+    ].filter(Boolean).join("\n");
+
+    const openaiRes = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        input: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: message },
+        ],
+        temperature: config.llm.temperature ?? 0.7,
+        max_output_tokens: config.llm.maxTokens ?? 800,
+      }),
+    });
+    const openaiData = await openaiRes.json() as any;
+    const answer = extractResponseText(openaiData);
+    if (!answer) {
+      console.log(`[SALES_AI_CHAT] empty response model=${model} accountId=${accountId}`);
+      return c.json({ ok: false, error: "empty_response" });
+    }
+
+    console.log(`[SALES_AI_CHAT] ok model=${model} accountId=${accountId} answerLen=${answer.length}`);
+    return c.json({ ok: true, answer, model });
+  } catch (e: any) {
+    console.error(`[SALES_AI_CHAT] error: ${String(e?.message ?? e).slice(0, 200)}`);
+    return c.json({ ok: false, error: "internal_error" }, 500);
   }
 });
 

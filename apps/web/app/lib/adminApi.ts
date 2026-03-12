@@ -582,6 +582,14 @@ export interface SalesAiIntent {
   ctaUrl?: string;
 }
 
+export interface SalesAiLlmSettings {
+  enabled: boolean;
+  model: string;
+  systemPrompt: string;
+  temperature: number;
+  maxTokens: number;
+}
+
 export interface SalesAiConfig {
   enabled: boolean;
   welcomeMessage: string;
@@ -592,6 +600,7 @@ export interface SalesAiConfig {
   qualificationQuestions: string[];
   handoffMessage: string;
   intents: SalesAiIntent[];
+  llm?: SalesAiLlmSettings;
   version: number;
   updatedAt: string;
 }
@@ -613,6 +622,9 @@ export interface SalesAiTestResponse {
   cta?: { label: string; url: string } | null;
   tone?: string;
   goal?: string;
+  llmUsed?: boolean;
+  llmModel?: string;
+  llmAnswer?: string;
 }
 
 export async function fetchSalesAiConfig(
