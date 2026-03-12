@@ -1493,25 +1493,56 @@ export async function POST(req: Request) {
         const chatData = (await chatRes.json()) as any;
         _openaiOk = chatData?.ok === true;
 
+        if (!_openaiOk) {
+          _fallbackReason = chatData?.error ?? "unknown";
+          console.log(`[SALES_LLM_CHAT] openai_failed`, JSON.stringify({
+            chatHttpStatus: chatRes.status,
+            error: _fallbackReason,
+            openaiHttpStatus: chatData?.openaiHttpStatus,
+            openaiErrorPreview: chatData?.openaiErrorPreview?.slice(0, 200),
+            tenantId: asyncTenantId,
+            accountId: asyncAcctId,
+          }));
+        }
+
         const pushText = _openaiOk && chatData?.answer
           ? String(chatData.answer)
           : asyncFallback;
-        if (!_openaiOk) _fallbackReason = chatData?.error ?? "unknown";
 
         const pr = await pushLine(asyncToken, lineUserId, [{ type: "text", text: pushText }]);
         _pushOk = pr.ok;
-        console.log(
-          `[SALES_LLM_PUSH] pushOk=${pr.ok} status=${pr.status} openaiOk=${_openaiOk} ` +
-          `answerLen=${chatData?.answer?.length ?? 0} fallbackReason=${_fallbackReason}`
-        );
+        console.log(`[SALES_LLM_PUSH]`, JSON.stringify({
+          status: pr.status,
+          body: pr.bodyText.slice(0, 300),
+          pushOk: pr.ok,
+          salesReplyMode: _openaiOk ? "llm_async_push" : "fallback_async_push",
+          openaiSucceeded: _openaiOk,
+          llmAnswerLength: chatData?.answer?.length ?? 0,
+          userId: lineUserId,
+          tenantId: asyncTenantId,
+          fallbackReason: _fallbackReason,
+          tokenLen: asyncToken?.length ?? 0,
+        }));
       } catch (e: any) {
         _fallbackReason = `exception: ${String(e?.message ?? e).slice(0, 150)}`;
-        console.log(`[SALES_LLM_PUSH] error: ${_fallbackReason}`);
+        console.log(`[SALES_LLM_PUSH] error`, JSON.stringify({
+          reason: _fallbackReason,
+          salesReplyMode: "error_fallback",
+          userId: lineUserId,
+          tenantId: asyncTenantId,
+        }));
         // Best-effort fallback push
         try {
           const pr2 = await pushLine(asyncToken, lineUserId, [{ type: "text", text: asyncFallback }]);
           _pushOk = pr2.ok;
-        } catch {}
+          console.log(`[SALES_LLM_PUSH] fallback_push`, JSON.stringify({
+            status: pr2.status,
+            body: pr2.bodyText.slice(0, 300),
+            pushOk: pr2.ok,
+          }));
+        } catch (e2: any) {
+          console.log(`[SALES_LLM_PUSH] fallback_push_error: ${String(e2?.message ?? e2).slice(0, 100)}`);
+        }
       }
     };
 
