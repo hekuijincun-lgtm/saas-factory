@@ -191,11 +191,11 @@ function resolveSalesIntent(
 ): { intent: any; key: string; label: string } | null {
   const normalized = textIn
     .normalize("NFKC")
-    .replace(/[\s\u200B-\u200D\uFEFF]/g, "")
+    .trim()
     .toLowerCase();
   for (const intent of intents) {
     if (Array.isArray(intent.keywords) && intent.keywords.some((k: string) =>
-      normalized.includes(k.toLowerCase())
+      normalized === k.toLowerCase()
     )) {
       return { intent, key: intent.key, label: intent.label };
     }
