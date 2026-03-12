@@ -1287,11 +1287,13 @@ type MenuItem = {
   active: boolean;
   sortOrder: number;
 };
-function defaultMenu() {
+/** 眉毛サロン向けデフォルトメニュー（未設定テナントのseed用） */
+function defaultMenu(): MenuItem[] {
   return [
-    { id: "cut",   name: "カット",   price: 5000,  durationMin: 60,  active: true, sortOrder: 1 },
-    { id: "color", name: "カラー",   price: 8000,  durationMin: 90,  active: true, sortOrder: 2 },
-    { id: "perm",  name: "パーマ",   price: 10000, durationMin: 120, active: true, sortOrder: 3 },
+    { id: "eyebrow-styling", name: "眉毛スタイリング",      price: 4500, durationMin: 45, active: true, sortOrder: 1 },
+    { id: "eyebrow-wax",     name: "眉毛WAX",              price: 5500, durationMin: 60, active: true, sortOrder: 2 },
+    { id: "eyebrow-wax-trim",name: "眉毛WAX＋間引き",       price: 6500, durationMin: 75, active: true, sortOrder: 3 },
+    { id: "eyebrow-perm",    name: "眉毛パーマ",            price: 7000, durationMin: 60, active: true, sortOrder: 4 },
   ];
 }
 

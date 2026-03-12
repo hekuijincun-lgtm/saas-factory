@@ -717,7 +717,7 @@ export default function AdminAIClient() {
                 type="text"
                 value={newUkw}
                 onChange={(e) => setNewUkw(e.target.value)}
-                placeholder="キーワード（例: カット, ヘアカラー）"
+                placeholder="キーワード（例: 眉毛WAX, スタイリング）"
                 className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-300"
               />
               <input
