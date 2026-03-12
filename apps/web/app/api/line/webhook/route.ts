@@ -167,6 +167,8 @@ async function loadSalesAiConfig(
     const params = new URLSearchParams();
     if (opts.accountId) params.set("accountId", opts.accountId);
     else if (opts.tenantId) params.set("tenantId", opts.tenantId);
+    // Auto-seed LLM config on first access (idempotent)
+    params.set("seed", "llm");
     const url = `${apiBase}/sales-ai/config?${params.toString()}`;
     const r = await fetch(url, { headers: { Accept: "application/json" } });
     if (!r.ok) {
