@@ -6385,15 +6385,34 @@ function resolveBookingUrl(storeSettings: any, env: any, tenantId: string): stri
     || (env?.WEB_BASE ? `${env.WEB_BASE}/booking?tenantId=${tenantId}` : "");
 }
 
-// GET /sales-ai/config — lightweight sales AI config read (no auth, single KV read)
+// GET /sales-ai/config — lightweight sales AI config read (no auth)
 // Used by LINE webhook to load per-account sales AI configuration.
 // Completely separate from tenant AI接客 (ai:settings:{tenantId}).
-// Returns only fields needed by webhook (no internal metadata like version/updatedAt/qualificationQuestions).
+// Supports two lookup modes:
+//   1. ?accountId=xxx  — direct KV lookup (fast)
+//   2. ?tenantId=xxx   — reverse lookup: settings:{tenantId} → lineAccounts[purpose=sales] → owner:sales-ai:{id}
 app.get("/sales-ai/config", async (c) => {
-  const accountId = (c.req.query("accountId") ?? "").trim();
-  if (!accountId) return c.json({ ok: false, error: "missing accountId" }, 400);
+  let accountId = (c.req.query("accountId") ?? "").trim();
+  const tenantId = (c.req.query("tenantId") ?? "").trim();
   const kv = (c.env as any)?.SAAS_FACTORY;
-  if (!kv) return c.json({ ok: true, accountId, config: null });
+  if (!kv) return c.json({ ok: true, accountId: accountId || null, config: null });
+
+  // Reverse lookup: tenantId → first active sales lineAccount
+  if (!accountId && tenantId) {
+    try {
+      const settings = await kv.get(`settings:${tenantId}`, "json") as any;
+      const salesAcct = (settings?.lineAccounts ?? []).find(
+        (a: any) => a?.purpose === "sales" && a?.status === "active" && a?.id
+      );
+      if (salesAcct) {
+        accountId = salesAcct.id;
+        console.log(`[SALES_AI_CFG] tenantId reverse lookup: ${tenantId} → accountId=${accountId}`);
+      }
+    } catch {}
+  }
+
+  if (!accountId) return c.json({ ok: false, error: "missing accountId (no sales lineAccount found)" }, 400);
+
   try {
     const raw = await kv.get(`owner:sales-ai:${accountId}`, "json") as any;
     if (!raw) return c.json({ ok: true, accountId, config: null });
@@ -6434,12 +6453,29 @@ app.post("/sales-ai/chat", async (c) => {
   if (!apiKey) return c.json({ ok: false, error: "not_configured" });
 
   const body: any = await c.req.json().catch(() => ({}));
-  const accountId = String(body?.accountId ?? "").trim();
+  let accountId = String(body?.accountId ?? "").trim();
+  const tenantId = String(body?.tenantId ?? "").trim();
   const message = String(body?.message ?? "").trim();
-  if (!accountId || !message) return c.json({ ok: false, error: "missing accountId or message" }, 400);
+  if (!message) return c.json({ ok: false, error: "missing message" }, 400);
 
   const kv = env?.SAAS_FACTORY;
   if (!kv) return c.json({ ok: false, error: "kv_unavailable" }, 500);
+
+  // Reverse lookup: tenantId → first active sales lineAccount
+  if (!accountId && tenantId) {
+    try {
+      const settings = await kv.get(`settings:${tenantId}`, "json") as any;
+      const salesAcct = (settings?.lineAccounts ?? []).find(
+        (a: any) => a?.purpose === "sales" && a?.status === "active" && a?.id
+      );
+      if (salesAcct) {
+        accountId = salesAcct.id;
+        console.log(`[SALES_AI_CHAT] tenantId reverse lookup: ${tenantId} → accountId=${accountId}`);
+      }
+    } catch {}
+  }
+
+  if (!accountId) return c.json({ ok: false, error: "missing accountId (no sales lineAccount found)" }, 400);
 
   try {
     const raw = await kv.get(`owner:sales-ai:${accountId}`, "json") as any;
@@ -6471,18 +6507,25 @@ app.post("/sales-ai/chat", async (c) => {
         max_output_tokens: config.llm.maxTokens ?? 800,
       }),
     });
-    const openaiData = await openaiRes.json() as any;
+    const openaiStatus = openaiRes.status;
+    const openaiData = await openaiRes.json().catch(() => null) as any;
+    if (!openaiRes.ok || !openaiData) {
+      const errPreview = JSON.stringify(openaiData ?? {}).slice(0, 300);
+      console.log(`[SALES_AI_CHAT] openai_error status=${openaiStatus} model=${model} accountId=${accountId} body=${errPreview}`);
+      return c.json({ ok: false, error: "openai_error", openaiHttpStatus: openaiStatus, openaiErrorPreview: errPreview });
+    }
     const answer = extractResponseText(openaiData);
     if (!answer) {
-      console.log(`[SALES_AI_CHAT] empty response model=${model} accountId=${accountId}`);
-      return c.json({ ok: false, error: "empty_response" });
+      const keys = Object.keys(openaiData ?? {}).join(",");
+      console.log(`[SALES_AI_CHAT] empty response model=${model} accountId=${accountId} keys=${keys}`);
+      return c.json({ ok: false, error: "empty_response", openaiHttpStatus: openaiStatus, openaiKeys: keys });
     }
 
     console.log(`[SALES_AI_CHAT] ok model=${model} accountId=${accountId} answerLen=${answer.length}`);
     return c.json({ ok: true, answer, model });
   } catch (e: any) {
     console.error(`[SALES_AI_CHAT] error: ${String(e?.message ?? e).slice(0, 200)}`);
-    return c.json({ ok: false, error: "internal_error" }, 500);
+    return c.json({ ok: false, error: "internal_error", detail: String(e?.message ?? e).slice(0, 200) }, 500);
   }
 });
 

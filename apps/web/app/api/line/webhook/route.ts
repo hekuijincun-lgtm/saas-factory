@@ -4,7 +4,7 @@ import { getRequestContext } from "@cloudflare/next-on-pages";
 export const runtime = "edge";
 
 // ─── version / stamps ────────────────────────────────────────────────────────
-const STAMP = "LINE_WEBHOOK_V23_20260312_SALES_LLM_HARDENED";
+const STAMP = "LINE_WEBHOOK_V24_20260312_TENANTID_LOOKUP";
 const where  = "api/line/webhook";
 
 type LinePurpose = "booking" | "sales";
@@ -154,22 +154,28 @@ function salesIntentToLeadLabel(intent: string | null): string {
 }
 
 // ─── Sales AI config loader ──────────────────────────────────────────────
-// Reads from GET /sales-ai/config?accountId= (no auth, single KV read).
+// Reads from GET /sales-ai/config (no auth).
+// Supports two modes: accountId direct lookup, or tenantId reverse lookup.
 // Completely separate from tenant AI接客 config.
 async function loadSalesAiConfig(
   apiBase: string,
-  accountId: string
-): Promise<any | null> {
-  if (!apiBase || !accountId) return null;
+  opts: { accountId?: string | null; tenantId?: string }
+): Promise<{ config: any; accountId: string } | null> {
+  if (!apiBase) return null;
+  if (!opts.accountId && !opts.tenantId) return null;
   try {
-    const url = `${apiBase}/sales-ai/config?accountId=${encodeURIComponent(accountId)}`;
+    const params = new URLSearchParams();
+    if (opts.accountId) params.set("accountId", opts.accountId);
+    else if (opts.tenantId) params.set("tenantId", opts.tenantId);
+    const url = `${apiBase}/sales-ai/config?${params.toString()}`;
     const r = await fetch(url, { headers: { Accept: "application/json" } });
     if (!r.ok) {
-      console.log(`[SALES_AI_CFG] fetch failed status=${r.status} accountId=${accountId}`);
+      console.log(`[SALES_AI_CFG] fetch failed status=${r.status} params=${params.toString()}`);
       return null;
     }
     const d = (await r.json()) as any;
-    return d?.config ?? null;
+    if (!d?.config) return null;
+    return { config: d.config, accountId: d.accountId ?? opts.accountId ?? "" };
   } catch (e: any) {
     console.log(`[SALES_AI_CFG] error: ${String(e?.message ?? e).slice(0, 80)}`);
     return null;
@@ -215,7 +221,7 @@ function buildSalesReply(
 /** Handle a text message on a SALES-purpose LINE account.
  *  Loads per-account sales AI config from KV; falls back to hardcoded defaults. */
 async function handleSalesEvent(ctx: HandlerContext): Promise<HandlerResult> {
-  const { textIn, lineUserId, cfg, apiBase } = ctx;
+  const { textIn, lineUserId, tenantId, cfg, apiBase } = ctx;
 
   // 1. Try to load per-account sales AI config
   let accountId = extractAccountIdFromCredSource(cfg.credSource);
@@ -235,14 +241,21 @@ async function handleSalesEvent(ctx: HandlerContext): Promise<HandlerResult> {
   let salesConfig: any = null;
   let configSource = "none"; // Track why config was or wasn't loaded
 
-  if (!accountId) {
-    configSource = `no_account_id(credSource=${cfg.credSource ?? "empty"})`;
-  } else if (!apiBase) {
-    configSource = `no_api_base(accountId=${accountId})`;
+  if (!apiBase) {
+    configSource = `no_api_base(accountId=${accountId ?? "null"})`;
   } else {
-    salesConfig = await loadSalesAiConfig(apiBase, accountId);
+    // Try accountId direct lookup first, then tenantId reverse lookup
+    const result = await loadSalesAiConfig(apiBase, {
+      accountId: accountId || null,
+      tenantId,
+    });
+    if (result) {
+      salesConfig = result.config;
+      accountId = result.accountId; // may have been resolved by tenantId reverse lookup
+    }
+
     if (!salesConfig) {
-      configSource = `fetch_null(accountId=${accountId})`;
+      configSource = `fetch_null(accountId=${accountId ?? "null"},tenantId=${tenantId})`;
     } else if (!salesConfig.enabled) {
       configSource = `disabled(accountId=${accountId})`;
     } else if (!Array.isArray(salesConfig.intents)) {
@@ -278,9 +291,9 @@ async function handleSalesEvent(ctx: HandlerContext): Promise<HandlerResult> {
       };
     }
 
-    // No intent matched — always try LLM first (accountId is guaranteed non-null here)
+    // No intent matched — always try LLM first
     if (salesConfig.llm?.enabled) {
-      console.log(`[SALES_AI] llm_fallback accountId=${accountId} text="${textIn.slice(0, 30)}"`);
+      console.log(`[SALES_AI] llm_fallback accountId=${accountId} tenantId=${tenantId} text="${textIn.slice(0, 30)}"`);
 
       return {
         branch: "sales_llm",
@@ -291,7 +304,8 @@ async function handleSalesEvent(ctx: HandlerContext): Promise<HandlerResult> {
         salesConfigSource: configSource,
         sendMode: "async",
         asyncPayload: {
-          accountId: accountId!,
+          accountId: accountId ?? "",
+          tenantId,
           message: textIn,
           lineUserId,
           channelAccessToken: cfg.channelAccessToken,
@@ -471,6 +485,7 @@ interface HandlerResult {
   sendMode?: "sync" | "async"; // "async" = skip replyLine, use waitUntil push instead
   asyncPayload?: {
     accountId: string;
+    tenantId: string;
     message: string;
     lineUserId: string;
     channelAccessToken: string;
@@ -957,7 +972,8 @@ export async function GET(req: Request) {
             "x-internal-token": debugInternalToken,
           },
           body: JSON.stringify({
-            accountId: result.asyncPayload.accountId,
+            accountId: result.asyncPayload.accountId || undefined,
+            tenantId: result.asyncPayload.tenantId,
             message: result.asyncPayload.message,
           }),
         });
@@ -1221,7 +1237,8 @@ export async function POST(req: Request) {
             "x-internal-token": internalToken,
           },
           body: JSON.stringify({
-            accountId: _d1Result.asyncPayload.accountId,
+            accountId: _d1Result.asyncPayload.accountId || undefined,
+            tenantId: _d1Result.asyncPayload.tenantId,
             message: _d1Result.asyncPayload.message,
           }),
         });
@@ -1456,7 +1473,7 @@ export async function POST(req: Request) {
 
   // ── Async LLM path: skip replyLine, use waitUntil to call /sales-ai/chat + push ──
   if (result.sendMode === "async" && result.asyncPayload && lineUserId) {
-    const { accountId: asyncAcctId, message: asyncMsg, channelAccessToken: asyncToken, fallbackMessage: asyncFallback } = result.asyncPayload;
+    const { accountId: asyncAcctId, tenantId: asyncTenantId, message: asyncMsg, channelAccessToken: asyncToken, fallbackMessage: asyncFallback } = result.asyncPayload;
 
     const runLlmAndPush = async () => {
       let _openaiOk = false;
@@ -1469,7 +1486,7 @@ export async function POST(req: Request) {
             "Content-Type": "application/json",
             "x-internal-token": internalToken,
           },
-          body: JSON.stringify({ accountId: asyncAcctId, message: asyncMsg }),
+          body: JSON.stringify({ accountId: asyncAcctId || undefined, tenantId: asyncTenantId, message: asyncMsg }),
         });
         const chatData = (await chatRes.json()) as any;
         _openaiOk = chatData?.ok === true;
