@@ -6419,7 +6419,24 @@ app.get("/sales-ai/config", async (c) => {
   if (!accountId) return c.json({ ok: false, error: "missing accountId (no sales lineAccount found)" }, 400);
 
   try {
-    const raw = await kv.get(`owner:sales-ai:${accountId}`, "json") as any;
+    let raw = await kv.get(`owner:sales-ai:${accountId}`, "json") as any;
+    // Auto-seed: when no config exists and ?seed=llm is passed, create one with LLM enabled
+    if (!raw && c.req.query("seed") === "llm") {
+      raw = {
+        enabled: true,
+        welcomeMessage: "",
+        fallbackMessage: "申し訳ありません、ただいま応答できません。後ほどご連絡いたします。",
+        tone: "friendly",
+        goal: "demo",
+        cta: { label: "", url: "" },
+        intents: [],
+        llm: { enabled: true, model: "gpt-4o", systemPrompt: "", temperature: 0.7, maxTokens: 800 },
+        handoffMessage: "担当者よりご連絡します。少々お待ちください。",
+        seededAt: new Date().toISOString(),
+      };
+      await kv.put(`owner:sales-ai:${accountId}`, JSON.stringify(raw));
+      console.log(`[SALES_AI_CFG] auto-seeded config for accountId=${accountId}`);
+    }
     if (!raw) return c.json({ ok: true, accountId, config: null });
     // Return only webhook-relevant fields (exclude internal metadata)
     const config = {
