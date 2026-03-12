@@ -24,12 +24,6 @@ import {
 } from 'lucide-react';
 import { Reveal } from '../_components/Reveal';
 import { PlanCTA } from './PlanCTA';
-import { SalesLineCTA, SalesLineStickyBar } from '../_components/SalesLineCTA';
-import {
-  fetchPublicSalesLine,
-  resolveSalesLineTarget,
-  type SalesLineTarget,
-} from '@/src/lib/salesLine';
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Configuration constants — update these without touching layout logic
@@ -152,14 +146,7 @@ export const metadata: Metadata = {
 // ──────────────────────────────────────────────────────────────────────────────
 // Page entry point
 // ──────────────────────────────────────────────────────────────────────────────
-// Default tenantId for LP sales line resolution
-const LP_TENANT_ID = process.env.LP_TENANT_ID || 'default';
-
 export default async function EyebrowLandingPage() {
-  // Resolve sales LINE target: routing → env → mailto
-  const salesData = await fetchPublicSalesLine(LP_TENANT_ID);
-  const target = resolveSalesLineTarget('eyebrow', salesData);
-
   return (
     <div className="min-h-screen bg-white font-sans antialiased text-gray-900">
       <LpNavbar />
@@ -167,31 +154,19 @@ export default async function EyebrowLandingPage() {
         <HeroSection />
         {/* Gradient bridge: dark hero → light problem */}
         <div aria-hidden="true" className="h-24 sm:h-32 bg-gradient-to-b from-slate-950 via-[#1e1b3a] to-slate-50" />
-        <ProblemSection target={target} />
+        <ProblemSection />
         <SolutionSection />
         <DashboardSection />
         <EyebrowSection />
         <FlowSection />
         <SetupSection />
-        {/* Mid-page LINE CTA band */}
-        <section className="bg-slate-50 py-12 px-5 text-center" aria-label="LINE相談CTA">
-          <Reveal className="mx-auto max-w-xl">
-            <p className="text-gray-600 mb-4 text-sm">
-              料金プランの前に、まずはお気軽にご相談ください
-            </p>
-            <SalesLineCTA variant="section" subtitle="LINEで30秒・無料相談" target={target} />
-          </Reveal>
-        </section>
         <PricingSection />
         <FaqSection />
         {/* Gradient bridge: white FAQ → dark CTA */}
         <div aria-hidden="true" className="h-24 sm:h-32 bg-gradient-to-b from-white via-[#e8e0f0] to-slate-950" />
-        <FinalCtaSection target={target} />
+        <FinalCtaSection />
       </main>
       <LpFooter />
-      {/* Bottom padding for mobile sticky CTA bar */}
-      <div className="h-16 md:hidden" aria-hidden="true" />
-      <SalesLineStickyBar target={target} />
     </div>
   );
 }
@@ -421,7 +396,7 @@ function HeroDeviceMockup() {
 // ──────────────────────────────────────────────────────────────────────────────
 // Problem section
 // ──────────────────────────────────────────────────────────────────────────────
-function ProblemSection({ target }: { target?: SalesLineTarget }) {
+function ProblemSection() {
   const problems: { icon: LucideIcon; title: string; desc: string }[] = [
     {
       icon: MessageCircle,
@@ -502,9 +477,15 @@ function ProblemSection({ target }: { target?: SalesLineTarget }) {
               <p className="font-bold text-lg mb-2">そのすべてを解決します</p>
               <p className="text-rose-100 text-sm leading-relaxed mb-4">
                 予約の取りこぼしを減らしたいサロン向け。
-                LINEで無料診断できます。
+                まずはデモで体験してみてください。
               </p>
-              <SalesLineCTA variant="inline" label="LINEで無料診断する" target={target} />
+              <Link
+                href={DEMO_HREF}
+                className="inline-flex items-center gap-1.5 text-sm font-semibold text-white hover:text-rose-100 transition-colors"
+              >
+                無料でデモを見る
+                <ArrowRight className="w-4 h-4" aria-hidden="true" />
+              </Link>
             </div>
           </Reveal>
         </div>
@@ -1366,7 +1347,7 @@ function FaqSection() {
 // ──────────────────────────────────────────────────────────────────────────────
 // Final CTA
 // ──────────────────────────────────────────────────────────────────────────────
-function FinalCtaSection({ target }: { target?: SalesLineTarget }) {
+function FinalCtaSection() {
   return (
     <section
       className="relative overflow-hidden bg-slate-950 py-28 px-5 text-center"
@@ -1387,19 +1368,13 @@ function FinalCtaSection({ target }: { target?: SalesLineTarget }) {
           解放されませんか
         </h2>
         <p className="text-slate-300 mb-8 text-lg leading-relaxed">
-          最短30分で稼働開始。まずはLINEでお気軽にご相談ください。
+          最短30分で稼働開始。初期費用0円・いつでも解約OK。
         </p>
-        <SalesLineCTA
-          variant="hero"
-          subtitle="無料診断・導入相談OK　30秒で完了"
-          className="mb-4"
-          target={target}
-        />
         <Link
           href={DEMO_HREF}
-          className="group inline-flex items-center gap-2 px-7 py-3 text-slate-300 font-medium rounded-full text-sm hover:text-white transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
+          className="group inline-flex items-center gap-2 px-8 py-4 bg-white text-gray-900 font-bold rounded-full text-base hover:bg-gray-100 transition-all duration-200 shadow-xl shadow-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
         >
-          デモを見る
+          無料でデモを見る
           <ArrowRight
             className="w-4 h-4 transition-transform duration-200 group-hover:translate-x-1"
             aria-hidden="true"
