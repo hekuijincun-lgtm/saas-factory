@@ -414,6 +414,33 @@ export interface SourceAnalytics {
   meetingRateBySource: Array<{ source_type: string; total: number; meetings: number; rate: number; sample_size: number }>;
 }
 
+// ── Phase 6: Learning Patterns ────────────────────────────────────────────
+
+export type LearningPatternType = "source" | "hypothesis" | "tone" | "cta" | "variant";
+
+export interface OutreachLearningPattern {
+  id: string;
+  tenant_id: string;
+  pattern_type: LearningPatternType;
+  pattern_key: string;
+  label: string;
+  niche: string | null;
+  sample_size: number;
+  reply_rate: number;
+  meeting_rate: number;
+  win_score: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WinningPatternsData {
+  topTone: { key: string; replyRate: number; sampleSize: number } | null;
+  topHypothesis: { key: string; label: string; replyRate: number; sampleSize: number } | null;
+  topCta: { key: string; replyRate: number; sampleSize: number } | null;
+  topSource: { key: string; meetingRate: number; sampleSize: number } | null;
+  patterns: OutreachLearningPattern[];
+}
+
 /** Analytics summary */
 export interface OutreachAnalytics {
   totalLeads: number;

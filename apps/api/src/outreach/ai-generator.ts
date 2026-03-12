@@ -1,11 +1,12 @@
 // Outreach OS — AI Message Generator (service layer)
 // ============================================================
 // Isolates AI generation logic. Currently uses template fallback.
-// Future: swap in OpenAI / Claude API call.
+// Phase 6: accepts LearningContext for winning pattern injection.
 
 import type { OutreachLead, GeneratedMessage, GenerateMessageInput } from "./types";
 import type { ExtractedFeatures } from "./analyzer";
 import type { PainHypothesis } from "./pain-hypothesis";
+import type { LearningContext } from "./learning";
 
 interface AIGeneratorConfig {
   /** OpenAI API key (optional — falls back to template if missing) */
@@ -14,38 +15,68 @@ interface AIGeneratorConfig {
   model?: string;
 }
 
-/** Extended input with Phase 2 analyzer data */
+/** Extended input with Phase 2 analyzer data + Phase 6 learning context */
 interface GeneratorContext {
   lead: OutreachLead;
   input: GenerateMessageInput;
   config: AIGeneratorConfig;
   features?: ExtractedFeatures | null;
   hypotheses?: PainHypothesis[] | null;
+  learning?: LearningContext | null;
 }
 
 /**
  * Generate an outreach message for a lead.
  * Uses AI when API key is available, otherwise falls back to template.
  * Phase 2: accepts extracted features + pain hypotheses for more targeted messages.
+ * Phase 6: accepts learning context for winning pattern injection.
  */
 export async function generateOutreachMessage(
   lead: OutreachLead,
   input: GenerateMessageInput,
   config: AIGeneratorConfig,
   features?: ExtractedFeatures | null,
-  hypotheses?: PainHypothesis[] | null
+  hypotheses?: PainHypothesis[] | null,
+  learning?: LearningContext | null
 ): Promise<GeneratedMessage> {
-  const ctx: GeneratorContext = { lead, input, config, features, hypotheses };
+  const ctx: GeneratorContext = { lead, input, config, features, hypotheses, learning };
   if (config.openaiApiKey) {
     return generateWithAI(ctx);
   }
   return generateWithTemplate(ctx);
 }
 
+// ── Learning context formatter ──────────────────────────────────────────
+
+function formatLearningContext(learning: LearningContext | null | undefined): string {
+  if (!learning) return "";
+  const lines: string[] = [];
+
+  if (learning.topTone) {
+    lines.push(
+      `- 最も効果的なトーン: 「${learning.topTone.key}」(返信率${learning.topTone.replyRate}%, n=${learning.topTone.sampleSize})`
+    );
+  }
+  if (learning.topHypothesis) {
+    lines.push(
+      `- 最も刺さる課題: 「${learning.topHypothesis.label}」(返信率${learning.topHypothesis.replyRate}%, n=${learning.topHypothesis.sampleSize})`
+    );
+  }
+  if (learning.topCta) {
+    lines.push(
+      `- 最も効果的なバリアント: 「${learning.topCta.key}」(返信率${learning.topCta.replyRate}%, n=${learning.topCta.sampleSize})`
+    );
+  }
+
+  return lines.length > 0
+    ? `\n過去の営業活動から学習した勝ちパターン:\n${lines.join("\n")}\nこれらの傾向を参考にしてください（ただし個別リードの特性を最優先すること）。`
+    : "";
+}
+
 // ── AI-powered generation ──────────────────────────────────────────────────
 
 async function generateWithAI(ctx: GeneratorContext): Promise<GeneratedMessage> {
-  const { lead, input, config, features, hypotheses } = ctx;
+  const { lead, input, config, features, hypotheses, learning } = ctx;
   const tone = input.tone ?? "friendly";
   const cta = input.cta ?? "無料相談のご案内";
   const channel = input.channel ?? "email";
@@ -67,6 +98,9 @@ async function generateWithAI(ctx: GeneratorContext): Promise<GeneratedMessage> 
       ].filter(Boolean).join("\n")
     : "（サイト未解析）";
 
+  // Phase 6: Learning context
+  const learningContext = formatLearningContext(learning);
+
   const systemPrompt = `あなたはB2B営業のプロフェッショナルです。
 与えられたリード情報と課題分析から、パーソナライズされた営業メッセージを生成してください。
 
@@ -79,6 +113,7 @@ async function generateWithAI(ctx: GeneratorContext): Promise<GeneratedMessage> 
 - 日本語で書くこと
 - 短く要点をまとめること（200文字以内の本文）
 - 相手のウェブサイトを具体的に見たことが伝わる表現を使うこと
+${learningContext}
 
 JSON形式で返してください:
 {
@@ -154,8 +189,8 @@ ${painContext}`;
 // ── Template fallback ──────────────────────────────────────────────────────
 
 function generateWithTemplate(ctx: GeneratorContext): GeneratedMessage {
-  const { lead, input, hypotheses } = ctx;
-  const tone = input.tone ?? "friendly";
+  const { lead, input, hypotheses, learning } = ctx;
+  const tone = input.tone ?? (learning?.topTone?.key as any) ?? "friendly";
   const cta = input.cta ?? "無料相談";
   const storeName = lead.store_name || "御社";
   const area = lead.area ?? lead.region ?? "";
@@ -164,7 +199,12 @@ function generateWithTemplate(ctx: GeneratorContext): GeneratedMessage {
   // Use pain hypotheses if available, otherwise fall back to basic checks
   let painPoints: string[];
   if (hypotheses?.length) {
-    painPoints = hypotheses
+    // Phase 6: prioritize winning hypothesis if available
+    const winningCode = learning?.topHypothesis?.key;
+    const sorted = winningCode
+      ? [...hypotheses].sort((a, b) => (a.code === winningCode ? -1 : b.code === winningCode ? 1 : 0))
+      : hypotheses;
+    painPoints = sorted
       .filter((h) => h.severity === "high" || h.severity === "medium")
       .slice(0, 3)
       .map((h) => h.label);
@@ -193,9 +233,12 @@ function generateWithTemplate(ctx: GeneratorContext): GeneratedMessage {
 
   const ctaText = `ぜひ一度、${cta}にてお話しさせていただければ幸いです。`;
 
+  const learningNote = learning?.topTone
+    ? ` / 勝ちトーン: ${learning.topTone.key}(${learning.topTone.replyRate}%)`
+    : "";
   const reasoningSources = hypotheses?.length
-    ? `解析済み: ${hypotheses.length}件の課題を特定`
-    : `基本チェック`;
+    ? `解析済み: ${hypotheses.length}件の課題を特定${learningNote}`
+    : `基本チェック${learningNote}`;
 
   return {
     subject,

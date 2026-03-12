@@ -24,6 +24,8 @@ import {
 import { classifyReply } from "./reply-classifier";
 import { parseCsv, buildPreview, buildMergeSets, normalizeDomain as importNormalizeDomain } from "./importer";
 import { resolveSourceProvider } from "./source-providers/provider-factory";
+import { refreshLearningPatterns, getLearningContext } from "./learning";
+import type { LearningPattern } from "./learning";
 import type { CandidateResult } from "./source-providers/types";
 import type { ExistingLead } from "./importer";
 import type {
@@ -660,9 +662,12 @@ export function createOutreachRoutes(getTenantId: GetTenantId) {
       }));
     }
 
+    // Phase 6: Load learning context for winning pattern injection
+    const learningCtx = await getLearningContext(db, tenantId, lead.category);
+
     const generated = await generateOutreachMessage(lead, input, {
       openaiApiKey: c.env.OPENAI_API_KEY,
-    }, features, hypotheses);
+    }, features, hypotheses, learningCtx);
 
     // Save as draft
     const messageId = uid();
@@ -2535,6 +2540,23 @@ export function createOutreachRoutes(getTenantId: GetTenantId) {
     };
 
     return c.json({ ok: true, tenantId, data });
+  });
+
+  // ── GET /analytics/winning-patterns — Learning patterns ──────────────
+  app.get("/analytics/winning-patterns", async (c) => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    const ctx = await getLearningContext(db, tenantId);
+    return c.json({ ok: true, tenantId, data: ctx });
+  });
+
+  // ── POST /analytics/refresh-patterns — Recalculate learning patterns ──
+  app.post("/analytics/refresh-patterns", async (c) => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    const result = await refreshLearningPatterns(db, tenantId, uid, now);
+    await logAudit(db, tenantId, "system", "outreach.refresh_patterns", result);
+    return c.json({ ok: true, tenantId, data: result });
   });
 
   return app;

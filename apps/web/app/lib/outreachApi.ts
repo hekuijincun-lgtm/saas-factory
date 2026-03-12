@@ -31,6 +31,7 @@ import type {
   SourceSearchResult,
   SourceImportResult,
   SourceAnalytics,
+  WinningPatternsData,
 } from "@/src/types/outreach";
 
 // ── Leads ──────────────────────────────────────────────────────────────────
@@ -563,6 +564,29 @@ export async function fetchSourceAnalytics(
 ): Promise<SourceAnalytics> {
   const res = await apiGet<{ ok: boolean; data: SourceAnalytics }>(
     "/admin/outreach/analytics/sources",
+    { tenantId }
+  );
+  return res.data;
+}
+
+// ── Winning Patterns ────────────────────────────────────────────────────
+
+export async function fetchWinningPatterns(
+  tenantId: string
+): Promise<WinningPatternsData> {
+  const res = await apiGet<{ ok: boolean; data: WinningPatternsData }>(
+    "/admin/outreach/analytics/winning-patterns",
+    { tenantId }
+  );
+  return res.data;
+}
+
+export async function refreshWinningPatterns(
+  tenantId: string
+): Promise<{ updated: number; deleted: number }> {
+  const res = await apiPost<{ ok: boolean; data: { updated: number; deleted: number } }>(
+    "/admin/outreach/analytics/refresh-patterns",
+    {},
     { tenantId }
   );
   return res.data;

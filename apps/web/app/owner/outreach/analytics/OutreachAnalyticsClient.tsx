@@ -2,9 +2,9 @@
 
 import { useState, useEffect } from "react";
 import { useOwnerTenantId } from "@/src/lib/useOwnerTenantId";
-import { fetchOutreachAnalytics, fetchLearningAnalytics, fetchCampaignAnalytics, fetchSourceAnalytics } from "@/app/lib/outreachApi";
-import type { OutreachAnalytics, LearningAnalytics, CampaignAnalytics, SourceAnalytics } from "@/src/types/outreach";
-import { SOURCE_TYPE_LABELS } from "@/src/types/outreach";
+import { fetchOutreachAnalytics, fetchLearningAnalytics, fetchCampaignAnalytics, fetchSourceAnalytics, fetchWinningPatterns, refreshWinningPatterns } from "@/app/lib/outreachApi";
+import type { OutreachAnalytics, LearningAnalytics, CampaignAnalytics, SourceAnalytics, WinningPatternsData } from "@/src/types/outreach";
+import { SOURCE_TYPE_LABELS, PATTERN_TYPE_LABELS } from "@/src/types/outreach";
 import { PIPELINE_LABELS } from "@/src/types/outreach";
 
 function KpiCard({
@@ -31,6 +31,8 @@ export default function OutreachAnalyticsClient() {
   const [learning, setLearning] = useState<LearningAnalytics | null>(null);
   const [campaignAnalytics, setCampaignAnalytics] = useState<CampaignAnalytics | null>(null);
   const [sourceAnalytics, setSourceAnalytics] = useState<SourceAnalytics | null>(null);
+  const [winningPatterns, setWinningPatterns] = useState<WinningPatternsData | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -42,12 +44,14 @@ export default function OutreachAnalyticsClient() {
       fetchLearningAnalytics(tenantId),
       fetchCampaignAnalytics(tenantId).catch(() => null),
       fetchSourceAnalytics(tenantId).catch(() => null),
+      fetchWinningPatterns(tenantId).catch(() => null),
     ])
-      .then(([a, l, c, s]) => {
+      .then(([a, l, c, s, w]) => {
         setAnalytics(a);
         setLearning(l);
         setCampaignAnalytics(c);
         setSourceAnalytics(s);
+        setWinningPatterns(w);
       })
       .catch((err) => setError(err.message || "読み込みに失敗しました"))
       .finally(() => setLoading(false));
@@ -310,6 +314,126 @@ export default function OutreachAnalyticsClient() {
                 )}
               </div>
             )}
+
+            {/* Phase 6: Winning Patterns */}
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-medium text-gray-700">勝ちパターン</h3>
+                <button
+                  onClick={async () => {
+                    if (!tenantId || refreshing) return;
+                    setRefreshing(true);
+                    try {
+                      await refreshWinningPatterns(tenantId);
+                      const fresh = await fetchWinningPatterns(tenantId);
+                      setWinningPatterns(fresh);
+                    } catch {}
+                    setRefreshing(false);
+                  }}
+                  disabled={refreshing}
+                  className="text-xs px-3 py-1.5 bg-amber-50 text-amber-700 hover:bg-amber-100 rounded-lg disabled:opacity-50"
+                >
+                  {refreshing ? "更新中..." : "パターン更新"}
+                </button>
+              </div>
+
+              {winningPatterns ? (
+                <>
+                  {/* Top performers summary */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                    {winningPatterns.topTone && (
+                      <div className="bg-purple-50 border border-purple-200 rounded-xl p-3">
+                        <div className="text-[10px] text-purple-600 font-medium">最強トーン</div>
+                        <div className="text-sm font-semibold mt-0.5">{winningPatterns.topTone.key}</div>
+                        <div className="text-[10px] text-gray-500">
+                          返信率 {winningPatterns.topTone.replyRate}%
+                          <span className="text-gray-400 ml-1">n={winningPatterns.topTone.sampleSize}</span>
+                        </div>
+                      </div>
+                    )}
+                    {winningPatterns.topHypothesis && (
+                      <div className="bg-blue-50 border border-blue-200 rounded-xl p-3">
+                        <div className="text-[10px] text-blue-600 font-medium">最強課題仮説</div>
+                        <div className="text-sm font-semibold mt-0.5">{winningPatterns.topHypothesis.label}</div>
+                        <div className="text-[10px] text-gray-500">
+                          返信率 {winningPatterns.topHypothesis.replyRate}%
+                          <span className="text-gray-400 ml-1">n={winningPatterns.topHypothesis.sampleSize}</span>
+                        </div>
+                      </div>
+                    )}
+                    {winningPatterns.topCta && (
+                      <div className="bg-green-50 border border-green-200 rounded-xl p-3">
+                        <div className="text-[10px] text-green-600 font-medium">最強バリアント</div>
+                        <div className="text-sm font-semibold mt-0.5">{winningPatterns.topCta.key}</div>
+                        <div className="text-[10px] text-gray-500">
+                          返信率 {winningPatterns.topCta.replyRate}%
+                          <span className="text-gray-400 ml-1">n={winningPatterns.topCta.sampleSize}</span>
+                        </div>
+                      </div>
+                    )}
+                    {winningPatterns.topSource && (
+                      <div className="bg-orange-50 border border-orange-200 rounded-xl p-3">
+                        <div className="text-[10px] text-orange-600 font-medium">最強ソース</div>
+                        <div className="text-sm font-semibold mt-0.5">
+                          {SOURCE_TYPE_LABELS[winningPatterns.topSource.key] ?? winningPatterns.topSource.key}
+                        </div>
+                        <div className="text-[10px] text-gray-500">
+                          商談率 {winningPatterns.topSource.meetingRate}%
+                          <span className="text-gray-400 ml-1">n={winningPatterns.topSource.sampleSize}</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* All patterns table */}
+                  {winningPatterns.patterns.length > 0 && (
+                    <div className="overflow-x-auto border rounded-xl">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="bg-gray-50 text-left text-xs text-gray-500 border-b">
+                            <th className="py-2 px-3">タイプ</th>
+                            <th className="py-2 px-3">パターン</th>
+                            <th className="py-2 px-3 text-right">返信率</th>
+                            <th className="py-2 px-3 text-right">商談率</th>
+                            <th className="py-2 px-3 text-right">スコア</th>
+                            <th className="py-2 px-3 text-right">サンプル</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {winningPatterns.patterns.map((p) => (
+                            <tr key={p.id} className="border-b last:border-0">
+                              <td className="py-2 px-3">
+                                <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">
+                                  {PATTERN_TYPE_LABELS[p.pattern_type as keyof typeof PATTERN_TYPE_LABELS] ?? p.pattern_type}
+                                </span>
+                              </td>
+                              <td className="py-2 px-3 font-medium">{p.label}</td>
+                              <td className="py-2 px-3 text-right">{p.reply_rate}%</td>
+                              <td className="py-2 px-3 text-right">{p.meeting_rate}%</td>
+                              <td className="py-2 px-3 text-right font-semibold">{p.win_score}</td>
+                              <td className="py-2 px-3 text-right text-gray-400">
+                                n={p.sample_size}
+                                {p.sample_size < 5 && <span className="text-[10px] text-amber-500 ml-1">参考値</span>}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                  {winningPatterns.patterns.length === 0 && (
+                    <div className="text-sm text-gray-400 py-4 text-center">
+                      パターンデータがありません。「パターン更新」を実行してください。
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="text-sm text-gray-400 py-4 text-center">
+                  勝ちパターンを表示するには「パターン更新」を実行してください。
+                </div>
+              )}
+            </div>
           </>
         ) : null}
       </div>
