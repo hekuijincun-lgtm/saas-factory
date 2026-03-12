@@ -565,3 +565,80 @@ export const PATTERN_TYPE_LABELS: Record<LearningPatternType, string> = {
   cta: "CTA",
   variant: "バリアント",
 };
+
+// ── Phase 7: Campaign Auto Optimization ──────────────────────────────────
+
+export interface OutreachNicheTemplate {
+  id: string;
+  tenant_id: string;
+  niche: string;
+  name: string;
+  tone: string;
+  subject_template: string | null;
+  opener_template: string | null;
+  body_template: string | null;
+  cta_template: string | null;
+  hypothesis_codes: string | null;
+  win_score: number;
+  sample_size: number;
+  is_auto_generated: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CampaignDraftInput {
+  niche: string;
+  area?: string;
+  min_score?: number;
+  tone?: "formal" | "friendly" | "casual";
+  auto_variants?: boolean;
+}
+
+export interface CampaignDraftResult {
+  campaign: OutreachCampaign;
+  variants: OutreachCampaignVariant[];
+  matchingLeads: number;
+  learningContext: {
+    topTone: string | null;
+    topHypothesis: string | null;
+    nicheTemplate: string | null;
+  };
+}
+
+export interface CampaignInsight {
+  campaign_id: string;
+  campaign_name: string;
+  niche: string | null;
+  area: string | null;
+  status: string;
+  total_leads: number;
+  total_sent: number;
+  total_replied: number;
+  total_meetings: number;
+  reply_rate: number;
+  meeting_rate: number;
+  created_at: string;
+}
+
+export interface TemplateStats {
+  niche: string;
+  count: number;
+  best_score: number;
+  total_samples: number;
+}
+
+export interface LearningRefreshLog {
+  id: string;
+  tenant_id: string;
+  patterns_updated: number;
+  patterns_deleted: number;
+  templates_generated: number;
+  triggered_by: string;
+  created_at: string;
+}
+
+export interface CampaignInsightsData {
+  campaigns: CampaignInsight[];
+  refreshHistory: LearningRefreshLog[];
+  templateStats: TemplateStats[];
+}

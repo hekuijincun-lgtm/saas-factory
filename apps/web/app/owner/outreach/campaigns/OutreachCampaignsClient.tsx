@@ -10,12 +10,14 @@ import {
   createCampaignVariant,
   fetchCampaignPreview,
   generateReviewItems,
+  generateCampaignDraft,
 } from "@/app/lib/outreachApi";
 import type {
   OutreachCampaign,
   OutreachCampaignVariant,
   CampaignPreview,
   CampaignStatus,
+  CampaignDraftResult,
 } from "@/src/types/outreach";
 import {
   CAMPAIGN_STATUS_LABELS,
@@ -40,6 +42,15 @@ export default function OutreachCampaignsClient() {
   const [variants, setVariants] = useState<OutreachCampaignVariant[]>([]);
   const [preview, setPreview] = useState<CampaignPreview | null>(null);
   const [generating, setGenerating] = useState(false);
+
+  // AI Draft Generator
+  const [showDraftGen, setShowDraftGen] = useState(false);
+  const [draftNiche, setDraftNiche] = useState("");
+  const [draftArea, setDraftArea] = useState("");
+  const [draftMinScore, setDraftMinScore] = useState("");
+  const [draftTone, setDraftTone] = useState<"" | "formal" | "friendly" | "casual">("");
+  const [draftGenerating, setDraftGenerating] = useState(false);
+  const [draftResult, setDraftResult] = useState<CampaignDraftResult | null>(null);
 
   // Variant form
   const [variantKey, setVariantKey] = useState("A");
@@ -136,6 +147,31 @@ export default function OutreachCampaignsClient() {
     }
   };
 
+  const handleDraftGenerate = async () => {
+    if (!draftNiche.trim()) return;
+    setDraftGenerating(true);
+    setDraftResult(null);
+    try {
+      const result = await generateCampaignDraft(tenantId, {
+        niche: draftNiche.trim(),
+        area: draftArea || undefined,
+        min_score: draftMinScore ? parseInt(draftMinScore, 10) : undefined,
+        tone: (draftTone || undefined) as any,
+        auto_variants: true,
+      });
+      setDraftResult(result);
+      setToast({
+        type: "success",
+        text: `キャンペーン「${result.campaign.name}」を自動生成しました (${result.variants.length}バリアント, ${result.matchingLeads}件の対象リード)`,
+      });
+      load();
+    } catch (err: any) {
+      setToast({ type: "error", text: err.message || "AI生成に失敗しました" });
+    } finally {
+      setDraftGenerating(false);
+    }
+  };
+
   const handleStatusChange = async (id: string, status: CampaignStatus) => {
     try {
       await updateCampaign(tenantId, id, { status });
@@ -167,12 +203,20 @@ export default function OutreachCampaignsClient() {
         {/* Campaign list */}
         <div className="flex items-center justify-between">
           <h2 className="font-semibold text-sm">キャンペーン一覧</h2>
-          <button
-            onClick={() => setShowCreate(true)}
-            className="px-4 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-          >
-            新規作成
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setShowDraftGen(true)}
+              className="px-4 py-1.5 text-sm bg-amber-500 text-white rounded-lg hover:bg-amber-600"
+            >
+              AI自動生成
+            </button>
+            <button
+              onClick={() => setShowCreate(true)}
+              className="px-4 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+            >
+              新規作成
+            </button>
+          </div>
         </div>
 
         {loading ? (
@@ -428,6 +472,113 @@ export default function OutreachCampaignsClient() {
                 >
                   作成
                 </button>
+              </div>
+            </div>
+          </div>
+        )}
+        {/* AI Draft Generator modal */}
+        {showDraftGen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+            <div className="bg-white rounded-xl p-6 max-w-lg w-full shadow-xl space-y-4">
+              <h3 className="text-lg font-semibold">AI キャンペーン自動生成</h3>
+              <p className="text-xs text-gray-500">
+                学習データとニッチテンプレートを活用して、最適なキャンペーンとバリアントを自動生成します。
+              </p>
+              <div className="space-y-3">
+                <div>
+                  <label className="text-xs text-gray-500">ニッチ/カテゴリ *</label>
+                  <input
+                    value={draftNiche}
+                    onChange={(e) => setDraftNiche(e.target.value)}
+                    className="w-full border rounded-lg px-3 py-1.5 text-sm mt-1"
+                    placeholder="例: 美容院、整体院、ネイルサロン"
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs text-gray-500">エリア</label>
+                    <input
+                      value={draftArea}
+                      onChange={(e) => setDraftArea(e.target.value)}
+                      className="w-full border rounded-lg px-3 py-1.5 text-sm mt-1"
+                      placeholder="渋谷"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-500">最低スコア</label>
+                    <input
+                      type="number"
+                      value={draftMinScore}
+                      onChange={(e) => setDraftMinScore(e.target.value)}
+                      className="w-full border rounded-lg px-3 py-1.5 text-sm mt-1"
+                      placeholder="40"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="text-xs text-gray-500">トーン (空欄で学習データから自動選択)</label>
+                  <select
+                    value={draftTone}
+                    onChange={(e) => setDraftTone(e.target.value as any)}
+                    className="w-full border rounded-lg px-3 py-1.5 text-sm mt-1"
+                  >
+                    <option value="">自動選択</option>
+                    <option value="friendly">friendly</option>
+                    <option value="formal">formal</option>
+                    <option value="casual">casual</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Draft result */}
+              {draftResult && (
+                <div className="bg-green-50 border border-green-200 rounded-lg p-3 space-y-2">
+                  <div className="text-sm font-medium text-green-700">生成完了</div>
+                  <div className="text-xs text-gray-600 space-y-1">
+                    <div>キャンペーン: <strong>{draftResult.campaign.name}</strong></div>
+                    <div>バリアント数: {draftResult.variants.length}</div>
+                    <div>対象リード: {draftResult.matchingLeads}件</div>
+                    {draftResult.learningContext.topTone && (
+                      <div>勝ちトーン: {draftResult.learningContext.topTone}</div>
+                    )}
+                    {draftResult.learningContext.topHypothesis && (
+                      <div>勝ち課題: {draftResult.learningContext.topHypothesis}</div>
+                    )}
+                    {draftResult.learningContext.nicheTemplate && (
+                      <div>テンプレート: {draftResult.learningContext.nicheTemplate}</div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              <div className="flex gap-2 justify-end">
+                <button
+                  onClick={() => { setShowDraftGen(false); setDraftResult(null); }}
+                  className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg"
+                >
+                  {draftResult ? "閉じる" : "キャンセル"}
+                </button>
+                {!draftResult && (
+                  <button
+                    onClick={handleDraftGenerate}
+                    disabled={draftGenerating || !draftNiche.trim()}
+                    className="px-4 py-2 text-sm bg-amber-500 text-white rounded-lg hover:bg-amber-600 disabled:opacity-50"
+                  >
+                    {draftGenerating ? "生成中..." : "自動生成"}
+                  </button>
+                )}
+                {draftResult && (
+                  <button
+                    onClick={() => {
+                      loadDetail(draftResult.campaign.id);
+                      setShowDraftGen(false);
+                      setDraftResult(null);
+                    }}
+                    className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                  >
+                    詳細を見る
+                  </button>
+                )}
               </div>
             </div>
           </div>

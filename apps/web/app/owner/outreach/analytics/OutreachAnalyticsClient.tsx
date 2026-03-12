@@ -2,8 +2,8 @@
 
 import { useState, useEffect } from "react";
 import { useOwnerTenantId } from "@/src/lib/useOwnerTenantId";
-import { fetchOutreachAnalytics, fetchLearningAnalytics, fetchCampaignAnalytics, fetchSourceAnalytics, fetchWinningPatterns, refreshWinningPatterns } from "@/app/lib/outreachApi";
-import type { OutreachAnalytics, LearningAnalytics, CampaignAnalytics, SourceAnalytics, WinningPatternsData } from "@/src/types/outreach";
+import { fetchOutreachAnalytics, fetchLearningAnalytics, fetchCampaignAnalytics, fetchSourceAnalytics, fetchWinningPatterns, refreshWinningPatterns, fetchCampaignInsights } from "@/app/lib/outreachApi";
+import type { OutreachAnalytics, LearningAnalytics, CampaignAnalytics, SourceAnalytics, WinningPatternsData, CampaignInsightsData } from "@/src/types/outreach";
 import { SOURCE_TYPE_LABELS, PATTERN_TYPE_LABELS } from "@/src/types/outreach";
 import { PIPELINE_LABELS } from "@/src/types/outreach";
 
@@ -32,6 +32,7 @@ export default function OutreachAnalyticsClient() {
   const [campaignAnalytics, setCampaignAnalytics] = useState<CampaignAnalytics | null>(null);
   const [sourceAnalytics, setSourceAnalytics] = useState<SourceAnalytics | null>(null);
   const [winningPatterns, setWinningPatterns] = useState<WinningPatternsData | null>(null);
+  const [campaignInsights, setCampaignInsights] = useState<CampaignInsightsData | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -45,13 +46,15 @@ export default function OutreachAnalyticsClient() {
       fetchCampaignAnalytics(tenantId).catch(() => null),
       fetchSourceAnalytics(tenantId).catch(() => null),
       fetchWinningPatterns(tenantId).catch(() => null),
+      fetchCampaignInsights(tenantId).catch(() => null),
     ])
-      .then(([a, l, c, s, w]) => {
+      .then(([a, l, c, s, w, ci]) => {
         setAnalytics(a);
         setLearning(l);
         setCampaignAnalytics(c);
         setSourceAnalytics(s);
         setWinningPatterns(w);
+        setCampaignInsights(ci);
       })
       .catch((err) => setError(err.message || "読み込みに失敗しました"))
       .finally(() => setLoading(false));
@@ -310,6 +313,79 @@ export default function OutreachAnalyticsClient() {
                         {SOURCE_TYPE_LABELS[r.source_type] ?? r.source_type}: {r.runs}回検索 / {r.total_results}件取得 / {r.total_imported}件取込
                       </span>
                     ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Phase 7: Campaign Insights */}
+            {campaignInsights && campaignInsights.campaigns.length > 0 && (
+              <div className="space-y-3">
+                <h3 className="text-sm font-medium text-gray-700">キャンペーンインサイト</h3>
+
+                <div className="overflow-x-auto border rounded-xl">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-gray-50 text-left text-xs text-gray-500 border-b">
+                        <th className="py-2 px-3">キャンペーン</th>
+                        <th className="py-2 px-3">ニッチ</th>
+                        <th className="py-2 px-3 text-right">送信</th>
+                        <th className="py-2 px-3 text-right">返信率</th>
+                        <th className="py-2 px-3 text-right">商談率</th>
+                        <th className="py-2 px-3">ステータス</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {campaignInsights.campaigns.map((c) => (
+                        <tr key={c.campaign_id} className="border-b last:border-0">
+                          <td className="py-2 px-3 font-medium">{c.campaign_name}</td>
+                          <td className="py-2 px-3 text-xs text-gray-500">{c.niche ?? "-"}</td>
+                          <td className="py-2 px-3 text-right">{c.total_sent}</td>
+                          <td className="py-2 px-3 text-right font-medium">
+                            {c.reply_rate}%
+                            {c.total_sent > 0 && <span className="text-[10px] text-gray-400 ml-1">({c.total_replied}/{c.total_sent})</span>}
+                          </td>
+                          <td className="py-2 px-3 text-right">{c.meeting_rate}%</td>
+                          <td className="py-2 px-3">
+                            <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100">{c.status}</span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Niche template stats */}
+                {campaignInsights.templateStats.length > 0 && (
+                  <div>
+                    <h4 className="text-xs font-medium text-gray-600 mb-2">ニッチテンプレート</h4>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                      {campaignInsights.templateStats.map((t) => (
+                        <div key={t.niche} className="bg-amber-50 border border-amber-200 rounded-lg p-2">
+                          <div className="text-xs font-medium">{t.niche}</div>
+                          <div className="text-[10px] text-gray-500">
+                            {t.count}テンプレート / スコア{t.best_score} / n={t.total_samples}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Learning refresh history */}
+                {campaignInsights.refreshHistory.length > 0 && (
+                  <div>
+                    <h4 className="text-xs font-medium text-gray-600 mb-2">学習更新履歴</h4>
+                    <div className="space-y-1">
+                      {campaignInsights.refreshHistory.slice(0, 5).map((r) => (
+                        <div key={r.id} className="flex items-center gap-3 text-xs text-gray-500">
+                          <span className="text-gray-400">{new Date(r.created_at).toLocaleString("ja-JP")}</span>
+                          <span>{r.triggered_by}</span>
+                          <span>パターン: {r.patterns_updated}件</span>
+                          <span>テンプレート: {r.templates_generated}件</span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 )}
               </div>

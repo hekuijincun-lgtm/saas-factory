@@ -24,8 +24,9 @@ import {
 import { classifyReply } from "./reply-classifier";
 import { parseCsv, buildPreview, buildMergeSets, normalizeDomain as importNormalizeDomain } from "./importer";
 import { resolveSourceProvider } from "./source-providers/provider-factory";
-import { refreshLearningPatterns, getLearningContext } from "./learning";
+import { refreshLearningPatterns, getLearningContext, generateNicheTemplates } from "./learning";
 import type { LearningPattern } from "./learning";
+import { generateCampaignDraft } from "./campaign-generator";
 import type { CandidateResult } from "./source-providers/types";
 import type { ExistingLead } from "./importer";
 import type {
@@ -47,6 +48,8 @@ import type {
   OutreachSourceRun,
   OutreachSourceCandidate,
   SourceAnalytics,
+  CampaignDraftInput,
+  OutreachNicheTemplate,
 } from "./types";
 import { DEFAULT_OUTREACH_SETTINGS, REPLY_CLASSIFICATION_LABELS, CLASSIFY_CONFIDENCE_THRESHOLD } from "./types";
 import { logAudit } from "../lineConfig";
@@ -2555,8 +2558,173 @@ export function createOutreachRoutes(getTenantId: GetTenantId) {
     const tenantId = getTenantId(c);
     const db = c.env.DB;
     const result = await refreshLearningPatterns(db, tenantId, uid, now);
-    await logAudit(db, tenantId, "system", "outreach.refresh_patterns", result);
+    const templatesGenerated = await generateNicheTemplates(db, tenantId, uid, now);
+    await logAudit(db, tenantId, "system", "outreach.refresh_patterns", { ...result, templatesGenerated });
+    return c.json({ ok: true, tenantId, data: { ...result, templatesGenerated } });
+  });
+
+  // ── Phase 7: Campaign Draft Generator ──────────────────────────────────
+
+  // POST /campaigns/generate-draft — Auto-generate campaign with optimized variants
+  app.post("/campaigns/generate-draft", async (c) => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    const body = await c.req.json<CampaignDraftInput>();
+
+    if (!body.niche) {
+      return c.json({ ok: false, error: "niche is required" }, 400);
+    }
+
+    const result = await generateCampaignDraft(db, tenantId, body, uid, now);
+    await logAudit(db, tenantId, "system", "outreach.campaign_draft_generated", {
+      campaignId: result.campaign.id,
+      variants: result.variants.length,
+      matchingLeads: result.matchingLeads,
+    });
+
     return c.json({ ok: true, tenantId, data: result });
+  });
+
+  // ── Phase 7: Niche Templates ───────────────────────────────────────────
+
+  // GET /niche-templates — List niche templates
+  app.get("/niche-templates", async (c) => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    const niche = c.req.query("niche");
+
+    let query = "SELECT * FROM outreach_niche_templates WHERE tenant_id = ?1";
+    const binds: any[] = [tenantId];
+
+    if (niche) {
+      query += " AND niche = ?2";
+      binds.push(niche);
+    }
+
+    query += " ORDER BY win_score DESC LIMIT 50";
+
+    const rows = await db.prepare(query).bind(...binds).all<OutreachNicheTemplate>();
+    return c.json({ ok: true, tenantId, data: rows.results ?? [] });
+  });
+
+  // POST /niche-templates — Create/update a niche template manually
+  app.post("/niche-templates", async (c) => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    const body = await c.req.json<{
+      niche: string;
+      name: string;
+      tone?: string;
+      subject_template?: string;
+      opener_template?: string;
+      body_template?: string;
+      cta_template?: string;
+      hypothesis_codes?: string;
+    }>();
+
+    if (!body.niche || !body.name) {
+      return c.json({ ok: false, error: "niche and name are required" }, 400);
+    }
+
+    const id = uid();
+    const ts = now();
+    await db
+      .prepare(
+        `INSERT INTO outreach_niche_templates
+         (id, tenant_id, niche, name, tone, subject_template, opener_template, body_template, cta_template,
+          hypothesis_codes, win_score, sample_size, is_auto_generated, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 0, 0, 0, ?11, ?12)`
+      )
+      .bind(
+        id, tenantId, body.niche, body.name,
+        body.tone ?? "friendly",
+        body.subject_template ?? null,
+        body.opener_template ?? null,
+        body.body_template ?? null,
+        body.cta_template ?? null,
+        body.hypothesis_codes ?? null,
+        ts, ts
+      )
+      .run();
+
+    const created = await db
+      .prepare("SELECT * FROM outreach_niche_templates WHERE id = ?1")
+      .bind(id)
+      .first<OutreachNicheTemplate>();
+
+    return c.json({ ok: true, tenantId, data: created });
+  });
+
+  // GET /analytics/campaign-insights — Campaign performance comparison
+  app.get("/analytics/campaign-insights", async (c) => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+
+    // Campaign-level aggregation with variant performance
+    const insights = await db
+      .prepare(
+        `SELECT c.id as campaign_id, c.name as campaign_name, c.niche, c.area, c.status,
+           COUNT(DISTINCT m.lead_id) as total_leads,
+           SUM(CASE WHEN m.status = 'sent' THEN 1 ELSE 0 END) as total_sent,
+           SUM(CASE WHEN l.pipeline_stage IN ('replied','meeting','customer') THEN 1 ELSE 0 END) as total_replied,
+           SUM(CASE WHEN l.pipeline_stage IN ('meeting','customer') THEN 1 ELSE 0 END) as total_meetings,
+           c.created_at
+         FROM outreach_campaigns c
+         LEFT JOIN lead_message_drafts m ON m.campaign_id = c.id AND m.tenant_id = c.tenant_id
+         LEFT JOIN sales_leads l ON m.lead_id = l.id AND m.tenant_id = l.tenant_id
+         WHERE c.tenant_id = ?1
+         GROUP BY c.id
+         ORDER BY c.created_at DESC
+         LIMIT 20`
+      )
+      .bind(tenantId)
+      .all<{
+        campaign_id: string;
+        campaign_name: string;
+        niche: string | null;
+        area: string | null;
+        status: string;
+        total_leads: number;
+        total_sent: number;
+        total_replied: number;
+        total_meetings: number;
+        created_at: string;
+      }>();
+
+    // Learning refresh history
+    const refreshHistory = await db
+      .prepare(
+        `SELECT * FROM outreach_learning_refresh_log
+         WHERE tenant_id = ?1
+         ORDER BY created_at DESC LIMIT 10`
+      )
+      .bind(tenantId)
+      .all();
+
+    // Niche template stats
+    const templateStats = await db
+      .prepare(
+        `SELECT niche, COUNT(*) as count, MAX(win_score) as best_score, SUM(sample_size) as total_samples
+         FROM outreach_niche_templates
+         WHERE tenant_id = ?1
+         GROUP BY niche`
+      )
+      .bind(tenantId)
+      .all<{ niche: string; count: number; best_score: number; total_samples: number }>();
+
+    return c.json({
+      ok: true,
+      tenantId,
+      data: {
+        campaigns: (insights.results ?? []).map((r) => ({
+          ...r,
+          reply_rate: r.total_sent > 0 ? Math.round((r.total_replied / r.total_sent) * 100) : 0,
+          meeting_rate: r.total_sent > 0 ? Math.round((r.total_meetings / r.total_sent) * 100) : 0,
+        })),
+        refreshHistory: refreshHistory.results ?? [],
+        templateStats: templateStats.results ?? [],
+      },
+    });
   });
 
   return app;

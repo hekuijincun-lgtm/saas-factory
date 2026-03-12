@@ -32,6 +32,10 @@ import type {
   SourceImportResult,
   SourceAnalytics,
   WinningPatternsData,
+  CampaignDraftInput,
+  CampaignDraftResult,
+  OutreachNicheTemplate,
+  CampaignInsightsData,
 } from "@/src/types/outreach";
 
 // ── Leads ──────────────────────────────────────────────────────────────────
@@ -583,10 +587,68 @@ export async function fetchWinningPatterns(
 
 export async function refreshWinningPatterns(
   tenantId: string
-): Promise<{ updated: number; deleted: number }> {
-  const res = await apiPost<{ ok: boolean; data: { updated: number; deleted: number } }>(
+): Promise<{ updated: number; deleted: number; templatesGenerated?: number }> {
+  const res = await apiPost<{ ok: boolean; data: { updated: number; deleted: number; templatesGenerated?: number } }>(
     "/admin/outreach/analytics/refresh-patterns",
     {},
+    { tenantId }
+  );
+  return res.data;
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// Phase 7: Campaign Draft Generator, Niche Templates, Campaign Insights
+// ══════════════════════════════════════════════════════════════════════════
+
+export async function generateCampaignDraft(
+  tenantId: string,
+  input: CampaignDraftInput
+): Promise<CampaignDraftResult> {
+  const res = await apiPost<{ ok: boolean; data: CampaignDraftResult }>(
+    "/admin/outreach/campaigns/generate-draft",
+    input,
+    { tenantId, timeout: 30000 }
+  );
+  return res.data;
+}
+
+export async function fetchNicheTemplates(
+  tenantId: string,
+  niche?: string
+): Promise<OutreachNicheTemplate[]> {
+  const qs = niche ? `?niche=${encodeURIComponent(niche)}` : "";
+  const res = await apiGet<{ ok: boolean; data: OutreachNicheTemplate[] }>(
+    `/admin/outreach/niche-templates${qs}`,
+    { tenantId }
+  );
+  return res.data;
+}
+
+export async function createNicheTemplate(
+  tenantId: string,
+  input: {
+    niche: string;
+    name: string;
+    tone?: string;
+    subject_template?: string;
+    opener_template?: string;
+    body_template?: string;
+    cta_template?: string;
+  }
+): Promise<OutreachNicheTemplate> {
+  const res = await apiPost<{ ok: boolean; data: OutreachNicheTemplate }>(
+    "/admin/outreach/niche-templates",
+    input,
+    { tenantId }
+  );
+  return res.data;
+}
+
+export async function fetchCampaignInsights(
+  tenantId: string
+): Promise<CampaignInsightsData> {
+  const res = await apiGet<{ ok: boolean; data: CampaignInsightsData }>(
+    "/admin/outreach/analytics/campaign-insights",
     { tenantId }
   );
   return res.data;

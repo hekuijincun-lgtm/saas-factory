@@ -441,6 +441,55 @@ export interface WinningPatternsData {
   patterns: OutreachLearningPattern[];
 }
 
+// ── Phase 7 types ─────────────────────────────────────────────────────────
+
+export interface OutreachNicheTemplate {
+  id: string;
+  tenant_id: string;
+  niche: string;
+  name: string;
+  tone: string;
+  subject_template: string | null;
+  opener_template: string | null;
+  body_template: string | null;
+  cta_template: string | null;
+  hypothesis_codes: string | null;
+  win_score: number;
+  sample_size: number;
+  is_auto_generated: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CampaignDraftInput {
+  niche: string;
+  area?: string;
+  min_score?: number;
+  tone?: "formal" | "friendly" | "casual";
+  auto_variants?: boolean;
+}
+
+export interface CampaignDraftResult {
+  campaign: OutreachCampaign;
+  variants: OutreachCampaignVariant[];
+  matchingLeads: number;
+  learningContext: {
+    topTone: string | null;
+    topHypothesis: string | null;
+    nicheTemplate: string | null;
+  };
+}
+
+export interface LearningRefreshLog {
+  id: string;
+  tenant_id: string;
+  patterns_updated: number;
+  patterns_deleted: number;
+  templates_generated: number;
+  triggered_by: string;
+  created_at: string;
+}
+
 /** Analytics summary */
 export interface OutreachAnalytics {
   totalLeads: number;

@@ -7416,6 +7416,27 @@ async function scheduled(_event: any, env: Env, _ctx: any): Promise<void> {
     console.error(`[${PUSHQ_STAMP}] list error:`, String(pushqErr?.message ?? pushqErr));
   }
 
+  // ── Phase 7: Learning Auto Refresh (every 24h per tenant) ──────────────
+  if (db) {
+    const LEARN_STAMP = "LEARNING_AUTO_REFRESH_V1";
+    try {
+      // Only run at JST midnight-ish (hour 0-1) to minimize cron load
+      const learnNowJst = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Tokyo" }));
+      const learnHour = learnNowJst.getHours();
+      if (learnHour >= 0 && learnHour <= 1) {
+        const { autoRefreshAllTenants } = await import("./outreach/learning");
+        const learnUid = () => `ol_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+        const learnNow = () => new Date().toISOString();
+        const result = await autoRefreshAllTenants(db, learnUid, learnNow);
+        if (result.tenantsProcessed > 0) {
+          console.log(`[${LEARN_STAMP}] Processed ${result.tenantsProcessed} tenants, ${result.totalUpdated} patterns, ${result.totalTemplates} templates`);
+        }
+      }
+    } catch (learnErr: any) {
+      console.error(`[${LEARN_STAMP}] error:`, String(learnErr?.message ?? learnErr));
+    }
+  }
+
   // ── LINE 1日前リマインド ────────────────────────────────────────────────────
   if (db) {
     const REM_STAMP = "LINE_REMINDER_V1";
