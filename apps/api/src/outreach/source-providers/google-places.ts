@@ -200,8 +200,14 @@ export class GooglePlacesProvider implements SourceProvider {
       if (!res.ok) {
         const errText = await res.text().catch(() => "");
         const status = res.status;
+        console.error(`[GooglePlaces] API error: status=${status}, body=${errText.slice(0, 500)}`);
         if (status === 403 || status === 401) {
-          throw new Error("Google API キーが無効です。設定を確認してください。");
+          // Parse Google error for specific reason
+          const isDisabled = errText.includes("SERVICE_DISABLED") || errText.includes("has not been used");
+          if (isDisabled) {
+            throw new Error("Google Places API (New) が有効になっていません。Google Cloud Console で Places API (New) を有効にしてください。");
+          }
+          throw new Error(`Google API 認証エラー (${status}): APIキーまたは権限を確認してください。`);
         }
         if (status === 429) {
           throw new Error("Google API のレート制限に達しました。しばらく待ってから再試行してください。");

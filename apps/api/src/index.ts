@@ -1203,6 +1203,7 @@ app.get('/slots__legacy', async (c) => {
   }
 });app.get("/ping", (c) => c.text("pong"));
 
+
 /** =========================
  * GET /media/menu/* — R2 から画像を公開配信（認証不要）
  * path 例: /media/menu/menu-images/default/menu_xxx/1234567890-abc123.jpg
