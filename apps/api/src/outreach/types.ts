@@ -572,6 +572,77 @@ export interface BatchJobResult {
   };
 }
 
+// ── Phase 11: Auto Outreach Scheduler types ─────────────────────────────
+
+export type ScheduleFrequency = "daily" | "weekdays" | "weekly";
+export type ScheduleMode = "review_only" | "approved_send_existing_only";
+export type ScheduleRunStatus = "pending" | "running" | "completed" | "failed" | "cancelled";
+
+export interface OutreachSchedule {
+  id: string;
+  tenant_id: string;
+  name: string;
+  niche: string;
+  areas_json: string;
+  source_type: string;
+  enabled: number;
+  frequency: ScheduleFrequency;
+  run_hour: number;
+  run_minute: number;
+  max_target_count: number;
+  max_per_area: number;
+  quality_threshold: number;
+  auto_accept_enabled: number;
+  auto_import_enabled: number;
+  auto_analyze_enabled: number;
+  auto_score_enabled: number;
+  auto_draft_enabled: number;
+  mode: ScheduleMode;
+  last_run_at: string | null;
+  next_run_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface OutreachScheduleRun {
+  id: string;
+  tenant_id: string;
+  schedule_id: string;
+  status: ScheduleRunStatus;
+  searched_count: number;
+  accepted_count: number;
+  imported_count: number;
+  analyzed_count: number;
+  scored_count: number;
+  drafted_count: number;
+  queued_send_count: number;
+  error_count: number;
+  summary_json: string | null;
+  error_message: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  created_at: string;
+}
+
+export interface ScheduleCreateInput {
+  name?: string;
+  niche: string;
+  areas: string[];
+  source_type?: string;
+  frequency?: ScheduleFrequency;
+  run_hour?: number;
+  run_minute?: number;
+  max_target_count?: number;
+  max_per_area?: number;
+  quality_threshold?: number;
+  auto_accept_enabled?: boolean;
+  auto_import_enabled?: boolean;
+  auto_analyze_enabled?: boolean;
+  auto_score_enabled?: boolean;
+  auto_draft_enabled?: boolean;
+  mode?: ScheduleMode;
+}
+
 /** Analytics summary */
 export interface OutreachAnalytics {
   totalLeads: number;

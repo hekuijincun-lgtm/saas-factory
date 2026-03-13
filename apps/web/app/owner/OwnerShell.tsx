@@ -18,6 +18,7 @@ import {
   Megaphone,
   Settings2,
   Zap,
+  Clock,
 } from "lucide-react";
 
 function Sidebar({
@@ -41,6 +42,7 @@ function Sidebar({
     { href: "/owner/outreach/import", label: "CSVインポート", icon: Upload },
     { href: "/owner/outreach/campaigns", label: "キャンペーン", icon: Megaphone },
     { href: "/owner/outreach/batches", label: "自動バッチ", icon: Zap },
+    { href: "/owner/outreach/automation", label: "スケジューラ", icon: Clock },
     { href: "/owner/outreach/settings", label: "配信設定", icon: Settings2 },
   ];
 

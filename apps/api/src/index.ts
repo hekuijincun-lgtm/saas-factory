@@ -7459,6 +7459,25 @@ async function scheduled(_event: any, env: Env, _ctx: any): Promise<void> {
     }
   }
 
+  // ── Phase 11: Auto Outreach Scheduler (runs at configured times) ────────
+  if (db) {
+    const SCHED_STAMP = "OUTREACH_SCHEDULER_V1";
+    try {
+      const { processScheduledJobs } = await import("./outreach/automation");
+      const schedUid = () => `ol_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+      const schedNow = () => new Date().toISOString();
+      const schedResult = await processScheduledJobs(db, kv, schedUid, schedNow, {
+        GOOGLE_MAPS_API_KEY: (env as any).GOOGLE_MAPS_API_KEY,
+        OPENAI_API_KEY: (env as any).OPENAI_API_KEY,
+      });
+      if (schedResult.processed > 0 || schedResult.errors > 0) {
+        console.log(`[${SCHED_STAMP}] processed=${schedResult.processed} errors=${schedResult.errors}`);
+      }
+    } catch (schedErr: any) {
+      console.error(`[${SCHED_STAMP}] error:`, String(schedErr?.message ?? schedErr));
+    }
+  }
+
   // ── LINE 1日前リマインド ────────────────────────────────────────────────────
   if (db) {
     const REM_STAMP = "LINE_REMINDER_V1";

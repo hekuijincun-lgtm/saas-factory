@@ -50,6 +50,7 @@ import {
 import type { LearningPattern } from "./learning";
 import { generateCampaignDraft } from "./campaign-generator";
 import { createBatchJob, runBatchJob } from "./batches";
+import { createSchedule, updateSchedule, runScheduleNow } from "./automation";
 import type { CandidateResult } from "./source-providers/types";
 import type { ExistingLead } from "./importer";
 import type {
@@ -76,6 +77,9 @@ import type {
   OutreachBatchJob,
   OutreachBatchJobItem,
   BatchJobCreateInput,
+  OutreachSchedule,
+  OutreachScheduleRun,
+  ScheduleCreateInput,
 } from "./types";
 import { DEFAULT_OUTREACH_SETTINGS, REPLY_CLASSIFICATION_LABELS, CLASSIFY_CONFIDENCE_THRESHOLD } from "./types";
 import { logAudit } from "../lineConfig";
@@ -3253,6 +3257,123 @@ export function createOutreachRoutes(getTenantId: GetTenantId) {
       .run();
 
     return c.json({ ok: true, tenantId });
+  });
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // Phase 11: Auto Outreach Scheduler
+  // ══════════════════════════════════════════════════════════════════════════
+
+  // GET /automation — List schedules
+  app.get("/automation", async (c) => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    const rows = await db
+      .prepare("SELECT * FROM outreach_schedules WHERE tenant_id = ?1 ORDER BY created_at DESC LIMIT 50")
+      .bind(tenantId)
+      .all<OutreachSchedule>();
+    return c.json({ ok: true, tenantId, data: rows.results ?? [] });
+  });
+
+  // POST /automation — Create schedule
+  app.post("/automation", async (c) => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    const body = await c.req.json<ScheduleCreateInput>();
+
+    if (!body.niche?.trim()) {
+      return c.json({ ok: false, error: "niche は必須です" }, 400);
+    }
+    if (!body.areas?.length) {
+      return c.json({ ok: false, error: "areas は1件以上必要です" }, 400);
+    }
+
+    try {
+      const schedule = await createSchedule(db, tenantId, body, uid, now);
+      await logAudit(db, tenantId, "system", "outreach.schedule_created", { scheduleId: schedule.id });
+      return c.json({ ok: true, tenantId, data: schedule });
+    } catch (err: any) {
+      return c.json({ ok: false, error: err.message }, 400);
+    }
+  });
+
+  // GET /automation/:id — Get schedule detail
+  app.get("/automation/:id", async (c) => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    const id = c.req.param("id");
+
+    const schedule = await db
+      .prepare("SELECT * FROM outreach_schedules WHERE id = ?1 AND tenant_id = ?2")
+      .bind(id, tenantId)
+      .first<OutreachSchedule>();
+    if (!schedule) return c.json({ ok: false, error: "Schedule not found" }, 404);
+
+    return c.json({ ok: true, tenantId, data: schedule });
+  });
+
+  // PATCH /automation/:id — Update schedule
+  app.patch("/automation/:id", async (c) => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    const id = c.req.param("id");
+    const body = await c.req.json<Partial<ScheduleCreateInput> & { enabled?: boolean }>();
+
+    const updated = await updateSchedule(db, tenantId, id, body, now);
+    if (!updated) return c.json({ ok: false, error: "Schedule not found" }, 404);
+
+    await logAudit(db, tenantId, "system", "outreach.schedule_updated", { scheduleId: id });
+    return c.json({ ok: true, tenantId, data: updated });
+  });
+
+  // POST /automation/:id/enable — Enable schedule
+  app.post("/automation/:id/enable", async (c) => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    const id = c.req.param("id");
+    const updated = await updateSchedule(db, tenantId, id, { enabled: true }, now);
+    if (!updated) return c.json({ ok: false, error: "Schedule not found" }, 404);
+    return c.json({ ok: true, tenantId, data: updated });
+  });
+
+  // POST /automation/:id/disable — Disable schedule
+  app.post("/automation/:id/disable", async (c) => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    const id = c.req.param("id");
+    const updated = await updateSchedule(db, tenantId, id, { enabled: false }, now);
+    if (!updated) return c.json({ ok: false, error: "Schedule not found" }, 404);
+    return c.json({ ok: true, tenantId, data: updated });
+  });
+
+  // POST /automation/:id/run-now — Manual run
+  app.post("/automation/:id/run-now", async (c) => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    const kv = c.env.SAAS_FACTORY;
+    const id = c.req.param("id");
+
+    try {
+      const run = await runScheduleNow(db, kv, tenantId, id, uid, now, {
+        GOOGLE_MAPS_API_KEY: c.env.GOOGLE_MAPS_API_KEY,
+        OPENAI_API_KEY: c.env.OPENAI_API_KEY,
+      });
+      await logAudit(db, tenantId, "system", "outreach.schedule_run_now", { scheduleId: id, runId: run.id });
+      return c.json({ ok: true, tenantId, data: run });
+    } catch (err: any) {
+      return c.json({ ok: false, error: err.message || "Run failed" }, 500);
+    }
+  });
+
+  // GET /automation/:id/runs — List run history
+  app.get("/automation/:id/runs", async (c) => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    const scheduleId = c.req.param("id");
+    const rows = await db
+      .prepare("SELECT * FROM outreach_schedule_runs WHERE schedule_id = ?1 AND tenant_id = ?2 ORDER BY created_at DESC LIMIT 30")
+      .bind(scheduleId, tenantId)
+      .all<OutreachScheduleRun>();
+    return c.json({ ok: true, tenantId, data: rows.results ?? [] });
   });
 
   return app;

@@ -51,6 +51,9 @@ import type {
   OutreachBatchJobItem,
   BatchJobCreateInput,
   BatchJobResult,
+  OutreachSchedule,
+  OutreachScheduleRun,
+  ScheduleCreateInput,
 } from "@/src/types/outreach";
 
 // ── Leads ──────────────────────────────────────────────────────────────────
@@ -916,4 +919,87 @@ export async function cancelBatchJob(
     {},
     { tenantId }
   );
+}
+
+// ── Phase 11: Auto Outreach Scheduler ──────────────────────────────────
+
+export async function fetchSchedules(
+  tenantId: string
+): Promise<OutreachSchedule[]> {
+  const res = await apiGet<{ ok: boolean; data: OutreachSchedule[] }>(
+    `/admin/outreach/automation`,
+    { tenantId }
+  );
+  return res.data;
+}
+
+export async function createSchedule(
+  tenantId: string,
+  input: ScheduleCreateInput
+): Promise<OutreachSchedule> {
+  const res = await apiPost<{ ok: boolean; data: OutreachSchedule }>(
+    `/admin/outreach/automation`,
+    input,
+    { tenantId }
+  );
+  return res.data;
+}
+
+export async function updateSchedule(
+  tenantId: string,
+  scheduleId: string,
+  updates: Partial<ScheduleCreateInput> & { enabled?: boolean }
+): Promise<OutreachSchedule> {
+  const res = await apiRequest<{ ok: boolean; data: OutreachSchedule }>(
+    `/admin/outreach/automation/${scheduleId}`,
+    { method: "PATCH", body: JSON.stringify(updates), tenantId }
+  );
+  return res.data;
+}
+
+export async function enableSchedule(
+  tenantId: string,
+  scheduleId: string
+): Promise<OutreachSchedule> {
+  const res = await apiPost<{ ok: boolean; data: OutreachSchedule }>(
+    `/admin/outreach/automation/${scheduleId}/enable`,
+    {},
+    { tenantId }
+  );
+  return res.data;
+}
+
+export async function disableSchedule(
+  tenantId: string,
+  scheduleId: string
+): Promise<OutreachSchedule> {
+  const res = await apiPost<{ ok: boolean; data: OutreachSchedule }>(
+    `/admin/outreach/automation/${scheduleId}/disable`,
+    {},
+    { tenantId }
+  );
+  return res.data;
+}
+
+export async function runScheduleNow(
+  tenantId: string,
+  scheduleId: string
+): Promise<OutreachScheduleRun> {
+  const res = await apiPost<{ ok: boolean; data: OutreachScheduleRun }>(
+    `/admin/outreach/automation/${scheduleId}/run-now`,
+    {},
+    { tenantId }
+  );
+  return res.data;
+}
+
+export async function fetchScheduleRuns(
+  tenantId: string,
+  scheduleId: string
+): Promise<OutreachScheduleRun[]> {
+  const res = await apiGet<{ ok: boolean; data: OutreachScheduleRun[] }>(
+    `/admin/outreach/automation/${scheduleId}/runs`,
+    { tenantId }
+  );
+  return res.data;
 }
