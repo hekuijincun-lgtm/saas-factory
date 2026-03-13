@@ -80,6 +80,7 @@ type Bindings = {
   DB: D1Database;
   SAAS_FACTORY: KVNamespace;
   OPENAI_API_KEY?: string;
+  GOOGLE_MAPS_API_KEY?: string;
 };
 
 // Re-use getTenantId from parent — passed via factory function
@@ -2205,7 +2206,9 @@ export function createOutreachRoutes(getTenantId: GetTenantId) {
     // 2. Execute provider
     let candidates: CandidateResult[];
     try {
-      const provider = resolveSourceProvider(sourceType);
+      const provider = resolveSourceProvider(sourceType, {
+        GOOGLE_MAPS_API_KEY: c.env.GOOGLE_MAPS_API_KEY,
+      });
       const result = await provider.searchCandidates({
         query: body.query ?? "",
         location: body.location,
