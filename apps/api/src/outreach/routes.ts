@@ -59,6 +59,13 @@ import {
   acceptRecommendation,
   dismissRecommendation,
 } from "./copilot";
+import {
+  executeRecommendationAction,
+  getActionLogs,
+  getAutoActionSettings,
+  saveAutoActionSettings,
+  processAutoActions,
+} from "./action-engine";
 import type { CopilotRecommendation } from "./copilot";
 import type { CandidateResult } from "./source-providers/types";
 import type { ExistingLead } from "./importer";
@@ -3479,6 +3486,59 @@ export function createOutreachRoutes(getTenantId: GetTenantId) {
       .bind(tenantId)
       .all();
     return c.json({ ok: true, tenantId, data: rows.results ?? [] });
+  });
+
+  // ── Phase 13: Auto Action Engine ──────────────────────────────────────
+
+  // POST /copilot/recommendations/:id/execute — Execute a recommendation action
+  app.post("/copilot/recommendations/:id/execute", async (c) => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    const kv = c.env.SAAS_FACTORY;
+    const recId = c.req.param("id");
+    const result = await executeRecommendationAction(db, kv, tenantId, recId, "user", uid, now, {
+      GOOGLE_MAPS_API_KEY: c.env.GOOGLE_MAPS_API_KEY,
+      OPENAI_API_KEY: c.env.OPENAI_API_KEY,
+    });
+    return c.json({ ok: result.ok, tenantId, result: result.result, error: result.error });
+  });
+
+  // GET /action-logs — Fetch action audit logs
+  app.get("/action-logs", async (c) => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    const limit = Number(c.req.query("limit") || "50");
+    const logs = await getActionLogs(db, tenantId, limit);
+    return c.json({ ok: true, tenantId, data: logs });
+  });
+
+  // GET /auto-execution/settings — Get auto execution settings
+  app.get("/auto-execution/settings", async (c) => {
+    const tenantId = getTenantId(c);
+    const kv = c.env.SAAS_FACTORY;
+    const settings = await getAutoActionSettings(kv, tenantId);
+    return c.json({ ok: true, tenantId, data: settings });
+  });
+
+  // PUT /auto-execution/settings — Update auto execution settings
+  app.put("/auto-execution/settings", async (c) => {
+    const tenantId = getTenantId(c);
+    const kv = c.env.SAAS_FACTORY;
+    const body = await c.req.json();
+    const settings = await saveAutoActionSettings(kv, tenantId, body);
+    return c.json({ ok: true, tenantId, data: settings });
+  });
+
+  // POST /auto-execution/run — Manually trigger auto execution
+  app.post("/auto-execution/run", async (c) => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    const kv = c.env.SAAS_FACTORY;
+    const result = await processAutoActions(db, kv, uid, now, {
+      GOOGLE_MAPS_API_KEY: c.env.GOOGLE_MAPS_API_KEY,
+      OPENAI_API_KEY: c.env.OPENAI_API_KEY,
+    });
+    return c.json({ ok: true, tenantId, data: result });
   });
 
   return app;

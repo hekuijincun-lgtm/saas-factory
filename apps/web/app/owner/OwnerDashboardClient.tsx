@@ -16,9 +16,10 @@ import {
   ArrowRight,
   CheckCircle2,
   XCircle,
+  Zap,
 } from "lucide-react";
-import type { CopilotRecommendation, CopilotOverview } from "@/src/types/outreach";
-import { RECOMMENDATION_PRIORITY_COLORS, RECOMMENDATION_TYPE_LABELS } from "@/src/types/outreach";
+import type { CopilotRecommendation, CopilotOverview, ActionExecutionStatus } from "@/src/types/outreach";
+import { RECOMMENDATION_PRIORITY_COLORS, RECOMMENDATION_TYPE_LABELS, EXECUTION_STATUS_LABELS, EXECUTION_STATUS_COLORS } from "@/src/types/outreach";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -180,6 +181,26 @@ export default function OwnerDashboardClient() {
       showToast(action === "accept" ? "推奨を承認しました" : "推奨を非表示にしました");
     } catch {
       showToast("操作に失敗しました");
+    }
+  };
+
+  const handleExecuteAction = async (recId: string) => {
+    try {
+      const res = await fetch(`/api/proxy/admin/outreach/copilot/recommendations/${recId}/execute?tenantId=default`, { method: "POST" });
+      const data = (await res.json()) as { ok: boolean; error?: string };
+      if (data.ok) {
+        setCopilot((prev) => prev ? {
+          ...prev,
+          recommendations: prev.recommendations.map((r) =>
+            r.id === recId ? { ...r, execution_status: "executed" as const, status: "completed" as const } : r
+          ),
+        } : null);
+        showToast("アクションを実行しました");
+      } else {
+        showToast(data.error || "実行に失敗しました");
+      }
+    } catch {
+      showToast("実行に失敗しました");
     }
   };
 
@@ -395,47 +416,64 @@ export default function OwnerDashboardClient() {
                     <p className="text-xs text-gray-500 mt-0.5">{rec.summary}</p>
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
-                    {rec.recommendation_type === "run_schedule_now" && (
-                      <a
-                        href="/owner/outreach/automation"
-                        className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
-                        title="スケジューラへ"
-                      >
-                        <ArrowRight className="w-4 h-4" />
-                      </a>
+                    {rec.execution_status === "executed" ? (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-green-100 text-green-700">
+                        実行済
+                      </span>
+                    ) : (
+                      <>
+                        {rec.action_type && (
+                          <button
+                            onClick={() => handleExecuteAction(rec.id)}
+                            className="p-1.5 text-amber-600 hover:bg-amber-50 rounded-lg transition-colors"
+                            title="アクション実行"
+                          >
+                            <Zap className="w-4 h-4" />
+                          </button>
+                        )}
+                        {rec.recommendation_type === "run_schedule_now" && (
+                          <a
+                            href="/owner/outreach/automation"
+                            className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                            title="スケジューラへ"
+                          >
+                            <ArrowRight className="w-4 h-4" />
+                          </a>
+                        )}
+                        {rec.recommendation_type === "prioritize_review_queue" && (
+                          <a
+                            href="/owner/outreach/review"
+                            className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                            title="レビューキューへ"
+                          >
+                            <ArrowRight className="w-4 h-4" />
+                          </a>
+                        )}
+                        {rec.recommendation_type === "recommend_campaign" && (
+                          <a
+                            href="/owner/outreach/analytics"
+                            className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                            title="分析へ"
+                          >
+                            <ArrowRight className="w-4 h-4" />
+                          </a>
+                        )}
+                        <button
+                          onClick={() => handleCopilotAction(rec.id, "accept")}
+                          className="p-1.5 text-green-600 hover:bg-green-50 rounded-lg transition-colors"
+                          title="承認"
+                        >
+                          <CheckCircle2 className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => handleCopilotAction(rec.id, "dismiss")}
+                          className="p-1.5 text-gray-400 hover:bg-gray-100 rounded-lg transition-colors"
+                          title="非表示"
+                        >
+                          <XCircle className="w-4 h-4" />
+                        </button>
+                      </>
                     )}
-                    {rec.recommendation_type === "prioritize_review_queue" && (
-                      <a
-                        href="/owner/outreach/review"
-                        className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
-                        title="レビューキューへ"
-                      >
-                        <ArrowRight className="w-4 h-4" />
-                      </a>
-                    )}
-                    {rec.recommendation_type === "recommend_campaign" && (
-                      <a
-                        href="/owner/outreach/analytics"
-                        className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
-                        title="分析へ"
-                      >
-                        <ArrowRight className="w-4 h-4" />
-                      </a>
-                    )}
-                    <button
-                      onClick={() => handleCopilotAction(rec.id, "accept")}
-                      className="p-1.5 text-green-600 hover:bg-green-50 rounded-lg transition-colors"
-                      title="承認"
-                    >
-                      <CheckCircle2 className="w-4 h-4" />
-                    </button>
-                    <button
-                      onClick={() => handleCopilotAction(rec.id, "dismiss")}
-                      className="p-1.5 text-gray-400 hover:bg-gray-100 rounded-lg transition-colors"
-                      title="非表示"
-                    >
-                      <XCircle className="w-4 h-4" />
-                    </button>
                   </div>
                 </div>
               ))}

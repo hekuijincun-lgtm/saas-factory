@@ -40,6 +40,14 @@ export interface CopilotRecommendation {
   priority: RecommendationPriority;
   status: RecommendationStatus;
   payload_json: string | null;
+  action_type: string | null;
+  action_payload_json: string | null;
+  auto_executable: number;
+  execution_status: string;
+  execution_mode: string;
+  executed_at: string | null;
+  execution_result_json: string | null;
+  execution_error: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -316,7 +324,7 @@ export async function generateRecommendations(
   now: NowFn
 ): Promise<CopilotRecommendation[]> {
   const ts = now();
-  const recommendations: Array<Omit<CopilotRecommendation, "id" | "created_at" | "updated_at">> = [];
+  const recommendations: Array<Omit<CopilotRecommendation, "id" | "created_at" | "updated_at" | "executed_at" | "execution_result_json" | "execution_error">> = [];
 
   // Clear old open recommendations (replace with fresh ones)
   await db
@@ -341,6 +349,8 @@ export async function generateRecommendations(
         priority: m.won_rate_30d > 0.05 ? "high" : "medium",
         status: "open",
         payload_json: JSON.stringify({ schedule_id: sh.schedule_id, stale_days: m.stale_days, won_rate_30d: m.won_rate_30d }),
+        action_type: "run_schedule_now", action_payload_json: JSON.stringify({ schedule_id: sh.schedule_id }),
+        auto_executable: 1, execution_status: "pending", execution_mode: "auto_if_enabled",
       });
     }
 
@@ -354,6 +364,8 @@ export async function generateRecommendations(
         priority: "high",
         status: "open",
         payload_json: JSON.stringify({ schedule_id: sh.schedule_id, health_score: sh.health_score, error_rate_7d: m.error_rate_7d }),
+        action_type: "pause_schedule", action_payload_json: JSON.stringify({ schedule_id: sh.schedule_id }),
+        auto_executable: 1, execution_status: "pending", execution_mode: "auto_if_enabled",
       });
     }
 
@@ -367,6 +379,8 @@ export async function generateRecommendations(
         priority: "high",
         status: "open",
         payload_json: JSON.stringify({ schedule_id: sh.schedule_id, error_rate_7d: m.error_rate_7d }),
+        action_type: "pause_schedule", action_payload_json: JSON.stringify({ schedule_id: sh.schedule_id }),
+        auto_executable: 1, execution_status: "pending", execution_mode: "auto_if_enabled",
       });
     }
 
@@ -380,6 +394,8 @@ export async function generateRecommendations(
         priority: "medium",
         status: "open",
         payload_json: JSON.stringify({ schedule_id: sh.schedule_id, avg_quality: m.avg_quality_score_30d }),
+        action_type: "raise_quality_threshold", action_payload_json: JSON.stringify({ schedule_id: sh.schedule_id }),
+        auto_executable: 1, execution_status: "pending", execution_mode: "auto_if_enabled",
       });
     }
 
@@ -393,6 +409,8 @@ export async function generateRecommendations(
         priority: "medium",
         status: "open",
         payload_json: JSON.stringify({ schedule_id: sh.schedule_id, won_rate_30d: m.won_rate_30d, imported_7d: m.imported_count_7d }),
+        action_type: "lower_quality_threshold", action_payload_json: JSON.stringify({ schedule_id: sh.schedule_id }),
+        auto_executable: 1, execution_status: "pending", execution_mode: "auto_if_enabled",
       });
     }
   }
@@ -443,6 +461,8 @@ export async function generateRecommendations(
       priority: "high",
       status: "open",
       payload_json: JSON.stringify({ source_type: bestEntry.source_type, niche: bestEntry.niche, area: bestEntry.area, composite: bestComposite }),
+      action_type: null, action_payload_json: null,
+      auto_executable: 0, execution_status: "pending", execution_mode: "manual_only",
     });
   }
 
@@ -456,6 +476,8 @@ export async function generateRecommendations(
       priority: "medium",
       status: "open",
       payload_json: JSON.stringify({ source_type: worstEntry.source_type, niche: worstEntry.niche, area: worstEntry.area, composite: worstComposite }),
+      action_type: "stop_area", action_payload_json: JSON.stringify({ area: worstEntry.area }),
+      auto_executable: 1, execution_status: "pending", execution_mode: "auto_if_enabled",
     });
   }
 
@@ -477,6 +499,8 @@ export async function generateRecommendations(
         priority: highCount >= 5 ? "high" : "medium",
         status: "open",
         payload_json: JSON.stringify({ total_pending: pendingReviewCount?.cnt, high_priority: highCount }),
+        action_type: "prioritize_review_queue", action_payload_json: null,
+        auto_executable: 1, execution_status: "pending", execution_mode: "auto_if_enabled",
       });
     }
   }
@@ -489,12 +513,18 @@ export async function generateRecommendations(
     await db
       .prepare(
         `INSERT INTO outreach_copilot_recommendations
-         (id, tenant_id, recommendation_type, title, summary, priority, status, payload_json, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)`
+         (id, tenant_id, recommendation_type, title, summary, priority, status, payload_json,
+          action_type, action_payload_json, auto_executable, execution_status, execution_mode,
+          created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)`
       )
-      .bind(id, tenantId, rec.recommendation_type, rec.title, rec.summary, rec.priority, rec.status, rec.payload_json ?? null, ts, ts)
+      .bind(
+        id, tenantId, rec.recommendation_type, rec.title, rec.summary, rec.priority, rec.status, rec.payload_json ?? null,
+        rec.action_type ?? null, rec.action_payload_json ?? null, rec.auto_executable ?? 0, rec.execution_status ?? "pending", rec.execution_mode ?? "manual_only",
+        ts, ts
+      )
       .run();
-    saved.push({ ...rec, id, created_at: ts, updated_at: ts } as CopilotRecommendation);
+    saved.push({ ...rec, id, created_at: ts, updated_at: ts, executed_at: null, execution_result_json: null, execution_error: null } as CopilotRecommendation);
   }
 
   return saved;

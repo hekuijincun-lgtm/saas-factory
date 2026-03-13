@@ -1010,6 +1010,27 @@ export const RECOMMENDATION_TYPE_LABELS: Record<RecommendationType, string> = {
   recommend_campaign: "キャンペーン推奨",
 };
 
+export type ActionExecutionStatus = "pending" | "eligible" | "executed" | "failed" | "skipped" | "blocked";
+export type ExecutionMode = "manual_only" | "auto_safe" | "auto_if_enabled";
+
+export const EXECUTION_STATUS_LABELS: Record<ActionExecutionStatus, string> = {
+  pending: "待機中",
+  eligible: "実行可能",
+  executed: "実行済",
+  failed: "失敗",
+  skipped: "スキップ",
+  blocked: "ブロック",
+};
+
+export const EXECUTION_STATUS_COLORS: Record<ActionExecutionStatus, string> = {
+  pending: "bg-gray-100 text-gray-600",
+  eligible: "bg-blue-100 text-blue-700",
+  executed: "bg-green-100 text-green-700",
+  failed: "bg-red-100 text-red-700",
+  skipped: "bg-yellow-100 text-yellow-700",
+  blocked: "bg-orange-100 text-orange-700",
+};
+
 export interface CopilotRecommendation {
   id: string;
   tenant_id: string;
@@ -1019,8 +1040,39 @@ export interface CopilotRecommendation {
   priority: RecommendationPriority;
   status: RecommendationStatus;
   payload_json: string | null;
+  action_type: string | null;
+  action_payload_json: string | null;
+  auto_executable: number;
+  execution_status: ActionExecutionStatus;
+  execution_mode: ExecutionMode;
+  executed_at: string | null;
+  execution_result_json: string | null;
+  execution_error: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface ActionLog {
+  id: string;
+  tenant_id: string;
+  recommendation_id: string | null;
+  action_type: string;
+  action_payload_json: string | null;
+  execution_mode: string;
+  execution_status: string;
+  executed_by: string;
+  result_json: string | null;
+  error_message: string | null;
+  created_at: string;
+}
+
+export interface AutoActionSettings {
+  auto_action_enabled: boolean;
+  auto_execute_safe_recommendations: boolean;
+  auto_execute_schedule_runs: boolean;
+  auto_execute_threshold_adjustments: boolean;
+  auto_execute_send_existing_approved_only: boolean;
+  auto_action_max_executions_per_day: number;
 }
 
 export interface ScheduleHealthScore {

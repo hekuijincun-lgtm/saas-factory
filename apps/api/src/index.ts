@@ -7495,6 +7495,25 @@ async function scheduled(_event: any, env: Env, _ctx: any): Promise<void> {
     }
   }
 
+  // ── Phase 13: Auto Action Engine (cron) ────────────────────────────────
+  if (db) {
+    const AAE_STAMP = "AUTO_ACTION_ENGINE_V1";
+    try {
+      const { processAutoActions } = await import("./outreach/action-engine");
+      const aaeUid = () => `ol_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+      const aaeNow = () => new Date().toISOString();
+      const aaeResult = await processAutoActions(db, kv, aaeUid, aaeNow, {
+        GOOGLE_MAPS_API_KEY: (env as any).GOOGLE_MAPS_API_KEY,
+        OPENAI_API_KEY: (env as any).OPENAI_API_KEY,
+      });
+      if (aaeResult.processed > 0 || aaeResult.errors > 0) {
+        console.log(`[${AAE_STAMP}] processed=${aaeResult.processed} skipped=${aaeResult.skipped} errors=${aaeResult.errors}`);
+      }
+    } catch (aaeErr: any) {
+      console.error(`[${AAE_STAMP}] error:`, String(aaeErr?.message ?? aaeErr));
+    }
+  }
+
   // ── LINE 1日前リマインド ────────────────────────────────────────────────────
   if (db) {
     const REM_STAMP = "LINE_REMINDER_V1";

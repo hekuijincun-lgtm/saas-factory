@@ -58,6 +58,8 @@ import type {
   CopilotOverview,
   CopilotInsight,
   PrioritizedReviewItem,
+  ActionLog,
+  AutoActionSettings,
 } from "@/src/types/outreach";
 
 // ── Leads ──────────────────────────────────────────────────────────────────
@@ -1079,6 +1081,63 @@ export async function fetchPrioritizedReview(
 ): Promise<PrioritizedReviewItem[]> {
   const res = await apiGet<{ ok: boolean; data: PrioritizedReviewItem[] }>(
     "/admin/outreach/review/prioritized",
+    { tenantId }
+  );
+  return res.data;
+}
+
+// ── Phase 13: Auto Action Engine ───────────────────────────────────────
+
+export async function executeRecommendation(
+  tenantId: string,
+  recId: string
+): Promise<{ ok: boolean; result?: any; error?: string }> {
+  return apiPost<{ ok: boolean; result?: any; error?: string }>(
+    `/admin/outreach/copilot/recommendations/${recId}/execute`,
+    {},
+    { tenantId }
+  );
+}
+
+export async function fetchActionLogs(
+  tenantId: string,
+  limit: number = 50
+): Promise<ActionLog[]> {
+  const res = await apiGet<{ ok: boolean; data: ActionLog[] }>(
+    `/admin/outreach/action-logs?limit=${limit}`,
+    { tenantId }
+  );
+  return res.data;
+}
+
+export async function fetchAutoActionSettings(
+  tenantId: string
+): Promise<AutoActionSettings> {
+  const res = await apiGet<{ ok: boolean; data: AutoActionSettings }>(
+    "/admin/outreach/auto-execution/settings",
+    { tenantId }
+  );
+  return res.data;
+}
+
+export async function saveAutoActionSettings(
+  tenantId: string,
+  settings: Partial<AutoActionSettings>
+): Promise<AutoActionSettings> {
+  const res = await apiPut<{ ok: boolean; data: AutoActionSettings }>(
+    "/admin/outreach/auto-execution/settings",
+    settings,
+    { tenantId }
+  );
+  return res.data;
+}
+
+export async function runAutoExecution(
+  tenantId: string
+): Promise<{ processed: number; skipped: number; errors: number }> {
+  const res = await apiPost<{ ok: boolean; data: { processed: number; skipped: number; errors: number } }>(
+    "/admin/outreach/auto-execution/run",
+    {},
     { tenantId }
   );
   return res.data;
