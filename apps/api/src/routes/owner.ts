@@ -129,16 +129,30 @@ export function registerOwnerRoutes(app: Hono<{ Bindings: Record<string, unknown
     const db = env.DB;
     if (!kv) return c.json({ ok: false, error: "Internal error" }, 500);
 
+    // Plan monthly prices (JPY)
+    const PLAN_PRICES: Record<string, number> = {
+      starter: 3980,
+      pro: 9800,
+      enterprise: 30000,
+    };
+
     try {
       const settingsKeys = await kv.list({ prefix: "settings:" });
       const tenantCount = settingsKeys.keys?.length ?? 0;
 
       let lineConnected = 0;
+      let billedTenantCount = 0;
+      let mrr = 0;
       for (const key of settingsKeys.keys ?? []) {
         try {
           const raw = await kv.get(key.name, "json");
           const settings = raw ? mergeSettings(raw) : DEFAULT_ADMIN_SETTINGS;
           if (settings.integrations?.line?.channelAccessToken) lineConnected++;
+          const sub = settings.subscription;
+          if (sub && (sub.status === "active" || sub.status === "trialing")) {
+            billedTenantCount++;
+            mrr += PLAN_PRICES[sub.planId] ?? 0;
+          }
         } catch {}
       }
 
@@ -173,6 +187,8 @@ export function registerOwnerRoutes(app: Hono<{ Bindings: Record<string, unknown
       return c.json({
         ok: true,
         tenantCount,
+        billedTenantCount,
+        mrr,
         reservationsToday,
         lineConnected,
         pendingTickets,
@@ -210,18 +226,28 @@ export function registerOwnerRoutes(app: Hono<{ Bindings: Record<string, unknown
         }
       }
 
+      // Plan monthly prices (JPY)
+      const PLAN_PRICES: Record<string, number> = {
+        starter: 3980,
+        pro: 9800,
+        enterprise: 30000,
+      };
+
       const tenants: any[] = [];
       for (const key of settingsKeys.keys ?? []) {
         const tenantId = key.name.replace("settings:", "");
         try {
           const raw = await kv.get(key.name, "json");
           const settings = raw ? mergeSettings(raw) : DEFAULT_ADMIN_SETTINGS;
+          const sub = settings.subscription;
           tenants.push({
             tenantId,
             storeName: settings.storeName || tenantId,
             lineConnected: !!settings.integrations?.line?.channelAccessToken,
             reservationsToday: resCounts[tenantId] ?? 0,
-            subscriptionStatus: settings.subscription?.status ?? "unknown",
+            subscriptionStatus: sub?.status ?? "unknown",
+            planId: sub?.planId ?? null,
+            monthlyAmount: sub ? (PLAN_PRICES[sub.planId] ?? 0) : 0,
           });
         } catch {
           tenants.push({
@@ -230,6 +256,8 @@ export function registerOwnerRoutes(app: Hono<{ Bindings: Record<string, unknown
             lineConnected: false,
             reservationsToday: 0,
             subscriptionStatus: "unknown",
+            planId: null,
+            monthlyAmount: 0,
           });
         }
       }

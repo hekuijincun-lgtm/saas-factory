@@ -10,12 +10,16 @@ import {
   RefreshCw,
   ExternalLink,
   X,
+  DollarSign,
+  TrendingUp,
 } from "lucide-react";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
 interface Overview {
   tenantCount: number;
+  billedTenantCount: number;
+  mrr: number;
   reservationsToday: number;
   lineConnected: number;
   pendingTickets: number;
@@ -27,6 +31,8 @@ interface Tenant {
   lineConnected: boolean;
   reservationsToday: number;
   subscriptionStatus: string;
+  planId: string | null;
+  monthlyAmount: number;
 }
 
 interface Ticket {
@@ -67,6 +73,7 @@ export default function OwnerDashboardClient() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [tenantSearch, setTenantSearch] = useState("");
+  const [showAllTenants, setShowAllTenants] = useState(false);
   const [ticketFilter, setTicketFilter] = useState<TicketStatus>("");
   const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
   const [toast, setToast] = useState("");
@@ -106,6 +113,8 @@ export default function OwnerDashboardClient() {
       if (ovData.ok) {
         setOverview({
           tenantCount: ovData.tenantCount,
+          billedTenantCount: ovData.billedTenantCount ?? 0,
+          mrr: ovData.mrr ?? 0,
           reservationsToday: ovData.reservationsToday,
           lineConnected: ovData.lineConnected,
           pendingTickets: ovData.pendingTickets,
@@ -170,7 +179,10 @@ export default function OwnerDashboardClient() {
   };
 
   // Filtered data
-  const filteredTenants = tenants.filter(
+  const billedTenants = showAllTenants
+    ? tenants
+    : tenants.filter((t) => t.subscriptionStatus === "active" || t.subscriptionStatus === "trialing");
+  const filteredTenants = billedTenants.filter(
     (t) =>
       !tenantSearch ||
       t.storeName.toLowerCase().includes(tenantSearch.toLowerCase()) ||
@@ -233,30 +245,24 @@ export default function OwnerDashboardClient() {
 
       {/* Section 1: KPI Cards */}
       {overview && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           <KpiCard
             icon={<Building2 className="w-5 h-5 text-indigo-600" />}
-            label="テナント数"
-            value={overview.tenantCount}
+            label="課金テナント数"
+            value={`${overview.billedTenantCount} / ${overview.tenantCount}`}
             bg="bg-indigo-50"
           />
           <KpiCard
-            icon={<CalendarCheck className="w-5 h-5 text-green-600" />}
-            label="本日予約"
-            value={overview.reservationsToday}
-            bg="bg-green-50"
-          />
-          <KpiCard
-            icon={<Wifi className="w-5 h-5 text-emerald-600" />}
-            label="LINE 連携"
-            value={overview.lineConnected}
+            icon={<DollarSign className="w-5 h-5 text-emerald-600" />}
+            label="MRR（月次経常収益）"
+            value={`¥${overview.mrr.toLocaleString()}`}
             bg="bg-emerald-50"
           />
           <KpiCard
-            icon={<MessageSquare className="w-5 h-5 text-red-600" />}
-            label="未対応チケット"
-            value={overview.pendingTickets}
-            bg="bg-red-50"
+            icon={<TrendingUp className="w-5 h-5 text-amber-600" />}
+            label="本日予約 / 未対応チケット"
+            value={`${overview.reservationsToday} / ${overview.pendingTickets}`}
+            bg="bg-amber-50"
           />
         </div>
       )}
@@ -288,7 +294,15 @@ export default function OwnerDashboardClient() {
       {/* Section 3: Tenant List */}
       <div ref={tenantsRef} id="tenants-section" className="bg-white rounded-xl border border-gray-200 shadow-sm">
         <div className="p-4 border-b border-gray-200 flex flex-col sm:flex-row sm:items-center gap-3">
-          <h2 className="text-lg font-semibold text-gray-900">テナント一覧</h2>
+          <h2 className="text-lg font-semibold text-gray-900">
+            {showAllTenants ? "全テナント" : "課金テナント"}
+          </h2>
+          <button
+            onClick={() => setShowAllTenants(!showAllTenants)}
+            className="text-xs px-3 py-1.5 rounded-lg font-medium bg-gray-100 text-gray-600 hover:bg-gray-200 transition-colors"
+          >
+            {showAllTenants ? "課金のみ表示" : `全て表示 (${tenants.length})`}
+          </button>
           <div className="flex-1" />
           <input
             type="text"
@@ -304,16 +318,17 @@ export default function OwnerDashboardClient() {
               <tr className="bg-gray-50 text-gray-600">
                 <th className="text-left px-4 py-3 font-medium">店舗名</th>
                 <th className="text-left px-4 py-3 font-medium">テナントID</th>
+                <th className="text-center px-4 py-3 font-medium">プラン</th>
+                <th className="text-right px-4 py-3 font-medium">月額</th>
                 <th className="text-center px-4 py-3 font-medium">LINE</th>
                 <th className="text-center px-4 py-3 font-medium">本日予約</th>
-                <th className="text-center px-4 py-3 font-medium">プラン</th>
                 <th className="text-center px-4 py-3 font-medium">アクション</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {filteredTenants.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-4 py-8 text-center text-gray-400">
+                  <td colSpan={7} className="px-4 py-8 text-center text-gray-400">
                     {tenantSearch ? "検索結果なし" : "テナントがありません"}
                   </td>
                 </tr>
@@ -323,6 +338,26 @@ export default function OwnerDashboardClient() {
                     <td className="px-4 py-3 font-medium text-gray-900">{t.storeName}</td>
                     <td className="px-4 py-3 text-gray-500 font-mono text-xs">{t.tenantId}</td>
                     <td className="px-4 py-3 text-center">
+                      <span
+                        className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${
+                          t.subscriptionStatus === "active"
+                            ? "bg-green-100 text-green-800"
+                            : t.subscriptionStatus === "trialing"
+                            ? "bg-blue-100 text-blue-800"
+                            : t.subscriptionStatus === "past_due"
+                            ? "bg-red-100 text-red-800"
+                            : "bg-gray-100 text-gray-600"
+                        }`}
+                      >
+                        {t.planId ?? "—"}
+                        {t.subscriptionStatus === "trialing" && " (試用)"}
+                        {t.subscriptionStatus === "past_due" && " (未払)"}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-right text-gray-700 font-mono text-xs">
+                      {t.monthlyAmount > 0 ? `¥${t.monthlyAmount.toLocaleString()}` : "—"}
+                    </td>
+                    <td className="px-4 py-3 text-center">
                       {t.lineConnected ? (
                         <span className="inline-block w-2 h-2 rounded-full bg-green-500" title="接続済み" />
                       ) : (
@@ -330,19 +365,6 @@ export default function OwnerDashboardClient() {
                       )}
                     </td>
                     <td className="px-4 py-3 text-center text-gray-700">{t.reservationsToday}</td>
-                    <td className="px-4 py-3 text-center">
-                      <span
-                        className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${
-                          t.subscriptionStatus === "active"
-                            ? "bg-green-100 text-green-800"
-                            : t.subscriptionStatus === "trialing"
-                            ? "bg-blue-100 text-blue-800"
-                            : "bg-gray-100 text-gray-600"
-                        }`}
-                      >
-                        {t.subscriptionStatus}
-                      </span>
-                    </td>
                     <td className="px-4 py-3 text-center space-x-2">
                       <a
                         href={`/admin?tenantId=${encodeURIComponent(t.tenantId)}`}
@@ -524,7 +546,7 @@ function KpiCard({
 }: {
   icon: React.ReactNode;
   label: string;
-  value: number;
+  value: string | number;
   bg: string;
 }) {
   return (
