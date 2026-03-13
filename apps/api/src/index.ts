@@ -4178,9 +4178,15 @@ app.post('/auth/email/start', async (c) => {
       }
     }
 
+    // Fallback planId from URL ?plan= (when Stripe is not configured)
+    const VALID_PLAN_IDS = new Set(['starter', 'pro', 'enterprise']);
+    const fallbackPlanId: string | undefined = (!stripeInfo && typeof body.planId === 'string' && VALID_PLAN_IDS.has(body.planId))
+      ? body.planId : undefined;
+
     await kv.put(`signup:init:${tenantId}`, JSON.stringify({
       storeName, ownerEmail: rawEmail,
       ...(stripeInfo ? { stripe: stripeInfo } : {}),
+      ...(fallbackPlanId ? { planId: fallbackPlanId } : {}),
     }), { expirationTtl: 900 }); // 15 min
   } else {
     tenantId = String(body.tenantId ?? 'default');
@@ -4343,7 +4349,7 @@ app.post('/auth/email/verify', async (c) => {
   // --- Signup provisioning (signup:init written by /start when signup=1) ---
   const signupInitRaw = await kv.get(`signup:init:${tenantId}`);
   if (signupInitRaw) {
-    const si: { storeName?: string; stripe?: { sessionId?: string; planId: string; customerId: string; subscriptionId: string } } = JSON.parse(signupInitRaw);
+    const si: { storeName?: string; planId?: string; stripe?: { sessionId?: string; planId: string; customerId: string; subscriptionId: string } } = JSON.parse(signupInitRaw);
     const storedName = si.storeName || email;
     const ownerStore: AdminMembersStore = {
       version: 1,
@@ -4380,20 +4386,31 @@ app.post('/auth/email/verify', async (c) => {
         await kv.put(`admin:members:${tenantId}`, JSON.stringify(existing));
       }
     }
-    const seedSettings = mergeSettings(DEFAULT_ADMIN_SETTINGS, {
-      storeName: storedName,
-      tenant: { name: storedName, email },
-      onboarding: { onboardingCompleted: false },
-      ...(si.stripe ? {
-        subscription: {
+    // Determine subscription seed: Stripe-verified takes priority, then fallback planId
+    const resolvedPlanId: PlanId | undefined = si.stripe
+      ? (si.stripe.planId as PlanId)
+      : (si.planId as PlanId | undefined);
+    const subscriptionSeed: Partial<SubscriptionInfo> | undefined = si.stripe
+      ? {
           planId: si.stripe.planId as PlanId,
           stripeCustomerId: si.stripe.customerId || undefined,
           stripeSubscriptionId: si.stripe.subscriptionId || undefined,
           stripeSessionId: si.stripe.sessionId || undefined,
           status: 'active' as const,
           createdAt: Date.now(),
-        },
-      } : {}),
+        }
+      : resolvedPlanId
+        ? {
+            planId: resolvedPlanId,
+            status: 'active' as const,
+            createdAt: Date.now(),
+          }
+        : undefined;
+    const seedSettings = mergeSettings(DEFAULT_ADMIN_SETTINGS, {
+      storeName: storedName,
+      tenant: { name: storedName, email },
+      onboarding: { onboardingCompleted: false },
+      ...(subscriptionSeed ? { subscription: subscriptionSeed as SubscriptionInfo } : {}),
     });
     await kv.put('settings:' + tenantId, JSON.stringify(seedSettings));
     // Write reverse index: stripeCustomerId → tenantId

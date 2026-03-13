@@ -31,16 +31,16 @@ export function PlanCTA({ planId, label, highlighted = false }: PlanCTAProps) {
         return;
       }
 
-      // Stripe not configured — fallback to direct signup
+      // Stripe not configured — fallback to direct signup with plan preserved
       if (data.error === 'stripe_not_configured' || data.error === 'price_not_configured') {
-        window.location.href = '/signup';
+        window.location.href = `/signup?plan=${encodeURIComponent(planId)}`;
         return;
       }
 
       setError(data.error ?? '決済の開始に失敗しました');
     } catch {
-      // Network error — fallback to signup
-      window.location.href = '/signup';
+      // Network error — fallback to signup with plan preserved
+      window.location.href = `/signup?plan=${encodeURIComponent(planId)}`;
     } finally {
       setLoading(false);
     }

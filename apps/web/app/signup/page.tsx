@@ -9,6 +9,8 @@ interface PlanVerification {
   error?: string;
 }
 
+const VALID_PLANS = new Set(["starter", "pro", "enterprise"]);
+
 const PLAN_LABELS: Record<string, string> = {
   starter: "Starter",
   pro: "Pro",
@@ -27,10 +29,19 @@ export default function SignupPage() {
   // Stripe session verification
   const [plan, setPlan] = useState<PlanVerification>({ status: "idle" });
   const [stripeSessionId, setStripeSessionId] = useState<string | null>(null);
+  // Plan from URL ?plan= (fallback signup without Stripe)
+  const [urlPlanId, setUrlPlanId] = useState<string | null>(null);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
     const params = new URLSearchParams(window.location.search);
+
+    // Read ?plan= for fallback signup (Stripe not configured)
+    const rawPlan = params.get("plan");
+    if (rawPlan && VALID_PLANS.has(rawPlan)) {
+      setUrlPlanId(rawPlan);
+    }
+
     const sid = params.get("session_id");
     if (!sid) return;
 
@@ -79,6 +90,7 @@ export default function SignupPage() {
         storeName: storeName.trim(),
         signup: true,
         ...(stripeSessionId ? { stripeSessionId } : {}),
+        ...(urlPlanId && !stripeSessionId ? { planId: urlPlanId } : {}),
         ...(isDebug ? { debug: "1" } : {}),
       }),
     }).catch(() => null);
@@ -187,6 +199,11 @@ export default function SignupPage() {
           {plan.status === "error" && (
             <div className="mb-5 rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-700 text-center">
               {plan.error}
+            </div>
+          )}
+          {plan.status === "idle" && urlPlanId && (
+            <div className="mb-5 rounded-xl bg-indigo-50 border border-indigo-200 px-4 py-3 text-sm text-indigo-700 text-center">
+              <strong>{PLAN_LABELS[urlPlanId] ?? urlPlanId}</strong> プランで登録
             </div>
           )}
 
