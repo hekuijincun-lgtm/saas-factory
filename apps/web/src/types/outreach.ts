@@ -786,6 +786,90 @@ export interface QualityV2BackfillResult {
   skipped: number;
 }
 
+// ── Phase 10: Auto Prospect Batch ──────────────────────────────────────
+
+export type BatchJobMode = "review_only" | "approved_send";
+export type BatchJobStatus = "pending" | "running" | "completed" | "failed" | "cancelled";
+
+export const BATCH_STATUS_LABELS: Record<BatchJobStatus, string> = {
+  pending: "待機中",
+  running: "実行中",
+  completed: "完了",
+  failed: "失敗",
+  cancelled: "キャンセル",
+};
+
+export const BATCH_STATUS_COLORS: Record<BatchJobStatus, string> = {
+  pending: "bg-gray-100 text-gray-600",
+  running: "bg-blue-100 text-blue-700",
+  completed: "bg-green-100 text-green-700",
+  failed: "bg-red-100 text-red-700",
+  cancelled: "bg-gray-100 text-gray-400",
+};
+
+export const BATCH_MODE_LABELS: Record<BatchJobMode, string> = {
+  review_only: "レビューのみ",
+  approved_send: "承認済み送信",
+};
+
+export interface OutreachBatchJob {
+  id: string;
+  tenant_id: string;
+  niche: string;
+  areas_json: string;
+  randomize_areas: number;
+  target_count: number;
+  max_per_area: number;
+  quality_threshold: number;
+  mode: BatchJobMode;
+  status: BatchJobStatus;
+  source_type: string;
+  created_count: number;
+  imported_count: number;
+  draft_count: number;
+  queued_send_count: number;
+  error_count: number;
+  result_summary_json: string | null;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface OutreachBatchJobItem {
+  id: string;
+  tenant_id: string;
+  batch_job_id: string;
+  source_candidate_id: string | null;
+  lead_id: string | null;
+  review_item_id: string | null;
+  status: string;
+  error_message: string | null;
+  created_at: string;
+}
+
+export interface BatchJobCreateInput {
+  niche: string;
+  areas: string[];
+  randomize_areas?: boolean;
+  target_count?: number;
+  max_per_area?: number;
+  quality_threshold?: number;
+  mode?: BatchJobMode;
+  source_type?: string;
+}
+
+export interface BatchJobResult {
+  job: OutreachBatchJob;
+  items: OutreachBatchJobItem[];
+  summary: {
+    searched: number;
+    accepted: number;
+    imported: number;
+    drafted: number;
+    errors: number;
+  };
+}
+
 export const AUTOMATION_STATUS_LABELS: Record<string, string> = {
   none: "—",
   processing: "処理中",

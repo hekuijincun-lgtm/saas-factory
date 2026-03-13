@@ -509,6 +509,69 @@ export interface LearningRefreshLog {
   created_at: string;
 }
 
+// ── Phase 10: Auto Prospect Batch types ──────────────────────────────────
+
+export type BatchJobMode = "review_only" | "approved_send";
+export type BatchJobStatus = "pending" | "running" | "completed" | "failed" | "cancelled";
+
+export interface OutreachBatchJob {
+  id: string;
+  tenant_id: string;
+  niche: string;
+  areas_json: string;
+  randomize_areas: number;
+  target_count: number;
+  max_per_area: number;
+  quality_threshold: number;
+  mode: BatchJobMode;
+  status: BatchJobStatus;
+  source_type: string;
+  created_count: number;
+  imported_count: number;
+  draft_count: number;
+  queued_send_count: number;
+  error_count: number;
+  result_summary_json: string | null;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface OutreachBatchJobItem {
+  id: string;
+  tenant_id: string;
+  batch_job_id: string;
+  source_candidate_id: string | null;
+  lead_id: string | null;
+  review_item_id: string | null;
+  status: string;
+  error_message: string | null;
+  created_at: string;
+}
+
+export interface BatchJobCreateInput {
+  niche: string;
+  areas: string[];
+  randomize_areas?: boolean;
+  target_count?: number;
+  max_per_area?: number;
+  quality_threshold?: number;
+  mode?: BatchJobMode;
+  source_type?: string;
+}
+
+export interface BatchJobResult {
+  job: OutreachBatchJob;
+  items: OutreachBatchJobItem[];
+  summary: {
+    searched: number;
+    accepted: number;
+    imported: number;
+    drafted: number;
+    errors: number;
+  };
+}
+
 /** Analytics summary */
 export interface OutreachAnalytics {
   totalLeads: number;

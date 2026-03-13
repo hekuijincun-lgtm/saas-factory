@@ -17,6 +17,7 @@ import {
   Upload,
   Megaphone,
   Settings2,
+  Zap,
 } from "lucide-react";
 
 function Sidebar({
@@ -39,6 +40,7 @@ function Sidebar({
     { href: "/owner/outreach/sources", label: "ソース検索", icon: Search },
     { href: "/owner/outreach/import", label: "CSVインポート", icon: Upload },
     { href: "/owner/outreach/campaigns", label: "キャンペーン", icon: Megaphone },
+    { href: "/owner/outreach/batches", label: "自動バッチ", icon: Zap },
     { href: "/owner/outreach/settings", label: "配信設定", icon: Settings2 },
   ];
 

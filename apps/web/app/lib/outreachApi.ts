@@ -47,6 +47,10 @@ import type {
   LearnedInsightsResult,
   QualityLearningRefreshResult,
   QualityV2BackfillResult,
+  OutreachBatchJob,
+  OutreachBatchJobItem,
+  BatchJobCreateInput,
+  BatchJobResult,
 } from "@/src/types/outreach";
 
 // ── Leads ──────────────────────────────────────────────────────────────────
@@ -854,4 +858,62 @@ export async function fetchLearnedInsights(
     { tenantId }
   );
   return res.data;
+}
+
+// ── Phase 10: Auto Prospect Batch ──────────────────────────────────────
+
+export async function createBatchJob(
+  tenantId: string,
+  input: BatchJobCreateInput
+): Promise<OutreachBatchJob> {
+  const res = await apiPost<{ ok: boolean; data: OutreachBatchJob }>(
+    `/admin/outreach/batches`,
+    input,
+    { tenantId }
+  );
+  return res.data;
+}
+
+export async function fetchBatchJobs(
+  tenantId: string
+): Promise<OutreachBatchJob[]> {
+  const res = await apiGet<{ ok: boolean; data: OutreachBatchJob[] }>(
+    `/admin/outreach/batches`,
+    { tenantId }
+  );
+  return res.data;
+}
+
+export async function fetchBatchJobDetail(
+  tenantId: string,
+  jobId: string
+): Promise<{ job: OutreachBatchJob; items: OutreachBatchJobItem[] }> {
+  const res = await apiGet<{ ok: boolean; data: { job: OutreachBatchJob; items: OutreachBatchJobItem[] } }>(
+    `/admin/outreach/batches/${jobId}`,
+    { tenantId }
+  );
+  return res.data;
+}
+
+export async function runBatchJob(
+  tenantId: string,
+  jobId: string
+): Promise<BatchJobResult> {
+  const res = await apiPost<{ ok: boolean; data: BatchJobResult }>(
+    `/admin/outreach/batches/${jobId}/run`,
+    {},
+    { tenantId }
+  );
+  return res.data;
+}
+
+export async function cancelBatchJob(
+  tenantId: string,
+  jobId: string
+): Promise<void> {
+  await apiPost<{ ok: boolean }>(
+    `/admin/outreach/batches/${jobId}/cancel`,
+    {},
+    { tenantId }
+  );
 }

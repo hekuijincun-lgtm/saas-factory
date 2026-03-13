@@ -49,6 +49,7 @@ import {
 } from "./candidate-quality-learning";
 import type { LearningPattern } from "./learning";
 import { generateCampaignDraft } from "./campaign-generator";
+import { createBatchJob, runBatchJob } from "./batches";
 import type { CandidateResult } from "./source-providers/types";
 import type { ExistingLead } from "./importer";
 import type {
@@ -72,6 +73,9 @@ import type {
   SourceAnalytics,
   CampaignDraftInput,
   OutreachNicheTemplate,
+  OutreachBatchJob,
+  OutreachBatchJobItem,
+  BatchJobCreateInput,
 } from "./types";
 import { DEFAULT_OUTREACH_SETTINGS, REPLY_CLASSIFICATION_LABELS, CLASSIFY_CONFIDENCE_THRESHOLD } from "./types";
 import { logAudit } from "../lineConfig";
@@ -3147,6 +3151,108 @@ export function createOutreachRoutes(getTenantId: GetTenantId) {
     const db = c.env.DB;
     const insights = await getLearnedQualityInsights(db, tenantId);
     return c.json({ ok: true, tenantId, data: insights });
+  });
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // Phase 10: Auto Prospect Batch
+  // ══════════════════════════════════════════════════════════════════════════
+
+  // POST /batches — Create a new batch job
+  app.post("/batches", async (c) => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    const body = await c.req.json<BatchJobCreateInput>();
+
+    if (!body.niche?.trim()) {
+      return c.json({ ok: false, error: "niche は必須です" }, 400);
+    }
+    if (!body.areas?.length) {
+      return c.json({ ok: false, error: "areas は1件以上必要です" }, 400);
+    }
+
+    const job = await createBatchJob(db, tenantId, body, uid, now);
+    await logAudit(db, tenantId, "system", "outreach.batch_created", { jobId: job.id, niche: job.niche, areas: body.areas });
+    return c.json({ ok: true, tenantId, data: job });
+  });
+
+  // GET /batches — List batch jobs
+  app.get("/batches", async (c) => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    const rows = await db
+      .prepare("SELECT * FROM outreach_batch_jobs WHERE tenant_id = ?1 ORDER BY created_at DESC LIMIT 50")
+      .bind(tenantId)
+      .all<OutreachBatchJob>();
+    return c.json({ ok: true, tenantId, data: rows.results ?? [] });
+  });
+
+  // GET /batches/:id — Get batch job detail
+  app.get("/batches/:id", async (c) => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    const jobId = c.req.param("id");
+
+    const job = await db
+      .prepare("SELECT * FROM outreach_batch_jobs WHERE id = ?1 AND tenant_id = ?2")
+      .bind(jobId, tenantId)
+      .first<OutreachBatchJob>();
+    if (!job) return c.json({ ok: false, error: "Batch job not found" }, 404);
+
+    const items = await db
+      .prepare("SELECT * FROM outreach_batch_job_items WHERE batch_job_id = ?1 AND tenant_id = ?2 ORDER BY created_at")
+      .bind(jobId, tenantId)
+      .all<OutreachBatchJobItem>();
+
+    return c.json({ ok: true, tenantId, data: { job, items: items.results ?? [] } });
+  });
+
+  // POST /batches/:id/run — Execute batch job
+  app.post("/batches/:id/run", async (c) => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    const kv = c.env.SAAS_FACTORY;
+    const jobId = c.req.param("id");
+
+    try {
+      const result = await runBatchJob(db, kv, tenantId, jobId, uid, now, {
+        GOOGLE_MAPS_API_KEY: c.env.GOOGLE_MAPS_API_KEY,
+        OPENAI_API_KEY: c.env.OPENAI_API_KEY,
+      });
+
+      await logAudit(db, tenantId, "system", "outreach.batch_completed", {
+        jobId, summary: result.summary,
+      });
+
+      return c.json({ ok: true, tenantId, data: result });
+    } catch (err: any) {
+      await logAudit(db, tenantId, "system", "outreach.batch_failed", {
+        jobId, error: err.message,
+      });
+      return c.json({ ok: false, error: err.message || "Batch execution failed" }, 500);
+    }
+  });
+
+  // POST /batches/:id/cancel — Cancel a pending/running batch job
+  app.post("/batches/:id/cancel", async (c) => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    const jobId = c.req.param("id");
+
+    const job = await db
+      .prepare("SELECT * FROM outreach_batch_jobs WHERE id = ?1 AND tenant_id = ?2")
+      .bind(jobId, tenantId)
+      .first<OutreachBatchJob>();
+    if (!job) return c.json({ ok: false, error: "Batch job not found" }, 404);
+    if (job.status !== "pending" && job.status !== "running") {
+      return c.json({ ok: false, error: `Cannot cancel job with status ${job.status}` }, 400);
+    }
+
+    await db
+      .prepare("UPDATE outreach_batch_jobs SET status = 'cancelled', updated_at = ?1 WHERE id = ?2 AND tenant_id = ?3")
+      .bind(now(), jobId, tenantId)
+      .run();
+
+    return c.json({ ok: true, tenantId });
   });
 
   return app;
