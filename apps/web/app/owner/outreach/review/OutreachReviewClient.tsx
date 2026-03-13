@@ -8,8 +8,9 @@ import {
   rejectMessage,
   sendCampaign,
   fetchSendStats,
+  fetchPrioritizedReview,
 } from "@/app/lib/outreachApi";
-import type { OutreachMessage, MessageStatus, SendStats } from "@/src/types/outreach";
+import type { OutreachMessage, MessageStatus, SendStats, PrioritizedReviewItem } from "@/src/types/outreach";
 import { PIPELINE_LABELS, PIPELINE_COLORS } from "@/src/types/outreach";
 
 const STATUS_LABELS: Record<MessageStatus, string> = {
@@ -30,6 +31,8 @@ export default function OutreachReviewClient() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [toast, setToast] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [sendStats, setSendStats] = useState<SendStats | null>(null);
+  const [prioritized, setPrioritized] = useState<PrioritizedReviewItem[]>([]);
+  const [showPrioritized, setShowPrioritized] = useState(false);
 
   const load = useCallback(async () => {
     if (!tenantId) return;
@@ -41,6 +44,10 @@ export default function OutreachReviewClient() {
       ]);
       setMessages(data);
       setSendStats(stats);
+      // Also fetch prioritized view if on pending_review tab
+      if (activeTab === "pending_review") {
+        fetchPrioritizedReview(tenantId).then(setPrioritized).catch(() => {});
+      }
     } catch (err: any) {
       setToast({ type: "error", text: err.message || "読み込みに失敗しました" });
     } finally {
@@ -118,13 +125,13 @@ export default function OutreachReviewClient() {
         )}
 
         {/* Tabs */}
-        <div className="flex gap-1 border-b">
+        <div className="flex gap-1 border-b items-end">
           {STATUS_TAB_ORDER.map((tab) => (
             <button
               key={tab}
-              onClick={() => setActiveTab(tab)}
+              onClick={() => { setActiveTab(tab); setShowPrioritized(false); }}
               className={`px-4 py-2 text-sm border-b-2 transition-colors ${
-                activeTab === tab
+                activeTab === tab && !showPrioritized
                   ? "border-blue-500 text-blue-600 font-medium"
                   : "border-transparent text-gray-500 hover:text-gray-700"
               }`}
@@ -132,10 +139,75 @@ export default function OutreachReviewClient() {
               {STATUS_LABELS[tab]}
             </button>
           ))}
+          <div className="flex-1" />
+          {activeTab === "pending_review" && prioritized.length > 0 && (
+            <button
+              onClick={() => setShowPrioritized(!showPrioritized)}
+              className={`px-3 py-1.5 mb-1 text-xs font-medium rounded-lg transition-colors ${
+                showPrioritized
+                  ? "bg-amber-100 text-amber-700"
+                  : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+              }`}
+            >
+              優先度順 ({prioritized.filter(p => (p.review_priority_score ?? 0) >= 60).length} 件高)
+            </button>
+          )}
         </div>
 
+        {/* Prioritized view */}
+        {showPrioritized && activeTab === "pending_review" && (
+          <div className="space-y-3">
+            <div className="flex items-center gap-2 text-xs text-amber-600 font-medium">
+              <span>★ 優先度順表示</span>
+              <span className="text-gray-400">(スコア 60+ = 高優先)</span>
+            </div>
+            {prioritized.map((item) => {
+              const score = item.review_priority_score ?? 0;
+              const isHigh = score >= 60;
+              return (
+                <div key={item.id} className={`border rounded-lg p-3 ${isHigh ? "border-amber-200 bg-amber-50/50" : ""}`}>
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className={`inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                      isHigh ? "bg-amber-100 text-amber-700" : "bg-gray-100 text-gray-600"
+                    }`}>
+                      {score.toFixed(0)}点
+                    </span>
+                    <span className="font-medium text-sm">{item.store_name}</span>
+                    {item.pipeline_stage && (
+                      <span className={`px-2 py-0.5 rounded-full text-xs ${PIPELINE_COLORS[item.pipeline_stage] ?? ""}`}>
+                        {PIPELINE_LABELS[item.pipeline_stage] ?? item.pipeline_stage}
+                      </span>
+                    )}
+                    {item.category && <span className="text-xs text-gray-400">{item.category}</span>}
+                    {item.area && <span className="text-xs text-gray-400">{item.area}</span>}
+                    {item.lead_score != null && (
+                      <span className="text-xs text-gray-400">Lead: {item.lead_score}点</span>
+                    )}
+                  </div>
+                  {item.subject && <p className="text-sm text-gray-700 truncate">{item.subject}</p>}
+                  <p className="text-xs text-gray-500 truncate mt-0.5">{item.body}</p>
+                  <div className="flex gap-2 mt-2">
+                    <button
+                      onClick={() => handleApprove(item.id)}
+                      className="px-3 py-1 text-xs bg-green-600 text-white rounded-lg hover:bg-green-700"
+                    >
+                      承認
+                    </button>
+                    <button
+                      onClick={() => handleReject(item.id)}
+                      className="px-3 py-1 text-xs bg-red-50 text-red-600 rounded-lg hover:bg-red-100"
+                    >
+                      却下
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
         {/* Message list */}
-        {loading ? (
+        {(showPrioritized && activeTab === "pending_review") ? null : loading ? (
           <div className="text-sm text-gray-500 py-8 text-center">読み込み中...</div>
         ) : messages.length === 0 ? (
           <div className="text-sm text-gray-500 py-8 text-center">

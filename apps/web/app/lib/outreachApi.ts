@@ -54,6 +54,10 @@ import type {
   OutreachSchedule,
   OutreachScheduleRun,
   ScheduleCreateInput,
+  CopilotRecommendation,
+  CopilotOverview,
+  CopilotInsight,
+  PrioritizedReviewItem,
 } from "@/src/types/outreach";
 
 // ── Leads ──────────────────────────────────────────────────────────────────
@@ -999,6 +1003,82 @@ export async function fetchScheduleRuns(
 ): Promise<OutreachScheduleRun[]> {
   const res = await apiGet<{ ok: boolean; data: OutreachScheduleRun[] }>(
     `/admin/outreach/automation/${scheduleId}/runs`,
+    { tenantId }
+  );
+  return res.data;
+}
+
+// ── Phase 12: Auto Sales Copilot ───────────────────────────────────────
+
+export async function fetchCopilotRecommendations(
+  tenantId: string,
+  status: string = "open"
+): Promise<CopilotRecommendation[]> {
+  const res = await apiGet<{ ok: boolean; data: CopilotRecommendation[] }>(
+    `/admin/outreach/copilot/recommendations?status=${status}`,
+    { tenantId }
+  );
+  return res.data;
+}
+
+export async function refreshCopilotRecommendations(
+  tenantId: string
+): Promise<CopilotRecommendation[]> {
+  const res = await apiPost<{ ok: boolean; data: CopilotRecommendation[] }>(
+    "/admin/outreach/copilot/recommendations/refresh",
+    {},
+    { tenantId }
+  );
+  return res.data;
+}
+
+export async function acceptCopilotRecommendation(
+  tenantId: string,
+  recId: string
+): Promise<{ ok: boolean }> {
+  return apiPost<{ ok: boolean }>(
+    `/admin/outreach/copilot/recommendations/${recId}/accept`,
+    {},
+    { tenantId }
+  );
+}
+
+export async function dismissCopilotRecommendation(
+  tenantId: string,
+  recId: string
+): Promise<{ ok: boolean }> {
+  return apiPost<{ ok: boolean }>(
+    `/admin/outreach/copilot/recommendations/${recId}/dismiss`,
+    {},
+    { tenantId }
+  );
+}
+
+export async function fetchCopilotOverview(
+  tenantId: string
+): Promise<CopilotOverview> {
+  const res = await apiGet<{ ok: boolean; data: CopilotOverview }>(
+    "/admin/outreach/copilot/overview",
+    { tenantId }
+  );
+  return res.data;
+}
+
+export async function fetchCopilotInsights(
+  tenantId: string
+): Promise<CopilotInsight[]> {
+  const res = await apiGet<{ ok: boolean; data: CopilotInsight[] }>(
+    "/admin/outreach/analytics/copilot-insights",
+    { tenantId }
+  );
+  return res.data;
+}
+
+export async function fetchPrioritizedReview(
+  tenantId: string
+): Promise<PrioritizedReviewItem[]> {
+  const res = await apiGet<{ ok: boolean; data: PrioritizedReviewItem[] }>(
+    "/admin/outreach/review/prioritized",
     { tenantId }
   );
   return res.data;

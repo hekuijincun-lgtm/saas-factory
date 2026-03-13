@@ -51,6 +51,15 @@ import type { LearningPattern } from "./learning";
 import { generateCampaignDraft } from "./campaign-generator";
 import { createBatchJob, runBatchJob } from "./batches";
 import { createSchedule, updateSchedule, runScheduleNow } from "./automation";
+import {
+  generateRecommendations,
+  getCopilotOverview,
+  getCopilotInsights,
+  computeReviewPriorities,
+  acceptRecommendation,
+  dismissRecommendation,
+} from "./copilot";
+import type { CopilotRecommendation } from "./copilot";
 import type { CandidateResult } from "./source-providers/types";
 import type { ExistingLead } from "./importer";
 import type {
@@ -3373,6 +3382,102 @@ export function createOutreachRoutes(getTenantId: GetTenantId) {
       .prepare("SELECT * FROM outreach_schedule_runs WHERE schedule_id = ?1 AND tenant_id = ?2 ORDER BY created_at DESC LIMIT 30")
       .bind(scheduleId, tenantId)
       .all<OutreachScheduleRun>();
+    return c.json({ ok: true, tenantId, data: rows.results ?? [] });
+  });
+
+  // ── Phase 12: Auto Sales Copilot ─────────────────────────────────────
+
+  // GET /copilot/recommendations — List recommendations
+  app.get("/copilot/recommendations", async (c) => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    const status = c.req.query("status") || "open";
+    const rows = await db
+      .prepare(
+        `SELECT * FROM outreach_copilot_recommendations
+         WHERE tenant_id = ?1 AND status = ?2
+         ORDER BY CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, created_at DESC
+         LIMIT 50`
+      )
+      .bind(tenantId, status)
+      .all<CopilotRecommendation>();
+    return c.json({ ok: true, tenantId, data: rows.results ?? [] });
+  });
+
+  // POST /copilot/recommendations/refresh — Regenerate recommendations
+  app.post("/copilot/recommendations/refresh", async (c) => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    try {
+      const recs = await generateRecommendations(db, tenantId, uid, now);
+      await logAudit(db, tenantId, "system", "outreach.copilot_refresh", { count: recs.length });
+      return c.json({ ok: true, tenantId, data: recs });
+    } catch (err: any) {
+      return c.json({ ok: false, error: err.message || "Refresh failed" }, 500);
+    }
+  });
+
+  // POST /copilot/recommendations/:id/accept
+  app.post("/copilot/recommendations/:id/accept", async (c) => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    const id = c.req.param("id");
+    const ok = await acceptRecommendation(db, tenantId, id, now);
+    return c.json({ ok, tenantId });
+  });
+
+  // POST /copilot/recommendations/:id/dismiss
+  app.post("/copilot/recommendations/:id/dismiss", async (c) => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    const id = c.req.param("id");
+    const ok = await dismissRecommendation(db, tenantId, id, now);
+    return c.json({ ok, tenantId });
+  });
+
+  // GET /copilot/overview — Dashboard copilot overview (top 3 recs + health + insights)
+  app.get("/copilot/overview", async (c) => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    try {
+      const overview = await getCopilotOverview(db, tenantId);
+      return c.json({ ok: true, tenantId, data: overview });
+    } catch (err: any) {
+      return c.json({ ok: false, error: err.message || "Overview failed" }, 500);
+    }
+  });
+
+  // GET /analytics/copilot-insights — Copilot insights for analytics page
+  app.get("/analytics/copilot-insights", async (c) => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    try {
+      const insights = await getCopilotInsights(db, tenantId);
+      return c.json({ ok: true, tenantId, data: insights });
+    } catch (err: any) {
+      return c.json({ ok: false, error: err.message || "Insights failed" }, 500);
+    }
+  });
+
+  // GET /review/prioritized — Review queue sorted by priority
+  app.get("/review/prioritized", async (c) => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+
+    // Compute/refresh priorities
+    await computeReviewPriorities(db, tenantId);
+
+    const rows = await db
+      .prepare(
+        `SELECT m.*, l.store_name, l.category, l.area, l.pipeline_stage, l.score as lead_score, l.rating
+         FROM lead_message_drafts m
+         JOIN sales_leads l ON m.lead_id = l.id AND l.tenant_id = ?1
+         WHERE m.tenant_id = ?1 AND m.status = 'pending_review'
+         ORDER BY COALESCE(m.review_priority_score, 0) DESC
+         LIMIT 50`
+      )
+      .bind(tenantId)
+      .all();
     return c.json({ ok: true, tenantId, data: rows.results ?? [] });
   });
 

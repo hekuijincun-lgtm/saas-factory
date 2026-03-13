@@ -12,7 +12,13 @@ import {
   X,
   DollarSign,
   TrendingUp,
+  Sparkles,
+  ArrowRight,
+  CheckCircle2,
+  XCircle,
 } from "lucide-react";
+import type { CopilotRecommendation, CopilotOverview } from "@/src/types/outreach";
+import { RECOMMENDATION_PRIORITY_COLORS, RECOMMENDATION_TYPE_LABELS } from "@/src/types/outreach";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -77,6 +83,8 @@ export default function OwnerDashboardClient() {
   const [ticketFilter, setTicketFilter] = useState<TicketStatus>("");
   const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
   const [toast, setToast] = useState("");
+  const [copilot, setCopilot] = useState<CopilotOverview | null>(null);
+  const [copilotLoading, setCopilotLoading] = useState(false);
 
   const tenantsRef = useRef<HTMLDivElement>(null);
   const ticketsRef = useRef<HTMLDivElement>(null);
@@ -124,6 +132,9 @@ export default function OwnerDashboardClient() {
       }
       if (tData.ok) setTenants(tData.tenants ?? []);
       if (tkData.ok) setTickets(tkData.tickets ?? []);
+
+      // Fetch copilot overview (non-blocking — uses first tenant for outreach context)
+      fetchCopilotData();
     } catch (e) {
       console.error("Owner dashboard fetch error:", e);
       setError("通信エラーが発生しました。ページを再読込してください。");
@@ -131,6 +142,46 @@ export default function OwnerDashboardClient() {
       setLoading(false);
     }
   }, []);
+
+  const fetchCopilotData = useCallback(async () => {
+    setCopilotLoading(true);
+    try {
+      const res = await fetch("/api/proxy/admin/outreach/copilot/overview?tenantId=default");
+      const data = await res.json() as any;
+      if (data.ok) setCopilot(data.data);
+    } catch {
+      // Non-critical — copilot is optional
+    } finally {
+      setCopilotLoading(false);
+    }
+  }, []);
+
+  const handleRefreshCopilot = async () => {
+    setCopilotLoading(true);
+    try {
+      const res = await fetch("/api/proxy/admin/outreach/copilot/recommendations/refresh?tenantId=default", { method: "POST" });
+      await res.json();
+      await fetchCopilotData();
+      showToast("Copilot 推奨を更新しました");
+    } catch {
+      showToast("Copilot 更新に失敗しました");
+    } finally {
+      setCopilotLoading(false);
+    }
+  };
+
+  const handleCopilotAction = async (recId: string, action: "accept" | "dismiss") => {
+    try {
+      await fetch(`/api/proxy/admin/outreach/copilot/recommendations/${recId}/${action}?tenantId=default`, { method: "POST" });
+      setCopilot((prev) => prev ? {
+        ...prev,
+        recommendations: prev.recommendations.filter((r) => r.id !== recId),
+      } : null);
+      showToast(action === "accept" ? "推奨を承認しました" : "推奨を非表示にしました");
+    } catch {
+      showToast("操作に失敗しました");
+    }
+  };
 
   useEffect(() => {
     fetchAll();
@@ -291,7 +342,132 @@ export default function OwnerDashboardClient() {
         </button>
       )}
 
-      {/* Section 3: Tenant List */}
+      {/* Section 3: Sales Copilot */}
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
+        <div className="p-4 border-b border-gray-200 flex items-center gap-3">
+          <Sparkles className="w-5 h-5 text-amber-500" />
+          <h2 className="text-lg font-semibold text-gray-900">Sales Copilot</h2>
+          <span className="text-xs text-gray-400">今日のおすすめ営業アクション</span>
+          <div className="flex-1" />
+          <button
+            onClick={handleRefreshCopilot}
+            disabled={copilotLoading}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors disabled:opacity-50"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${copilotLoading ? "animate-spin" : ""}`} />
+            更新
+          </button>
+        </div>
+        <div className="p-4">
+          {!copilot && !copilotLoading && (
+            <p className="text-sm text-gray-400 text-center py-4">
+              「更新」をクリックして Copilot 推奨を生成してください
+            </p>
+          )}
+          {copilotLoading && !copilot && (
+            <div className="flex items-center justify-center py-6">
+              <RefreshCw className="w-5 h-5 animate-spin text-gray-400" />
+            </div>
+          )}
+          {copilot && copilot.recommendations.length === 0 && (
+            <p className="text-sm text-gray-400 text-center py-4">
+              現在の推奨アクションはありません。データが蓄積されると提案が表示されます。
+            </p>
+          )}
+          {copilot && copilot.recommendations.length > 0 && (
+            <div className="space-y-3">
+              {copilot.recommendations.map((rec) => (
+                <div
+                  key={rec.id}
+                  className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg border border-gray-100"
+                >
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span
+                        className={`inline-flex px-2 py-0.5 rounded-full text-[10px] font-medium ${
+                          RECOMMENDATION_PRIORITY_COLORS[rec.priority] ?? "bg-gray-100 text-gray-600"
+                        }`}
+                      >
+                        {RECOMMENDATION_TYPE_LABELS[rec.recommendation_type] ?? rec.recommendation_type}
+                      </span>
+                    </div>
+                    <p className="text-sm font-medium text-gray-900">{rec.title}</p>
+                    <p className="text-xs text-gray-500 mt-0.5">{rec.summary}</p>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    {rec.recommendation_type === "run_schedule_now" && (
+                      <a
+                        href="/owner/outreach/automation"
+                        className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                        title="スケジューラへ"
+                      >
+                        <ArrowRight className="w-4 h-4" />
+                      </a>
+                    )}
+                    {rec.recommendation_type === "prioritize_review_queue" && (
+                      <a
+                        href="/owner/outreach/review"
+                        className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                        title="レビューキューへ"
+                      >
+                        <ArrowRight className="w-4 h-4" />
+                      </a>
+                    )}
+                    {rec.recommendation_type === "recommend_campaign" && (
+                      <a
+                        href="/owner/outreach/analytics"
+                        className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                        title="分析へ"
+                      >
+                        <ArrowRight className="w-4 h-4" />
+                      </a>
+                    )}
+                    <button
+                      onClick={() => handleCopilotAction(rec.id, "accept")}
+                      className="p-1.5 text-green-600 hover:bg-green-50 rounded-lg transition-colors"
+                      title="承認"
+                    >
+                      <CheckCircle2 className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => handleCopilotAction(rec.id, "dismiss")}
+                      className="p-1.5 text-gray-400 hover:bg-gray-100 rounded-lg transition-colors"
+                      title="非表示"
+                    >
+                      <XCircle className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          {/* Schedule Health Summary */}
+          {copilot && copilot.schedule_health.length > 0 && (
+            <div className="mt-4 pt-4 border-t border-gray-100">
+              <p className="text-xs font-medium text-gray-500 mb-2">スケジュール健全性</p>
+              <div className="flex flex-wrap gap-2">
+                {copilot.schedule_health.map((sh) => (
+                  <div
+                    key={sh.schedule_id}
+                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${
+                      sh.health_score >= 70
+                        ? "bg-green-100 text-green-700"
+                        : sh.health_score >= 40
+                        ? "bg-yellow-100 text-yellow-700"
+                        : "bg-red-100 text-red-700"
+                    }`}
+                  >
+                    <span>{sh.schedule_name}</span>
+                    <span className="font-bold">{sh.health_score}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Section 4: Tenant List */}
       <div ref={tenantsRef} id="tenants-section" className="bg-white rounded-xl border border-gray-200 shadow-sm">
         <div className="p-4 border-b border-gray-200 flex flex-col sm:flex-row sm:items-center gap-3">
           <h2 className="text-lg font-semibold text-gray-900">

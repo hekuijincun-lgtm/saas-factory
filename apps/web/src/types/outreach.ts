@@ -968,6 +968,112 @@ export interface ScheduleCreateInput {
   mode?: ScheduleMode;
 }
 
+// ── Phase 12: Auto Sales Copilot types ───────────────────────────────
+
+export type RecommendationType =
+  | "run_schedule_now"
+  | "pause_schedule"
+  | "raise_quality_threshold"
+  | "lower_quality_threshold"
+  | "expand_area"
+  | "stop_area"
+  | "try_new_niche"
+  | "prioritize_review_queue"
+  | "retry_high_quality_source"
+  | "recommend_campaign";
+
+export type RecommendationPriority = "high" | "medium" | "low";
+export type RecommendationStatus = "open" | "accepted" | "dismissed" | "completed";
+
+export const RECOMMENDATION_PRIORITY_LABELS: Record<RecommendationPriority, string> = {
+  high: "高",
+  medium: "中",
+  low: "低",
+};
+
+export const RECOMMENDATION_PRIORITY_COLORS: Record<RecommendationPriority, string> = {
+  high: "bg-red-100 text-red-700",
+  medium: "bg-yellow-100 text-yellow-700",
+  low: "bg-gray-100 text-gray-600",
+};
+
+export const RECOMMENDATION_TYPE_LABELS: Record<RecommendationType, string> = {
+  run_schedule_now: "即時実行",
+  pause_schedule: "一時停止",
+  raise_quality_threshold: "品質閾値↑",
+  lower_quality_threshold: "品質閾値↓",
+  expand_area: "エリア拡大",
+  stop_area: "エリア停止",
+  try_new_niche: "新ニッチ",
+  prioritize_review_queue: "レビュー優先",
+  retry_high_quality_source: "高品質再試行",
+  recommend_campaign: "キャンペーン推奨",
+};
+
+export interface CopilotRecommendation {
+  id: string;
+  tenant_id: string;
+  recommendation_type: RecommendationType;
+  title: string;
+  summary: string;
+  priority: RecommendationPriority;
+  status: RecommendationStatus;
+  payload_json: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ScheduleHealthScore {
+  schedule_id: string;
+  schedule_name: string;
+  niche: string;
+  health_score: number;
+  metrics: {
+    run_count_7d: number;
+    candidate_count_7d: number;
+    imported_count_7d: number;
+    drafted_count_7d: number;
+    error_rate_7d: number;
+    stale_days: number;
+    reply_rate_30d: number;
+    meeting_rate_30d: number;
+    won_rate_30d: number;
+    avg_quality_score_30d: number;
+  };
+}
+
+export interface CopilotInsight {
+  type: string;
+  title: string;
+  summary: string;
+  metric_value: number | null;
+  comparison: string | null;
+}
+
+export interface CopilotOverview {
+  recommendations: CopilotRecommendation[];
+  schedule_health: ScheduleHealthScore[];
+  insights: CopilotInsight[];
+  high_priority_review_count: number;
+}
+
+export interface PrioritizedReviewItem {
+  id: string;
+  lead_id: string;
+  tenant_id: string;
+  subject: string | null;
+  body: string;
+  status: string;
+  tone: string | null;
+  review_priority_score: number | null;
+  store_name: string;
+  category: string | null;
+  area: string | null;
+  pipeline_stage: string;
+  lead_score: number | null;
+  rating: number | null;
+}
+
 export const AUTOMATION_STATUS_LABELS: Record<string, string> = {
   none: "—",
   processing: "処理中",

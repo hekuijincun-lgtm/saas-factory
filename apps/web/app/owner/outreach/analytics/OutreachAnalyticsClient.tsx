@@ -2,8 +2,8 @@
 
 import { useState, useEffect } from "react";
 import { useOwnerTenantId } from "@/src/lib/useOwnerTenantId";
-import { fetchOutreachAnalytics, fetchLearningAnalytics, fetchCampaignAnalytics, fetchSourceAnalytics, fetchWinningPatterns, refreshWinningPatterns, fetchCampaignInsights, fetchSourceQuality, fetchTopSources, fetchSourceTrends, fetchSourceBreakdown, fetchLearnedInsights, refreshQualityLearning, backfillQualityV2 } from "@/app/lib/outreachApi";
-import type { OutreachAnalytics, LearningAnalytics, CampaignAnalytics, SourceAnalytics, WinningPatternsData, CampaignInsightsData, SourceQualityRow, SourceQualitySummary, TopSourceRow, SourceTrendPoint, SourceTrendBreakdown, LearnedInsightsResult } from "@/src/types/outreach";
+import { fetchOutreachAnalytics, fetchLearningAnalytics, fetchCampaignAnalytics, fetchSourceAnalytics, fetchWinningPatterns, refreshWinningPatterns, fetchCampaignInsights, fetchSourceQuality, fetchTopSources, fetchSourceTrends, fetchSourceBreakdown, fetchLearnedInsights, refreshQualityLearning, backfillQualityV2, fetchCopilotInsights } from "@/app/lib/outreachApi";
+import type { OutreachAnalytics, LearningAnalytics, CampaignAnalytics, SourceAnalytics, WinningPatternsData, CampaignInsightsData, SourceQualityRow, SourceQualitySummary, TopSourceRow, SourceTrendPoint, SourceTrendBreakdown, LearnedInsightsResult, CopilotInsight } from "@/src/types/outreach";
 import { SOURCE_TYPE_LABELS, PATTERN_TYPE_LABELS } from "@/src/types/outreach";
 import { PIPELINE_LABELS } from "@/src/types/outreach";
 
@@ -39,6 +39,7 @@ export default function OutreachAnalyticsClient() {
   const [sourceTrends, setSourceTrends] = useState<SourceTrendPoint[]>([]);
   const [sourceBreakdown, setSourceBreakdown] = useState<SourceTrendBreakdown[]>([]);
   const [learnedInsights, setLearnedInsights] = useState<LearnedInsightsResult | null>(null);
+  const [copilotInsights, setCopilotInsights] = useState<CopilotInsight[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [learningRefreshing, setLearningRefreshing] = useState(false);
   const [backfilling, setBackfilling] = useState(false);
@@ -60,8 +61,9 @@ export default function OutreachAnalyticsClient() {
       fetchSourceTrends(tenantId, { days: 30 }).catch(() => []),
       fetchSourceBreakdown(tenantId, 30).catch(() => []),
       fetchLearnedInsights(tenantId).catch(() => null),
+      fetchCopilotInsights(tenantId).catch(() => []),
     ])
-      .then(([a, l, c, s, w, ci, sq, ts, trends, breakdown, li]) => {
+      .then(([a, l, c, s, w, ci, sq, ts, trends, breakdown, li, cpi]) => {
         setAnalytics(a);
         setLearning(l);
         setCampaignAnalytics(c);
@@ -76,6 +78,7 @@ export default function OutreachAnalyticsClient() {
         setSourceTrends(Array.isArray(trends) ? trends : []);
         setSourceBreakdown(Array.isArray(breakdown) ? breakdown : []);
         setLearnedInsights(li);
+        setCopilotInsights(Array.isArray(cpi) ? cpi : []);
       })
       .catch((err) => setError(err.message || "読み込みに失敗しました"))
       .finally(() => setLoading(false));
@@ -847,6 +850,26 @@ export default function OutreachAnalyticsClient() {
             </div>
           )}
         </div>
+
+        {/* Copilot Insights */}
+        {copilotInsights.length > 0 && (
+          <div className="bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 rounded-xl p-4">
+            <h3 className="font-bold text-gray-900 mb-3 flex items-center gap-2">
+              <span className="text-amber-500">★</span> Copilot Insights
+            </h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {copilotInsights.map((insight, i) => (
+                <div key={i} className="bg-white/80 rounded-lg p-3 border border-amber-100">
+                  <div className="text-xs text-amber-600 font-medium mb-1">{insight.title}</div>
+                  <p className="text-sm text-gray-700">{insight.summary}</p>
+                  {insight.comparison && (
+                    <p className="text-xs text-gray-400 mt-1">{insight.comparison}</p>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </>
   );
