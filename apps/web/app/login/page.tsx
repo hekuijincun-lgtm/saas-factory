@@ -38,7 +38,8 @@ export default async function LoginPage({
     returnTo = `${returnTo}${sep}tenantId=${encodeURIComponent(tenantId)}`;
   }
   const reason = params.reason ?? null;
-  const isDebug = params.debug === "1";
+  // debug mode は development のみ許可（本番で callbackUrl 露出を防止）
+  const isDebug = process.env.NODE_ENV === "development" && params.debug === "1";
 
   return (
     <LoginForm

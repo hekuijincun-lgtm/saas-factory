@@ -44,7 +44,8 @@ function resolveApiBase(): string {
 
 export async function GET(req: Request) {
   const url = new URL(req.url);
-  const isDebug = url.searchParams.get("debug") === "1";
+  // debug mode は development のみ許可（本番で verify 結果を露出しない）
+  const isDebug = process.env.NODE_ENV === "development" && url.searchParams.get("debug") === "1";
 
   const token = url.searchParams.get("token");
   const returnToRaw = url.searchParams.get("returnTo") ?? "/admin";

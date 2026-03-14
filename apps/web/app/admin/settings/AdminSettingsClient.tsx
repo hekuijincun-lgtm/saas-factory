@@ -5,7 +5,6 @@ import { useState, useEffect } from 'react';
 import { useAdminTenantId } from '@/src/lib/useAdminTenantId';
 import { CalendarDays, Building2, Clock, Link as LinkIcon, AlertCircle, RefreshCw, Save, Scissors, Plus, Trash2 } from 'lucide-react';
 import type { EyebrowSurveyQuestion } from '@/src/types/settings';
-import DebugHydration from './DebugHydration';
 import {
   fetchAdminSettings,
   saveAdminSettings,
@@ -726,8 +725,6 @@ export default function AdminSettingsClient() {
 
   return (
     <>
-      <DebugHydration name="AdminSettingsClient" />
-
       {/* Toast */}
       {toastMessage && (
         <div

@@ -233,9 +233,21 @@ export default function AdminShell({
     return <>{children}</>;
   }
 
+  // Auth loading guard: セッション確認が完了するまで children を描画しない
+  if (tenantStatus === "loading") {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-gray-50">
+        <div className="text-center space-y-3">
+          <div className="w-8 h-8 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin mx-auto" />
+          <p className="text-sm text-gray-500">認証を確認中...</p>
+        </div>
+      </div>
+    );
+  }
+
   // Auth guard: session expired or invalid → show login redirect banner
   // Skip for pages that handle their own auth (line-setup is already excluded above)
-  if (tenantStatus === "ready" && !authenticated) {
+  if (!authenticated) {
     const loginParams = new URLSearchParams();
     const returnTo = typeof window !== "undefined"
       ? window.location.pathname + window.location.search
@@ -300,6 +312,13 @@ export default function AdminShell({
             {storeName}
           </span>
         </header>
+
+        {/* テナント未解決警告 — "default" フォールバック時 */}
+        {authenticated && sessionTenantId === "default" && (
+          <div className="mx-4 mt-3 sm:mx-6 lg:mx-8 rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-700">
+            テナントが特定できません。URLにtenantIdパラメータを付けてアクセスするか、再度ログインしてください。
+          </div>
+        )}
 
         {/* ページコンテンツ */}
         <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
