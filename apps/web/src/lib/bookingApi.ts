@@ -145,9 +145,28 @@ export interface MenuItem {
   durationMin: number;
   active: boolean;
   sortOrder: number;
-  eyebrow?: MenuItemEyebrow;  // 眉毛特化属性（optional）
+  /** @deprecated use verticalAttributes instead */
+  eyebrow?: MenuItemEyebrow;  // 眉毛特化属性（legacy）
+  /** Phase 2a: 業種共通属性（verticalAttributes → eyebrow の優先順位で読む） */
+  verticalAttributes?: Record<string, unknown>;
   imageKey?: string;          // R2 object key (P1)
   imageUrl?: string;          // 公開URL
+}
+
+// ── Phase 2a: MenuItem vertical attributes read helper ───────────
+
+/**
+ * メニューアイテムの業種属性を正規化して返す read adapter。
+ * 優先順位: verticalAttributes → eyebrow legacy → undefined
+ * 呼び出し側は eyebrow 固定参照を避け、この helper 経由で読む。
+ */
+export function getMenuVerticalAttrs(item: MenuItem): MenuItemEyebrow | undefined {
+  // verticalAttributes が存在すれば eyebrow 互換の shape にキャスト
+  if (item.verticalAttributes && Object.keys(item.verticalAttributes).length > 0) {
+    return item.verticalAttributes as unknown as MenuItemEyebrow;
+  }
+  // legacy eyebrow にフォールバック
+  return item.eyebrow;
 }
 
 export interface AdminSettings {
@@ -493,9 +512,10 @@ export async function getMenu(tenantId: string = "default"): Promise<MenuItem[]>
         active: x?.active !== false,
         sortOrder: n(x?.sortOrder, 0),
         tenantId: (x?.tenantId != null ? String(x.tenantId) : tenantId),
-        ...(x?.imageKey  ? { imageKey: String(x.imageKey) } : {}),
-        ...(safeImageUrl ? { imageUrl: safeImageUrl }       : {}),
-        ...(x?.eyebrow   ? { eyebrow:  x.eyebrow }         : {}),
+        ...(x?.imageKey            ? { imageKey: String(x.imageKey) }           : {}),
+        ...(safeImageUrl           ? { imageUrl: safeImageUrl }                : {}),
+        ...(x?.eyebrow             ? { eyebrow:  x.eyebrow }                  : {}),
+        ...(x?.verticalAttributes  ? { verticalAttributes: x.verticalAttributes } : {}),
       };
     }) as MenuItem[];
   } catch (error) {

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { getMenu, deleteMenuItem, type MenuItem, type MenuItemEyebrow } from '@/src/lib/bookingApi';
+import { getMenu, deleteMenuItem, getMenuVerticalAttrs, type MenuItem, type MenuItemEyebrow } from '@/src/lib/bookingApi';
 import { useAdminTenantId } from '@/src/lib/useAdminTenantId';
 import { ApiClientError } from '@/src/lib/apiClient';
 import { compressImage, MAX_UPLOAD_BYTES } from '@/src/lib/compressImage';
@@ -99,6 +99,8 @@ export default function MenuManager({ tenantId: tenantIdProp }: { tenantId?: str
     resetImageState();
     // 既存画像があればプレビューに表示（blob URL ではなく imageUrl をそのまま使う）
     setImagePreviewUrl(item.imageUrl ?? null);
+    // Phase 2a: verticalAttributes → eyebrow の優先順位で読む
+    const attrs = getMenuVerticalAttrs(item);
     setFormData({
       name: item.name,
       price: String(item.price),
@@ -106,9 +108,9 @@ export default function MenuManager({ tenantId: tenantIdProp }: { tenantId?: str
       active: item.active,
       sortOrder: item.sortOrder,
       eyebrow: {
-        firstTimeOnly: item.eyebrow?.firstTimeOnly ?? false,
-        genderTarget: item.eyebrow?.genderTarget ?? 'both',
-        styleType: item.eyebrow?.styleType,
+        firstTimeOnly: attrs?.firstTimeOnly ?? false,
+        genderTarget: attrs?.genderTarget ?? 'both',
+        styleType: attrs?.styleType,
       },
       imageKey: item.imageKey,
       imageUrl: item.imageUrl,
@@ -170,15 +172,20 @@ export default function MenuManager({ tenantId: tenantIdProp }: { tenantId?: str
         imageUrl = upData.imageUrl;
       }
 
-      const itemPayload = {
+      // Phase 2a: eyebrow テナントのみ eyebrow + verticalAttributes を dual-write
+      // 非 eyebrow テナントでは eyebrow を送らない（汚染防止）
+      const itemPayload: Record<string, any> = {
         name: formData.name.trim(),
         price: Number(formData.price),
         durationMin: Number(formData.durationMin),
         active: formData.active,
         sortOrder: formData.sortOrder,
-        eyebrow: formData.eyebrow,
         imageUrl: imageUrl ?? null, // null = 削除指示（Workers PATCH が !imageUrl で delete）
       };
+      if (isEyebrow) {
+        itemPayload.eyebrow = formData.eyebrow;
+        itemPayload.verticalAttributes = formData.eyebrow;
+      }
 
       // tenantId を URL に含めて fetch（updateMenuItem/createMenuItem は tenantId 非対応）
       let saved: any;

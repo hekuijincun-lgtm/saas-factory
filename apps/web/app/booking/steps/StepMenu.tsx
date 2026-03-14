@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { getMenu, type MenuItem } from '@/src/lib/bookingApi';
+import { getMenu, getMenuVerticalAttrs, type MenuItem } from '@/src/lib/bookingApi';
 
 interface Props {
   tenantId: string;
@@ -53,27 +53,28 @@ export default function StepMenu({ tenantId, onSelect }: Props) {
   if (loading) return <Spinner />;
   if (error) return <ErrorMsg msg={error} />;
 
-  // 眉毛属性を持つメニューがあるか判定
-  const hasFirstTimeItems = items.some(m => m.eyebrow?.firstTimeOnly);
-  const hasGenderItems = items.some(m => !!m.eyebrow?.genderTarget);
+  // Phase 2a: verticalAttributes → eyebrow 優先で属性判定
+  const hasFirstTimeItems = items.some(m => getMenuVerticalAttrs(m)?.firstTimeOnly);
+  const hasGenderItems = items.some(m => !!getMenuVerticalAttrs(m)?.genderTarget);
   const allStyleTypes = [...new Set(
-    items.map(m => m.eyebrow?.styleType).filter((s): s is StyleType => !!s)
+    items.map(m => getMenuVerticalAttrs(m)?.styleType).filter((s): s is StyleType => !!s)
   )];
   const hasEyebrowFilters = hasFirstTimeItems || hasGenderItems || allStyleTypes.length > 0;
 
   // フィルタ適用
   const filtered = items.filter(m => {
+    const attrs = getMenuVerticalAttrs(m);
     // 初回/リピートフィルタ
-    if (isFirstTime === true && !m.eyebrow?.firstTimeOnly) return false;
-    if (isFirstTime === false && m.eyebrow?.firstTimeOnly) return false;
+    if (isFirstTime === true && !attrs?.firstTimeOnly) return false;
+    if (isFirstTime === false && attrs?.firstTimeOnly) return false;
     // 性別フィルタ（'both' は両性向けなので female/male どちらでも表示）
     if (genderFilter !== null) {
-      const g = m.eyebrow?.genderTarget;
+      const g = attrs?.genderTarget;
       if (g && g !== 'both' && g !== genderFilter) return false;
     }
     // スタイルフィルタ
     if (styleFilter !== null) {
-      const s = m.eyebrow?.styleType;
+      const s = attrs?.styleType;
       if (s && s !== styleFilter) return false;
     }
     return true;
@@ -201,27 +202,27 @@ export default function StepMenu({ tenantId, onSelect }: Props) {
                     {item.name}
                   </p>
                   <p className="text-sm text-brand-muted mt-0.5">{item.durationMin}分</p>
-                  {/* 眉毛属性バッジ */}
-                  {(item.eyebrow?.firstTimeOnly || item.eyebrow?.genderTarget || item.eyebrow?.styleType) && (
+                  {/* Phase 2a: verticalAttributes → eyebrow 優先でバッジ表示 */}
+                  {(() => { const a = getMenuVerticalAttrs(item); return (a?.firstTimeOnly || a?.genderTarget || a?.styleType) ? (
                     <div className="flex flex-wrap gap-1 mt-1.5">
-                      {item.eyebrow?.firstTimeOnly && (
+                      {a?.firstTimeOnly && (
                         <span className="text-xs bg-pink-50 text-pink-600 border border-pink-200 rounded-full px-2 py-0.5">
                           初回限定
                         </span>
                       )}
-                      {item.eyebrow?.genderTarget && (
+                      {a?.genderTarget && (
                         <span className="text-xs bg-purple-50 text-purple-600 border border-purple-200 rounded-full px-2 py-0.5">
-                          {item.eyebrow.genderTarget === 'female' ? '女性向け'
-                           : item.eyebrow.genderTarget === 'male' ? '男性向け' : '両性向け'}
+                          {a.genderTarget === 'female' ? '女性向け'
+                           : a.genderTarget === 'male' ? '男性向け' : '両性向け'}
                         </span>
                       )}
-                      {item.eyebrow?.styleType && (
+                      {a?.styleType && (
                         <span className="text-xs bg-blue-50 text-blue-600 border border-blue-200 rounded-full px-2 py-0.5">
-                          {({ natural: 'ナチュラル', sharp: 'シャープ', korean: '韓国風', custom: 'カスタム' } as Record<StyleType, string>)[item.eyebrow.styleType] ?? item.eyebrow.styleType}
+                          {({ natural: 'ナチュラル', sharp: 'シャープ', korean: '韓国風', custom: 'カスタム' } as Record<StyleType, string>)[a.styleType] ?? a.styleType}
                         </span>
                       )}
                     </div>
-                  )}
+                  ) : null; })()}
                 </div>
                 <span className="text-brand-primary font-semibold ml-4 flex-shrink-0">
                   ¥{item.price.toLocaleString()}

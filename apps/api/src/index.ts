@@ -562,14 +562,18 @@ app.get('/admin/rbac/audit', async (c) => {
     if(sDefault) data = deepMerge(data, sDefault)
     if(sTenant)  data = deepMerge(data, sTenant)
 
+    // Phase 1a: inject eyebrow defaults only for eyebrow vertical (not for generic/nail/dental)
+    // Must run BEFORE resolveVertical so verticalConfig includes survey defaults
+    {
+      const preVertical = resolveVertical(data).vertical;
+      if (preVertical === 'eyebrow' && !data.eyebrow) {
+        data = deepMerge(data, EYEBROW_DEFAULT_SETTINGS)
+      }
+    }
+
     // P1: inject resolved vertical fields (backward-compat: legacy eyebrow also kept)
     const { vertical, verticalConfig } = resolveVertical(data)
     data = { ...data, vertical, verticalConfig }
-
-    // Phase 1a: inject eyebrow defaults only for eyebrow vertical (not for generic/nail/dental)
-    if (vertical === 'eyebrow' && !data.eyebrow) {
-      data = deepMerge(data, EYEBROW_DEFAULT_SETTINGS)
-    }
 
     return c.json({
       ok:true,
@@ -1306,7 +1310,19 @@ type MenuItem = {
   durationMin: number;
   active: boolean;
   sortOrder: number;
+  eyebrow?: Record<string, any>;
+  verticalAttributes?: Record<string, any>;
 };
+
+/** Phase 2a: KV 読み出し時に eyebrow-only データへ verticalAttributes を注入する */
+function normalizeMenuItems(items: any[]): any[] {
+  return items.map(item => {
+    if (item.eyebrow && !item.verticalAttributes) {
+      return { ...item, verticalAttributes: { ...item.eyebrow } };
+    }
+    return item;
+  });
+}
 /** Phase 1a: vertical-aware デフォルトメニュー */
 function defaultMenu(vertical?: string): MenuItem[] {
   if (vertical === 'eyebrow') {
@@ -1331,7 +1347,7 @@ app.get("/admin/menu", async (c) => {
     const value = await kv.get(key);
 
     if (value) {
-      const menu = JSON.parse(value);
+      const menu = normalizeMenuItems(JSON.parse(value));
       return c.json({ ok: true, tenantId, data: menu });
     }
 
@@ -1519,8 +1535,9 @@ app.post("/admin/menu", async (c) => {
     const seed = defaultMenu();
     const menu: any[] = value ? JSON.parse(value) : seed;
 
-    // eyebrow: 眉毛特化属性（styleType/firstTimeOnly/genderTarget）— optional
+    // Phase 2a: eyebrow / verticalAttributes dual-write
     const eyebrow = body?.eyebrow && typeof body.eyebrow === 'object' ? body.eyebrow : undefined;
+    const verticalAttributes = body?.verticalAttributes && typeof body.verticalAttributes === 'object' ? body.verticalAttributes : undefined;
 
     // If body contains an existing item id, treat as update (upsert)
     const bodyId: string | undefined = typeof body?.id === 'string' && body.id.trim() ? body.id.trim() : undefined;
@@ -1537,8 +1554,15 @@ app.post("/admin/menu", async (c) => {
         active: active !== undefined ? active : existing.active,
         sortOrder: sortOrder !== undefined ? sortOrder : existing.sortOrder,
       };
+      // eyebrow (legacy)
       if (eyebrow !== undefined) updated.eyebrow = eyebrow;
-      else if ('eyebrow' in body && body.eyebrow === null) delete updated.eyebrow;
+      else if ('eyebrow' in body && body.eyebrow === null) { delete updated.eyebrow; delete updated.verticalAttributes; }
+      // verticalAttributes (new)
+      if (verticalAttributes !== undefined) updated.verticalAttributes = verticalAttributes;
+      else if ('verticalAttributes' in body && body.verticalAttributes === null) delete updated.verticalAttributes;
+      // Phase 2a: dual-write bridge — eyebrow → verticalAttributes or vice versa
+      if (eyebrow !== undefined && !verticalAttributes) updated.verticalAttributes = { ...eyebrow };
+      if (verticalAttributes !== undefined && !eyebrow) updated.eyebrow = { ...verticalAttributes };
       // imageKey/imageUrl: optional 画像フィールド
       if (body.imageKey != null) {
         if (body.imageKey) updated.imageKey = String(body.imageKey);
@@ -1563,6 +1587,10 @@ app.post("/admin/menu", async (c) => {
       sortOrder: sortOrder !== undefined ? sortOrder : menu.length,
     };
     if (eyebrow !== undefined) newItem.eyebrow = eyebrow;
+    if (verticalAttributes !== undefined) newItem.verticalAttributes = verticalAttributes;
+    // Phase 2a: dual-write bridge
+    if (eyebrow !== undefined && !verticalAttributes) newItem.verticalAttributes = { ...eyebrow };
+    if (verticalAttributes !== undefined && !eyebrow) newItem.eyebrow = { ...verticalAttributes };
     if (body.imageKey) newItem.imageKey = String(body.imageKey);
     if (body.imageUrl) newItem.imageUrl = String(body.imageUrl);
     menu.push(newItem);
@@ -1597,9 +1625,18 @@ app.patch("/admin/menu/:id", async (c) => {
     if (body.durationMin !== undefined) updated.durationMin = Number(body.durationMin);
     if (body.active !== undefined) updated.active = Boolean(body.active);
     if (body.sortOrder !== undefined) updated.sortOrder = Number(body.sortOrder);
+    // Phase 2a: eyebrow / verticalAttributes dual-write
     if (body.eyebrow !== undefined) {
-      if (body.eyebrow === null) delete updated.eyebrow;
-      else updated.eyebrow = body.eyebrow;
+      if (body.eyebrow === null) { delete updated.eyebrow; delete updated.verticalAttributes; }
+      else { updated.eyebrow = body.eyebrow; updated.verticalAttributes = { ...body.eyebrow }; }
+    }
+    if (body.verticalAttributes !== undefined) {
+      if (body.verticalAttributes === null) { delete updated.verticalAttributes; }
+      else {
+        updated.verticalAttributes = body.verticalAttributes;
+        // reverse bridge: verticalAttributes → eyebrow (unless eyebrow explicitly set in same request)
+        if (body.eyebrow === undefined) updated.eyebrow = { ...body.verticalAttributes };
+      }
     }
     // imageKey/imageUrl: optional 画像フィールド
     if (body.imageKey !== undefined) {
@@ -3427,6 +3464,159 @@ app.get("/my/reservations", async (c) => {
 // ── Outreach OS routes ──────────────────────────────────────────────────────
 // Mounted at /admin/outreach/* — protected by existing admin auth middleware.
 app.route("/admin/outreach", createOutreachRoutes(getTenantId));
+
+// ── Outreach Email Inbound Webhook (public, no admin auth) ─────────────────
+// POST /webhooks/email/inbound — receives inbound email from Resend or custom integration.
+// Supports two payload formats:
+//   1. Resend inbound webhook: { type, created_at, data: { from, to, subject, text, html, ... } }
+//   2. Flat format: { from, to, subject, text, html, message_id }
+// Looks up lead by sender email (tenant-scoped), routes to existing ingest pipeline.
+// Protected by OUTREACH_WEBHOOK_SECRET (required when set; rejects if set but mismatch).
+app.post("/webhooks/email/inbound", async (c) => {
+  const db = c.env.DB;
+  const kv = c.env.SAAS_FACTORY;
+
+  // Webhook secret verification (required if configured)
+  const webhookSecret = (c.env as any).OUTREACH_WEBHOOK_SECRET;
+  if (webhookSecret) {
+    const authHeader = c.req.header("x-webhook-secret") || c.req.header("authorization");
+    const provided = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : authHeader || "";
+    // Timing-safe comparison to prevent timing attacks
+    let match = provided.length === webhookSecret.length;
+    for (let i = 0; i < webhookSecret.length; i++) {
+      match = match && (provided.charCodeAt(i) === webhookSecret.charCodeAt(i));
+    }
+    if (!match) {
+      return c.json({ ok: false, error: "unauthorized" }, 401);
+    }
+  }
+
+  let rawBody: any;
+  try {
+    rawBody = await c.req.json();
+  } catch {
+    return c.json({ ok: false, error: "invalid JSON body" }, 400);
+  }
+
+  // Normalize payload: support both Resend nested format and flat format
+  const payload = rawBody?.data && typeof rawBody.data === "object" && rawBody.data.from
+    ? rawBody.data   // Resend format: { type, data: { from, to, subject, text, html } }
+    : rawBody;        // Flat format: { from, to, subject, text, html, message_id }
+
+  const fromRaw = payload.from || "";
+  // Extract email from "Name <email@example.com>" or plain "email@example.com"
+  const emailMatch = fromRaw.match(/<([^>]+)>/) || [null, fromRaw];
+  const fromEmail = (emailMatch[1] || "").trim().toLowerCase();
+  const replyText = (payload.text || payload.html || "").slice(0, 10000);
+  const subject = payload.subject || "";
+  const externalMessageId = payload.message_id || payload.messageId || payload.headers?.["message-id"] || "";
+
+  if (!fromEmail || !fromEmail.includes("@")) {
+    return c.json({ ok: false, error: "valid 'from' email is required" }, 400);
+  }
+  if (!replyText.trim()) {
+    return c.json({ ok: false, error: "reply text (text or html) is required" }, 400);
+  }
+
+  // Idempotency: skip if this message_id was already ingested (cross-tenant is OK for dedup)
+  if (externalMessageId) {
+    const existing = await db
+      .prepare("SELECT id, tenant_id FROM outreach_replies WHERE message_id = ?1 LIMIT 1")
+      .bind(externalMessageId)
+      .first<{ id: string; tenant_id: string }>();
+    if (existing) {
+      return c.json({ ok: true, skipped: true, reason: "duplicate_message_id", replyId: existing.id });
+    }
+  }
+
+  // Look up ALL leads with this email to handle multi-tenant correctly
+  const leads = await db
+    .prepare("SELECT id, tenant_id FROM sales_leads WHERE LOWER(contact_email) = ?1 ORDER BY updated_at DESC LIMIT 10")
+    .bind(fromEmail)
+    .all<{ id: string; tenant_id: string }>();
+
+  const matchedLeads = leads.results ?? [];
+
+  if (matchedLeads.length === 0) {
+    // Unknown sender — log and return 200 to not cause webhook retries
+    console.warn(`[email-inbound] No lead found for email: ${fromEmail}`);
+    return c.json({ ok: true, skipped: true, reason: "no_matching_lead", from: fromEmail });
+  }
+
+  // Process reply for ALL matching leads (each in their own tenant)
+  const results: Array<{ tenantId: string; leadId: string; replyId: string; autoProcessed: boolean }> = [];
+
+  for (const lead of matchedLeads) {
+    const tenantId = lead.tenant_id;
+    const leadId = lead.id;
+
+    const replyId = `or_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    const ts = new Date().toISOString();
+
+    // Insert into outreach_replies
+    await db
+      .prepare(
+        `INSERT INTO outreach_replies
+         (id, tenant_id, lead_id, campaign_id, message_id, reply_text, reply_source, ai_handled, ai_response_sent, created_at)
+         VALUES (?1, ?2, ?3, NULL, ?4, ?5, 'email', 0, 0, ?6)`
+      )
+      .bind(replyId, tenantId, leadId, externalMessageId || null, replyText, ts)
+      .run();
+
+    // Update lead last_replied_at
+    await db
+      .prepare("UPDATE sales_leads SET last_replied_at = ?1, updated_at = ?2 WHERE id = ?3 AND tenant_id = ?4")
+      .bind(ts, ts, leadId, tenantId)
+      .run();
+
+    // Classify intent
+    const openaiApiKey = (c.env as any).OPENAI_API_KEY;
+    let classifyResult: any = null;
+    try {
+      const { classifyReplyIntent } = await import("./outreach/reply-classifier");
+      classifyResult = await classifyReplyIntent(replyText, openaiApiKey);
+      await db
+        .prepare(
+          `UPDATE outreach_replies SET intent = ?1, sentiment = ?2, intent_confidence = ?3 WHERE id = ?4 AND tenant_id = ?5`
+        )
+        .bind(classifyResult.intent, classifyResult.sentiment, classifyResult.confidence, replyId, tenantId)
+        .run();
+    } catch (clsErr: any) {
+      console.error(`[email-inbound] Classification error for tenant=${tenantId}:`, clsErr?.message);
+    }
+
+    // Auto-process if enabled
+    let autoProcessed = false;
+    try {
+      const { getAutoReplySettings, processReply } = await import("./outreach/reply-dispatcher");
+      const arSettings = await getAutoReplySettings(kv, tenantId);
+      if (arSettings.autoReplyEnabled) {
+        const uidFn = () => `or_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+        const nowFn = () => new Date().toISOString();
+        await processReply(
+          { db, kv, tenantId, openaiApiKey, resendApiKey: (c.env as any).RESEND_API_KEY, emailFrom: (c.env as any).EMAIL_FROM, uid: uidFn, now: nowFn },
+          {
+            id: replyId, tenant_id: tenantId, lead_id: leadId,
+            campaign_id: null, message_id: externalMessageId || null,
+            reply_text: replyText, reply_source: "email",
+            sentiment: classifyResult?.sentiment || null,
+            intent: classifyResult?.intent || null,
+            intent_confidence: classifyResult?.confidence || null,
+            ai_handled: 0, ai_response: null, ai_response_sent: 0,
+            created_at: ts,
+          }
+        );
+        autoProcessed = true;
+      }
+    } catch (procErr: any) {
+      console.error(`[email-inbound] Auto-process error for tenant=${tenantId}:`, procErr?.message);
+    }
+
+    results.push({ tenantId, leadId, replyId, autoProcessed });
+  }
+
+  return c.json({ ok: true, processed: results.length, results });
+});
 
 export default { fetch: app.fetch, queue, scheduled };
 
@@ -7279,7 +7469,7 @@ async function scheduled(_event: any, env: Env, _ctx: any): Promise<void> {
           }
 
           // Read outreach settings for send mode
-          let sendMode = "safe";
+          let sendMode: "safe" | "real" = "safe";
           try {
             const settingsRaw = await kv.get(`outreach:settings:${fTenantId}`);
             if (settingsRaw) sendMode = JSON.parse(settingsRaw).sendMode ?? "safe";
@@ -7287,41 +7477,60 @@ async function scheduled(_event: any, env: Env, _ctx: any): Promise<void> {
 
           // Generate followup message via template (no AI call in cron to avoid latency)
           const stepLabel = fStep === "first_followup" ? "1回目" : "2回目";
-          const subject = `${(lead as any).store_name}様 — フォローアップ（${stepLabel}）`;
-          const body = `${(lead as any).store_name}様\n\n先日ご連絡させていただいた件につきまして、${stepLabel}のフォローアップをお送りいたします。\nご興味がございましたら、お気軽にご返信ください。`;
+          const fSubject = `${(lead as any).store_name}様 — フォローアップ（${stepLabel}）`;
+          const fBody = `${(lead as any).store_name}様\n\n先日ご連絡させていただいた件につきまして、${stepLabel}のフォローアップをお送りいたします。\nご興味がございましたら、お気軽にご返信ください。`;
 
-          // Save as draft with status sent (followup auto-sends in safe mode)
+          // Save as draft
           const msgId = `ol_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
           await db.prepare(
             `INSERT INTO lead_message_drafts (id, lead_id, tenant_id, kind, subject, body, status, tone, created_at)
              VALUES (?, ?, ?, 'email', ?, ?, 'sent', 'friendly', ?)`
-          ).bind(msgId, fLeadId, fTenantId, subject, body, nowIso).run();
+          ).bind(msgId, fLeadId, fTenantId, fSubject, fBody, nowIso).run();
 
-          // Record delivery event
+          // Actually send via resolveProvider (real mode uses Resend, safe mode logs only)
+          const { resolveProvider: resolveFuProvider } = await import("./outreach/send-provider");
+          const fuProvider = resolveFuProvider(sendMode, {
+            RESEND_API_KEY: (env as any).RESEND_API_KEY,
+            EMAIL_FROM: (env as any).EMAIL_FROM,
+          });
+          const fuSendResult = await fuProvider.send({
+            leadId: fLeadId,
+            tenantId: fTenantId,
+            channel: "email",
+            to: (lead as any).contact_email || "",
+            subject: fSubject,
+            body: fBody,
+          });
+
+          // Record delivery event with actual send result
+          const evtStatus = fuSendResult.success ? "sent" : "failed";
           const evtId = `ol_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
           await db.prepare(
             `INSERT INTO outreach_delivery_events (id, tenant_id, lead_id, message_id, channel, event_type, status, metadata_json, created_at)
-             VALUES (?, ?, ?, ?, 'email', 'sent', 'sent', ?, ?)`
-          ).bind(evtId, fTenantId, fLeadId, msgId, JSON.stringify({ provider: "safe_mode", sendMode, step: fStep }), nowIso).run();
+             VALUES (?, ?, ?, ?, 'email', ?, ?, ?, ?)`
+          ).bind(evtId, fTenantId, fLeadId, msgId, evtStatus, evtStatus, JSON.stringify({ provider: fuProvider.name, sendMode, step: fStep, messageId: fuSendResult.messageId || null, error: fuSendResult.error || null }), nowIso).run();
 
           // Update followup record (Phase 4.5: include provider_message_id, clear processing_at)
+          const fuStatus = fuSendResult.success ? "sent" : "failed";
           await db.prepare(
-            "UPDATE outreach_followups SET status = 'sent', sent_at = ?, message_id = ?, provider_message_id = ?, processing_at = NULL WHERE id = ?"
-          ).bind(nowIso, msgId, `safe_followup_${fId}`, fId).run();
+            "UPDATE outreach_followups SET status = ?, sent_at = ?, message_id = ?, provider_message_id = ?, processing_at = NULL WHERE id = ?"
+          ).bind(fuStatus, nowIso, msgId, fuSendResult.messageId || `${fuProvider.name}_${fId}`, fId).run();
 
           // Phase 4.5: Record normalized outreach event
           const oEvtId = `ol_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
           await db.prepare(
             `INSERT INTO outreach_events (id, tenant_id, lead_id, type, metadata, created_at)
              VALUES (?, ?, ?, 'followup_send', ?, ?)`
-          ).bind(oEvtId, fTenantId, fLeadId, JSON.stringify({ step: fStep, messageId: msgId, sendMode }), nowIso).run();
+          ).bind(oEvtId, fTenantId, fLeadId, JSON.stringify({ step: fStep, messageId: msgId, sendMode, provider: fuProvider.name, sent: fuSendResult.success }), nowIso).run();
 
-          // Update last_contacted_at
-          await db.prepare(
-            "UPDATE sales_leads SET last_contacted_at = ?, updated_at = ? WHERE id = ? AND tenant_id = ?"
-          ).bind(nowIso, nowIso, fLeadId, fTenantId).run();
+          // Update last_contacted_at only if actually sent
+          if (fuSendResult.success) {
+            await db.prepare(
+              "UPDATE sales_leads SET last_contacted_at = ?, updated_at = ? WHERE id = ? AND tenant_id = ?"
+            ).bind(nowIso, nowIso, fLeadId, fTenantId).run();
+          }
 
-          console.log(`[${OUTREACH_STAMP}] Sent ${fStep} to ${fLeadId} (${sendMode})`);
+          console.log(`[${OUTREACH_STAMP}] ${fuStatus} ${fStep} to ${fLeadId} (${sendMode}, provider=${fuProvider.name})`);
         } catch (itemErr: any) {
           console.error(`[${OUTREACH_STAMP}] Error processing followup ${fId}:`, itemErr?.message);
           // Phase 4.5: Clear processing lock so it can be retried next cron
@@ -7584,6 +7793,8 @@ async function scheduled(_event: any, env: Env, _ctx: any): Promise<void> {
         const areResult = await processUnhandledReplies({
           db, kv, tenantId: tid,
           openaiApiKey: (env as any).OPENAI_API_KEY,
+          resendApiKey: (env as any).RESEND_API_KEY,
+          emailFrom: (env as any).EMAIL_FROM,
           uid: areUid, now: areNow,
         });
         if (areResult.processed > 0 || areResult.errors > 0) {

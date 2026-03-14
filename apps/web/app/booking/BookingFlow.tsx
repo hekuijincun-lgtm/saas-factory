@@ -8,8 +8,8 @@ import StepDatetime from './steps/StepDatetime';
 import StepConfirm from './steps/StepConfirm';
 import StepSurvey from './steps/StepSurvey';
 import type { MenuItem } from '@/src/lib/bookingApi';
-import { fetchBookingSettings } from '@/src/lib/bookingApi';
-import type { EyebrowSurveyQuestion } from '@/src/types/settings';
+import { fetchBookingSettings, getMenuVerticalAttrs } from '@/src/lib/bookingApi';
+import { getVerticalConfig, resolveVertical, type EyebrowSurveyQuestion } from '@/src/types/settings';
 
 export interface BookingState {
   menuId: string | null;
@@ -158,15 +158,20 @@ export default function BookingFlow() {
   useEffect(() => {
     fetchBookingSettings(tenantId).then(settings => {
       const raw = settings as any;
-      // Generic booking agreement checkbox text (top-level)
-      const ct = raw.consentText || raw.eyebrow?.consentText;
+      const vc = getVerticalConfig(raw);
+      const vertical = resolveVertical(raw);
+      // Generic booking agreement checkbox text (top-level consentText)
+      const ct = raw.consentText || vc.consentText;
       if (ct) setConsentText(ct);
-      // Treatment-specific consent text — displayed as a SEPARATE block above the checkbox
-      const tct = String(raw.eyebrow?.consentText ?? raw.verticalConfig?.consentText ?? "").trim();
-      if (tct) setTreatmentConsentText(tct);
+      // Treatment-specific consent text — verticalConfig → eyebrow legacy → skip
+      // Only show for verticals that have consent (e.g. eyebrow)
+      if (vertical !== 'generic' && vc.consentText) {
+        setTreatmentConsentText(vc.consentText);
+      }
       if (raw.staffSelectionEnabled === false) setStaffSelectionEnabled(false);
-      if (raw.eyebrow?.surveyEnabled === true) setSurveyEnabled(true);
-      if (Array.isArray(raw.eyebrow?.surveyQuestions)) setSurveyQuestions(raw.eyebrow.surveyQuestions);
+      // Survey: verticalConfig → eyebrow legacy
+      if (vc.surveyEnabled === true) setSurveyEnabled(true);
+      if (Array.isArray(vc.surveyQuestions)) setSurveyQuestions(vc.surveyQuestions);
     }).catch(() => { /* fallback: default values のまま */ });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId]);
@@ -223,7 +228,7 @@ export default function BookingFlow() {
       menuName: menu.name,
       menuPrice: menu.price,
       menuDurationMin: menu.durationMin,
-      menuStyleType: menu.eyebrow?.styleType ?? null,
+      menuStyleType: getMenuVerticalAttrs(menu)?.styleType ?? null,
     });
     if (!staffSelectionEnabled) {
       update({ staffId: 'any', staffName: '指名なし' });
