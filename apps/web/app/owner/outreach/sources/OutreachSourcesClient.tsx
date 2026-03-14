@@ -39,7 +39,7 @@ export default function OutreachSourcesClient() {
   const { tenantId, loading: tenantLoading } = useOwnerTenantId();
 
   // Search form
-  const [sourceType, setSourceType] = useState("directory");
+  const [sourceType, setSourceType] = useState("map");
   const [query, setQuery] = useState("");
   const [location, setLocation] = useState("");
   const [niche, setNiche] = useState("");
@@ -359,8 +359,8 @@ export default function OutreachSourcesClient() {
                 onChange={(e) => setSourceType(e.target.value)}
                 className="w-full border rounded-lg px-3 py-2 text-sm"
               >
-                <option value="directory">ディレクトリ</option>
-                <option value="map">マップ</option>
+                <option value="map">Google マップ</option>
+                <option value="directory">デモデータ (テスト用)</option>
               </select>
             </div>
             <div>
@@ -400,6 +400,13 @@ export default function OutreachSourcesClient() {
             {searching ? "検索中..." : "検索実行"}
           </button>
         </div>
+
+        {/* Demo data warning */}
+        {sourceType === "directory" && (
+          <div className="bg-yellow-50 border border-yellow-200 rounded-lg px-4 py-3 text-sm text-yellow-800">
+            「デモデータ」はテスト用のサンプルデータを返します。本番環境では「Google マップ」を使用してください。
+          </div>
+        )}
 
         {/* Import Result Banners */}
         {importResult && (

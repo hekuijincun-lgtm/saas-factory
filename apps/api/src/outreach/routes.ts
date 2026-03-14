@@ -2403,7 +2403,10 @@ export function createOutreachRoutes(getTenantId: GetTenantId) {
       invalid: savedCandidates.filter((c2) => c2.import_status === "invalid").length,
     };
 
-    return c.json({ ok: true, tenantId, data: { runId, candidates: savedCandidates, summary } });
+    const { isDemoSourceType } = await import("./source-providers/provider-factory");
+    const isDemo = isDemoSourceType(sourceType);
+
+    return c.json({ ok: true, tenantId, data: { runId, candidates: savedCandidates, summary, isDemo } });
   });
 
   // ── GET /sources/runs — List runs ──────────────────────────────────────

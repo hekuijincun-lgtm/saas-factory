@@ -1,6 +1,7 @@
 // Source Provider Factory (Phase 6 + Phase 9 Google Places)
 // ============================================================
 // Resolves the correct provider based on source_type.
+// "directory" (mock) is restricted: returns clearly labeled demo data.
 
 import type { SourceProvider } from "./types";
 import { MockDirectoryProvider } from "./mock-directory";
@@ -18,6 +19,7 @@ export interface ProviderEnv {
 export function resolveSourceProvider(sourceType: string, env?: ProviderEnv): SourceProvider {
   switch (sourceType) {
     case "directory":
+      // MockDirectoryProvider returns demo data only — label clearly in UI
       return new MockDirectoryProvider();
     case "map": {
       const apiKey = env?.GOOGLE_MAPS_API_KEY;
@@ -31,7 +33,12 @@ export function resolveSourceProvider(sourceType: string, env?: ProviderEnv): So
   }
 }
 
-/** List available source types */
+/** List available source types with labels */
 export function availableSourceTypes(): string[] {
   return ["directory", "map"];
+}
+
+/** Check if a source type produces demo/mock data */
+export function isDemoSourceType(sourceType: string): boolean {
+  return sourceType === "directory";
 }

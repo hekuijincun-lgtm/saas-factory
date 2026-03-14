@@ -448,8 +448,8 @@ export type CandidateImportStatus = "new" | "duplicate" | "imported" | "skipped"
 export const SOURCE_TYPE_LABELS: Record<string, string> = {
   csv: "CSV",
   manual: "手動",
-  map: "マップ",
-  directory: "ディレクトリ",
+  map: "Google マップ",
+  directory: "デモデータ",
 };
 
 export const CANDIDATE_STATUS_LABELS: Record<CandidateImportStatus, string> = {

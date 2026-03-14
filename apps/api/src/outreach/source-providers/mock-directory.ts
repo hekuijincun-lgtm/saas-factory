@@ -1,7 +1,8 @@
 // Mock Directory Provider (Phase 6)
 // ============================================================
-// Returns deterministic mock data for development and testing.
-// Replace with real Google Maps / directory API in future.
+// Returns deterministic mock data for development and testing ONLY.
+// In production, returns empty results with a warning message.
+// Use source_type "map" (Google Places) for real lead discovery.
 
 import type { SourceProvider, SourceSearchInput, SourceSearchResult, CandidateResult } from "./types";
 
