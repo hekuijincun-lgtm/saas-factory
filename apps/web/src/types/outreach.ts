@@ -876,7 +876,8 @@ export interface BatchJobResult {
 // ── Phase 11: Auto Outreach Scheduler ──────────────────────────────────
 
 export type ScheduleFrequency = "daily" | "weekdays" | "weekly";
-export type ScheduleMode = "review_only" | "approved_send_existing_only";
+export type ScheduleMode = "review_only" | "approved_send_existing_only" | "hybrid" | "auto_send";
+export type ScheduleAreaMode = "manual" | "auto";
 export type ScheduleRunStatus = "pending" | "running" | "completed" | "failed" | "cancelled";
 
 export const SCHEDULE_FREQUENCY_LABELS: Record<ScheduleFrequency, string> = {
@@ -888,6 +889,13 @@ export const SCHEDULE_FREQUENCY_LABELS: Record<ScheduleFrequency, string> = {
 export const SCHEDULE_MODE_LABELS: Record<ScheduleMode, string> = {
   review_only: "レビューのみ",
   approved_send_existing_only: "承認済み送信",
+  hybrid: "ハイブリッド",
+  auto_send: "自動送信",
+};
+
+export const SCHEDULE_AREA_MODE_LABELS: Record<ScheduleAreaMode, string> = {
+  manual: "手動指定",
+  auto: "AI 自動選定",
 };
 
 export const SCHEDULE_RUN_STATUS_LABELS: Record<ScheduleRunStatus, string> = {
@@ -926,6 +934,9 @@ export interface OutreachSchedule {
   auto_score_enabled: number;
   auto_draft_enabled: number;
   mode: ScheduleMode;
+  area_mode: ScheduleAreaMode;
+  daily_send_limit: number;
+  min_score_for_auto_send: number;
   last_run_at: string | null;
   next_run_at: string | null;
   created_at: string;
@@ -945,6 +956,13 @@ export interface OutreachScheduleRun {
   drafted_count: number;
   queued_send_count: number;
   error_count: number;
+  sent_count: number;
+  skipped_count: number;
+  review_count: number;
+  chosen_area: string | null;
+  area_mode: string | null;
+  send_mode: string | null;
+  selection_reason: string | null;
   summary_json: string | null;
   error_message: string | null;
   started_at: string | null;
@@ -969,6 +987,9 @@ export interface ScheduleCreateInput {
   auto_score_enabled?: boolean;
   auto_draft_enabled?: boolean;
   mode?: ScheduleMode;
+  area_mode?: ScheduleAreaMode;
+  daily_send_limit?: number;
+  min_score_for_auto_send?: number;
 }
 
 // ── Phase 12: Auto Sales Copilot types ───────────────────────────────

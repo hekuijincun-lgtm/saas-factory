@@ -16,11 +16,13 @@ import type {
   OutreachScheduleRun,
   ScheduleFrequency,
   ScheduleMode,
+  ScheduleAreaMode,
   ScheduleRunStatus,
 } from "@/src/types/outreach";
 import {
   SCHEDULE_FREQUENCY_LABELS,
   SCHEDULE_MODE_LABELS,
+  SCHEDULE_AREA_MODE_LABELS,
   SCHEDULE_RUN_STATUS_LABELS,
   SCHEDULE_RUN_STATUS_COLORS,
 } from "@/src/types/outreach";
@@ -43,6 +45,9 @@ export default function OutreachAutomationClient() {
   const [formMaxPerArea, setFormMaxPerArea] = useState("8");
   const [formQualityThreshold, setFormQualityThreshold] = useState("0.4");
   const [formMode, setFormMode] = useState<ScheduleMode>("review_only");
+  const [formAreaMode, setFormAreaMode] = useState<ScheduleAreaMode>("manual");
+  const [formDailySendLimit, setFormDailySendLimit] = useState("0");
+  const [formMinScore, setFormMinScore] = useState("40");
   const [creating, setCreating] = useState(false);
 
   // Detail / runs
@@ -91,6 +96,9 @@ export default function OutreachAutomationClient() {
         max_per_area: parseInt(formMaxPerArea, 10) || 8,
         quality_threshold: parseFloat(formQualityThreshold) || 0.4,
         mode: formMode,
+        area_mode: formAreaMode,
+        daily_send_limit: parseInt(formDailySendLimit, 10) || 0,
+        min_score_for_auto_send: parseInt(formMinScore, 10) || 40,
       });
       setToast({ type: "success", text: "スケジュールを作成しました" });
       setShowCreate(false);
@@ -108,6 +116,9 @@ export default function OutreachAutomationClient() {
     setFormFrequency("daily"); setFormHour("9"); setFormMinute("0");
     setFormTargetCount("20"); setFormMaxPerArea("8"); setFormQualityThreshold("0.4");
     setFormMode("review_only");
+    setFormAreaMode("manual");
+    setFormDailySendLimit("0");
+    setFormMinScore("40");
   };
 
   const handleToggle = async (schedule: OutreachSchedule) => {
@@ -131,7 +142,10 @@ export default function OutreachAutomationClient() {
     setRunning(true);
     try {
       const run = await runScheduleNow(tenantId, scheduleId);
-      setToast({ type: "success", text: `実行完了: インポート ${run.imported_count}件, ドラフト ${run.drafted_count}件` });
+      const parts = [`インポート ${run.imported_count}件`, `ドラフト ${run.drafted_count}件`];
+      if (run.sent_count > 0) parts.push(`送信 ${run.sent_count}件`);
+      if (run.review_count > 0) parts.push(`レビュー待ち ${run.review_count}件`);
+      setToast({ type: "success", text: `実行完了: ${parts.join(", ")}` });
       await loadSchedules();
       if (selectedSchedule?.id === scheduleId) {
         await loadRuns(scheduleId);
@@ -260,6 +274,8 @@ export default function OutreachAutomationClient() {
                     className="w-full border rounded-lg px-3 py-2 text-sm">
                     <option value="review_only">レビューのみ（安全）</option>
                     <option value="approved_send_existing_only">承認済み送信</option>
+                    <option value="hybrid">ハイブリッド</option>
+                    <option value="auto_send">自動送信</option>
                   </select>
                 </div>
               </div>
@@ -269,6 +285,46 @@ export default function OutreachAutomationClient() {
                   新規生成されたドラフトは自動送信されません。
                 </div>
               )}
+              {formMode === "hybrid" && (
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-800">
+                  ハイブリッドモード: スコアが閾値以上のリードは自動送信、それ以下はレビュー待ちになります。
+                </div>
+              )}
+              {formMode === "auto_send" && (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-xs text-red-800">
+                  自動送信モード: 安全チェックを通過した全てのドラフトが自動的に送信されます。
+                  十分なテスト後にのみ有効化してください。
+                </div>
+              )}
+              {/* Auto-send settings (visible for hybrid/auto_send) */}
+              {(formMode === "hybrid" || formMode === "auto_send") && (
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">1日の送信上限</label>
+                    <input type="number" value={formDailySendLimit} onChange={e => setFormDailySendLimit(e.target.value)}
+                      min={0} max={200} className="w-full border rounded-lg px-3 py-2 text-sm" />
+                    <p className="text-xs text-gray-400 mt-0.5">0 = 無制限（レートリミットのみ）</p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">自動送信スコア閾値</label>
+                    <input type="number" value={formMinScore} onChange={e => setFormMinScore(e.target.value)}
+                      min={0} max={100} className="w-full border rounded-lg px-3 py-2 text-sm" />
+                    <p className="text-xs text-gray-400 mt-0.5">このスコア以上で自動送信対象</p>
+                  </div>
+                </div>
+              )}
+              {/* Area mode */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">エリア選定モード</label>
+                <select value={formAreaMode} onChange={e => setFormAreaMode(e.target.value as ScheduleAreaMode)}
+                  className="w-full border rounded-lg px-3 py-2 text-sm">
+                  <option value="manual">手動指定（登録エリアを順番に使用）</option>
+                  <option value="auto">AI 自動選定（反応率・鮮度で最適エリアを選択）</option>
+                </select>
+                {formAreaMode === "auto" && (
+                  <p className="text-xs text-blue-600 mt-1">次回実行時に AI が最適エリアを自動選定します</p>
+                )}
+              </div>
             </div>
             <div className="flex justify-end gap-3 mt-6">
               <button onClick={() => { setShowCreate(false); resetForm(); }}
@@ -315,6 +371,7 @@ export default function OutreachAutomationClient() {
                     <div className="text-xs text-gray-500 mt-0.5">
                       {s.niche} | {areas.slice(0, 4).join(", ")}{areas.length > 4 && ` +${areas.length - 4}`}
                       {" | "}{SCHEDULE_MODE_LABELS[s.mode]}
+                      {s.area_mode === "auto" && " | エリア自動"}
                       {s.last_run_at && <> | 最終実行: {new Date(s.last_run_at).toLocaleDateString("ja-JP")}</>}
                     </div>
                   </div>
@@ -359,6 +416,13 @@ export default function OutreachAutomationClient() {
               <div>目標: <span className="font-medium">{selectedSchedule.max_target_count}件</span></div>
               <div>品質閾値: <span className="font-medium">{selectedSchedule.quality_threshold}</span></div>
               <div>モード: <span className="font-medium">{SCHEDULE_MODE_LABELS[selectedSchedule.mode]}</span></div>
+              <div>エリア選定: <span className="font-medium">{SCHEDULE_AREA_MODE_LABELS[selectedSchedule.area_mode] ?? "手動指定"}</span></div>
+              {(selectedSchedule.mode === "hybrid" || selectedSchedule.mode === "auto_send") && (
+                <>
+                  <div>送信上限/日: <span className="font-medium">{selectedSchedule.daily_send_limit || "無制限"}</span></div>
+                  <div>スコア閾値: <span className="font-medium">{selectedSchedule.min_score_for_auto_send}</span></div>
+                </>
+              )}
               {selectedSchedule.next_run_at && (
                 <div className="col-span-2 sm:col-span-3">
                   次回実行予定: <span className="font-medium">{new Date(selectedSchedule.next_run_at).toLocaleString("ja-JP")}</span>
@@ -398,7 +462,9 @@ export default function OutreachAutomationClient() {
                         <th className="px-3 py-2 text-right">検索</th>
                         <th className="px-3 py-2 text-right">インポート</th>
                         <th className="px-3 py-2 text-right">ドラフト</th>
+                        <th className="px-3 py-2 text-right">送信</th>
                         <th className="px-3 py-2 text-right">エラー</th>
+                        <th className="px-3 py-2 text-left">エリア</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y">
@@ -416,7 +482,25 @@ export default function OutreachAutomationClient() {
                           <td className="px-3 py-1.5 text-right">{run.imported_count}</td>
                           <td className="px-3 py-1.5 text-right">{run.drafted_count}</td>
                           <td className="px-3 py-1.5 text-right">
+                            {run.sent_count > 0 ? (
+                              <span className="text-green-700 font-medium">{run.sent_count}</span>
+                            ) : run.review_count > 0 ? (
+                              <span className="text-gray-500" title={`レビュー待ち: ${run.review_count}件`}>R:{run.review_count}</span>
+                            ) : "—"}
+                            {run.skipped_count > 0 && (
+                              <span className="text-gray-400 ml-1" title={`スキップ: ${run.skipped_count}件`}>(-{run.skipped_count})</span>
+                            )}
+                          </td>
+                          <td className="px-3 py-1.5 text-right">
                             <span className={run.error_count > 0 ? "text-red-600" : ""}>{run.error_count}</span>
+                          </td>
+                          <td className="px-3 py-1.5 whitespace-nowrap">
+                            {run.chosen_area ? (
+                              <span className="text-xs" title={run.selection_reason ?? ""}>
+                                {run.chosen_area}
+                                {run.area_mode === "auto" && <span className="text-blue-500 ml-0.5" title="AI自動選定">*</span>}
+                              </span>
+                            ) : "—"}
                           </td>
                         </tr>
                       ))}

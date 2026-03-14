@@ -1,7 +1,7 @@
-// Outreach OS — Auto Outreach Scheduler (Phase 11)
+// Outreach OS — Auto Outreach Scheduler (Phase 11 + Phase 16)
 // ============================================================
 // Scheduled automation: creates batch jobs on schedule and runs them.
-// Reuses existing runBatchJob() for the full pipeline.
+// Phase 16: auto_send/hybrid modes + area auto-selection.
 // Default: review_only (no auto-send of new drafts)
 
 import type { D1Database } from "@cloudflare/workers-types";
@@ -9,14 +9,32 @@ import type {
   OutreachSchedule,
   OutreachScheduleRun,
   ScheduleCreateInput,
+  ScheduleAreaMode,
+  OutreachSettings,
 } from "./types";
+import { DEFAULT_OUTREACH_SETTINGS } from "./types";
 import { createBatchJob, runBatchJob } from "./batches";
+import {
+  SafeModeSender,
+  resolveProvider,
+  checkRateLimit,
+  incrementRateLimit,
+  isUnsubscribed,
+  isDuplicateSend,
+  markSent,
+  trackSendAttempt,
+  MAX_SEND_RETRIES,
+} from "./send-provider";
 
 type UidFn = () => string;
 type NowFn = () => string;
 
 /** Hard cap for schedules per tenant */
 const MAX_SCHEDULES_PER_TENANT = 10;
+
+/** Allowed schedule modes */
+const VALID_MODES = ["review_only", "approved_send_existing_only", "hybrid", "auto_send"];
+const VALID_AREA_MODES: ScheduleAreaMode[] = ["manual", "auto"];
 
 // ── CRUD ────────────────────────────────────────────────────────────────
 
@@ -40,6 +58,9 @@ export async function createSchedule(
   const ts = now();
   const nextRun = computeNextRun(input.frequency ?? "daily", input.run_hour ?? 9, input.run_minute ?? 0);
 
+  const mode = VALID_MODES.includes(input.mode ?? "") ? input.mode! : "review_only";
+  const areaMode = VALID_AREA_MODES.includes(input.area_mode as any) ? input.area_mode! : "manual";
+
   const schedule: OutreachSchedule = {
     id,
     tenant_id: tenantId,
@@ -59,7 +80,10 @@ export async function createSchedule(
     auto_analyze_enabled: input.auto_analyze_enabled !== false ? 1 : 0,
     auto_score_enabled: input.auto_score_enabled !== false ? 1 : 0,
     auto_draft_enabled: input.auto_draft_enabled !== false ? 1 : 0,
-    mode: input.mode === "approved_send_existing_only" ? "approved_send_existing_only" : "review_only",
+    mode: mode as any,
+    area_mode: areaMode,
+    daily_send_limit: Math.max(0, Math.min(input.daily_send_limit ?? 0, 200)),
+    min_score_for_auto_send: Math.max(0, Math.min(input.min_score_for_auto_send ?? 40, 100)),
     last_run_at: null,
     next_run_at: nextRun,
     created_at: ts,
@@ -72,8 +96,9 @@ export async function createSchedule(
        (id, tenant_id, name, niche, areas_json, source_type, enabled, frequency,
         run_hour, run_minute, max_target_count, max_per_area, quality_threshold,
         auto_accept_enabled, auto_import_enabled, auto_analyze_enabled, auto_score_enabled, auto_draft_enabled,
-        mode, last_run_at, next_run_at, created_at, updated_at)
-       VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23)`
+        mode, area_mode, daily_send_limit, min_score_for_auto_send,
+        last_run_at, next_run_at, created_at, updated_at)
+       VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25,?26)`
     )
     .bind(
       id, tenantId, schedule.name, schedule.niche, schedule.areas_json, schedule.source_type,
@@ -81,7 +106,8 @@ export async function createSchedule(
       schedule.max_target_count, schedule.max_per_area, schedule.quality_threshold,
       schedule.auto_accept_enabled, schedule.auto_import_enabled, schedule.auto_analyze_enabled,
       schedule.auto_score_enabled, schedule.auto_draft_enabled,
-      schedule.mode, null, nextRun, ts, ts
+      schedule.mode, schedule.area_mode, schedule.daily_send_limit, schedule.min_score_for_auto_send,
+      null, nextRun, ts, ts
     )
     .run();
 
@@ -135,7 +161,18 @@ export async function updateSchedule(
   if (updates.auto_analyze_enabled !== undefined) apply("auto_analyze_enabled", updates.auto_analyze_enabled ? 1 : 0);
   if (updates.auto_score_enabled !== undefined) apply("auto_score_enabled", updates.auto_score_enabled ? 1 : 0);
   if (updates.auto_draft_enabled !== undefined) apply("auto_draft_enabled", updates.auto_draft_enabled ? 1 : 0);
-  if (updates.mode !== undefined) apply("mode", updates.mode);
+  if (updates.mode !== undefined && VALID_MODES.includes(updates.mode)) {
+    apply("mode", updates.mode);
+  }
+  if (updates.area_mode !== undefined && VALID_AREA_MODES.includes(updates.area_mode as any)) {
+    apply("area_mode", updates.area_mode);
+  }
+  if (updates.daily_send_limit !== undefined) {
+    apply("daily_send_limit", Math.max(0, Math.min(updates.daily_send_limit, 200)));
+  }
+  if (updates.min_score_for_auto_send !== undefined) {
+    apply("min_score_for_auto_send", Math.max(0, Math.min(updates.min_score_for_auto_send, 100)));
+  }
   if (updates.enabled !== undefined) apply("enabled", updates.enabled ? 1 : 0);
 
   // Recompute next_run if frequency/time changed
@@ -193,7 +230,6 @@ export async function processScheduledJobs(
   const currentDay = nowJst.getDay(); // 0=Sun, 1=Mon, ...
 
   // Only process at exact 5-min cron boundaries matching run_hour/run_minute
-  // We check: run_hour == currentHour AND run_minute is within 5-min window of currentMinute
   const minuteFloor = Math.floor(currentMinute / 5) * 5;
 
   // Find enabled schedules that are due
@@ -243,6 +279,292 @@ export async function processScheduledJobs(
   return { processed, errors };
 }
 
+// ── Area Auto-Selection ─────────────────────────────────────────────────
+
+interface AreaSelectionResult {
+  areas: string[];
+  chosenArea: string;
+  reason: string;
+}
+
+async function selectAreaAutomatically(
+  db: D1Database,
+  tenantId: string,
+  schedule: OutreachSchedule
+): Promise<AreaSelectionResult> {
+  const configuredAreas: string[] = JSON.parse(schedule.areas_json);
+  if (configuredAreas.length === 0) {
+    return { areas: [], chosenArea: "", reason: "エリア未設定" };
+  }
+  if (configuredAreas.length === 1) {
+    return { areas: configuredAreas, chosenArea: configuredAreas[0], reason: "エリア1件のみ" };
+  }
+
+  // Gather per-area stats from existing leads
+  const areaStats: Array<{
+    area: string;
+    leadCount: number;
+    replyCount: number;
+    meetingCount: number;
+    replyRate: number;
+    recentRunCount: number;
+  }> = [];
+
+  for (const area of configuredAreas) {
+    const stats = await db
+      .prepare(
+        `SELECT
+           COUNT(*) as lead_count,
+           SUM(CASE WHEN pipeline_stage IN ('replied','meeting','customer') THEN 1 ELSE 0 END) as reply_count,
+           SUM(CASE WHEN pipeline_stage IN ('meeting','customer') THEN 1 ELSE 0 END) as meeting_count
+         FROM sales_leads
+         WHERE tenant_id = ?1 AND area = ?2`
+      )
+      .bind(tenantId, area)
+      .first<{ lead_count: number; reply_count: number; meeting_count: number }>();
+
+    // Check how many times this area was used in recent runs
+    const recentRuns = await db
+      .prepare(
+        `SELECT COUNT(*) as cnt FROM outreach_schedule_runs
+         WHERE tenant_id = ?1 AND schedule_id = ?2 AND chosen_area = ?3
+         AND created_at > datetime('now', '-14 days')`
+      )
+      .bind(tenantId, schedule.id, area)
+      .first<{ cnt: number }>();
+
+    const leadCount = stats?.lead_count ?? 0;
+    const replyCount = stats?.reply_count ?? 0;
+    const meetingCount = stats?.meeting_count ?? 0;
+
+    areaStats.push({
+      area,
+      leadCount,
+      replyCount,
+      meetingCount,
+      replyRate: leadCount > 0 ? replyCount / leadCount : 0,
+      recentRunCount: recentRuns?.cnt ?? 0,
+    });
+  }
+
+  // Scoring: prefer high reply rate, avoid recently-used areas, explore low-coverage areas
+  const scored = areaStats.map((s) => {
+    let score = 0;
+
+    // Reply rate bonus (0-40 points)
+    score += s.replyRate * 40;
+
+    // Meeting rate bonus (0-30 points)
+    const meetingRate = s.leadCount > 0 ? s.meetingCount / s.leadCount : 0;
+    score += meetingRate * 30;
+
+    // Exploration bonus: less leads = more to discover (0-20 points)
+    const explorationScore = Math.max(0, 20 - s.leadCount * 0.5);
+    score += explorationScore;
+
+    // Freshness penalty: recently used areas get deprioritized (-5 per recent run)
+    score -= s.recentRunCount * 5;
+
+    return { ...s, score };
+  });
+
+  // Sort by score DESC
+  scored.sort((a, b) => b.score - a.score);
+  const best = scored[0];
+
+  const reasons: string[] = [];
+  if (best.replyRate > 0) reasons.push(`返信率${(best.replyRate * 100).toFixed(0)}%`);
+  if (best.leadCount === 0) reasons.push("未開拓エリア");
+  if (best.recentRunCount === 0) reasons.push("最近未使用");
+  if (best.meetingCount > 0) reasons.push(`商談${best.meetingCount}件`);
+  if (reasons.length === 0) reasons.push("スコア最高");
+
+  const reason = `自動選定: ${best.area} (${reasons.join(", ")})`;
+
+  return {
+    areas: [best.area],
+    chosenArea: best.area,
+    reason,
+  };
+}
+
+// ── Auto-Send Logic ─────────────────────────────────────────────────────
+
+interface AutoSendResult {
+  sentCount: number;
+  skippedCount: number;
+  reviewCount: number;
+  skippedReasons: Record<string, number>;
+}
+
+async function executeAutoSend(
+  db: D1Database,
+  kv: KVNamespace,
+  tenantId: string,
+  schedule: OutreachSchedule,
+  settings: OutreachSettings,
+  uid: UidFn,
+  now: NowFn
+): Promise<AutoSendResult> {
+  const result: AutoSendResult = { sentCount: 0, skippedCount: 0, reviewCount: 0, skippedReasons: {} };
+
+  const isAutoSend = schedule.mode === "auto_send";
+  const isHybrid = schedule.mode === "hybrid";
+  if (!isAutoSend && !isHybrid) return result;
+
+  const minScore = schedule.min_score_for_auto_send || 40;
+  const dailyLimit = schedule.daily_send_limit || settings.dailyCap || 50;
+
+  // Find drafted messages from leads imported by this schedule's niche
+  const drafts = await db
+    .prepare(
+      `SELECT d.id, d.lead_id, d.subject, d.body, d.kind, d.campaign_id,
+              l.score, l.contact_email, l.line_url, l.area, l.store_name,
+              l.send_attempt_count, l.last_contacted_at
+       FROM lead_message_drafts d
+       JOIN sales_leads l ON d.lead_id = l.id AND d.tenant_id = l.tenant_id
+       WHERE d.tenant_id = ?1
+         AND d.status = 'pending_review'
+         AND l.score >= ?2
+       ORDER BY l.score DESC
+       LIMIT ?3`
+    )
+    .bind(tenantId, minScore, dailyLimit)
+    .all<{
+      id: string; lead_id: string; subject: string | null; body: string;
+      kind: string; campaign_id: string | null;
+      score: number; contact_email: string | null; line_url: string | null;
+      area: string | null; store_name: string;
+      send_attempt_count: number; last_contacted_at: string | null;
+    }>();
+
+  const skipReason = (reason: string) => {
+    result.skippedCount++;
+    result.skippedReasons[reason] = (result.skippedReasons[reason] || 0) + 1;
+  };
+
+  for (const draft of (drafts.results ?? [])) {
+    // ── Safety checks (fail-closed) ──
+
+    // 1. Rate limit
+    const rl = await checkRateLimit(kv, tenantId, { dailyCap: dailyLimit, perTenantPerHour: settings.hourlyCap });
+    if (!rl.allowed) { skipReason("rate_limit"); continue; }
+
+    // 2. Unsubscribe
+    if (await isUnsubscribed(kv, tenantId, draft.lead_id)) { skipReason("unsubscribed"); continue; }
+
+    // 3. Duplicate send
+    if (await isDuplicateSend(kv, tenantId, draft.lead_id, draft.id)) { skipReason("duplicate"); continue; }
+
+    // 4. Max retries
+    if (draft.send_attempt_count >= MAX_SEND_RETRIES) { skipReason("max_retries"); continue; }
+
+    // 5. Contact cooldown
+    if (draft.last_contacted_at) {
+      const cooldownMs = (settings.contactCooldownDays || 7) * 86400000;
+      if (Date.now() - new Date(draft.last_contacted_at).getTime() < cooldownMs) {
+        skipReason("cooldown"); continue;
+      }
+    }
+
+    // 6. Resolve send channel
+    const channel = (draft.kind as any) ?? "email";
+    const to = draft.contact_email || draft.line_url || "";
+    if (!to) { skipReason("no_contact"); continue; }
+
+    // 7. LP URL fail-closed check
+    const lpTokenPattern = /\{\{lp_url\}\}/;
+    const usesLpToken = lpTokenPattern.test(draft.subject ?? "") || lpTokenPattern.test(draft.body);
+    if (usesLpToken) {
+      // Resolve LP URL
+      let lpUrl = settings.defaultLpUrl || "";
+      if (draft.campaign_id) {
+        const camp = await db
+          .prepare("SELECT landing_page_url FROM outreach_campaigns WHERE id = ?1 AND tenant_id = ?2")
+          .bind(draft.campaign_id, tenantId)
+          .first<{ landing_page_url: string | null }>();
+        if (camp?.landing_page_url) lpUrl = camp.landing_page_url;
+      }
+      if (!lpUrl) { skipReason("lp_url_unresolved"); continue; }
+    }
+
+    // 8. Hybrid mode: low score → review instead of send
+    if (isHybrid && (draft.score ?? 0) < minScore + 20) {
+      // In hybrid, only truly high-scoring leads get auto-sent
+      // Lower-scoring leads stay in review queue
+      result.reviewCount++;
+      continue;
+    }
+
+    // ── Execute send ──
+    const ts = now();
+    const sender = resolveProvider(settings.sendMode);
+
+    // Token expansion
+    let lpUrl = settings.defaultLpUrl || "";
+    if (draft.campaign_id) {
+      const camp = await db
+        .prepare("SELECT landing_page_url FROM outreach_campaigns WHERE id = ?1 AND tenant_id = ?2")
+        .bind(draft.campaign_id, tenantId)
+        .first<{ landing_page_url: string | null }>();
+      if (camp?.landing_page_url) lpUrl = camp.landing_page_url;
+    }
+    const expandTokens = (s: string) =>
+      s.replace(/\{\{lp_url\}\}/g, lpUrl)
+       .replace(/\{store_name\}/g, draft.store_name ?? "")
+       .replace(/\{area\}/g, draft.area ?? "");
+
+    try {
+      const sendResult = await sender.send({
+        leadId: draft.lead_id,
+        tenantId,
+        channel: channel as any,
+        to,
+        subject: expandTokens(draft.subject ?? ""),
+        body: expandTokens(draft.body),
+      });
+
+      await trackSendAttempt(db, tenantId, draft.lead_id, sendResult.success ? undefined : sendResult.error);
+
+      if (sendResult.success) {
+        // Update message status
+        await db.prepare("UPDATE lead_message_drafts SET status = 'sent' WHERE id = ?1 AND tenant_id = ?2")
+          .bind(draft.id, tenantId).run();
+
+        // Pipeline transition
+        await db.prepare(
+          `UPDATE sales_leads SET pipeline_stage = 'contacted', last_contacted_at = ?1, updated_at = ?2
+           WHERE id = ?3 AND tenant_id = ?4 AND pipeline_stage IN ('new', 'approved')`
+        ).bind(ts, ts, draft.lead_id, tenantId).run();
+
+        // Rate limit + dedup
+        await incrementRateLimit(kv, tenantId);
+        await markSent(kv, tenantId, draft.lead_id, draft.id);
+
+        // Delivery event
+        const eventId = uid();
+        await db.prepare(
+          `INSERT INTO outreach_delivery_events (id, tenant_id, lead_id, message_id, channel, event_type, status, metadata_json, created_at)
+           VALUES (?1, ?2, ?3, ?4, ?5, 'sent', 'sent', ?6, ?7)`
+        ).bind(
+          eventId, tenantId, draft.lead_id, draft.id, channel,
+          JSON.stringify({ provider: sendResult.provider, sendMode: settings.sendMode, source: "auto_scheduler" }),
+          ts
+        ).run();
+
+        result.sentCount++;
+      } else {
+        skipReason("send_failed");
+      }
+    } catch (err: any) {
+      await trackSendAttempt(db, tenantId, draft.lead_id, err.message);
+      skipReason("send_error");
+    }
+  }
+
+  return result;
+}
+
 // ── Core Execution ──────────────────────────────────────────────────────
 
 async function executeScheduleRun(
@@ -261,15 +583,30 @@ async function executeScheduleRun(
   await db
     .prepare(
       `INSERT INTO outreach_schedule_runs
-       (id, tenant_id, schedule_id, status, started_at, created_at)
-       VALUES (?1, ?2, ?3, 'running', ?4, ?5)`
+       (id, tenant_id, schedule_id, status, send_mode, area_mode, started_at, created_at)
+       VALUES (?1, ?2, ?3, 'running', ?4, ?5, ?6, ?7)`
     )
-    .bind(runId, tenantId, schedule.id, ts, ts)
+    .bind(runId, tenantId, schedule.id, schedule.mode, schedule.area_mode ?? "manual", ts, ts)
     .run();
 
   try {
-    // Create a batch job from the schedule config
-    const areas: string[] = JSON.parse(schedule.areas_json);
+    // ── Area selection ──
+    let areas: string[] = JSON.parse(schedule.areas_json);
+    let chosenArea: string | null = null;
+    let selectionReason: string | null = null;
+
+    if ((schedule.area_mode ?? "manual") === "auto") {
+      const selection = await selectAreaAutomatically(db, tenantId, schedule);
+      areas = selection.areas;
+      chosenArea = selection.chosenArea;
+      selectionReason = selection.reason;
+    } else {
+      chosenArea = areas.join(", ");
+      selectionReason = "手動指定";
+    }
+
+    // ── Create and run batch job ──
+    const batchMode = schedule.mode === "approved_send_existing_only" ? "approved_send" : "review_only";
     const batchJob = await createBatchJob(db, tenantId, {
       niche: schedule.niche,
       areas,
@@ -277,14 +614,26 @@ async function executeScheduleRun(
       target_count: schedule.max_target_count,
       max_per_area: schedule.max_per_area,
       quality_threshold: schedule.quality_threshold,
-      mode: schedule.mode === "approved_send_existing_only" ? "approved_send" : "review_only",
+      mode: batchMode,
       source_type: schedule.source_type,
     }, uid, now);
 
-    // Run the batch
     const batchResult = await runBatchJob(db, kv, tenantId, batchJob.id, uid, now, env);
 
-    // Update run with results
+    // ── Auto-send phase (hybrid / auto_send only) ──
+    let sendResult: AutoSendResult = { sentCount: 0, skippedCount: 0, reviewCount: 0, skippedReasons: {} };
+
+    if (schedule.mode === "hybrid" || schedule.mode === "auto_send") {
+      // Load tenant outreach settings
+      const settingsRaw = await kv.get(`outreach:settings:${tenantId}`);
+      const settings: OutreachSettings = settingsRaw
+        ? { ...DEFAULT_OUTREACH_SETTINGS, ...JSON.parse(settingsRaw) }
+        : { ...DEFAULT_OUTREACH_SETTINGS };
+
+      sendResult = await executeAutoSend(db, kv, tenantId, schedule, settings, uid, now);
+    }
+
+    // ── Update run record ──
     const summary = batchResult.summary;
     const finishedAt = now();
     await db
@@ -296,14 +645,25 @@ async function executeScheduleRun(
            imported_count = ?3,
            drafted_count = ?4,
            error_count = ?5,
-           summary_json = ?6,
-           finished_at = ?7
-         WHERE id = ?8 AND tenant_id = ?9`
+           sent_count = ?6,
+           skipped_count = ?7,
+           review_count = ?8,
+           chosen_area = ?9,
+           selection_reason = ?10,
+           summary_json = ?11,
+           finished_at = ?12
+         WHERE id = ?13 AND tenant_id = ?14`
       )
       .bind(
         summary.searched, summary.accepted, summary.imported,
         summary.drafted, summary.errors,
-        JSON.stringify({ ...summary, batchJobId: batchJob.id }),
+        sendResult.sentCount, sendResult.skippedCount, sendResult.reviewCount,
+        chosenArea, selectionReason,
+        JSON.stringify({
+          ...summary,
+          batchJobId: batchJob.id,
+          sendStats: sendResult,
+        }),
         finishedAt, runId, tenantId
       )
       .run();
