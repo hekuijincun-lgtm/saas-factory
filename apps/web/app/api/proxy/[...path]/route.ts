@@ -96,7 +96,7 @@ async function proxy(req: Request, ctx: Ctx): Promise<Response> {
     if (session.userId) headers.set('x-session-user-id', session.userId);
   }
 
-  let method = (req.method === "PATCH" ? "PUT" : req.method).toUpperCase();
+  let method = req.method.toUpperCase();
 
   let body: ArrayBuffer | undefined = undefined;
   if (method !== "GET" && method !== "HEAD") {
@@ -105,7 +105,7 @@ async function proxy(req: Request, ctx: Ctx): Promise<Response> {
 
   // Rewrite PATCH /admin/menu/:id → POST /admin/menu with id always injected into body
   let menuRewrite = false;
-  if (req.method === "PATCH" && /^admin\/menu\/[^\/]+$/.test(rel)) {
+  if (method === "PATCH" && /^admin\/menu\/[^\/]+$/.test(rel)) {
     menuRewrite = true;
     const menuId = segs[segs.length - 1];
     rel = "admin/menu";

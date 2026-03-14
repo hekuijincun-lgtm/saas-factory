@@ -620,6 +620,8 @@ async function executeScheduleRun(
 
     const batchResult = await runBatchJob(db, kv, tenantId, batchJob.id, uid, now, env);
 
+    console.log(`[SCHEDULER] tenant=${tenantId} schedule=${schedule.id} run=${runId} area=${chosenArea} searched=${batchResult.summary.searched} imported=${batchResult.summary.imported} drafted=${batchResult.summary.drafted} skippedDedup=${(batchResult.summary as any).skippedDedup ?? 0} errors=${batchResult.summary.errors}`);
+
     // ── Auto-send phase (hybrid / auto_send only) ──
     let sendResult: AutoSendResult = { sentCount: 0, skippedCount: 0, reviewCount: 0, skippedReasons: {} };
 

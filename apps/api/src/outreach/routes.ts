@@ -3400,8 +3400,8 @@ export function createOutreachRoutes(getTenantId: GetTenantId) {
     return c.json({ ok: true, tenantId, data: schedule });
   });
 
-  // PATCH /automation/:id — Update schedule
-  app.patch("/automation/:id", async (c) => {
+  // PATCH/PUT /automation/:id — Update schedule
+  const handleUpdateSchedule = async (c: any) => {
     const tenantId = getTenantId(c);
     const db = c.env.DB;
     const id = c.req.param("id");
@@ -3412,7 +3412,9 @@ export function createOutreachRoutes(getTenantId: GetTenantId) {
 
     await logAudit(db, tenantId, "system", "outreach.schedule_updated", { scheduleId: id });
     return c.json({ ok: true, tenantId, data: updated });
-  });
+  };
+  app.patch("/automation/:id", handleUpdateSchedule);
+  app.put("/automation/:id", handleUpdateSchedule);
 
   // POST /automation/:id/enable — Enable schedule
   app.post("/automation/:id/enable", async (c) => {

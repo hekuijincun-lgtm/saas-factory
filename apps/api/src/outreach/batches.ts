@@ -136,6 +136,9 @@ export async function runBatchJob(
   let totalDrafted = 0;
   let totalErrors = 0;
   let totalSearched = 0;
+  let totalSkippedDedup = 0;
+  let totalSkippedQuality = 0;
+  let totalSkippedNoContact = 0;
   const createdLeadIds: string[] = [];
 
   // Load settings
@@ -240,7 +243,7 @@ export async function runBatchJob(
           }
         }
 
-        if (importStatus === "duplicate") continue;
+        if (importStatus === "duplicate") { totalSkippedDedup++; continue; }
 
         // Quality score
         const qualityScore = computeCandidateQualityScore({
@@ -255,10 +258,10 @@ export async function runBatchJob(
         });
 
         // Auto-accept gate
-        if (qualityScore < job.quality_threshold) continue;
+        if (qualityScore < job.quality_threshold) { totalSkippedQuality++; continue; }
 
         // Has contact channel
-        if (!c.websiteUrl && !c.email && !c.phone) continue;
+        if (!c.websiteUrl && !c.email && !c.phone) { totalSkippedNoContact++; continue; }
 
         // Save candidate
         const candId = uid();
@@ -309,7 +312,7 @@ export async function runBatchJob(
             .bind(
               leadId, tenantId, c.storeName,
               c.websiteUrl ?? null, c.email ?? null,
-              c.category ?? null, c.area ?? area,
+              job.niche ?? c.category ?? null, c.area ?? area,
               c.rating ?? null, c.reviewCount ?? 0,
               domain, domain,
               job.source_type, job.source_type, runId, c.externalId ?? candId,
@@ -509,7 +512,12 @@ export async function runBatchJob(
       imported: totalImported,
       drafted: totalDrafted,
       errors: totalErrors,
+      skippedDedup: totalSkippedDedup,
+      skippedQuality: totalSkippedQuality,
+      skippedNoContact: totalSkippedNoContact,
     };
+
+    console.log(`[BATCH] tenant=${tenantId} job=${jobId} searched=${totalSearched} imported=${totalImported} drafted=${totalDrafted} skippedDedup=${totalSkippedDedup} skippedQuality=${totalSkippedQuality} skippedNoContact=${totalSkippedNoContact} errors=${totalErrors}`);
 
     await db
       .prepare(
