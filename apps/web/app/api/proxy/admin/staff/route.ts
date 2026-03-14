@@ -1,5 +1,5 @@
 export const runtime = "edge";
-import { readAdminToken, injectAdminToken, makeDebugStamp, applyDebugHeaders, readSessionPayload } from "../../_lib/proxy";
+import { readAdminToken, injectAdminToken, makeDebugStamp, applyDebugHeaders, readSessionPayload, isDebugAllowed } from "../../_lib/proxy";
 
 function apiBase(): string {
   const v = process.env.API_BASE || process.env.BOOKING_API_BASE || process.env.NEXT_PUBLIC_API_BASE;
@@ -14,7 +14,8 @@ function tenantIdFrom(req: Request): string {
 
 async function forward(req: Request): Promise<Response> {
   const u = new URL(req.url);
-  const isDebug = u.searchParams.get("debug") === "1";
+  const _da = isDebugAllowed();
+  const isDebug = _da && u.searchParams.get("debug") === "1";
   const tenantId = tenantIdFrom(req);
   const method = req.method.toUpperCase();
 
@@ -47,12 +48,11 @@ async function forward(req: Request): Promise<Response> {
     status: res.status,
     headers: { "content-type": outCt, "cache-control": "no-store" },
   });
-  if (tokenInjected) out.headers.set("x-admin-token-present", "1");
-  // Tenant observability headers — always present so curl/devtools can verify isolation
-  out.headers.set("x-tenant-query",     tenantId);
-  out.headers.set("x-tenant-session",   sessionTenantId ?? "(none)");
-  out.headers.set("x-tenant-effective", sessionTenantId ?? tenantId);
   if (isDebug) {
+    if (tokenInjected) out.headers.set("x-admin-token-present", "1");
+    out.headers.set("x-tenant-query",     tenantId);
+    out.headers.set("x-tenant-session",   sessionTenantId ?? "(none)");
+    out.headers.set("x-tenant-effective", sessionTenantId ?? tenantId);
     applyDebugHeaders(out.headers, { stamp: makeDebugStamp(), isAdminRoute: true, tokenConfigured, tokenInjected });
   }
   return out;

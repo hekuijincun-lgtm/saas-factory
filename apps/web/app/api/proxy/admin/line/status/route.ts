@@ -1,7 +1,7 @@
 export const runtime = "edge";
 // Note: Pages route /api/proxy/admin/line/status
 //       → upstream  /admin/integrations/line/status  (path differs intentionally)
-import { readAdminToken, injectAdminToken, makeDebugStamp, applyDebugHeaders } from "../../../_lib/proxy";
+import { readAdminToken, injectAdminToken, makeDebugStamp, applyDebugHeaders, isDebugAllowed } from "../../../_lib/proxy";
 
 function apiBase(): string {
   const v = process.env.API_BASE || process.env.BOOKING_API_BASE || process.env.NEXT_PUBLIC_API_BASE;
@@ -11,7 +11,7 @@ function apiBase(): string {
 
 export async function GET(req: Request): Promise<Response> {
   const u = new URL(req.url);
-  const isDebug = u.searchParams.get("debug") === "1";
+  const isDebug = isDebugAllowed() && u.searchParams.get("debug") === "1";
   const tenantId = u.searchParams.get("tenantId") ?? "default";
 
   const upstream = new URL(apiBase());
@@ -31,8 +31,8 @@ export async function GET(req: Request): Promise<Response> {
       "cache-control": "no-store",
     },
   });
-  if (tokenInjected) out.headers.set("x-admin-token-present", "1");
   if (isDebug) {
+    if (tokenInjected) out.headers.set("x-admin-token-present", "1");
     applyDebugHeaders(out.headers, { stamp: makeDebugStamp(), isAdminRoute: true, tokenConfigured, tokenInjected });
   }
   return out;
