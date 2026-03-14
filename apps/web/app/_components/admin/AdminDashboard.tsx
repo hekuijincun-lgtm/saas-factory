@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import Card from '../ui/Card';
 import { Scissors } from 'lucide-react';
 import { useAdminTenantId } from '@/src/lib/useAdminTenantId';
+import { useVertical } from '../../admin/_lib/useVertical';
 
 interface ScheduleItem {
   time: string;
@@ -73,6 +74,7 @@ interface RepeatMetrics {
 
 export default function AdminDashboard() {
   const { status: tenantStatus, tenantId } = useAdminTenantId();
+  const { vertical } = useVertical(tenantId);
 
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -226,8 +228,8 @@ export default function AdminDashboard() {
         </Card>
       </div>
 
-      {/* 眉毛 KPI カード */}
-      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+      {/* 眉毛 KPI カード — Phase 1a: eyebrow vertical のみ表示 */}
+      {vertical === 'eyebrow' && <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
         <div className="px-5 py-4 border-b border-gray-100 flex items-center gap-2">
           <Scissors className="w-4 h-4 text-pink-500" />
           <h2 className="text-sm font-semibold text-gray-700">眉毛サロン KPI <span className="font-normal text-gray-400">（直近90日）</span></h2>
@@ -320,7 +322,7 @@ export default function AdminDashboard() {
             )}
           </div>
         )}
-      </div>
+      </div>}
 
       {/* J3: リピート施策効果カード */}
       <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
@@ -365,15 +367,15 @@ export default function AdminDashboard() {
         )}
       </div>
 
-      {/* 本日の施術予定 */}
+      {/* 本日の予定 */}
       <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
         <div className="px-5 py-4 border-b border-gray-100">
-          <h2 className="text-sm font-semibold text-gray-700">本日の施術予定</h2>
+          <h2 className="text-sm font-semibold text-gray-700">本日の予定</h2>
           <p className="text-xs text-gray-400 mt-0.5">{date}</p>
         </div>
         {schedule.length === 0 ? (
           <div className="py-10 text-center">
-            <p className="text-sm text-gray-400">本日の施術予定はありません</p>
+            <p className="text-sm text-gray-400">本日の予定はありません</p>
           </div>
         ) : (
           <div className="overflow-x-auto">

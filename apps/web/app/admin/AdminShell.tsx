@@ -25,7 +25,7 @@ import { adminNavItems } from "./nav.config";
 // 定数
 // ============================================================
 
-const FALLBACK_STORE_NAME = "Lumiere 表参道";
+const FALLBACK_STORE_NAME = "マイショップ";
 
 // href → lucide-react icon のマッピング
 const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {

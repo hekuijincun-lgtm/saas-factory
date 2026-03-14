@@ -5,6 +5,7 @@ import { useState, useEffect } from 'react';
 import { useAdminTenantId } from '@/src/lib/useAdminTenantId';
 import { CalendarDays, Building2, Clock, Link as LinkIcon, AlertCircle, RefreshCw, Save, Scissors, Plus, Trash2 } from 'lucide-react';
 import type { EyebrowSurveyQuestion } from '@/src/types/settings';
+import { useVertical } from '../_lib/useVertical';
 import {
   fetchAdminSettings,
   saveAdminSettings,
@@ -40,7 +41,7 @@ const INITIAL_LOCAL_TENANT: LocalTenant = {
   bookingWindow: 14,
 };
 
-const FALLBACK_STORE_NAME = 'Lumiere 表参道';
+const FALLBACK_STORE_NAME = 'マイショップ';
 
 // ============================================================
 // Component
@@ -48,6 +49,8 @@ const FALLBACK_STORE_NAME = 'Lumiere 表参道';
 
 export default function AdminSettingsClient() {
   const { tenantId, status: tenantStatus } = useAdminTenantId();
+  const { vertical } = useVertical(tenantId);
+  const isEyebrow = vertical === 'eyebrow';
 
   // --- localStorageベースのテナント設定（営業日・予約窓 等） ---
   const [localTenant, setLocalTenant] = useState<LocalTenant>(INITIAL_LOCAL_TENANT);
@@ -1354,9 +1357,9 @@ export default function AdminSettingsClient() {
         </div>
 
         {/* ============================================================
-            眉毛施術設定（眉毛サロン特化）
+            眉毛施術設定（眉毛サロン特化） — Phase 1a: eyebrow のみ表示
         ============================================================ */}
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+        {isEyebrow && <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
           <div className="flex items-center gap-3 mb-5">
             <div className="p-2 bg-pink-100 rounded-lg shrink-0">
               <Scissors className="w-5 h-5 text-pink-600" />
@@ -1532,7 +1535,7 @@ export default function AdminSettingsClient() {
               )}
             </div>
           </div>
-        </div>
+        </div>}
 
         {/* ============================================================
             運用ツール: 顧客キー補完（Backfill）

@@ -9,10 +9,13 @@ import Card from '../ui/Card';
 import DataTable from '../ui/DataTable';
 import Badge from '../ui/Badge';
 import { Plus, Edit2, Trash2, Scissors, ImageIcon, X } from 'lucide-react';
+import { useVertical } from '../../admin/_lib/useVertical';
 
 export default function MenuManager({ tenantId: tenantIdProp }: { tenantId?: string }) {
   const { tenantId: sessionTenantId } = useAdminTenantId();
   const tenantId = tenantIdProp ?? sessionTenantId;
+  const { vertical } = useVertical(tenantId);
+  const isEyebrow = vertical === 'eyebrow';
 
   const [menuList, setMenuList] = useState<MenuItem[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
@@ -445,7 +448,8 @@ export default function MenuManager({ tenantId: tenantIdProp }: { tenantId?: str
               </label>
             </div>
 
-            {/* 眉毛設定セクション */}
+            {/* 眉毛設定セクション（eyebrow vertical のみ表示） */}
+            {isEyebrow && (
             <div className="border-t border-gray-100 pt-4">
               <div className="flex items-center gap-2 mb-3">
                 <Scissors className="w-4 h-4 text-pink-500" />
@@ -502,6 +506,7 @@ export default function MenuManager({ tenantId: tenantIdProp }: { tenantId?: str
                 </div>
               </div>
             </div>
+            )}
 
             <div className="flex gap-2 pt-4">
               <button

@@ -17,9 +17,19 @@ const PLAN_LABELS: Record<string, string> = {
   enterprise: "Enterprise",
 };
 
+const VERTICAL_OPTIONS = [
+  { value: "generic", label: "業種を選択してください" },
+  { value: "eyebrow", label: "アイブロウサロン" },
+  { value: "nail", label: "ネイルサロン" },
+  { value: "hair", label: "ヘアサロン" },
+  { value: "esthetic", label: "エステ・リラクゼーション" },
+  { value: "dental", label: "歯科・クリニック" },
+] as const;
+
 export default function SignupPage() {
   const [email, setEmail] = useState("");
   const [storeName, setStoreName] = useState("");
+  const [vertical, setVertical] = useState("generic");
   const [status, setStatus] = useState<"idle" | "loading" | "sent" | "error">(
     "idle"
   );
@@ -89,6 +99,7 @@ export default function SignupPage() {
         email: emailTrimmed,
         storeName: storeName.trim(),
         signup: true,
+        ...(vertical !== "generic" ? { vertical } : {}),
         ...(stripeSessionId ? { stripeSessionId } : {}),
         ...(urlPlanId && !stripeSessionId ? { planId: urlPlanId } : {}),
         ...(isDebug ? { debug: "1" } : {}),
@@ -238,6 +249,26 @@ export default function SignupPage() {
               />
               <p className="mt-1 text-xs text-slate-400">
                 省略するとメールアドレスから自動生成されます
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                業種
+              </label>
+              <select
+                value={vertical}
+                onChange={(e) => setVertical(e.target.value)}
+                className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100 transition bg-white"
+              >
+                {VERTICAL_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+              <p className="mt-1 text-xs text-slate-400">
+                後から管理画面で変更できます
               </p>
             </div>
 

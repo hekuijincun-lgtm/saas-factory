@@ -11,8 +11,8 @@ export type Staff = {
 
 export const STAFF: Staff[] = [
   { id: 'any', name: '指名なし', role: 'Any' },
-  { id: 'ayaka', name: 'AYAKA', role: 'アイブロウリスト' },
-  { id: 'mizuki', name: 'MIZUKI', role: 'アイブロウリスト' },
+  { id: 'ayaka', name: 'AYAKA', role: 'スタッフ' },
+  { id: 'mizuki', name: 'MIZUKI', role: 'スタッフ' },
 ];
 
 // 後方互換性のため

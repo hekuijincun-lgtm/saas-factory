@@ -102,7 +102,7 @@ export interface OnboardingSettings {
 }
 
 /** 業種バーティカル識別子 */
-export type VerticalType = 'eyebrow' | 'nail' | 'dental' | 'generic';
+export type VerticalType = 'eyebrow' | 'nail' | 'dental' | 'hair' | 'esthetic' | 'generic';
 
 /** バーティカル共通設定（業種に依存しない汎用フォーム） */
 export interface VerticalConfig {

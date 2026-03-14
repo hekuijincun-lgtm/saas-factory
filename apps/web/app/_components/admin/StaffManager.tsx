@@ -13,9 +13,12 @@ import type { StaffShift, TimeStr } from '@/src/types/shift';
 import { generateTimeOptions } from '@/src/lib/shiftUtils';
 import { useAdminSettings, clearAdminSettingsCache } from '../../admin/_lib/useAdminSettings';
 import { fetchAdminSettings, saveAdminSettings } from '../../lib/adminApi';
+import { useVertical } from '../../admin/_lib/useVertical';
 
 export default function StaffManager() {
   const { tenantId, status: tenantStatus } = useAdminTenantId();
+  const { vertical } = useVertical(tenantId);
+  const isEyebrow = vertical === 'eyebrow';
   const { settings: bizSettings } = useAdminSettings(tenantId);
   // settings 由来の時刻選択肢（fallback: 10:00-20:00/30min）
   const settingsTimeOptions = generateTimeOptions(bizSettings.open, bizSettings.close, bizSettings.interval) as TimeStr[];
@@ -319,8 +322,8 @@ export default function StaffManager() {
               <label htmlFor="active" className="text-sm text-brand-text">有効</label>
             </div>
 
-            {/* 眉毛スキルセクション */}
-            <div className="border-t border-gray-100 pt-4">
+            {/* 眉毛スキルセクション（eyebrow vertical のみ表示） */}
+            {isEyebrow && (<div className="border-t border-gray-100 pt-4">
               <div className="flex items-center gap-2 mb-3">
                 <Scissors className="w-4 h-4 text-pink-500" />
                 <span className="text-sm font-medium text-gray-700">眉毛スキル</span>
@@ -400,7 +403,7 @@ export default function StaffManager() {
                   <p className="mt-1 text-xs text-gray-400">Enter またはカンマで追加</p>
                 </div>
               </div>
-            </div>
+            </div>)}
 
             <div className="flex gap-2 pt-4">
               <button

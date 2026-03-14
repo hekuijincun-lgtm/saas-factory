@@ -6,6 +6,8 @@ import { compressImage, MAX_UPLOAD_BYTES } from '@/src/lib/compressImage';
 import { detectAuthError } from '@/src/lib/adminAuthError';
 import type { Reservation, ReservationMeta, Staff } from '@/src/lib/bookingApi';
 
+import { useVertical } from '../../admin/_lib/useVertical';
+
 type DetailTab = 'basic' | 'karte' | 'consent' | 'image' | 'survey';
 
 interface Props {
@@ -20,7 +22,7 @@ interface Props {
   isCancelling?: boolean;
 }
 
-const TABS: { id: DetailTab; label: string; icon?: boolean }[] = [
+const ALL_TABS: { id: DetailTab; label: string; icon?: boolean }[] = [
   { id: 'basic',   label: '基本情報' },
   { id: 'karte',   label: '眉毛カルテ', icon: true },
   { id: 'consent', label: '同意ログ',   icon: true },
@@ -38,6 +40,9 @@ export default function ReservationDetailPanel({
   onCancelReservation,
   isCancelling,
 }: Props) {
+  const { vertical } = useVertical(tenantId);
+  const isEyebrow = vertical === 'eyebrow';
+  const TABS = isEyebrow ? ALL_TABS : ALL_TABS.filter(t => t.id !== 'karte');
   const [tab, setTab] = useState<DetailTab>('basic');
   const [editMode, setEditMode] = useState(false);
   const [editForm, setEditForm] = useState({ name: '', phone: '', note: '', staffId: 'any' });

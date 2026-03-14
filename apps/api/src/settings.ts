@@ -102,7 +102,21 @@ export interface OnboardingSettings {
 }
 
 /** 業種バーティカル識別子 */
-export type VerticalType = 'eyebrow' | 'nail' | 'dental' | 'generic';
+export type VerticalType = 'eyebrow' | 'nail' | 'dental' | 'hair' | 'esthetic' | 'generic';
+
+/** 汎用リピート促進テンプレート（eyebrow 以外のフォールバック） */
+export const GENERIC_REPEAT_TEMPLATE =
+  '前回のご来店からそろそろ{interval}週が経ちます。またのご来店をお待ちしております。';
+
+/** 業種ラベル（UI表示用） */
+export const VERTICAL_LABELS: Record<VerticalType, string> = {
+  generic: '汎用（業種を選択してください）',
+  eyebrow: 'アイブロウサロン',
+  nail: 'ネイルサロン',
+  hair: 'ヘアサロン',
+  esthetic: 'エステ・リラクゼーション',
+  dental: '歯科・クリニック',
+};
 
 /** バーティカル共通設定（業種に依存しない汎用フォーム） */
 export interface VerticalConfig {

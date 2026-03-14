@@ -1,9 +1,9 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import Stripe from "stripe";
-import { resolveVertical, DEFAULT_ADMIN_SETTINGS, mergeSettings } from "./settings";
+import { resolveVertical, DEFAULT_ADMIN_SETTINGS, mergeSettings, GENERIC_REPEAT_TEMPLATE } from "./settings";
 import type { PlanId, SubscriptionInfo } from "./settings";
-import { getRepeatConfig, getStyleLabel, buildRepeatMessage, eyebrowOnboardingChecks } from "./verticals/eyebrow";
+import { getRepeatConfig, getStyleLabel, buildRepeatMessage, eyebrowOnboardingChecks, DEFAULT_REPEAT_TEMPLATE } from "./verticals/eyebrow";
 import { registerOwnerRoutes, getOwnerIds, bootstrapOwnerIfEmpty, isPrincipalAllowed, normalizePrincipal } from "./routes/owner";
 import { registerOwnerLeadRoutes } from "./routes/ownerLeads";
 import { createOutreachRoutes } from "./outreach/routes";
@@ -498,8 +498,9 @@ app.get('/admin/rbac/audit', async (c) => {
       return c.json({ ok:false, error:'kv_binding_missing', tenantId, seen:Object.keys(envAny||{}) }, 500)
     }
 
+    // Phase 1a: vertical-aware defaults — eyebrow defaults only for eyebrow tenants
     const DEFAULT_SETTINGS: any = {
-      businessName: "Lumière Brow",
+      businessName: "",
       slotMinutes: 30,
       timezone: "Asia/Tokyo",
       closedWeekdays: [],
@@ -509,6 +510,9 @@ app.get('/admin/rbac/audit', async (c) => {
       storeAddress: "",
       consentText: "予約内容を確認し、同意の上で予約を確定します",
       staffSelectionEnabled: true,
+    }
+    // Eyebrow-specific defaults — injected only when vertical resolves to 'eyebrow'
+    const EYEBROW_DEFAULT_SETTINGS: any = {
       eyebrow: {
         surveyEnabled: true,
         surveyQuestions: [
@@ -561,6 +565,11 @@ app.get('/admin/rbac/audit', async (c) => {
     // P1: inject resolved vertical fields (backward-compat: legacy eyebrow also kept)
     const { vertical, verticalConfig } = resolveVertical(data)
     data = { ...data, vertical, verticalConfig }
+
+    // Phase 1a: inject eyebrow defaults only for eyebrow vertical (not for generic/nail/dental)
+    if (vertical === 'eyebrow' && !data.eyebrow) {
+      data = deepMerge(data, EYEBROW_DEFAULT_SETTINGS)
+    }
 
     return c.json({
       ok:true,
@@ -793,7 +802,7 @@ const parseHHMM = (s: string) => {
     const overlaps = (a0:number,a1:number,b0:number,b1:number) => a0 < b1 && a1 > b0
 
     const DEFAULT_SETTINGS: any = {
-      businessName: "Lumière Brow",
+      businessName: "",
       slotMinutes: 30,
       timezone: "Asia/Tokyo",
       closedWeekdays: [],
@@ -1298,14 +1307,18 @@ type MenuItem = {
   active: boolean;
   sortOrder: number;
 };
-/** 眉毛サロン向けデフォルトメニュー（未設定テナントのseed用） */
-function defaultMenu(): MenuItem[] {
-  return [
-    { id: "eyebrow-styling", name: "眉毛スタイリング",      price: 4500, durationMin: 45, active: true, sortOrder: 1 },
-    { id: "eyebrow-wax",     name: "眉毛WAX",              price: 5500, durationMin: 60, active: true, sortOrder: 2 },
-    { id: "eyebrow-wax-trim",name: "眉毛WAX＋間引き",       price: 6500, durationMin: 75, active: true, sortOrder: 3 },
-    { id: "eyebrow-perm",    name: "眉毛パーマ",            price: 7000, durationMin: 60, active: true, sortOrder: 4 },
-  ];
+/** Phase 1a: vertical-aware デフォルトメニュー */
+function defaultMenu(vertical?: string): MenuItem[] {
+  if (vertical === 'eyebrow') {
+    return [
+      { id: "eyebrow-styling", name: "眉毛スタイリング",      price: 4500, durationMin: 45, active: true, sortOrder: 1 },
+      { id: "eyebrow-wax",     name: "眉毛WAX",              price: 5500, durationMin: 60, active: true, sortOrder: 2 },
+      { id: "eyebrow-wax-trim",name: "眉毛WAX＋間引き",       price: 6500, durationMin: 75, active: true, sortOrder: 3 },
+      { id: "eyebrow-perm",    name: "眉毛パーマ",            price: 7000, durationMin: 60, active: true, sortOrder: 4 },
+    ];
+  }
+  // generic / nail / dental / hair / esthetic → 空配列（テナントが自分で登録する）
+  return [];
 }
 
 app.get("/admin/menu", async (c) => {
@@ -1322,7 +1335,16 @@ app.get("/admin/menu", async (c) => {
       return c.json({ ok: true, tenantId, data: menu });
     }
 
-    return c.json({ ok: true, tenantId, data: defaultMenu() });
+    // Phase 1a: resolve vertical to return appropriate default menu
+    let vertical = 'generic';
+    try {
+      const settingsRaw = await kv.get(`settings:${tenantId}`);
+      if (settingsRaw) {
+        const s = JSON.parse(settingsRaw);
+        vertical = resolveVertical(s).vertical;
+      }
+    } catch { /* ignore */ }
+    return c.json({ ok: true, tenantId, data: defaultMenu(vertical) });
   } catch (error) {
     return c.json({ ok: false, error: "Failed to fetch menu", message: String(error) }, 500);
   }
@@ -2166,9 +2188,10 @@ app.get("/admin/onboarding-status", async (c) => {
 
     const items: Array<{ key: string; label: string; done: boolean; action: string; detail?: string }> = [];
 
-    // Load settings — P4: use eyebrow plugin for repeat config
+    // Load settings — Phase 1a: resolve vertical for conditional checks
     let storeName = '';
     let bookingUrl = '';
+    let vertical = 'generic';
     let eyebrowRepeatEnabled = false;
     let eyebrowTemplateSet = false;
     if (kv) {
@@ -2178,9 +2201,10 @@ app.get("/admin/onboarding-status", async (c) => {
           const s = JSON.parse(raw);
           storeName = String(s?.storeName ?? '').trim();
           bookingUrl = String(s?.integrations?.line?.bookingUrl ?? '').trim();
+          vertical = resolveVertical(s).vertical;
           const rc = getRepeatConfig(s);
           eyebrowRepeatEnabled = rc.enabled;
-          eyebrowTemplateSet = rc.template.trim().length > 0 && rc.template !== '前回のご来店からそろそろ{interval}週が経ちます。眉毛のリタッチはいかがでしょうか？';
+          eyebrowTemplateSet = rc.template.trim().length > 0 && rc.template !== DEFAULT_REPEAT_TEMPLATE;
         }
       } catch { /* ignore */ }
     }
@@ -2207,10 +2231,12 @@ app.get("/admin/onboarding-status", async (c) => {
       } catch { /* ignore */ }
     }
     items.push({ key: 'menu', label: 'メニュー登録（1件以上）', done: menuCount > 0, action: '/admin/menu', detail: menuCount > 0 ? `${menuCount}件` : undefined });
-    // P4: eyebrow 固有チェックは eyebrowOnboardingChecks から注入
-    const eyebrowItems = eyebrowOnboardingChecks({ menuEyebrowCount, repeatEnabled: eyebrowRepeatEnabled, templateSet: eyebrowTemplateSet });
-    const menuEyebrowItem = eyebrowItems.find(i => i.key === 'menuEyebrow')!;
-    items.push(menuEyebrowItem);
+
+    // Phase 1a: eyebrow 固有チェックは eyebrow vertical の場合のみ注入
+    if (vertical === 'eyebrow') {
+      const eyebrowItems = eyebrowOnboardingChecks({ menuEyebrowCount, repeatEnabled: eyebrowRepeatEnabled, templateSet: eyebrowTemplateSet });
+      for (const item of eyebrowItems) items.push(item);
+    }
 
     // Staff check
     let staffCount = 0;
@@ -2237,10 +2263,6 @@ app.get("/admin/onboarding-status", async (c) => {
       } catch { /* ignore */ }
     }
     items.push({ key: 'testReservation', label: 'テスト予約（直近30日に1件以上）', done: hasTestReservation, action: '/booking' });
-
-    // P4: repeatConfig via eyebrow plugin
-    const repeatConfigItem = eyebrowItems.find(i => i.key === 'repeatConfig')!;
-    items.push(repeatConfigItem);
 
     const completedCount = items.filter(i => i.done).length;
     const completionRate = Math.round((completedCount / items.length) * 100);
@@ -2292,7 +2314,8 @@ app.get("/admin/repeat-targets", async (c) => {
         }
       } catch { /* ignore */ }
     }
-    if (!repeatTemplate) repeatTemplate = '前回のご来店からそろそろ{interval}週が経ちます。眉毛のリタッチはいかがでしょうか？';
+    // Phase 1a: use generic fallback instead of eyebrow-specific template
+    if (!repeatTemplate) repeatTemplate = GENERIC_REPEAT_TEMPLATE;
     // Fallback bookingUrl from WEB_BASE env
     if (!bookingUrl) {
       const webBase = String((c.env as any).WEB_BASE ?? (c.env as any).ADMIN_WEB_BASE ?? '').trim();
@@ -2449,16 +2472,18 @@ app.post("/admin/repeat-send", async (c) => {
     const cooldownDays: number = Math.max(0, Number(body.cooldownDays ?? 7));
 
     // Load channelAccessToken + default template from settings
+    // Phase 1a: use getRepeatConfig (verticalConfig 優先 → eyebrow フォールバック → GENERIC)
     let channelAccessToken = '';
-    let defaultTemplate = '前回のご来店からそろそろ{interval}週が経ちます。眉毛のリタッチはいかがでしょうか？';
+    let defaultTemplate = GENERIC_REPEAT_TEMPLATE;
     let intervalDays = 42;
     try {
       const raw = await kv.get(`settings:${tenantId}`);
       if (raw) {
         const s = JSON.parse(raw);
         channelAccessToken = String(s?.integrations?.line?.channelAccessToken ?? '').trim();
-        if (s?.eyebrow?.repeat?.template) defaultTemplate = s.eyebrow.repeat.template;
-        if (s?.eyebrow?.repeat?.intervalDays) intervalDays = Number(s.eyebrow.repeat.intervalDays) || 42;
+        const rc = getRepeatConfig(s);
+        defaultTemplate = rc.template;
+        intervalDays = rc.intervalDays;
       }
     } catch { /* ignore */ }
 
@@ -3570,7 +3595,7 @@ app.post('/billing/checkout', async (c) => {
       line_items: [{ price: priceId, quantity: 1 }],
       metadata: { planId },
       success_url: `${webOrigin}/signup?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${webOrigin}/lp/eyebrow?canceled=1#pricing`,
+      cancel_url: `${webOrigin}/signup?canceled=1`,
     });
 
     return c.json({ ok: true, url: session.url });
@@ -4189,10 +4214,16 @@ app.post('/auth/email/start', async (c) => {
     const fallbackPlanId: string | undefined = (!stripeInfo && typeof body.planId === 'string' && VALID_PLAN_IDS.has(body.planId))
       ? body.planId : undefined;
 
+    // Phase 1a: persist vertical selection from signup form
+    const VALID_VERTICALS = new Set(['eyebrow', 'nail', 'dental', 'hair', 'esthetic', 'generic']);
+    const signupVertical: string | undefined = (typeof body.vertical === 'string' && VALID_VERTICALS.has(body.vertical))
+      ? body.vertical : undefined;
+
     await kv.put(`signup:init:${tenantId}`, JSON.stringify({
       storeName, ownerEmail: rawEmail,
       ...(stripeInfo ? { stripe: stripeInfo } : {}),
       ...(fallbackPlanId ? { planId: fallbackPlanId } : {}),
+      ...(signupVertical ? { vertical: signupVertical } : {}),
     }), { expirationTtl: 900 }); // 15 min
   } else {
     tenantId = String(body.tenantId ?? 'default');
@@ -4412,11 +4443,14 @@ app.post('/auth/email/verify', async (c) => {
             createdAt: Date.now(),
           }
         : undefined;
+    // Phase 1a: seed vertical from signup selection
+    const seedVertical = si.vertical ?? undefined;
     const seedSettings = mergeSettings(DEFAULT_ADMIN_SETTINGS, {
       storeName: storedName,
       tenant: { name: storedName, email },
       onboarding: { onboardingCompleted: false },
       ...(subscriptionSeed ? { subscription: subscriptionSeed as SubscriptionInfo } : {}),
+      ...(seedVertical ? { vertical: seedVertical } : {}),
     });
     await kv.put('settings:' + tenantId, JSON.stringify(seedSettings));
     // Write reverse index: stripeCustomerId → tenantId
@@ -5296,13 +5330,22 @@ app.post("/internal/sales/lead-reply", async (c) => {
     let created = false;
 
     if (!lead) {
+      // Phase 1a: resolve industry from tenant settings instead of hardcoding 'eyebrow'
+      let industry = 'shared';
+      try {
+        const kv = (c.env as any).SAAS_FACTORY;
+        if (kv) {
+          const sr = await kv.get(`settings:${tenantId}`);
+          if (sr) { industry = resolveVertical(JSON.parse(sr)).vertical; }
+        }
+      } catch { /* ignore */ }
       // Create new lead
       leadId = crypto.randomUUID();
       await db.prepare(
         `INSERT INTO sales_leads (id, tenant_id, industry, store_name, line_user_id, status, notes, created_at, updated_at)
-         VALUES (?, ?, 'eyebrow', ?, ?, 'new', ?, ?, ?)`
+         VALUES (?, ?, ?, ?, ?, 'new', ?, ?, ?)`
       ).bind(
-        leadId, tenantId,
+        leadId, tenantId, industry,
         displayName || `LINE:${lineUserId.slice(0, 8)}`,
         lineUserId, null, now, now
       ).run();

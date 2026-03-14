@@ -4,7 +4,9 @@
  * 他業種プラグイン（nail.ts / dental.ts 等）も同構造で追加可能。
  */
 
-/** デフォルトリピートテンプレート */
+import { GENERIC_REPEAT_TEMPLATE } from '../settings';
+
+/** デフォルトリピートテンプレート（アイブロウ専用） */
 export const DEFAULT_REPEAT_TEMPLATE =
   '前回のご来店からそろそろ{interval}週が経ちます。眉毛のリタッチはいかがでしょうか？';
 
@@ -58,7 +60,8 @@ export function getRepeatConfig(settings: any): RepeatConfig {
       template: String(eb.template || DEFAULT_REPEAT_TEMPLATE),
     };
   }
-  return { enabled: false, intervalDays: 42, template: DEFAULT_REPEAT_TEMPLATE };
+  // Phase 1a: 汎用フォールバック（eyebrow 以外のテナントに眉毛メッセージを送らない）
+  return { enabled: false, intervalDays: 42, template: GENERIC_REPEAT_TEMPLATE };
 }
 
 /**
