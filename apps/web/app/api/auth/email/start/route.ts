@@ -16,9 +16,10 @@ export async function POST(req: Request) {
   let body: Record<string, unknown> = {};
   try { body = await req.json(); } catch {}
 
-  // debug=1 from URL query param OR from body (convenience — workers reads body.debug)
+  // debug=1: development のみ（本番で内部 URL / proxy diagnostics を露出しない）
   const url = new URL(req.url);
-  const isDebug = url.searchParams.get("debug") === "1" || body.debug === "1" || body.debug === true;
+  const isDebug = process.env.NODE_ENV === "development" &&
+    (url.searchParams.get("debug") === "1" || body.debug === "1" || body.debug === true);
   if (isDebug) body = { ...body, debug: "1" };
 
   const apiBase = resolveApiBase();

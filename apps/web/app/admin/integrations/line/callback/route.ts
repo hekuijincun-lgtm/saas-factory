@@ -9,6 +9,8 @@ function pickTenantId(state: string | null): string {
   return state.slice(0, i) || "default";
 }
 
+const isDev = process.env.NODE_ENV === "development";
+
 export async function GET(req: NextRequest) {
   const url = new URL(req.url);
 
@@ -19,14 +21,16 @@ export async function GET(req: NextRequest) {
 
   const tenantId = pickTenantId(state);
 
-  console.log("[line-callback] HIT", {
-    href: url.href,
-    code: code ? "(present)" : null,
-    state,
-    error,
-    errorDescription,
-    tenantId,
-  });
+  if (isDev) {
+    console.log("[line-callback] HIT", {
+      href: url.href,
+      code: code ? "(present)" : null,
+      state,
+      error,
+      errorDescription,
+      tenantId,
+    });
+  }
 
   if (error) {
     return NextResponse.redirect(
@@ -44,7 +48,9 @@ export async function GET(req: NextRequest) {
 
   const proxyUrl = new URL(`/api/proxy/admin/line/oauth/callback?tenantId=${encodeURIComponent(tenantId)}`, url.origin);
 
-  console.log("[line-callback] POST proxy", { proxyUrl: proxyUrl.toString(), tenantId });
+  if (isDev) {
+    console.log("[line-callback] POST proxy", { proxyUrl: proxyUrl.toString(), tenantId });
+  }
 
   const res = await fetch(proxyUrl.toString(), {
     method: "POST",
@@ -54,11 +60,12 @@ export async function GET(req: NextRequest) {
   });
 
   const text = await res.text();
-  console.log("[line-callback] proxy result", { status: res.status, body: text.slice(0, 800) });
+  if (isDev) {
+    console.log("[line-callback] proxy result", { status: res.status, body: text.slice(0, 800) });
+  }
 
   return NextResponse.redirect(
     new URL(`/admin/line-setup?reason=${res.ok ? "linked" : "error_exchange"}&tenantId=${encodeURIComponent(tenantId)}`, url.origin),
     307,
   );
 }
-

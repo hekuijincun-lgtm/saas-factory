@@ -82,51 +82,50 @@ export async function middleware(req: NextRequest) {
     }
   }
 
-  // ── Auth check for /admin/* (only when REQUIRE_LINE_AUTH=1) ──────────────
+  // ── Auth check for /admin/* (always-on) ───────────────────────────────────
   //
-  // Gated behind env flag for gradual rollout.
-  // Exempt paths: /admin/unauthorized, /admin/line-setup, /api/*
-  // Redirects to /login (email magic-link) — LINE fallback is on that page.
+  // Session verification is unconditional for privileged routes.
+  // If LINE_SESSION_SECRET is not configured, auth is skipped (local dev only).
+  // REQUIRE_LINE_AUTH is now only used for LINE-specific login enforcement.
+  // Exempt paths: /admin/unauthorized, /admin/line-setup
   if (
-    process.env.REQUIRE_LINE_AUTH === "1" &&
     (pathname === "/admin" || pathname.startsWith("/admin/")) &&
     !pathname.startsWith("/admin/unauthorized") &&
     !pathname.startsWith("/admin/line-setup")
   ) {
-    const cookie = req.headers.get("cookie") ?? "";
-    const sessionMatch = cookie.match(/(?:^|;\s*)line_session=([^;]+)/);
-    const sessionToken = sessionMatch ? sessionMatch[1] : null;
+    const secret = (process.env.LINE_SESSION_SECRET ?? "").trim();
+    // No secret configured → skip auth (local development without session signing)
+    if (secret) {
+      const cookie = req.headers.get("cookie") ?? "";
+      const sessionMatch = cookie.match(/(?:^|;\s*)line_session=([^;]+)/);
+      const sessionToken = sessionMatch ? sessionMatch[1] : null;
 
-    // Helper: build /login redirect URL preserving tenantId as a direct param.
-    // Falls back to last_tenant_id cookie when URL has no tenantId (e.g. bookmark /admin).
-    const buildLoginRedirect = (reason: string) => {
-      const fullPath = pathname + (req.nextUrl.search || "");
-      let tidParam = req.nextUrl.searchParams.get("tenantId");
-      if (!tidParam) {
-        const ltMatch = cookie.match(/(?:^|;\s*)last_tenant_id=([^;]+)/);
-        tidParam = ltMatch ? decodeURIComponent(ltMatch[1]) : null;
-      }
-      // If we recovered a tenantId and returnTo doesn't already have it, inject it
-      let returnToPath = fullPath;
-      if (tidParam && !fullPath.includes("tenantId=")) {
-        const sep = fullPath.includes("?") ? "&" : "?";
-        returnToPath = `${fullPath}${sep}tenantId=${encodeURIComponent(tidParam)}`;
-      }
-      let loginUrl = `/login?reason=${reason}&returnTo=${encodeURIComponent(returnToPath)}`;
-      if (tidParam) loginUrl += `&tenantId=${encodeURIComponent(tidParam)}`;
-      return new URL(loginUrl, req.nextUrl.origin);
-    };
+      // Helper: build /login redirect URL preserving tenantId as a direct param.
+      const buildLoginRedirect = (reason: string) => {
+        const fullPath = pathname + (req.nextUrl.search || "");
+        let tidParam = req.nextUrl.searchParams.get("tenantId");
+        if (!tidParam) {
+          const ltMatch = cookie.match(/(?:^|;\s*)last_tenant_id=([^;]+)/);
+          tidParam = ltMatch ? decodeURIComponent(ltMatch[1]) : null;
+        }
+        let returnToPath = fullPath;
+        if (tidParam && !fullPath.includes("tenantId=")) {
+          const sep = fullPath.includes("?") ? "&" : "?";
+          returnToPath = `${fullPath}${sep}tenantId=${encodeURIComponent(tidParam)}`;
+        }
+        let loginUrl = `/login?reason=${reason}&returnTo=${encodeURIComponent(returnToPath)}`;
+        if (tidParam) loginUrl += `&tenantId=${encodeURIComponent(tidParam)}`;
+        return new URL(loginUrl, req.nextUrl.origin);
+      };
 
-    if (sessionToken) {
-      const secret = (process.env.LINE_SESSION_SECRET ?? "").trim();
-      if (secret) {
+      if (sessionToken) {
         const valid = await verifySessionHasUserId(sessionToken, secret);
         if (!valid) {
           return NextResponse.redirect(buildLoginRedirect("session_expired"));
         }
+      } else {
+        return NextResponse.redirect(buildLoginRedirect("not_logged_in"));
       }
-    } else {
-      return NextResponse.redirect(buildLoginRedirect("not_logged_in"));
     }
   }
 

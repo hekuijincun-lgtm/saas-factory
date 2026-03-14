@@ -20,8 +20,8 @@ export async function GET(req: Request) {
 
   const returnTo = url.searchParams.get("returnTo") || `${url.origin}/admin/line-setup`;
 
-  // ✅ debug=1 は何があっても最優先で返す（Pages反映確認用）
-  if (debug) {
+  // debug=1: development / ALLOW_DEBUG_HEADERS=1 のみ（本番で内部 URL を露出しない）
+  if (debug && process.env.NODE_ENV === "development") {
     const w = new URL("/auth/line/start", apiBase);
     w.searchParams.set("tenantId", tenantId);
     w.searchParams.set("returnTo", returnTo);

@@ -60,14 +60,13 @@ function resolveApiBase(): string {
 const LINE_CB_MAX_AGE = 3600; // 1 hour — long enough to verify, short enough to auto-expire
 
 function applyDiag<T extends Response>(res: T, cbValue: string, stepLabel: string): T {
-  // Header: always observable regardless of browser state
+  // Diagnostic headers/cookies — development only (本番で step / diagnostic cookie を露出しない)
+  if (process.env.NODE_ENV !== "development") return res;
   res.headers.set("x-line-cb-step", stepLabel);
-  // Cookie 1: value holds the step code (encrypted in DB, but visible in HTTP header)
   res.headers.append(
     "Set-Cookie",
     `line_cb=${cbValue}; Path=/; Secure; SameSite=Lax; Max-Age=${LINE_CB_MAX_AGE}`
   );
-  // Cookie 2: name encodes the step (name column is plain-text in SQLite — key diagnostic)
   const nameEncoded = `line_cb_${cbValue.replace(/:/g, "_")}`;
   res.headers.append(
     "Set-Cookie",
@@ -80,7 +79,8 @@ function applyDiag<T extends Response>(res: T, cbValue: string, stepLabel: strin
 
 export async function GET(req: Request) {
   const url = new URL(req.url);
-  const isDebug = url.searchParams.get("debug") === "1";
+  // debug mode は development のみ許可（本番で内部 step / diagnostic を露出しない）
+  const isDebug = process.env.NODE_ENV === "development" && url.searchParams.get("debug") === "1";
 
   // step tracks the current processing stage for diagnostics
   let step = "init";

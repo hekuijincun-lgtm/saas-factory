@@ -98,6 +98,23 @@ export function resolveTargetBase(target: ProxyTarget): string {
   return target === 'booking' ? resolveBookingBase() : resolveUpstreamBase();
 }
 
+// ── Debug allow check ─────────────────────────────────────────────────────
+// 本番では debug 系ヘッダ・エンドポイントを一切無効にする。
+// development or ALLOW_DEBUG_HEADERS=1 のみ許可。
+
+function readEnvFlag(name: string): boolean {
+  try {
+    const ctx = getRequestContext();
+    if ((ctx?.env as any)?.[name] === '1') return true;
+  } catch {}
+  return (process.env as any)?.[name] === '1';
+}
+
+export function isDebugAllowed(): boolean {
+  if (process.env.NODE_ENV === 'development') return true;
+  return readEnvFlag('ALLOW_DEBUG_HEADERS');
+}
+
 // ── Admin token + debug helpers ────────────────────────────────────────────
 // これらを各 route から import することで注入ロジックを一元管理する。
 
@@ -232,14 +249,17 @@ export async function proxyFetch(
   const base = resolveTargetBase(target);
   const url = safeJoin(base, upstreamPath);
 
+  const _debugAllowed = isDebugAllowed();
   let isDebug = false;
   let dbgStamp = "";
-  try {
-    if (new URL(req.url).searchParams.get('debug') === '1') {
-      isDebug = true;
-      dbgStamp = makeDebugStamp();
-    }
-  } catch {}
+  if (_debugAllowed) {
+    try {
+      if (new URL(req.url).searchParams.get('debug') === '1') {
+        isDebug = true;
+        dbgStamp = makeDebugStamp();
+      }
+    } catch {}
+  }
 
   const method = (opts?.method ?? req.method ?? 'GET').toUpperCase();
 
@@ -348,14 +368,17 @@ export async function forwardJson(req: Request, url: string, init: RequestInit =
   h.delete('x-session-tenant-id');
   h.delete('x-session-user-id');
 
+  const _fwdDebugAllowed = isDebugAllowed();
   let isDebug = false;
   let dbgStamp = "";
-  try {
-    if (new URL(req.url).searchParams.get('debug') === '1') {
-      isDebug = true;
-      dbgStamp = makeDebugStamp();
-    }
-  } catch {}
+  if (_fwdDebugAllowed) {
+    try {
+      if (new URL(req.url).searchParams.get('debug') === '1') {
+        isDebug = true;
+        dbgStamp = makeDebugStamp();
+      }
+    } catch {}
+  }
 
   // allow init headers override/merge
   if (init.headers) {

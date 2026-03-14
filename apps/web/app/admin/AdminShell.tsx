@@ -175,13 +175,11 @@ export default function AdminShell({
 
   useEffect(() => {
     if (tenantStatus !== "ready") return;
+    // tenant 未解決時は API fetch しない（fail-closed: default テナントのデータを取らない）
+    if (!authenticated || sessionTenantId === "default") return;
 
     // ── URL canonicalization ──────────────────────────────────────────
     // セッション tenantId を正として URL を正規化する。
-    // ① URL の tenantId が間違っている → 修正
-    // ② URL に tenantId がなく、セッションが non-default → 付与
-    // ③ その他（URL 正しい or default テナント+URL なし）→ 何もしない
-    // ※ early return は廃止: リダイレクトと settings fetch を並行実行する
     const params = new URLSearchParams(window.location.search);
     const urlTenantId = params.get("tenantId");
     const needsCanon =
@@ -191,7 +189,6 @@ export default function AdminShell({
       const newParams = new URLSearchParams(window.location.search);
       newParams.set("tenantId", sessionTenantId);
       router.replace(`${window.location.pathname}?${newParams.toString()}`);
-      // early return 廃止 → settings fetch を続行（storeName 取得漏れ防止）
     }
 
     // API から storeName + onboarding フラグを取得
@@ -245,9 +242,11 @@ export default function AdminShell({
     );
   }
 
-  // Auth guard: session expired or invalid → show login redirect banner
+  // Auth guard: session expired, invalid, or tenant unresolved → block UI
   // Skip for pages that handle their own auth (line-setup is already excluded above)
-  if (!authenticated) {
+  const needsLogin = !authenticated;
+  const tenantUnresolved = authenticated && sessionTenantId === "default";
+  if (needsLogin || tenantUnresolved) {
     const loginParams = new URLSearchParams();
     const returnTo = typeof window !== "undefined"
       ? window.location.pathname + window.location.search
@@ -256,7 +255,7 @@ export default function AdminShell({
     if (sessionTenantId && sessionTenantId !== "default") {
       loginParams.set("tenantId", sessionTenantId);
     }
-    loginParams.set("reason", "session_expired");
+    loginParams.set("reason", needsLogin ? "session_expired" : "no_tenant");
     const loginUrl = `/login?${loginParams.toString()}`;
 
     return (
@@ -266,10 +265,14 @@ export default function AdminShell({
             <LogOut className="w-7 h-7 text-amber-600" />
           </div>
           <h2 className="text-lg font-semibold text-gray-900">
-            ログインの有効期限が切れました
+            {tenantUnresolved
+              ? "テナントを特定できません"
+              : "ログインの有効期限が切れました"}
           </h2>
           <p className="text-sm text-gray-500">
-            セッションの有効期限が切れたか、認証情報が無効です。再度ログインしてください。
+            {tenantUnresolved
+              ? "アクセス先のテナントが特定できないため、管理画面を表示できません。再度ログインしてください。"
+              : "セッションの有効期限が切れたか、認証情報が無効です。再度ログインしてください。"}
           </p>
           <a
             href={loginUrl}
@@ -277,11 +280,6 @@ export default function AdminShell({
           >
             ログインページへ
           </a>
-          {sessionTenantId && sessionTenantId !== "default" && (
-            <p className="text-xs text-gray-400">
-              テナント: {sessionTenantId}
-            </p>
-          )}
         </div>
       </div>
     );
@@ -312,13 +310,6 @@ export default function AdminShell({
             {storeName}
           </span>
         </header>
-
-        {/* テナント未解決警告 — "default" フォールバック時 */}
-        {authenticated && sessionTenantId === "default" && (
-          <div className="mx-4 mt-3 sm:mx-6 lg:mx-8 rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-700">
-            テナントが特定できません。URLにtenantIdパラメータを付けてアクセスするか、再度ログインしてください。
-          </div>
-        )}
 
         {/* ページコンテンツ */}
         <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">

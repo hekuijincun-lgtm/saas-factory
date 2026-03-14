@@ -19,6 +19,7 @@ import {
   Settings2,
   Zap,
   Clock,
+  MessageSquareReply,
 } from "lucide-react";
 
 function Sidebar({
@@ -43,6 +44,7 @@ function Sidebar({
     { href: "/owner/outreach/campaigns", label: "キャンペーン", icon: Megaphone },
     { href: "/owner/outreach/batches", label: "自動バッチ", icon: Zap },
     { href: "/owner/outreach/automation", label: "スケジューラ", icon: Clock },
+    { href: "/owner/outreach/replies", label: "Auto Reply", icon: MessageSquareReply },
     { href: "/owner/outreach/settings", label: "配信設定", icon: Settings2 },
   ];
 
@@ -143,18 +145,60 @@ export default function OwnerShell({
   const [mounted, setMounted] = useState(false);
   const [displayName, setDisplayName] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [authStatus, setAuthStatus] = useState<"loading" | "ok" | "denied">("loading");
 
   useEffect(() => {
     setMounted(true);
-    fetch("/api/auth/me")
+    fetch("/api/auth/me", { credentials: "same-origin", cache: "no-store" })
       .then((r) => r.json())
       .then((data: any) => {
-        if (data?.displayName) setDisplayName(data.displayName);
+        if (data?.ok && data?.userId) {
+          setAuthStatus("ok");
+          if (data.displayName) setDisplayName(data.displayName);
+        } else {
+          setAuthStatus("denied");
+        }
       })
-      .catch(() => {});
+      .catch(() => {
+        setAuthStatus("denied");
+      });
   }, []);
 
   if (!mounted) return null;
+
+  // Auth loading guard
+  if (authStatus === "loading") {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-gray-50">
+        <div className="text-center space-y-3">
+          <div className="w-8 h-8 border-2 border-amber-600 border-t-transparent rounded-full animate-spin mx-auto" />
+          <p className="text-sm text-gray-500">認証を確認中...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Auth denied guard
+  if (authStatus === "denied") {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-gray-50 p-4">
+        <div className="bg-white rounded-2xl shadow-lg border border-gray-200 max-w-md w-full p-8 text-center space-y-4">
+          <h2 className="text-lg font-semibold text-gray-900">
+            ログインが必要です
+          </h2>
+          <p className="text-sm text-gray-500">
+            セッションの有効期限が切れたか、認証情報が無効です。再度ログインしてください。
+          </p>
+          <a
+            href="/login?reason=session_expired&returnTo=/owner"
+            className="inline-flex items-center justify-center w-full px-6 py-3 bg-amber-600 hover:bg-amber-700 text-white text-sm font-medium rounded-xl transition-colors"
+          >
+            ログインページへ
+          </a>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-screen overflow-hidden bg-gray-50">

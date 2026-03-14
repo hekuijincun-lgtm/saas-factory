@@ -1,6 +1,6 @@
 /* LITERAL_OK_20260221_144234 */
 export const runtime = "edge";
-import { isAdminPathname, isOwnerPathname, readAdminToken, injectAdminToken, makeDebugStamp, applyDebugHeaders, readSessionPayload } from '../_lib/proxy';
+import { isAdminPathname, isOwnerPathname, readAdminToken, injectAdminToken, makeDebugStamp, applyDebugHeaders, readSessionPayload, isDebugAllowed } from '../_lib/proxy';
 
 type Ctx = { params: any };
 
@@ -28,8 +28,10 @@ function getBase(): string {
 
 async function proxy(req: Request, ctx: Ctx): Promise<Response> {
   const __u = new URL(req.url);
-  const isDebug = __u.searchParams.get("debug") === "1";
-  if (__u.searchParams.get("debug") === "2") {
+  const _dbgAllowed = isDebugAllowed();
+  const isDebug = _dbgAllowed && __u.searchParams.get("debug") === "1";
+  // debug=2: full routing diagnostic — development/preview only
+  if (_dbgAllowed && __u.searchParams.get("debug") === "2") {
     const segs = await getPathSegments(ctx);
     const sp = new URLSearchParams(__u.search);
     sp.delete("path");
@@ -134,20 +136,22 @@ async function proxy(req: Request, ctx: Ctx): Promise<Response> {
   });
 
   out.headers.set("cache-control", "no-store");
-  out.headers.set("x-proxy-stamp", "CATCHALL_V1");
-  if (menuRewrite) out.headers.set("x-proxy-rewrite", "menu_post_with_id");
-  out.headers.set("x-proxy-upstream-url", upstream.toString());
-  out.headers.set("x-proxy-upstream-method", method);
-  if (adminTokenInjected) out.headers.set("x-admin-token-present", "1");
-  // Tenant observability: always show which tenant was resolved from session
-  if (isAdminRoute && resolvedSessionTenantId) {
-    out.headers.set("x-tenant-session", resolvedSessionTenantId);
-  }
-  if (isAdminRoute && sp.has('tenantId')) {
-    out.headers.set("x-tenant-query", sp.get('tenantId')!);
-  }
-  if (isDebug) {
-    applyDebugHeaders(out.headers, { stamp: makeDebugStamp(), isAdminRoute, tokenConfigured: isTokenConfigured, tokenInjected: adminTokenInjected });
+  // Diagnostic headers — development/preview only (本番で内部 URL / tenant 情報を露出しない)
+  if (_dbgAllowed) {
+    out.headers.set("x-proxy-stamp", "CATCHALL_V1");
+    if (menuRewrite) out.headers.set("x-proxy-rewrite", "menu_post_with_id");
+    out.headers.set("x-proxy-upstream-url", upstream.toString());
+    out.headers.set("x-proxy-upstream-method", method);
+    if (adminTokenInjected) out.headers.set("x-admin-token-present", "1");
+    if (isAdminRoute && resolvedSessionTenantId) {
+      out.headers.set("x-tenant-session", resolvedSessionTenantId);
+    }
+    if (isAdminRoute && sp.has('tenantId')) {
+      out.headers.set("x-tenant-query", sp.get('tenantId')!);
+    }
+    if (isDebug) {
+      applyDebugHeaders(out.headers, { stamp: makeDebugStamp(), isAdminRoute, tokenConfigured: isTokenConfigured, tokenInjected: adminTokenInjected });
+    }
   }
 
   return out;
