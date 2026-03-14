@@ -2471,25 +2471,42 @@ export function createOutreachRoutes(getTenantId: GetTenantId) {
       if (cand.import_status === "invalid") { invalid++; continue; }
       if (cand.import_status === "duplicate") { skipped++; continue; }
 
-      // Create lead
+      // Create lead (handle UNIQUE constraint on normalized_domain gracefully)
       const leadId = uid();
       const ts = now();
-      await db.prepare(
-        `INSERT INTO sales_leads
-         (id, tenant_id, store_name, industry, website_url, contact_email, category, area,
-          rating, review_count, has_booking_link, status, pipeline_stage,
-          domain, normalized_domain, import_source, source_type, source_run_id, source_ref, imported_at,
-          created_at, updated_at)
-         VALUES (?1, ?2, ?3, 'shared', ?4, ?5, ?6, ?7, ?8, ?9, 0, 'new', 'new', ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)`
-      ).bind(
-        leadId, tenantId, cand.store_name,
-        cand.website_url, cand.email,
-        cand.category, cand.area,
-        cand.rating, cand.review_count,
-        cand.normalized_domain, cand.normalized_domain,
-        cand.source_type, cand.source_type, runId, cand.external_id ?? cand.id,
-        ts, ts, ts
-      ).run();
+      try {
+        await db.prepare(
+          `INSERT INTO sales_leads
+           (id, tenant_id, store_name, industry, website_url, contact_email, category, area,
+            rating, review_count, has_booking_link, status, pipeline_stage,
+            domain, normalized_domain, import_source, source_type, source_run_id, source_ref, imported_at,
+            created_at, updated_at)
+           VALUES (?1, ?2, ?3, 'shared', ?4, ?5, ?6, ?7, ?8, ?9, 0, 'new', 'new', ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)`
+        ).bind(
+          leadId, tenantId, cand.store_name,
+          cand.website_url, cand.email,
+          cand.category, cand.area,
+          cand.rating ?? 0, cand.review_count ?? 0,
+          cand.normalized_domain, cand.normalized_domain,
+          cand.source_type, cand.source_type, runId, cand.external_id ?? cand.id,
+          ts, ts, ts
+        ).run();
+      } catch (insertErr: any) {
+        // UNIQUE constraint violation → skip duplicate (don't crash)
+        const msg = String(insertErr?.message ?? "");
+        if (msg.includes("UNIQUE") || msg.includes("constraint")) {
+          console.warn(`[IMPORT] duplicate domain skipped: tenant=${tenantId} domain=${cand.normalized_domain} cand=${candId}`);
+          await db.prepare(
+            "UPDATE outreach_source_candidates SET import_status = 'duplicate', dedup_reason = 'domain_unique', updated_at = ?1 WHERE id = ?2 AND tenant_id = ?3"
+          ).bind(ts, candId, tenantId).run();
+          skipped++;
+          continue;
+        }
+        // Other DB error → log and skip (don't crash the whole batch)
+        console.error(`[IMPORT] insert failed: tenant=${tenantId} run=${runId} cand=${candId} err=${msg}`);
+        skipped++;
+        continue;
+      }
 
       // Mark candidate as imported
       await db.prepare(
@@ -2739,22 +2756,37 @@ export function createOutreachRoutes(getTenantId: GetTenantId) {
 
       const leadId = uid();
       const ts = now();
-      await db.prepare(
-        `INSERT INTO sales_leads
-         (id, tenant_id, store_name, industry, website_url, contact_email, category, area,
-          rating, review_count, has_booking_link, status, pipeline_stage,
-          domain, normalized_domain, import_source, source_type, source_run_id, source_ref, imported_at,
-          created_at, updated_at)
-         VALUES (?1, ?2, ?3, 'shared', ?4, ?5, ?6, ?7, ?8, ?9, 0, 'new', 'new', ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)`
-      ).bind(
-        leadId, tenantId, cand.store_name,
-        cand.website_url, cand.email,
-        cand.category, cand.area,
-        cand.rating, cand.review_count,
-        cand.normalized_domain, cand.normalized_domain,
-        cand.source_type, cand.source_type, runId, cand.external_id ?? cand.id,
-        ts, ts, ts
-      ).run();
+      try {
+        await db.prepare(
+          `INSERT INTO sales_leads
+           (id, tenant_id, store_name, industry, website_url, contact_email, category, area,
+            rating, review_count, has_booking_link, status, pipeline_stage,
+            domain, normalized_domain, import_source, source_type, source_run_id, source_ref, imported_at,
+            created_at, updated_at)
+           VALUES (?1, ?2, ?3, 'shared', ?4, ?5, ?6, ?7, ?8, ?9, 0, 'new', 'new', ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)`
+        ).bind(
+          leadId, tenantId, cand.store_name,
+          cand.website_url, cand.email,
+          cand.category, cand.area,
+          cand.rating ?? 0, cand.review_count ?? 0,
+          cand.normalized_domain, cand.normalized_domain,
+          cand.source_type, cand.source_type, runId, cand.external_id ?? cand.id,
+          ts, ts, ts
+        ).run();
+      } catch (insertErr: any) {
+        const msg = String(insertErr?.message ?? "");
+        if (msg.includes("UNIQUE") || msg.includes("constraint")) {
+          console.warn(`[IMPORT_ACCEPTED] duplicate domain skipped: tenant=${tenantId} domain=${cand.normalized_domain} cand=${cand.id}`);
+          await db.prepare(
+            "UPDATE outreach_source_candidates SET import_status = 'duplicate', dedup_reason = 'domain_unique', updated_at = ?1 WHERE id = ?2 AND tenant_id = ?3"
+          ).bind(ts, cand.id, tenantId).run();
+          skipped++;
+          continue;
+        }
+        console.error(`[IMPORT_ACCEPTED] insert failed: tenant=${tenantId} run=${runId} cand=${cand.id} err=${msg}`);
+        skipped++;
+        continue;
+      }
 
       await db.prepare(
         "UPDATE outreach_source_candidates SET import_status = 'imported', updated_at = ?1 WHERE id = ?2 AND tenant_id = ?3"

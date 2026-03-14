@@ -293,27 +293,44 @@ export async function runBatchJob(
           byNameArea.set(key, { id: candId, store_name: c.storeName });
         }
 
-        // Import as lead
+        // Import as lead (handle UNIQUE constraint on normalized_domain)
         const leadId = uid();
-        await db
-          .prepare(
-            `INSERT INTO sales_leads
-             (id, tenant_id, store_name, industry, website_url, contact_email, category, area,
-              rating, review_count, has_booking_link, status, pipeline_stage,
-              domain, normalized_domain, import_source, source_type, source_run_id, source_ref, imported_at,
-              created_at, updated_at)
-             VALUES (?1,?2,?3,'shared',?4,?5,?6,?7,?8,?9,0,'new','new',?10,?11,?12,?13,?14,?15,?16,?17,?18)`
-          )
-          .bind(
-            leadId, tenantId, c.storeName,
-            c.websiteUrl ?? null, c.email ?? null,
-            c.category ?? null, c.area ?? area,
-            c.rating ?? null, c.reviewCount ?? 0,
-            domain, domain,
-            job.source_type, job.source_type, runId, c.externalId ?? candId,
-            ts, ts, ts
-          )
-          .run();
+        let leadInserted = false;
+        try {
+          await db
+            .prepare(
+              `INSERT INTO sales_leads
+               (id, tenant_id, store_name, industry, website_url, contact_email, category, area,
+                rating, review_count, has_booking_link, status, pipeline_stage,
+                domain, normalized_domain, import_source, source_type, source_run_id, source_ref, imported_at,
+                created_at, updated_at)
+               VALUES (?1,?2,?3,'shared',?4,?5,?6,?7,?8,?9,0,'new','new',?10,?11,?12,?13,?14,?15,?16,?17,?18)`
+            )
+            .bind(
+              leadId, tenantId, c.storeName,
+              c.websiteUrl ?? null, c.email ?? null,
+              c.category ?? null, c.area ?? area,
+              c.rating ?? null, c.reviewCount ?? 0,
+              domain, domain,
+              job.source_type, job.source_type, runId, c.externalId ?? candId,
+              ts, ts, ts
+            )
+            .run();
+          leadInserted = true;
+        } catch (insertErr: any) {
+          const msg = String(insertErr?.message ?? "");
+          if (msg.includes("UNIQUE") || msg.includes("constraint")) {
+            console.warn(`[BATCH_IMPORT] duplicate domain skipped: tenant=${tenantId} domain=${domain} cand=${candId}`);
+            await db.prepare(
+              "UPDATE outreach_source_candidates SET import_status = 'duplicate', dedup_reason = 'domain_unique', updated_at = ?1 WHERE id = ?2 AND tenant_id = ?3"
+            ).bind(ts, candId, tenantId).run();
+            totalAccepted++;
+            areaAccepted++;
+            continue;
+          }
+          console.error(`[BATCH_IMPORT] insert failed: tenant=${tenantId} cand=${candId} err=${msg}`);
+          continue;
+        }
 
         // Mark candidate as imported
         await db
