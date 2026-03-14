@@ -60,6 +60,10 @@ import type {
   PrioritizedReviewItem,
   ActionLog,
   AutoActionSettings,
+  OutreachReply,
+  OutreachReplyLog,
+  AutoReplySettings,
+  AutoReplyStats,
 } from "@/src/types/outreach";
 
 // ── Leads ──────────────────────────────────────────────────────────────────
@@ -445,7 +449,7 @@ export async function fetchCampaigns(
 
 export async function createCampaign(
   tenantId: string,
-  input: { name: string; niche?: string; area?: string; min_score?: number }
+  input: { name: string; niche?: string; area?: string; min_score?: number; landing_page_url?: string }
 ): Promise<OutreachCampaign> {
   const res = await apiPost<{ ok: boolean; data: OutreachCampaign }>(
     "/admin/outreach/campaigns-create",
@@ -1137,6 +1141,260 @@ export async function runAutoExecution(
 ): Promise<{ processed: number; skipped: number; errors: number }> {
   const res = await apiPost<{ ok: boolean; data: { processed: number; skipped: number; errors: number } }>(
     "/admin/outreach/auto-execution/run",
+    {},
+    { tenantId }
+  );
+  return res.data;
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// Phase 14: Auto Reply AI
+// ══════════════════════════════════════════════════════════════════════════
+
+export async function ingestReply(
+  tenantId: string,
+  data: { lead_id: string; reply_text: string; reply_source?: string; campaign_id?: string; message_id?: string }
+): Promise<any> {
+  const res = await apiPost<{ ok: boolean; data: any }>(
+    "/admin/outreach/replies/ingest",
+    data,
+    { tenantId }
+  );
+  return res.data;
+}
+
+export async function fetchAutoReplies(
+  tenantId: string,
+  params?: { intent?: string; handled?: string; limit?: number }
+): Promise<OutreachReply[]> {
+  const sp = new URLSearchParams();
+  if (params?.intent) sp.set("intent", params.intent);
+  if (params?.handled) sp.set("handled", params.handled);
+  if (params?.limit) sp.set("limit", String(params.limit));
+  const qs = sp.toString();
+  const res = await apiGet<{ ok: boolean; data: OutreachReply[] }>(
+    `/admin/outreach/auto-reply/list${qs ? `?${qs}` : ""}`,
+    { tenantId }
+  );
+  return res.data;
+}
+
+export async function fetchUnhandledReplies(
+  tenantId: string
+): Promise<OutreachReply[]> {
+  const res = await apiGet<{ ok: boolean; data: OutreachReply[] }>(
+    "/admin/outreach/auto-reply/unhandled",
+    { tenantId }
+  );
+  return res.data;
+}
+
+export async function executeAutoReply(
+  tenantId: string,
+  replyId: string
+): Promise<any> {
+  const res = await apiPost<{ ok: boolean; data: any }>(
+    `/admin/outreach/auto-reply/${replyId}/execute`,
+    {},
+    { tenantId }
+  );
+  return res.data;
+}
+
+export async function fetchReplyLogs(
+  tenantId: string,
+  limit?: number
+): Promise<OutreachReplyLog[]> {
+  const qs = limit ? `?limit=${limit}` : "";
+  const res = await apiGet<{ ok: boolean; data: OutreachReplyLog[] }>(
+    `/admin/outreach/auto-reply/logs${qs}`,
+    { tenantId }
+  );
+  return res.data;
+}
+
+export async function fetchAutoReplySettings(
+  tenantId: string
+): Promise<AutoReplySettings> {
+  const res = await apiGet<{ ok: boolean; data: AutoReplySettings }>(
+    "/admin/outreach/auto-reply/settings",
+    { tenantId }
+  );
+  return res.data;
+}
+
+export async function saveAutoReplySettings(
+  tenantId: string,
+  settings: Partial<AutoReplySettings>
+): Promise<AutoReplySettings> {
+  const res = await apiPut<{ ok: boolean; data: AutoReplySettings }>(
+    "/admin/outreach/auto-reply/settings",
+    settings,
+    { tenantId }
+  );
+  return res.data;
+}
+
+export async function fetchAutoReplyStats(
+  tenantId: string
+): Promise<AutoReplyStats> {
+  const res = await apiGet<{ ok: boolean; data: AutoReplyStats }>(
+    "/admin/outreach/auto-reply/stats",
+    { tenantId }
+  );
+  return res.data;
+}
+
+export async function processAllUnhandledReplies(
+  tenantId: string
+): Promise<{ processed: number; sent: number; skipped: number; errors: number }> {
+  const res = await apiPost<{ ok: boolean; data: { processed: number; sent: number; skipped: number; errors: number } }>(
+    "/admin/outreach/auto-reply/process-all",
+    {},
+    { tenantId }
+  );
+  return res.data;
+}
+
+// ── Phase 15: Auto Close AI ─────────────────────────────────────────────
+
+import type {
+  CloseSettings,
+  CloseInsights,
+  HotLead,
+  OutreachCloseLog,
+  MeetingSuggestion,
+} from "@/src/types/outreach";
+
+export async function fetchCloseSettings(
+  tenantId: string
+): Promise<CloseSettings> {
+  const res = await apiGet<{ ok: boolean; data: CloseSettings }>(
+    "/admin/outreach/close/settings",
+    { tenantId }
+  );
+  return res.data;
+}
+
+export async function saveCloseSettings(
+  tenantId: string,
+  settings: Partial<CloseSettings>
+): Promise<CloseSettings> {
+  const res = await apiPut<{ ok: boolean; data: CloseSettings }>(
+    "/admin/outreach/close/settings",
+    settings,
+    { tenantId }
+  );
+  return res.data;
+}
+
+export async function fetchCloseInsights(
+  tenantId: string
+): Promise<CloseInsights> {
+  const res = await apiGet<{ ok: boolean; data: CloseInsights }>(
+    "/admin/outreach/close/insights",
+    { tenantId }
+  );
+  return res.data;
+}
+
+export async function closeEvaluateReply(
+  tenantId: string,
+  replyId: string
+): Promise<{
+  close_intent: string;
+  close_confidence: number;
+  deal_temperature: string;
+  recommended_next_step: string;
+}> {
+  const res = await apiPost<{ ok: boolean; data: any }>(
+    `/admin/outreach/replies/${replyId}/close-evaluate`,
+    {},
+    { tenantId }
+  );
+  return res.data;
+}
+
+export async function closeRespondToReply(
+  tenantId: string,
+  replyId: string
+): Promise<{
+  response_text: string;
+  response_type: string;
+  cta_type: string;
+  followup_window_hours: number;
+  handoff_required: boolean;
+}> {
+  const res = await apiPost<{ ok: boolean; data: any }>(
+    `/admin/outreach/replies/${replyId}/close-respond`,
+    {},
+    { tenantId }
+  );
+  return res.data;
+}
+
+export async function fetchCloseLogs(
+  tenantId: string,
+  limit = 50,
+  offset = 0
+): Promise<OutreachCloseLog[]> {
+  const res = await apiGet<{ ok: boolean; data: OutreachCloseLog[] }>(
+    `/admin/outreach/close-logs?limit=${limit}&offset=${offset}`,
+    { tenantId }
+  );
+  return res.data;
+}
+
+export async function fetchHotLeads(
+  tenantId: string,
+  limit = 20
+): Promise<HotLead[]> {
+  const res = await apiGet<{ ok: boolean; data: HotLead[] }>(
+    `/admin/outreach/hot-leads?limit=${limit}`,
+    { tenantId }
+  );
+  return res.data;
+}
+
+export async function handoffReply(
+  tenantId: string,
+  replyId: string
+): Promise<void> {
+  await apiPost<{ ok: boolean }>(
+    `/admin/outreach/replies/${replyId}/handoff`,
+    {},
+    { tenantId }
+  );
+}
+
+export async function markReplyWon(
+  tenantId: string,
+  replyId: string
+): Promise<void> {
+  await apiPost<{ ok: boolean }>(
+    `/admin/outreach/replies/${replyId}/mark-won`,
+    {},
+    { tenantId }
+  );
+}
+
+export async function markReplyLost(
+  tenantId: string,
+  replyId: string
+): Promise<void> {
+  await apiPost<{ ok: boolean }>(
+    `/admin/outreach/replies/${replyId}/mark-lost`,
+    {},
+    { tenantId }
+  );
+}
+
+export async function fetchMeetingSuggestion(
+  tenantId: string,
+  replyId: string
+): Promise<MeetingSuggestion> {
+  const res = await apiPost<{ ok: boolean; data: MeetingSuggestion }>(
+    `/admin/outreach/replies/${replyId}/meeting-suggest`,
     {},
     { tenantId }
   );

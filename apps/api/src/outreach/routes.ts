@@ -66,6 +66,13 @@ import {
   saveAutoActionSettings,
   processAutoActions,
 } from "./action-engine";
+import {
+  processReply,
+  processUnhandledReplies,
+  getAutoReplySettings,
+  saveAutoReplySettings,
+} from "./reply-dispatcher";
+import { classifyReplyIntent } from "./reply-classifier";
 import type { CopilotRecommendation } from "./copilot";
 import type { CandidateResult } from "./source-providers/types";
 import type { ExistingLead } from "./importer";
@@ -97,7 +104,8 @@ import type {
   OutreachScheduleRun,
   ScheduleCreateInput,
 } from "./types";
-import { DEFAULT_OUTREACH_SETTINGS, REPLY_CLASSIFICATION_LABELS, CLASSIFY_CONFIDENCE_THRESHOLD } from "./types";
+import { DEFAULT_OUTREACH_SETTINGS, REPLY_CLASSIFICATION_LABELS, CLASSIFY_CONFIDENCE_THRESHOLD, DEFAULT_AUTO_REPLY_SETTINGS } from "./types";
+import type { OutreachReply, OutreachReplyLog, AutoReplySettings, ReplyIntent, ReplySource } from "./types";
 import { logAudit } from "../lineConfig";
 
 type Bindings = {
@@ -916,14 +924,35 @@ export function createOutreachRoutes(getTenantId: GetTenantId) {
       .bind(leadId, tenantId)
       .first<OutreachLead>();
 
-    // 5. Send
+    // 5. Resolve LP URL for token expansion
+    const lpUrl = await (async () => {
+      if (msg.campaign_id) {
+        const camp = await db.prepare("SELECT landing_page_url FROM outreach_campaigns WHERE id = ?1 AND tenant_id = ?2")
+          .bind(msg.campaign_id, tenantId).first<{ landing_page_url: string | null }>();
+        if (camp?.landing_page_url) return camp.landing_page_url;
+      }
+      return settings.defaultLpUrl || "";
+    })();
+
+    // Fail-closed: block send if {{lp_url}} is used but no LP URL is resolved
+    const lpTokenPattern = /\{\{lp_url\}\}/;
+    const msgUsesLpToken = lpTokenPattern.test(msg.subject ?? "") || lpTokenPattern.test(msg.body ?? "");
+    if (msgUsesLpToken && !lpUrl) {
+      return c.json({ ok: false, error: "LP URL が未設定のため送信できません。キャンペーンまたは設定ページでLP URLを設定してください。" }, 400);
+    }
+
+    const expandTokens = (s: string) =>
+      s.replace(/\{\{lp_url\}\}/g, lpUrl)
+       .replace(/\{store_name\}/g, lead?.store_name ?? "")
+       .replace(/\{area\}/g, lead?.area ?? "");
+
     const result = await sender.send({
       leadId,
       tenantId,
       channel: (msg.kind as any) ?? "email",
       to: lead?.contact_email ?? lead?.line_url ?? "",
-      subject: msg.subject ?? "",
-      body: msg.body,
+      subject: expandTokens(msg.subject ?? ""),
+      body: expandTokens(msg.body),
     });
 
     // 6. Record delivery event
@@ -1122,6 +1151,7 @@ export function createOutreachRoutes(getTenantId: GetTenantId) {
       contactCooldownDays: Math.min(Math.max(body.contactCooldownDays ?? prev.contactCooldownDays, 1), 90),
       autoAnalyzeOnImport: body.autoAnalyzeOnImport ?? prev.autoAnalyzeOnImport,
       autoScoreOnImport: body.autoScoreOnImport ?? prev.autoScoreOnImport,
+      defaultLpUrl: (body.defaultLpUrl ?? prev.defaultLpUrl ?? "").slice(0, 2048),
     };
 
     await kv.put(`outreach:settings:${tenantId}`, JSON.stringify(next));
@@ -1752,6 +1782,7 @@ export function createOutreachRoutes(getTenantId: GetTenantId) {
       niche?: string;
       area?: string;
       min_score?: number;
+      landing_page_url?: string;
     }>();
 
     if (!body.name?.trim()) {
@@ -1761,9 +1792,9 @@ export function createOutreachRoutes(getTenantId: GetTenantId) {
     const id = uid();
     const ts = now();
     await db.prepare(
-      `INSERT INTO outreach_campaigns (id, tenant_id, name, niche, area, min_score, status, created_at, updated_at)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'draft', ?7, ?8)`
-    ).bind(id, tenantId, body.name.trim(), body.niche ?? null, body.area ?? null, body.min_score ?? null, ts, ts).run();
+      `INSERT INTO outreach_campaigns (id, tenant_id, name, niche, area, min_score, landing_page_url, status, created_at, updated_at)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'draft', ?8, ?9)`
+    ).bind(id, tenantId, body.name.trim(), body.niche ?? null, body.area ?? null, body.min_score ?? null, body.landing_page_url ?? null, ts, ts).run();
 
     const campaign = await db.prepare("SELECT * FROM outreach_campaigns WHERE id = ?1").bind(id).first();
     return c.json({ ok: true, tenantId, data: campaign }, 201);
@@ -1792,6 +1823,7 @@ export function createOutreachRoutes(getTenantId: GetTenantId) {
       ["niche", body.niche],
       ["area", body.area],
       ["min_score", body.min_score],
+      ["landing_page_url", body.landing_page_url],
       ["status", body.status],
     ];
 
@@ -2089,15 +2121,21 @@ export function createOutreachRoutes(getTenantId: GetTenantId) {
       );
 
       // Apply variant template overrides
+      const lpUrl = campaign.landing_page_url || settings.defaultLpUrl || "";
+      const replaceTokens = (s: string) =>
+        s.replace(/\{store_name\}/g, lead.store_name)
+         .replace(/\{area\}/g, lead.area ?? "")
+         .replace(/\{\{lp_url\}\}/g, lpUrl);
+
       const subject = variant.subject_template
-        ? variant.subject_template.replace("{store_name}", lead.store_name).replace("{area}", lead.area ?? "")
-        : generated_msg.subject;
+        ? replaceTokens(variant.subject_template)
+        : replaceTokens(generated_msg.subject);
 
       const opener = variant.opener_template
-        ? variant.opener_template.replace("{store_name}", lead.store_name)
-        : generated_msg.opener;
+        ? replaceTokens(variant.opener_template)
+        : replaceTokens(generated_msg.opener);
 
-      const fullBody = [opener, "", generated_msg.body, "", generated_msg.cta].join("\n");
+      const fullBody = replaceTokens([opener, "", generated_msg.body, "", generated_msg.cta].join("\n"));
 
       // Save as review item
       const msgId = uid();
@@ -3541,6 +3579,669 @@ export function createOutreachRoutes(getTenantId: GetTenantId) {
     return c.json({ ok: true, tenantId, data: result });
   });
 
+  // ── Phase 14: Auto Reply AI ────────────────────────────────────────────
+
+  // POST /replies/ingest — Ingest a new reply (from webhook/manual)
+  app.post("/replies/ingest", async (c) => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    const kv = c.env.SAAS_FACTORY;
+    const body = await c.req.json<{
+      lead_id: string;
+      campaign_id?: string;
+      message_id?: string;
+      reply_text: string;
+      reply_source?: ReplySource;
+    }>();
+
+    if (!body.lead_id || !body.reply_text?.trim()) {
+      return c.json({ ok: false, error: "lead_id and reply_text are required" }, 400);
+    }
+
+    // Verify lead exists
+    const lead = await db
+      .prepare("SELECT id FROM sales_leads WHERE id = ?1 AND tenant_id = ?2")
+      .bind(body.lead_id, tenantId)
+      .first();
+    if (!lead) {
+      return c.json({ ok: false, error: "Lead not found" }, 404);
+    }
+
+    const replyId = uid();
+    const ts = now();
+    const replySource = body.reply_source || "email";
+
+    // Insert into outreach_replies
+    await db
+      .prepare(
+        `INSERT INTO outreach_replies
+         (id, tenant_id, lead_id, campaign_id, message_id, reply_text, reply_source, ai_handled, ai_response_sent, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, 0, ?8)`
+      )
+      .bind(replyId, tenantId, body.lead_id, body.campaign_id || null, body.message_id || null, body.reply_text, replySource, ts)
+      .run();
+
+    // Auto-process immediately if enabled
+    const settings = await getAutoReplySettings(kv, tenantId);
+    let processResult = null;
+
+    if (settings.autoReplyEnabled) {
+      const reply: OutreachReply = {
+        id: replyId,
+        tenant_id: tenantId,
+        lead_id: body.lead_id,
+        campaign_id: body.campaign_id || null,
+        message_id: body.message_id || null,
+        reply_text: body.reply_text,
+        reply_source: replySource,
+        sentiment: null,
+        intent: null,
+        intent_confidence: null,
+        ai_handled: 0,
+        ai_response: null,
+        ai_response_sent: 0,
+        created_at: ts,
+      };
+      processResult = await processReply(
+        { db, kv, tenantId, openaiApiKey: c.env.OPENAI_API_KEY, uid, now },
+        reply
+      );
+    } else {
+      // Still classify for display, but don't auto-reply
+      const classification = await classifyReplyIntent(body.reply_text, c.env.OPENAI_API_KEY);
+      await db
+        .prepare(
+          `UPDATE outreach_replies
+           SET intent = ?1, sentiment = ?2, intent_confidence = ?3
+           WHERE id = ?4 AND tenant_id = ?5`
+        )
+        .bind(classification.intent, classification.sentiment, classification.confidence, replyId, tenantId)
+        .run();
+      processResult = {
+        replyId,
+        intent: classification.intent,
+        sentiment: classification.sentiment,
+        confidence: classification.confidence,
+        sent: false,
+        skippedReason: "auto_reply_disabled",
+      };
+    }
+
+    // Update lead last_replied_at
+    await db
+      .prepare("UPDATE sales_leads SET last_replied_at = ?1, updated_at = ?2 WHERE id = ?3 AND tenant_id = ?4")
+      .bind(ts, ts, body.lead_id, tenantId)
+      .run();
+
+    await logAudit(db, tenantId, "system", "outreach.reply_ingested", {
+      replyId, leadId: body.lead_id, replySource,
+    });
+
+    return c.json({ ok: true, tenantId, data: processResult });
+  });
+
+  // GET /auto-reply/list — List replies (paginated, filterable)
+  app.get("/auto-reply/list", async (c) => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    const intent = c.req.query("intent");
+    const handled = c.req.query("handled");
+    const limit = Math.min(Number(c.req.query("limit") || "50"), 100);
+
+    let sql = `SELECT r.*, l.store_name, l.contact_email, l.area, l.pipeline_stage
+               FROM outreach_replies r
+               JOIN sales_leads l ON r.lead_id = l.id AND l.tenant_id = ?1
+               WHERE r.tenant_id = ?1`;
+    const params: any[] = [tenantId];
+
+    if (intent) {
+      sql += ` AND r.intent = ?${params.length + 1}`;
+      params.push(intent);
+    }
+    if (handled === "0") {
+      sql += ` AND r.ai_handled = 0`;
+    } else if (handled === "1") {
+      sql += ` AND r.ai_handled = 1`;
+    }
+
+    sql += ` ORDER BY r.created_at DESC LIMIT ?${params.length + 1}`;
+    params.push(limit);
+
+    const stmt = db.prepare(sql);
+    const rows = await stmt.bind(...params).all();
+    return c.json({ ok: true, tenantId, data: rows.results ?? [] });
+  });
+
+  // GET /auto-reply/unhandled — Unhandled replies needing human review
+  app.get("/auto-reply/unhandled", async (c) => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    const rows = await db
+      .prepare(
+        `SELECT r.*, l.store_name, l.contact_email, l.area, l.pipeline_stage
+         FROM outreach_replies r
+         JOIN sales_leads l ON r.lead_id = l.id AND l.tenant_id = ?1
+         WHERE r.tenant_id = ?1 AND r.ai_handled = 0
+         ORDER BY r.created_at ASC
+         LIMIT 50`
+      )
+      .bind(tenantId)
+      .all();
+    return c.json({ ok: true, tenantId, data: rows.results ?? [] });
+  });
+
+  // POST /auto-reply/:id/execute — Manually execute auto-reply on a specific reply
+  app.post("/auto-reply/:id/execute", async (c) => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    const kv = c.env.SAAS_FACTORY;
+    const replyId = c.req.param("id");
+
+    const reply = await db
+      .prepare("SELECT * FROM outreach_replies WHERE id = ?1 AND tenant_id = ?2")
+      .bind(replyId, tenantId)
+      .first<OutreachReply>();
+
+    if (!reply) {
+      return c.json({ ok: false, error: "Reply not found" }, 404);
+    }
+
+    if (reply.ai_response_sent) {
+      return c.json({ ok: false, error: "Reply already sent" }, 400);
+    }
+
+    const result = await processReply(
+      { db, kv, tenantId, openaiApiKey: c.env.OPENAI_API_KEY, uid, now },
+      reply
+    );
+    return c.json({ ok: true, tenantId, data: result });
+  });
+
+  // GET /auto-reply/logs — Reply audit logs
+  app.get("/auto-reply/logs", async (c) => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    const limit = Math.min(Number(c.req.query("limit") || "50"), 100);
+    const rows = await db
+      .prepare(
+        `SELECT * FROM outreach_reply_logs
+         WHERE tenant_id = ?1
+         ORDER BY created_at DESC
+         LIMIT ?2`
+      )
+      .bind(tenantId, limit)
+      .all<OutreachReplyLog>();
+    return c.json({ ok: true, tenantId, data: rows.results ?? [] });
+  });
+
+  // GET /auto-reply/settings — Get auto-reply settings
+  app.get("/auto-reply/settings", async (c) => {
+    const tenantId = getTenantId(c);
+    const kv = c.env.SAAS_FACTORY;
+    const settings = await getAutoReplySettings(kv, tenantId);
+    return c.json({ ok: true, tenantId, data: settings });
+  });
+
+  // PUT /auto-reply/settings — Update auto-reply settings
+  app.put("/auto-reply/settings", async (c) => {
+    const tenantId = getTenantId(c);
+    const kv = c.env.SAAS_FACTORY;
+    const body = await c.req.json<Partial<AutoReplySettings>>();
+    const settings = await saveAutoReplySettings(kv, tenantId, body);
+    await logAudit(c.env.DB, tenantId, "user", "outreach.auto_reply_settings_updated", settings);
+    return c.json({ ok: true, tenantId, data: settings });
+  });
+
+  // GET /auto-reply/stats — Stats for dashboard
+  app.get("/auto-reply/stats", async (c) => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    const todayStart = new Date().toISOString().slice(0, 10);
+
+    const [totalToday, aiReplied, needsHuman] = await Promise.all([
+      db.prepare(
+        `SELECT COUNT(*) as cnt FROM outreach_replies WHERE tenant_id = ?1 AND created_at >= ?2`
+      ).bind(tenantId, todayStart).first<{ cnt: number }>(),
+      db.prepare(
+        `SELECT COUNT(*) as cnt FROM outreach_replies WHERE tenant_id = ?1 AND created_at >= ?2 AND ai_response_sent = 1`
+      ).bind(tenantId, todayStart).first<{ cnt: number }>(),
+      db.prepare(
+        `SELECT COUNT(*) as cnt FROM outreach_replies WHERE tenant_id = ?1 AND ai_handled = 0`
+      ).bind(tenantId).first<{ cnt: number }>(),
+    ]);
+
+    const todayReplies = totalToday?.cnt ?? 0;
+    const aiRepliedCount = aiReplied?.cnt ?? 0;
+
+    return c.json({
+      ok: true, tenantId,
+      data: {
+        todayReplies,
+        aiReplied: aiRepliedCount,
+        aiSuccessRate: todayReplies > 0 ? Math.round((aiRepliedCount / todayReplies) * 100) : 0,
+        needsHumanCount: needsHuman?.cnt ?? 0,
+      },
+    });
+  });
+
+  // POST /auto-reply/process-all — Manually trigger processing of all unhandled replies
+  app.post("/auto-reply/process-all", async (c) => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    const kv = c.env.SAAS_FACTORY;
+    const result = await processUnhandledReplies({
+      db, kv, tenantId, openaiApiKey: c.env.OPENAI_API_KEY, uid, now,
+    });
+    return c.json({ ok: true, tenantId, data: result });
+  });
+
+  // ── Phase 15: Auto Close AI ──────────────────────────────────────────
+
+  // GET /close/settings
+  app.get("/close/settings", async (c) => {
+    const tenantId = getTenantId(c);
+    const kv = c.env.SAAS_FACTORY;
+    const { getCloseSettings } = await import("./close-generator");
+    const settings = await getCloseSettings(kv, tenantId);
+    return c.json({ ok: true, tenantId, data: settings });
+  });
+
+  // PUT /close/settings
+  app.put("/close/settings", async (c) => {
+    const tenantId = getTenantId(c);
+    const kv = c.env.SAAS_FACTORY;
+    const body = await c.req.json();
+    const { saveCloseSettings } = await import("./close-generator");
+    const settings = await saveCloseSettings(kv, tenantId, body);
+    const db = c.env.DB;
+    const { logAudit } = await import("../lineConfig");
+    await logAudit(db, tenantId, "owner", "outreach.close.settings.update", body);
+    return c.json({ ok: true, tenantId, data: settings });
+  });
+
+  // POST /replies/:id/close-evaluate — evaluate close intent for a reply
+  app.post("/replies/:id/close-evaluate", async (c) => {
+    const tenantId = getTenantId(c);
+    const replyId = c.req.param("id");
+    const db = c.env.DB;
+    const kv = c.env.SAAS_FACTORY;
+
+    const reply = await db
+      .prepare("SELECT * FROM outreach_replies WHERE id = ?1 AND tenant_id = ?2")
+      .bind(replyId, tenantId)
+      .first();
+    if (!reply) return c.json({ ok: false, error: "reply_not_found" }, 404);
+
+    const { classifyCloseIntent } = await import("./close-classifier");
+    const result = await classifyCloseIntent(
+      reply.reply_text as string,
+      c.env.OPENAI_API_KEY
+    );
+
+    // Update reply record
+    await db
+      .prepare(
+        `UPDATE outreach_replies
+         SET close_intent = ?1, close_confidence = ?2, recommended_next_step = ?3,
+             deal_temperature = ?4, handoff_required = ?5
+         WHERE id = ?6 AND tenant_id = ?7`
+      )
+      .bind(
+        result.close_intent, result.close_confidence, result.recommended_next_step,
+        result.deal_temperature, result.recommended_next_step === "human_followup" ? 1 : 0,
+        replyId, tenantId
+      )
+      .run();
+
+    // Update lead
+    const { CLOSE_INTENT_TO_STAGE } = await import("./types");
+    const closeStage = CLOSE_INTENT_TO_STAGE[result.close_intent] || null;
+    await db
+      .prepare(
+        `UPDATE sales_leads
+         SET deal_temperature = ?1, handoff_required = ?2, close_stage = ?3, close_evaluated_at = ?4, updated_at = ?5
+         WHERE id = ?6 AND tenant_id = ?7`
+      )
+      .bind(
+        result.deal_temperature,
+        result.recommended_next_step === "human_followup" ? 1 : 0,
+        closeStage,
+        now(),
+        now(),
+        reply.lead_id as string,
+        tenantId
+      )
+      .run();
+
+    // Write close log
+    await db
+      .prepare(
+        `INSERT INTO outreach_close_logs
+         (id, tenant_id, lead_id, reply_id, close_intent, close_confidence, deal_temperature,
+          suggested_action, execution_status, handoff_required, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)`
+      )
+      .bind(
+        uid(), tenantId, reply.lead_id as string, replyId,
+        result.close_intent, result.close_confidence, result.deal_temperature,
+        result.recommended_next_step, "suggested",
+        result.recommended_next_step === "human_followup" ? 1 : 0,
+        now()
+      )
+      .run();
+
+    return c.json({ ok: true, tenantId, data: result });
+  });
+
+  // POST /replies/:id/close-respond — generate & optionally send close response
+  app.post("/replies/:id/close-respond", async (c) => {
+    const tenantId = getTenantId(c);
+    const replyId = c.req.param("id");
+    const db = c.env.DB;
+    const kv = c.env.SAAS_FACTORY;
+
+    const reply = await db
+      .prepare("SELECT * FROM outreach_replies WHERE id = ?1 AND tenant_id = ?2")
+      .bind(replyId, tenantId)
+      .first();
+    if (!reply) return c.json({ ok: false, error: "reply_not_found" }, 404);
+
+    if (!reply.close_intent) {
+      return c.json({ ok: false, error: "not_close_evaluated" }, 400);
+    }
+
+    const { getCloseSettings, generateCloseResponse } = await import("./close-generator");
+    const settings = await getCloseSettings(kv, tenantId);
+
+    const lead = await db
+      .prepare("SELECT store_name FROM sales_leads WHERE id = ?1 AND tenant_id = ?2")
+      .bind(reply.lead_id as string, tenantId)
+      .first<{ store_name: string }>();
+
+    const closeResp = await generateCloseResponse({
+      closeIntent: reply.close_intent as any,
+      dealTemperature: (reply.deal_temperature as any) || "cold",
+      recommendedNextStep: (reply.recommended_next_step as any) || "none",
+      replyText: reply.reply_text as string,
+      storeName: lead?.store_name || "弊社",
+      settings,
+      openaiApiKey: c.env.OPENAI_API_KEY,
+    });
+
+    // Write close log
+    await db
+      .prepare(
+        `INSERT INTO outreach_close_logs
+         (id, tenant_id, lead_id, reply_id, close_intent, close_confidence, deal_temperature,
+          suggested_action, ai_response, execution_status, handoff_required, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)`
+      )
+      .bind(
+        uid(), tenantId, reply.lead_id as string, replyId,
+        reply.close_intent as string,
+        reply.close_confidence as number,
+        (reply.deal_temperature as string) || "cold",
+        reply.recommended_next_step as string,
+        closeResp.response_text,
+        closeResp.handoff_required ? "escalated" : "suggested",
+        closeResp.handoff_required ? 1 : 0,
+        now()
+      )
+      .run();
+
+    return c.json({ ok: true, tenantId, data: closeResp });
+  });
+
+  // GET /close-logs — list close audit logs
+  app.get("/close-logs", async (c) => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    const limit = Math.min(Number(c.req.query("limit") || 50), 100);
+    const offset = Number(c.req.query("offset") || 0);
+
+    const rows = await db
+      .prepare(
+        `SELECT * FROM outreach_close_logs
+         WHERE tenant_id = ?1
+         ORDER BY created_at DESC
+         LIMIT ?2 OFFSET ?3`
+      )
+      .bind(tenantId, limit, offset)
+      .all();
+
+    return c.json({ ok: true, tenantId, data: rows.results ?? [] });
+  });
+
+  // GET /hot-leads — list hot/warm leads with close evaluation
+  app.get("/hot-leads", async (c) => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    const limit = Math.min(Number(c.req.query("limit") || 20), 50);
+
+    const rows = await db
+      .prepare(
+        `SELECT id, store_name, domain, deal_temperature, close_stage,
+                handoff_required, close_evaluated_at, updated_at
+         FROM sales_leads
+         WHERE tenant_id = ?1
+           AND deal_temperature IN ('hot', 'warm')
+           AND pipeline_stage NOT IN ('customer', 'lost')
+         ORDER BY
+           CASE deal_temperature WHEN 'hot' THEN 0 WHEN 'warm' THEN 1 ELSE 2 END,
+           close_evaluated_at DESC
+         LIMIT ?2`
+      )
+      .bind(tenantId, limit)
+      .all();
+
+    // Get latest close intent & recommended_next_step from close_logs
+    const leads = [];
+    for (const row of rows.results ?? []) {
+      const log = await db
+        .prepare(
+          `SELECT close_intent, suggested_action AS recommended_next_step
+           FROM outreach_close_logs
+           WHERE tenant_id = ?1 AND lead_id = ?2
+           ORDER BY created_at DESC LIMIT 1`
+        )
+        .bind(tenantId, row.id)
+        .first();
+      leads.push({
+        ...row,
+        close_intent: log?.close_intent || null,
+        recommended_next_step: log?.recommended_next_step || null,
+      });
+    }
+
+    return c.json({ ok: true, tenantId, data: leads });
+  });
+
+  // GET /close/insights — close analytics
+  app.get("/close/insights", async (c) => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    const todayStr = new Date().toISOString().slice(0, 10);
+
+    const [pricingToday, demoToday, meetingReq, hotCount, handoffCount] = await Promise.all([
+      db.prepare(
+        `SELECT COUNT(*) as cnt FROM outreach_close_logs WHERE tenant_id = ?1 AND close_intent = 'pricing_request' AND created_at >= ?2`
+      ).bind(tenantId, todayStr).first<{ cnt: number }>(),
+      db.prepare(
+        `SELECT COUNT(*) as cnt FROM outreach_close_logs WHERE tenant_id = ?1 AND close_intent = 'demo_request' AND created_at >= ?2`
+      ).bind(tenantId, todayStr).first<{ cnt: number }>(),
+      db.prepare(
+        `SELECT COUNT(*) as cnt FROM sales_leads WHERE tenant_id = ?1 AND close_stage = 'meeting_requested' AND pipeline_stage NOT IN ('customer', 'lost')`
+      ).bind(tenantId).first<{ cnt: number }>(),
+      db.prepare(
+        `SELECT COUNT(*) as cnt FROM sales_leads WHERE tenant_id = ?1 AND deal_temperature = 'hot' AND pipeline_stage NOT IN ('customer', 'lost')`
+      ).bind(tenantId).first<{ cnt: number }>(),
+      db.prepare(
+        `SELECT COUNT(*) as cnt FROM sales_leads WHERE tenant_id = ?1 AND handoff_required = 1 AND pipeline_stage NOT IN ('customer', 'lost')`
+      ).bind(tenantId).first<{ cnt: number }>(),
+    ]);
+
+    // Close rate by source
+    const sourceRows = await db.prepare(
+      `SELECT l.import_source as source,
+              COUNT(CASE WHEN l.pipeline_stage IN ('customer') THEN 1 END) * 1.0 / COUNT(*) as closeRate,
+              COUNT(*) as sampleSize
+       FROM sales_leads l
+       WHERE l.tenant_id = ?1 AND l.import_source IS NOT NULL
+       GROUP BY l.import_source HAVING COUNT(*) >= 3
+       ORDER BY closeRate DESC LIMIT 10`
+    ).bind(tenantId).all();
+
+    // Close rate by niche
+    const nicheRows = await db.prepare(
+      `SELECT l.niche,
+              COUNT(CASE WHEN l.pipeline_stage IN ('customer') THEN 1 END) * 1.0 / COUNT(*) as closeRate,
+              COUNT(*) as sampleSize
+       FROM sales_leads l
+       WHERE l.tenant_id = ?1 AND l.niche IS NOT NULL
+       GROUP BY l.niche HAVING COUNT(*) >= 3
+       ORDER BY closeRate DESC LIMIT 10`
+    ).bind(tenantId).all();
+
+    return c.json({
+      ok: true,
+      tenantId,
+      data: {
+        pricingRequestsToday: pricingToday?.cnt ?? 0,
+        demoRequestsToday: demoToday?.cnt ?? 0,
+        meetingRequestedCount: meetingReq?.cnt ?? 0,
+        hotLeadsCount: hotCount?.cnt ?? 0,
+        handoffRequiredCount: handoffCount?.cnt ?? 0,
+        closeRateBySource: (sourceRows.results ?? []).map((r: any) => ({
+          source: r.source, closeRate: r.closeRate, sampleSize: r.sampleSize,
+        })),
+        closeRateByNiche: (nicheRows.results ?? []).map((r: any) => ({
+          niche: r.niche, closeRate: r.closeRate, sampleSize: r.sampleSize,
+        })),
+      },
+    });
+  });
+
+  // POST /replies/:id/handoff — mark for human handoff
+  app.post("/replies/:id/handoff", async (c) => {
+    const tenantId = getTenantId(c);
+    const replyId = c.req.param("id");
+    const db = c.env.DB;
+
+    const reply = await db
+      .prepare("SELECT lead_id FROM outreach_replies WHERE id = ?1 AND tenant_id = ?2")
+      .bind(replyId, tenantId)
+      .first<{ lead_id: string }>();
+    if (!reply) return c.json({ ok: false, error: "reply_not_found" }, 404);
+
+    await db
+      .prepare("UPDATE outreach_replies SET handoff_required = 1 WHERE id = ?1 AND tenant_id = ?2")
+      .bind(replyId, tenantId)
+      .run();
+
+    await db
+      .prepare("UPDATE sales_leads SET handoff_required = 1, updated_at = ?1 WHERE id = ?2 AND tenant_id = ?3")
+      .bind(now(), reply.lead_id, tenantId)
+      .run();
+
+    const { logAudit } = await import("../lineConfig");
+    await logAudit(db, tenantId, "owner", "outreach.close.handoff", { replyId, leadId: reply.lead_id });
+
+    return c.json({ ok: true, tenantId });
+  });
+
+  // POST /replies/:id/mark-won — mark lead as won
+  app.post("/replies/:id/mark-won", async (c) => {
+    const tenantId = getTenantId(c);
+    const replyId = c.req.param("id");
+    const db = c.env.DB;
+
+    const reply = await db
+      .prepare("SELECT lead_id FROM outreach_replies WHERE id = ?1 AND tenant_id = ?2")
+      .bind(replyId, tenantId)
+      .first<{ lead_id: string }>();
+    if (!reply) return c.json({ ok: false, error: "reply_not_found" }, 404);
+
+    await db
+      .prepare("UPDATE sales_leads SET pipeline_stage = 'customer', close_stage = 'won', updated_at = ?1 WHERE id = ?2 AND tenant_id = ?3")
+      .bind(now(), reply.lead_id, tenantId)
+      .run();
+
+    await db
+      .prepare(
+        `INSERT INTO outreach_close_logs (id, tenant_id, lead_id, reply_id, close_intent, close_confidence, deal_temperature, suggested_action, execution_status, handoff_required, created_at)
+         VALUES (?1, ?2, ?3, ?4, 'signup_request', 1.0, 'hot', 'mark_won', 'auto_sent', 0, ?5)`
+      )
+      .bind(uid(), tenantId, reply.lead_id, replyId, now())
+      .run();
+
+    const { logAudit } = await import("../lineConfig");
+    await logAudit(db, tenantId, "owner", "outreach.close.mark_won", { replyId, leadId: reply.lead_id });
+
+    return c.json({ ok: true, tenantId });
+  });
+
+  // POST /replies/:id/mark-lost — mark lead as lost
+  app.post("/replies/:id/mark-lost", async (c) => {
+    const tenantId = getTenantId(c);
+    const replyId = c.req.param("id");
+    const db = c.env.DB;
+
+    const reply = await db
+      .prepare("SELECT lead_id FROM outreach_replies WHERE id = ?1 AND tenant_id = ?2")
+      .bind(replyId, tenantId)
+      .first<{ lead_id: string }>();
+    if (!reply) return c.json({ ok: false, error: "reply_not_found" }, 404);
+
+    await db
+      .prepare("UPDATE sales_leads SET pipeline_stage = 'lost', close_stage = 'lost', updated_at = ?1 WHERE id = ?2 AND tenant_id = ?3")
+      .bind(now(), reply.lead_id, tenantId)
+      .run();
+
+    await db
+      .prepare(
+        `INSERT INTO outreach_close_logs (id, tenant_id, lead_id, reply_id, close_intent, close_confidence, deal_temperature, suggested_action, execution_status, handoff_required, created_at)
+         VALUES (?1, ?2, ?3, ?4, 'cold_lead', 1.0, 'cold', 'mark_lost', 'auto_sent', 0, ?5)`
+      )
+      .bind(uid(), tenantId, reply.lead_id, replyId, now())
+      .run();
+
+    const { logAudit } = await import("../lineConfig");
+    await logAudit(db, tenantId, "owner", "outreach.close.mark_lost", { replyId, leadId: reply.lead_id });
+
+    return c.json({ ok: true, tenantId });
+  });
+
+  // POST /replies/:id/meeting-suggest — get meeting suggestion
+  app.post("/replies/:id/meeting-suggest", async (c) => {
+    const tenantId = getTenantId(c);
+    const replyId = c.req.param("id");
+    const db = c.env.DB;
+    const kv = c.env.SAAS_FACTORY;
+
+    const reply = await db
+      .prepare("SELECT * FROM outreach_replies WHERE id = ?1 AND tenant_id = ?2")
+      .bind(replyId, tenantId)
+      .first();
+    if (!reply) return c.json({ ok: false, error: "reply_not_found" }, 404);
+
+    const { getCloseSettings } = await import("./close-generator");
+    const settings = await getCloseSettings(kv, tenantId);
+
+    const lead = await db
+      .prepare("SELECT store_name FROM sales_leads WHERE id = ?1 AND tenant_id = ?2")
+      .bind(reply.lead_id as string, tenantId)
+      .first<{ store_name: string }>();
+
+    const { suggestNextStep } = await import("./meeting-suggester");
+    const suggestion = suggestNextStep(
+      (reply.close_intent as any) || "not_close_relevant",
+      (reply.deal_temperature as any) || "cold",
+      settings,
+      lead?.store_name || "弊社"
+    );
+
+    return c.json({ ok: true, tenantId, data: suggestion });
+  });
+
   return app;
 }
-

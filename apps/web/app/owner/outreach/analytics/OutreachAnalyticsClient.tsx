@@ -2,7 +2,8 @@
 
 import { useState, useEffect } from "react";
 import { useOwnerTenantId } from "@/src/lib/useOwnerTenantId";
-import { fetchOutreachAnalytics, fetchLearningAnalytics, fetchCampaignAnalytics, fetchSourceAnalytics, fetchWinningPatterns, refreshWinningPatterns, fetchCampaignInsights, fetchSourceQuality, fetchTopSources, fetchSourceTrends, fetchSourceBreakdown, fetchLearnedInsights, refreshQualityLearning, backfillQualityV2, fetchCopilotInsights } from "@/app/lib/outreachApi";
+import { fetchOutreachAnalytics, fetchLearningAnalytics, fetchCampaignAnalytics, fetchSourceAnalytics, fetchWinningPatterns, refreshWinningPatterns, fetchCampaignInsights, fetchSourceQuality, fetchTopSources, fetchSourceTrends, fetchSourceBreakdown, fetchLearnedInsights, refreshQualityLearning, backfillQualityV2, fetchCopilotInsights, fetchCloseInsights } from "@/app/lib/outreachApi";
+import type { CloseInsights } from "@/src/types/outreach";
 import type { OutreachAnalytics, LearningAnalytics, CampaignAnalytics, SourceAnalytics, WinningPatternsData, CampaignInsightsData, SourceQualityRow, SourceQualitySummary, TopSourceRow, SourceTrendPoint, SourceTrendBreakdown, LearnedInsightsResult, CopilotInsight } from "@/src/types/outreach";
 import { SOURCE_TYPE_LABELS, PATTERN_TYPE_LABELS } from "@/src/types/outreach";
 import { PIPELINE_LABELS } from "@/src/types/outreach";
@@ -40,6 +41,7 @@ export default function OutreachAnalyticsClient() {
   const [sourceBreakdown, setSourceBreakdown] = useState<SourceTrendBreakdown[]>([]);
   const [learnedInsights, setLearnedInsights] = useState<LearnedInsightsResult | null>(null);
   const [copilotInsights, setCopilotInsights] = useState<CopilotInsight[]>([]);
+  const [closeInsightsData, setCloseInsightsData] = useState<CloseInsights | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [learningRefreshing, setLearningRefreshing] = useState(false);
   const [backfilling, setBackfilling] = useState(false);
@@ -62,8 +64,9 @@ export default function OutreachAnalyticsClient() {
       fetchSourceBreakdown(tenantId, 30).catch(() => []),
       fetchLearnedInsights(tenantId).catch(() => null),
       fetchCopilotInsights(tenantId).catch(() => []),
+      fetchCloseInsights(tenantId).catch(() => null),
     ])
-      .then(([a, l, c, s, w, ci, sq, ts, trends, breakdown, li, cpi]) => {
+      .then(([a, l, c, s, w, ci, sq, ts, trends, breakdown, li, cpi, clIns]) => {
         setAnalytics(a);
         setLearning(l);
         setCampaignAnalytics(c);
@@ -79,6 +82,7 @@ export default function OutreachAnalyticsClient() {
         setSourceBreakdown(Array.isArray(breakdown) ? breakdown : []);
         setLearnedInsights(li);
         setCopilotInsights(Array.isArray(cpi) ? cpi : []);
+        setCloseInsightsData(clIns);
       })
       .catch((err) => setError(err.message || "読み込みに失敗しました"))
       .finally(() => setLoading(false));
@@ -850,6 +854,65 @@ export default function OutreachAnalyticsClient() {
             </div>
           )}
         </div>
+
+        {/* Close Insights (Phase 15) */}
+        {closeInsightsData && (
+          <div className="bg-gradient-to-r from-purple-50 to-pink-50 border border-purple-200 rounded-xl p-4">
+            <h3 className="font-bold text-gray-900 mb-3 flex items-center gap-2">
+              <span className="text-purple-500">⚡</span> Close Insights
+            </h3>
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
+              <div className="bg-white/80 rounded-lg p-3 border border-purple-100 text-center">
+                <p className="text-2xl font-bold text-purple-600">{closeInsightsData.pricingRequestsToday}</p>
+                <p className="text-xs text-gray-500">料金問合せ（今日）</p>
+              </div>
+              <div className="bg-white/80 rounded-lg p-3 border border-purple-100 text-center">
+                <p className="text-2xl font-bold text-emerald-600">{closeInsightsData.demoRequestsToday}</p>
+                <p className="text-xs text-gray-500">デモ希望（今日）</p>
+              </div>
+              <div className="bg-white/80 rounded-lg p-3 border border-purple-100 text-center">
+                <p className="text-2xl font-bold text-teal-600">{closeInsightsData.meetingRequestedCount}</p>
+                <p className="text-xs text-gray-500">商談待ち</p>
+              </div>
+              <div className="bg-white/80 rounded-lg p-3 border border-purple-100 text-center">
+                <p className="text-2xl font-bold text-red-600">{closeInsightsData.hotLeadsCount}</p>
+                <p className="text-xs text-gray-500">ホットリード</p>
+              </div>
+              <div className="bg-white/80 rounded-lg p-3 border border-purple-100 text-center">
+                <p className="text-2xl font-bold text-amber-600">{closeInsightsData.handoffRequiredCount}</p>
+                <p className="text-xs text-gray-500">要対応</p>
+              </div>
+            </div>
+            {closeInsightsData.closeRateBySource.length > 0 && (
+              <div className="mb-3">
+                <h4 className="text-sm font-medium text-gray-700 mb-2">ソース別 Close Rate</h4>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                  {closeInsightsData.closeRateBySource.map((s, i) => (
+                    <div key={i} className="bg-white/80 rounded-lg p-2 border border-purple-100">
+                      <span className="text-sm font-medium">{s.source}</span>
+                      <span className="text-sm text-purple-600 ml-2">{Math.round(s.closeRate * 100)}%</span>
+                      <span className="text-xs text-gray-400 ml-1">({s.sampleSize}件)</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {closeInsightsData.closeRateByNiche.length > 0 && (
+              <div>
+                <h4 className="text-sm font-medium text-gray-700 mb-2">ニッチ別 Close Rate</h4>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                  {closeInsightsData.closeRateByNiche.map((n, i) => (
+                    <div key={i} className="bg-white/80 rounded-lg p-2 border border-purple-100">
+                      <span className="text-sm font-medium">{n.niche}</span>
+                      <span className="text-sm text-purple-600 ml-2">{Math.round(n.closeRate * 100)}%</span>
+                      <span className="text-xs text-gray-400 ml-1">({n.sampleSize}件)</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Copilot Insights */}
         {copilotInsights.length > 0 && (

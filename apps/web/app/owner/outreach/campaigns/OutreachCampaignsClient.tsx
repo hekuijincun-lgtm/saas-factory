@@ -11,6 +11,7 @@ import {
   fetchCampaignPreview,
   generateReviewItems,
   generateCampaignDraft,
+  fetchOutreachSettings,
 } from "@/app/lib/outreachApi";
 import type {
   OutreachCampaign,
@@ -18,15 +19,147 @@ import type {
   CampaignPreview,
   CampaignStatus,
   CampaignDraftResult,
+  OutreachSettings,
 } from "@/src/types/outreach";
 import {
   CAMPAIGN_STATUS_LABELS,
   CAMPAIGN_STATUS_COLORS,
 } from "@/src/types/outreach";
 
+// ── Step Guide ────────────────────────────────────────────────────────────
+const STEPS = [
+  { num: 1, label: "リード取込", desc: "ソース検索やCSVからリードを取込みます", link: "/owner/outreach/sources" },
+  { num: 2, label: "キャンペーン作成", desc: "ニッチ・エリアを設定してキャンペーンを作成", link: null },
+  { num: 3, label: "バリアント追加", desc: "ABテスト用のメッセージバリアントを追加", link: null },
+  { num: 4, label: "レビュー&送信", desc: "生成したメッセージをレビューして送信", link: "/owner/outreach/review" },
+];
+
+function StepGuide({ campaignCount, hasVariants }: { campaignCount: number; hasVariants: boolean }) {
+  const currentStep = campaignCount === 0 ? 1 : !hasVariants ? 3 : 4;
+  return (
+    <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl border border-blue-100 p-4">
+      <h3 className="text-sm font-semibold text-blue-800 mb-3">セールスの流れ</h3>
+      <div className="flex gap-2">
+        {STEPS.map((s) => {
+          const done = s.num < currentStep;
+          const active = s.num === currentStep;
+          return (
+            <div key={s.num} className="flex-1 min-w-0">
+              <div className="flex items-center gap-1.5 mb-1">
+                <span className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold
+                  ${done ? "bg-green-500 text-white" : active ? "bg-blue-600 text-white" : "bg-gray-200 text-gray-500"}`}>
+                  {done ? "\u2713" : s.num}
+                </span>
+                <span className={`text-xs font-medium truncate ${active ? "text-blue-700" : "text-gray-500"}`}>{s.label}</span>
+              </div>
+              <p className="text-[10px] text-gray-400 leading-tight">{s.desc}</p>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ── Quick Start ───────────────────────────────────────────────────────────
+function QuickStartCard({ onStartDraft }: { onStartDraft: () => void }) {
+  return (
+    <div className="border-2 border-dashed border-amber-300 rounded-xl p-6 text-center space-y-3 bg-amber-50/50">
+      <div className="text-3xl">&#x1F680;</div>
+      <h3 className="text-base font-semibold text-gray-800">かんたん開始</h3>
+      <p className="text-sm text-gray-500 max-w-md mx-auto">
+        ニッチとエリアを入力するだけで、AIがキャンペーン・バリアント・メッセージを自動生成します。
+      </p>
+      <button
+        onClick={onStartDraft}
+        className="px-6 py-2.5 text-sm bg-amber-500 text-white rounded-lg hover:bg-amber-600 font-medium"
+      >
+        AI自動生成で始める
+      </button>
+      <p className="text-[10px] text-gray-400">リードが0件の場合は先にソース検索からリードを取込んでください</p>
+    </div>
+  );
+}
+
+// ── Readiness Panel ───────────────────────────────────────────────────────
+function ReadinessPanel({
+  campaign, variants, preview, settings,
+}: {
+  campaign: OutreachCampaign;
+  variants: OutreachCampaignVariant[];
+  preview: CampaignPreview | null;
+  settings: OutreachSettings | null;
+}) {
+  // Detect if any variant uses {{lp_url}}
+  const usesLpToken = variants.some(
+    (v) =>
+      (v.subject_template ?? "").includes("{{lp_url}}") ||
+      (v.opener_template ?? "").includes("{{lp_url}}") ||
+      (v.cta_template ?? "").includes("{{lp_url}}")
+  );
+  const lpUrlResolved = !!(campaign.landing_page_url || settings?.defaultLpUrl);
+  // If {{lp_url}} is used but LP URL is not resolved, send is blocked
+  const lpBlocked = usesLpToken && !lpUrlResolved;
+
+  type Check = { ok: boolean; label: string; warn?: boolean; blocked?: boolean };
+  const checks: Check[] = [
+    { ok: variants.length > 0, label: "バリアントが1つ以上ある" },
+    { ok: (preview?.matchingLeads ?? 0) > 0, label: "対象リードが1件以上ある" },
+  ];
+
+  if (usesLpToken) {
+    checks.push({
+      ok: lpUrlResolved,
+      label: lpUrlResolved
+        ? `LP URL 解決済み（${campaign.landing_page_url ? "キャンペーン設定" : "デフォルト設定"}）`
+        : "LP URL 未設定 — {{lp_url}} を使用中のため送信不可",
+      blocked: !lpUrlResolved,
+    });
+  } else {
+    checks.push({
+      ok: lpUrlResolved,
+      label: "LP URLが設定済み（{{lp_url}} 未使用のため任意）",
+      warn: true,
+    });
+  }
+
+  const requiredFailed = checks.some(c => !c.ok && !c.warn);
+  const allOk = !requiredFailed;
+
+  return (
+    <div className={`rounded-lg border p-3 space-y-2 ${
+      lpBlocked ? "border-red-200 bg-red-50/50" :
+      allOk ? "border-green-200 bg-green-50/50" :
+      "border-amber-200 bg-amber-50/50"
+    }`}>
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-medium text-gray-700">送信準備チェック</span>
+        {lpBlocked && (
+          <span className="text-[10px] px-2 py-0.5 rounded-full bg-red-100 text-red-700 font-medium">送信不可</span>
+        )}
+        {!lpBlocked && allOk && (
+          <span className="text-[10px] px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-medium">送信可能</span>
+        )}
+      </div>
+      {checks.map((c, i) => (
+        <div key={i} className="flex items-center gap-2 text-xs">
+          <span className={c.ok ? "text-green-600" : c.blocked ? "text-red-600" : c.warn ? "text-amber-500" : "text-red-500"}>
+            {c.ok ? "\u2713" : c.blocked ? "\u26D4" : c.warn ? "!" : "\u2717"}
+          </span>
+          <span className={c.ok ? "text-gray-600" : c.blocked ? "text-red-700 font-medium" : "text-gray-800"}>{c.label}</span>
+        </div>
+      ))}
+      <p className="text-[10px] text-gray-400 pt-1 border-t border-gray-100">
+        LP URL 解決優先順位: 1. キャンペーンLP URL → 2. 設定ページのデフォルトLP URL
+      </p>
+    </div>
+  );
+}
+
 export default function OutreachCampaignsClient() {
   const { tenantId, loading: tenantLoading } = useOwnerTenantId();
   const [campaigns, setCampaigns] = useState<OutreachCampaign[]>([]);
+  const [settings, setSettings] = useState<OutreachSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
@@ -36,6 +169,7 @@ export default function OutreachCampaignsClient() {
   const [newNiche, setNewNiche] = useState("");
   const [newArea, setNewArea] = useState("");
   const [newMinScore, setNewMinScore] = useState("");
+  const [newLpUrl, setNewLpUrl] = useState("");
 
   // Detail view
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -63,7 +197,12 @@ export default function OutreachCampaignsClient() {
     if (!tenantId) return;
     setLoading(true);
     try {
-      setCampaigns(await fetchCampaigns(tenantId));
+      const [c, s] = await Promise.all([
+        fetchCampaigns(tenantId),
+        fetchOutreachSettings(tenantId),
+      ]);
+      setCampaigns(c);
+      setSettings(s);
     } catch (err: any) {
       setToast({ type: "error", text: err.message || "読み込み失敗" });
     } finally {
@@ -81,12 +220,14 @@ export default function OutreachCampaignsClient() {
         niche: newNiche || undefined,
         area: newArea || undefined,
         min_score: newMinScore ? parseInt(newMinScore, 10) : undefined,
+        landing_page_url: newLpUrl || undefined,
       });
       setShowCreate(false);
       setNewName("");
       setNewNiche("");
       setNewArea("");
       setNewMinScore("");
+      setNewLpUrl("");
       setToast({ type: "success", text: "キャンペーンを作成しました" });
       load();
     } catch (err: any) {
@@ -118,7 +259,7 @@ export default function OutreachCampaignsClient() {
         cta_template: variantCta || undefined,
         tone: variantTone,
       });
-      setVariantKey(String.fromCharCode(65 + variants.length + 1)); // Next letter
+      setVariantKey(String.fromCharCode(65 + variants.length + 1));
       setVariantSubject("");
       setVariantOpener("");
       setVariantCta("");
@@ -182,11 +323,22 @@ export default function OutreachCampaignsClient() {
     }
   };
 
+  const handleLpUrlSave = async (campaignId: string, url: string) => {
+    try {
+      await updateCampaign(tenantId, campaignId, { landing_page_url: url || null } as any);
+      setToast({ type: "success", text: "LP URLを保存しました" });
+      load();
+    } catch (err: any) {
+      setToast({ type: "error", text: err.message || "LP URL保存失敗" });
+    }
+  };
+
   if (!tenantId || tenantLoading) {
     return <div className="p-6 text-sm text-gray-500">読み込み中...</div>;
   }
 
   const selectedCampaign = campaigns.find((c) => c.id === selectedId);
+  const hasAnyVariants = variants.length > 0;
 
   return (
     <>
@@ -200,7 +352,12 @@ export default function OutreachCampaignsClient() {
           </div>
         )}
 
-        {/* Campaign list */}
+        {/* Step guide */}
+        {!loading && (
+          <StepGuide campaignCount={campaigns.length} hasVariants={hasAnyVariants || campaigns.length === 0} />
+        )}
+
+        {/* Campaign list header */}
         <div className="flex items-center justify-between">
           <h2 className="font-semibold text-sm">キャンペーン一覧</h2>
           <div className="flex gap-2">
@@ -222,7 +379,8 @@ export default function OutreachCampaignsClient() {
         {loading ? (
           <div className="text-sm text-gray-500 py-8 text-center">読み込み中...</div>
         ) : campaigns.length === 0 ? (
-          <div className="text-sm text-gray-500 py-8 text-center">キャンペーンがありません</div>
+          /* Empty state with quick start */
+          <QuickStartCard onStartDraft={() => setShowDraftGen(true)} />
         ) : (
           <div className="space-y-2">
             {campaigns.map((c) => (
@@ -244,6 +402,7 @@ export default function OutreachCampaignsClient() {
                     {c.niche && <span>{c.niche}</span>}
                     {c.area && <span>{c.area}</span>}
                     {c.min_score != null && <span>スコア{c.min_score}+</span>}
+                    {c.landing_page_url && <span className="text-blue-400">LP設定済</span>}
                   </div>
                 </div>
               </div>
@@ -273,6 +432,9 @@ export default function OutreachCampaignsClient() {
               </div>
             </div>
 
+            {/* Readiness panel */}
+            <ReadinessPanel campaign={selectedCampaign} variants={variants} preview={preview} settings={settings} />
+
             {/* Preview stats */}
             {preview && (
               <div className="grid grid-cols-3 gap-3">
@@ -290,6 +452,13 @@ export default function OutreachCampaignsClient() {
                 </div>
               </div>
             )}
+
+            {/* LP URL for this campaign */}
+            <CampaignLpUrl
+              campaign={selectedCampaign}
+              defaultLpUrl={settings?.defaultLpUrl || ""}
+              onSave={(url) => handleLpUrlSave(selectedId, url)}
+            />
 
             {/* Variants */}
             <div className="space-y-3">
@@ -338,14 +507,16 @@ export default function OutreachCampaignsClient() {
                       onChange={(e) => setVariantTone(e.target.value)}
                       className="w-full border rounded px-2 py-1 text-sm mt-0.5"
                     >
-                      <option value="friendly">friendly</option>
-                      <option value="formal">formal</option>
-                      <option value="casual">casual</option>
+                      <option value="friendly">フレンドリー</option>
+                      <option value="formal">フォーマル</option>
+                      <option value="casual">カジュアル</option>
                     </select>
                   </div>
                 </div>
                 <div>
-                  <label className="text-xs text-gray-500">件名テンプレート (任意, {"{store_name}"} 使用可)</label>
+                  <label className="text-xs text-gray-500">
+                    件名テンプレート (任意, {"{store_name}"} {"{{lp_url}}"} 使用可)
+                  </label>
                   <input
                     value={variantSubject}
                     onChange={(e) => setVariantSubject(e.target.value)}
@@ -354,12 +525,12 @@ export default function OutreachCampaignsClient() {
                   />
                 </div>
                 <div>
-                  <label className="text-xs text-gray-500">CTAテンプレート (任意)</label>
+                  <label className="text-xs text-gray-500">CTAテンプレート (任意, {"{{lp_url}}"} でLP自動挿入)</label>
                   <input
                     value={variantCta}
                     onChange={(e) => setVariantCta(e.target.value)}
                     className="w-full border rounded px-2 py-1 text-sm mt-0.5"
-                    placeholder="無料相談のご案内"
+                    placeholder="詳細はこちら: {{lp_url}}"
                   />
                 </div>
                 <button
@@ -458,6 +629,15 @@ export default function OutreachCampaignsClient() {
                     placeholder="40"
                   />
                 </div>
+                <div>
+                  <label className="text-xs text-gray-500">LP URL (任意 — メッセージ内の {"{{lp_url}}"} を置換)</label>
+                  <input
+                    value={newLpUrl}
+                    onChange={(e) => setNewLpUrl(e.target.value)}
+                    className="w-full border rounded-lg px-3 py-1.5 text-sm mt-1"
+                    placeholder="https://example.com/lp"
+                  />
+                </div>
               </div>
               <div className="flex gap-2 justify-end">
                 <button
@@ -476,6 +656,7 @@ export default function OutreachCampaignsClient() {
             </div>
           </div>
         )}
+
         {/* AI Draft Generator modal */}
         {showDraftGen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
@@ -523,9 +704,9 @@ export default function OutreachCampaignsClient() {
                     className="w-full border rounded-lg px-3 py-1.5 text-sm mt-1"
                   >
                     <option value="">自動選択</option>
-                    <option value="friendly">friendly</option>
-                    <option value="formal">formal</option>
-                    <option value="casual">casual</option>
+                    <option value="friendly">フレンドリー</option>
+                    <option value="formal">フォーマル</option>
+                    <option value="casual">カジュアル</option>
                   </select>
                 </div>
               </div>
@@ -585,5 +766,69 @@ export default function OutreachCampaignsClient() {
         )}
       </div>
     </>
+  );
+}
+
+// ── Campaign LP URL inline editor ────────────────────────────────────────
+function CampaignLpUrl({
+  campaign,
+  defaultLpUrl,
+  onSave,
+}: {
+  campaign: OutreachCampaign;
+  defaultLpUrl: string;
+  onSave: (url: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [url, setUrl] = useState(campaign.landing_page_url || "");
+  const effectiveUrl = campaign.landing_page_url || defaultLpUrl;
+  const source = campaign.landing_page_url ? "キャンペーン設定" : defaultLpUrl ? "デフォルト設定" : null;
+
+  return (
+    <div className="border rounded-lg p-3 space-y-1.5 bg-gray-50">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-medium text-gray-600">LP URL（メッセージ内 {"{{lp_url}}"} の展開先）</span>
+        <button onClick={() => setEditing(!editing)} className="text-xs text-blue-600 hover:underline">
+          {editing ? "閉じる" : "編集"}
+        </button>
+      </div>
+      {editing ? (
+        <div className="space-y-2">
+          <div className="flex gap-2">
+            <input
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              className="flex-1 border rounded px-2 py-1 text-sm"
+              placeholder={defaultLpUrl || "https://example.com/lp"}
+            />
+            <button
+              onClick={() => { onSave(url); setEditing(false); }}
+              className="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700"
+            >
+              保存
+            </button>
+          </div>
+          {defaultLpUrl && (
+            <p className="text-[10px] text-gray-400">空にするとデフォルトLP URL ({defaultLpUrl}) が使われます</p>
+          )}
+        </div>
+      ) : (
+        <div className="text-xs text-gray-500 space-y-1">
+          {effectiveUrl ? (
+            <div className="flex items-center gap-1.5">
+              <span className="text-green-600">{"\u2713"}</span>
+              <span>{effectiveUrl}</span>
+              <span className="text-gray-400">({source})</span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-1.5">
+              <span className="text-amber-500">!</span>
+              <span className="text-gray-500">未設定 — {"{{lp_url}}"} を使用するバリアントがある場合、送信がブロックされます</span>
+            </div>
+          )}
+        </div>
+      )}
+      <p className="text-[10px] text-gray-400">解決優先順位: 1. このキャンペーンのLP URL → 2. 設定ページのデフォルトLP URL</p>
+    </div>
   );
 }

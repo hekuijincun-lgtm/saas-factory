@@ -86,6 +86,16 @@ export default function OwnerDashboardClient() {
   const [toast, setToast] = useState("");
   const [copilot, setCopilot] = useState<CopilotOverview | null>(null);
   const [copilotLoading, setCopilotLoading] = useState(false);
+  const [autoReplyStats, setAutoReplyStats] = useState<{ todayReplies: number; aiReplied: number; aiSuccessRate: number; needsHumanCount: number } | null>(null);
+  const [closeInsights, setCloseInsights] = useState<{
+    pricingRequestsToday: number; demoRequestsToday: number;
+    meetingRequestedCount: number; hotLeadsCount: number; handoffRequiredCount: number;
+  } | null>(null);
+  const [hotLeads, setHotLeads] = useState<Array<{
+    id: string; store_name: string; domain: string; deal_temperature: string;
+    close_stage: string | null; handoff_required: number;
+    close_intent: string | null; recommended_next_step: string | null;
+  }>>([]);
 
   const tenantsRef = useRef<HTMLDivElement>(null);
   const ticketsRef = useRef<HTMLDivElement>(null);
@@ -136,6 +146,20 @@ export default function OwnerDashboardClient() {
 
       // Fetch copilot overview (non-blocking — uses first tenant for outreach context)
       fetchCopilotData();
+      // Fetch auto-reply stats (non-blocking)
+      fetch("/api/proxy/admin/outreach/auto-reply/stats?tenantId=default")
+        .then((r) => r.json())
+        .then((d: any) => { if (d.ok) setAutoReplyStats(d.data); })
+        .catch(() => {});
+      // Fetch close insights + hot leads (non-blocking, Phase 15)
+      fetch("/api/proxy/admin/outreach/close/insights?tenantId=default")
+        .then((r) => r.json())
+        .then((d: any) => { if (d.ok) setCloseInsights(d.data); })
+        .catch(() => {});
+      fetch("/api/proxy/admin/outreach/hot-leads?tenantId=default&limit=5")
+        .then((r) => r.json())
+        .then((d: any) => { if (d.ok) setHotLeads(d.data ?? []); })
+        .catch(() => {});
     } catch (e) {
       console.error("Owner dashboard fetch error:", e);
       setError("通信エラーが発生しました。ページを再読込してください。");
@@ -504,6 +528,118 @@ export default function OwnerDashboardClient() {
           )}
         </div>
       </div>
+
+      {/* Section 3.5: Auto Reply AI */}
+      {autoReplyStats && (
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
+          <div className="p-4 border-b border-gray-200 flex items-center gap-3">
+            <MessageSquare className="w-5 h-5 text-blue-500" />
+            <h2 className="text-lg font-semibold text-gray-900">Auto Reply AI</h2>
+            <span className="text-xs text-gray-400">返信の自動処理状況</span>
+            <div className="flex-1" />
+            <a
+              href="/owner/outreach/replies"
+              className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1"
+            >
+              詳細 <ArrowRight className="w-3 h-3" />
+            </a>
+          </div>
+          <div className="p-4 grid grid-cols-4 gap-4">
+            <div className="text-center">
+              <p className="text-2xl font-bold text-gray-900">{autoReplyStats.todayReplies}</p>
+              <p className="text-xs text-gray-500">今日の返信</p>
+            </div>
+            <div className="text-center">
+              <p className="text-2xl font-bold text-green-600">{autoReplyStats.aiReplied}</p>
+              <p className="text-xs text-gray-500">AI返信成功</p>
+            </div>
+            <div className="text-center">
+              <p className="text-2xl font-bold text-amber-600">{autoReplyStats.aiSuccessRate}%</p>
+              <p className="text-xs text-gray-500">成功率</p>
+            </div>
+            <div className="text-center">
+              <p className={`text-2xl font-bold ${autoReplyStats.needsHumanCount > 0 ? "text-red-600" : "text-gray-400"}`}>
+                {autoReplyStats.needsHumanCount}
+              </p>
+              <p className="text-xs text-gray-500">要対応</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Section 3.6: Auto Close AI — Hot Leads & Close Insights (Phase 15) */}
+      {(closeInsights || hotLeads.length > 0) && (
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
+          <div className="p-4 border-b border-gray-200 flex items-center gap-3">
+            <Zap className="w-5 h-5 text-orange-500" />
+            <h2 className="text-lg font-semibold text-gray-900">Auto Close AI</h2>
+            <span className="text-xs text-gray-400">商談化支援</span>
+            <div className="flex-1" />
+            <a
+              href="/owner/outreach/replies"
+              className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1"
+            >
+              詳細 <ArrowRight className="w-3 h-3" />
+            </a>
+          </div>
+          {closeInsights && (
+            <div className="p-4 grid grid-cols-5 gap-4 border-b border-gray-100">
+              <div className="text-center">
+                <p className="text-2xl font-bold text-purple-600">{closeInsights.pricingRequestsToday}</p>
+                <p className="text-xs text-gray-500">料金問合せ（今日）</p>
+              </div>
+              <div className="text-center">
+                <p className="text-2xl font-bold text-emerald-600">{closeInsights.demoRequestsToday}</p>
+                <p className="text-xs text-gray-500">デモ希望（今日）</p>
+              </div>
+              <div className="text-center">
+                <p className="text-2xl font-bold text-teal-600">{closeInsights.meetingRequestedCount}</p>
+                <p className="text-xs text-gray-500">商談待ち</p>
+              </div>
+              <div className="text-center">
+                <p className={`text-2xl font-bold ${closeInsights.hotLeadsCount > 0 ? "text-red-600" : "text-gray-400"}`}>
+                  {closeInsights.hotLeadsCount}
+                </p>
+                <p className="text-xs text-gray-500">ホットリード</p>
+              </div>
+              <div className="text-center">
+                <p className={`text-2xl font-bold ${closeInsights.handoffRequiredCount > 0 ? "text-amber-600" : "text-gray-400"}`}>
+                  {closeInsights.handoffRequiredCount}
+                </p>
+                <p className="text-xs text-gray-500">要対応</p>
+              </div>
+            </div>
+          )}
+          {hotLeads.length > 0 && (
+            <div className="p-4">
+              <h3 className="text-sm font-medium text-gray-700 mb-2">ホットリード TOP {hotLeads.length}</h3>
+              <div className="space-y-2">
+                {hotLeads.map((lead) => (
+                  <div key={lead.id} className="flex items-center gap-3 p-2 rounded-lg bg-gray-50">
+                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                      lead.deal_temperature === "hot" ? "bg-red-100 text-red-700" :
+                      lead.deal_temperature === "warm" ? "bg-orange-100 text-orange-700" :
+                      "bg-blue-100 text-blue-700"
+                    }`}>
+                      {lead.deal_temperature === "hot" ? "ホット" : lead.deal_temperature === "warm" ? "ウォーム" : "コールド"}
+                    </span>
+                    <span className="text-sm font-medium text-gray-900 truncate">{lead.store_name || lead.domain}</span>
+                    {lead.close_intent && (
+                      <span className="text-xs text-gray-500">{lead.close_intent}</span>
+                    )}
+                    {lead.handoff_required === 1 && (
+                      <span className="px-1.5 py-0.5 rounded text-xs bg-amber-100 text-amber-700">要対応</span>
+                    )}
+                    {lead.close_stage && (
+                      <span className="text-xs text-gray-400 ml-auto">{lead.close_stage}</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Section 4: Tenant List */}
       <div ref={tenantsRef} id="tenants-section" className="bg-white rounded-xl border border-gray-200 shadow-sm">

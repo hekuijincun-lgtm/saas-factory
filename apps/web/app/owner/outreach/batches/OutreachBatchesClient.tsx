@@ -166,7 +166,7 @@ export default function OutreachBatchesClient() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Auto Prospect Batch</h1>
+          <h1 className="text-2xl font-bold text-gray-900">自動営業バッチ</h1>
           <p className="text-sm text-gray-500 mt-1">
             ワンボタンで営業候補の検索・インポート・ドラフト作成を自動実行
           </p>
@@ -443,6 +443,45 @@ export default function OutreachBatchesClient() {
                     <div className="text-green-600">エラー</div>
                   </div>
                 </div>
+              </div>
+            )}
+
+            {/* Next-action guidance */}
+            {selectedJob.status === "completed" && selectedJob.draft_count > 0 && (
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 space-y-2">
+                <div className="text-sm font-medium text-blue-800">次のステップ</div>
+                <div className="flex gap-2">
+                  <a
+                    href="/owner/outreach/review"
+                    className="px-4 py-1.5 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                  >
+                    レビューページでメッセージを確認
+                  </a>
+                  <a
+                    href="/owner/outreach/campaigns"
+                    className="px-4 py-1.5 text-xs bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200"
+                  >
+                    キャンペーン一覧へ
+                  </a>
+                </div>
+                <p className="text-[10px] text-blue-600">
+                  生成された {selectedJob.draft_count} 件のドラフトはレビューページで確認・承認できます
+                </p>
+              </div>
+            )}
+            {selectedJob.status === "completed" && selectedJob.draft_count === 0 && selectedJob.imported_count > 0 && (
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 space-y-2">
+                <div className="text-sm font-medium text-amber-800">次のステップ</div>
+                <p className="text-xs text-amber-700">
+                  {selectedJob.imported_count} 件のリードがインポートされましたが、ドラフトは作成されませんでした。
+                  キャンペーンを作成してメッセージを生成してください。
+                </p>
+                <a
+                  href="/owner/outreach/campaigns"
+                  className="inline-block px-4 py-1.5 text-xs bg-amber-500 text-white rounded-lg hover:bg-amber-600"
+                >
+                  キャンペーン作成へ
+                </a>
               </div>
             )}
 

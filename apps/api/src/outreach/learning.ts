@@ -54,20 +54,22 @@ export async function refreshLearningPatterns(
     sampleSize: number;
     replyRate: number;
     meetingRate: number;
+    closeRate: number;
   }> = [];
 
-  // 1. By source_type
+  // 1. By source_type (Phase 15: include close/won rate)
   const sourceRows = await db
     .prepare(
       `SELECT COALESCE(source_type, import_source, 'manual') as src,
          COUNT(*) as total,
          SUM(CASE WHEN pipeline_stage IN ('replied','meeting','customer') THEN 1 ELSE 0 END) as replied,
-         SUM(CASE WHEN pipeline_stage IN ('meeting','customer') THEN 1 ELSE 0 END) as meetings
+         SUM(CASE WHEN pipeline_stage IN ('meeting','customer') THEN 1 ELSE 0 END) as meetings,
+         SUM(CASE WHEN pipeline_stage = 'customer' THEN 1 ELSE 0 END) as closed
        FROM sales_leads WHERE tenant_id = ?1 AND pipeline_stage NOT IN ('new')
        GROUP BY src HAVING total >= 2`
     )
     .bind(tenantId)
-    .all<{ src: string; total: number; replied: number; meetings: number }>();
+    .all<{ src: string; total: number; replied: number; meetings: number; closed: number }>();
 
   for (const r of sourceRows.results ?? []) {
     patterns.push({
@@ -78,23 +80,25 @@ export async function refreshLearningPatterns(
       sampleSize: r.total,
       replyRate: r.total > 0 ? Math.round((r.replied / r.total) * 100) : 0,
       meetingRate: r.total > 0 ? Math.round((r.meetings / r.total) * 100) : 0,
+      closeRate: r.total > 0 ? Math.round((r.closed / r.total) * 100) : 0,
     });
   }
 
-  // 2. By hypothesis code
+  // 2. By hypothesis code (Phase 15: include close rate)
   const hypoRows = await db
     .prepare(
       `SELECT h.code, h.label,
          COUNT(DISTINCT h.lead_id) as total,
          SUM(CASE WHEN l.pipeline_stage IN ('replied','meeting','customer') THEN 1 ELSE 0 END) as replied,
-         SUM(CASE WHEN l.pipeline_stage IN ('meeting','customer') THEN 1 ELSE 0 END) as meetings
+         SUM(CASE WHEN l.pipeline_stage IN ('meeting','customer') THEN 1 ELSE 0 END) as meetings,
+         SUM(CASE WHEN l.pipeline_stage = 'customer' THEN 1 ELSE 0 END) as closed
        FROM outreach_pain_hypotheses h
        JOIN sales_leads l ON h.lead_id = l.id AND h.tenant_id = l.tenant_id
        WHERE h.tenant_id = ?1 AND l.pipeline_stage NOT IN ('new')
        GROUP BY h.code, h.label HAVING total >= 2`
     )
     .bind(tenantId)
-    .all<{ code: string; label: string; total: number; replied: number; meetings: number }>();
+    .all<{ code: string; label: string; total: number; replied: number; meetings: number; closed: number }>();
 
   for (const r of hypoRows.results ?? []) {
     patterns.push({
@@ -105,23 +109,25 @@ export async function refreshLearningPatterns(
       sampleSize: r.total,
       replyRate: r.total > 0 ? Math.round((r.replied / r.total) * 100) : 0,
       meetingRate: r.total > 0 ? Math.round((r.meetings / r.total) * 100) : 0,
+      closeRate: r.total > 0 ? Math.round((r.closed / r.total) * 100) : 0,
     });
   }
 
-  // 3. By message tone
+  // 3. By message tone (Phase 15: include close rate)
   const toneRows = await db
     .prepare(
       `SELECT m.tone,
          COUNT(DISTINCT m.lead_id) as total,
          SUM(CASE WHEN l.pipeline_stage IN ('replied','meeting','customer') THEN 1 ELSE 0 END) as replied,
-         SUM(CASE WHEN l.pipeline_stage IN ('meeting','customer') THEN 1 ELSE 0 END) as meetings
+         SUM(CASE WHEN l.pipeline_stage IN ('meeting','customer') THEN 1 ELSE 0 END) as meetings,
+         SUM(CASE WHEN l.pipeline_stage = 'customer' THEN 1 ELSE 0 END) as closed
        FROM lead_message_drafts m
        JOIN sales_leads l ON m.lead_id = l.id AND m.tenant_id = l.tenant_id
        WHERE m.tenant_id = ?1 AND m.status = 'sent' AND m.tone IS NOT NULL
        GROUP BY m.tone HAVING total >= 2`
     )
     .bind(tenantId)
-    .all<{ tone: string; total: number; replied: number; meetings: number }>();
+    .all<{ tone: string; total: number; replied: number; meetings: number; closed: number }>();
 
   for (const r of toneRows.results ?? []) {
     patterns.push({
@@ -132,23 +138,25 @@ export async function refreshLearningPatterns(
       sampleSize: r.total,
       replyRate: r.total > 0 ? Math.round((r.replied / r.total) * 100) : 0,
       meetingRate: r.total > 0 ? Math.round((r.meetings / r.total) * 100) : 0,
+      closeRate: r.total > 0 ? Math.round((r.closed / r.total) * 100) : 0,
     });
   }
 
-  // 4. By campaign variant (as CTA proxy)
+  // 4. By campaign variant (as CTA proxy) (Phase 15: include close rate)
   const variantRows = await db
     .prepare(
       `SELECT m.variant_key as vkey,
          COUNT(DISTINCT m.lead_id) as total,
          SUM(CASE WHEN l.pipeline_stage IN ('replied','meeting','customer') THEN 1 ELSE 0 END) as replied,
-         SUM(CASE WHEN l.pipeline_stage IN ('meeting','customer') THEN 1 ELSE 0 END) as meetings
+         SUM(CASE WHEN l.pipeline_stage IN ('meeting','customer') THEN 1 ELSE 0 END) as meetings,
+         SUM(CASE WHEN l.pipeline_stage = 'customer' THEN 1 ELSE 0 END) as closed
        FROM lead_message_drafts m
        JOIN sales_leads l ON m.lead_id = l.id AND m.tenant_id = l.tenant_id
        WHERE m.tenant_id = ?1 AND m.status = 'sent' AND m.variant_key IS NOT NULL
        GROUP BY m.variant_key HAVING total >= 2`
     )
     .bind(tenantId)
-    .all<{ vkey: string; total: number; replied: number; meetings: number }>();
+    .all<{ vkey: string; total: number; replied: number; meetings: number; closed: number }>();
 
   for (const r of variantRows.results ?? []) {
     patterns.push({
@@ -159,23 +167,25 @@ export async function refreshLearningPatterns(
       sampleSize: r.total,
       replyRate: r.total > 0 ? Math.round((r.replied / r.total) * 100) : 0,
       meetingRate: r.total > 0 ? Math.round((r.meetings / r.total) * 100) : 0,
+      closeRate: r.total > 0 ? Math.round((r.closed / r.total) * 100) : 0,
     });
   }
 
-  // 5. Phase 7: By niche (category-level aggregation)
+  // 5. Phase 7: By niche (category-level aggregation) (Phase 15: include close rate)
   const nicheRows = await db
     .prepare(
       `SELECT l.category as niche, m.tone,
          COUNT(DISTINCT m.lead_id) as total,
          SUM(CASE WHEN l.pipeline_stage IN ('replied','meeting','customer') THEN 1 ELSE 0 END) as replied,
-         SUM(CASE WHEN l.pipeline_stage IN ('meeting','customer') THEN 1 ELSE 0 END) as meetings
+         SUM(CASE WHEN l.pipeline_stage IN ('meeting','customer') THEN 1 ELSE 0 END) as meetings,
+         SUM(CASE WHEN l.pipeline_stage = 'customer' THEN 1 ELSE 0 END) as closed
        FROM lead_message_drafts m
        JOIN sales_leads l ON m.lead_id = l.id AND m.tenant_id = l.tenant_id
        WHERE m.tenant_id = ?1 AND m.status = 'sent' AND l.category IS NOT NULL AND m.tone IS NOT NULL
        GROUP BY l.category, m.tone HAVING total >= 2`
     )
     .bind(tenantId)
-    .all<{ niche: string; tone: string; total: number; replied: number; meetings: number }>();
+    .all<{ niche: string; tone: string; total: number; replied: number; meetings: number; closed: number }>();
 
   for (const r of nicheRows.results ?? []) {
     patterns.push({
@@ -186,6 +196,7 @@ export async function refreshLearningPatterns(
       sampleSize: r.total,
       replyRate: r.total > 0 ? Math.round((r.replied / r.total) * 100) : 0,
       meetingRate: r.total > 0 ? Math.round((r.meetings / r.total) * 100) : 0,
+      closeRate: r.total > 0 ? Math.round((r.closed / r.total) * 100) : 0,
     });
   }
 
@@ -198,7 +209,8 @@ export async function refreshLearningPatterns(
   // Insert new patterns
   let updated = 0;
   for (const p of patterns) {
-    const winScore = Math.round(p.replyRate * 0.6 + p.meetingRate * 0.4);
+    // Phase 15: close-rate weighted scoring (reply 0.3, meeting 0.3, close 0.4)
+    const winScore = Math.round(p.replyRate * 0.3 + p.meetingRate * 0.3 + p.closeRate * 0.4);
     await db
       .prepare(
         `INSERT INTO outreach_learning_patterns

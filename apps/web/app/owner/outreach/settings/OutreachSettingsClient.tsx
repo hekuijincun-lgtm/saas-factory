@@ -313,7 +313,35 @@ export default function OutreachSettingsClient() {
           </div>
         </div>
 
-        {/* 5. ソースインポート自動化 */}
+        {/* 5. LP URL設定 */}
+        <div className="bg-white rounded-xl border p-5 space-y-3">
+          <h2 className="font-semibold text-sm">ランディングページURL</h2>
+          <p className="text-xs text-gray-400">
+            メッセージ内の {"{{lp_url}}"} トークンがこのURLに自動置換されます。キャンペーン毎に個別URLも設定可能です。
+          </p>
+          <div className="flex gap-2">
+            <input
+              type="url"
+              value={settings?.defaultLpUrl ?? ""}
+              onChange={(e) => setSettings(settings ? { ...settings, defaultLpUrl: e.target.value } : null)}
+              className="flex-1 border rounded-lg px-3 py-1.5 text-sm"
+              placeholder="https://example.com/lp"
+            />
+            <button
+              onClick={() => handleSave({ defaultLpUrl: settings?.defaultLpUrl ?? "" })}
+              disabled={saving}
+              className="px-4 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+            >
+              保存
+            </button>
+          </div>
+          <div className="text-xs text-gray-400 space-y-1">
+            <p>使い方: バリアントの件名やCTAテンプレートに <code className="bg-gray-100 px-1 rounded">{"{{lp_url}}"}</code> と記述</p>
+            <p>例: <code className="bg-gray-100 px-1 rounded">詳細はこちら: {"{{lp_url}}"}</code></p>
+          </div>
+        </div>
+
+        {/* 6. ソースインポート自動化 */}
         <div className="bg-white rounded-xl border p-5 space-y-3">
           <h2 className="font-semibold text-sm">ソースインポート自動化</h2>
           <p className="text-xs text-gray-400">

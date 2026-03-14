@@ -1,5 +1,5 @@
 export const runtime = "edge";
-import { readAdminToken, injectAdminToken, readSessionTenantId, readSessionPayload, makeDebugStamp, applyDebugHeaders } from '../../_lib/proxy';
+import { readAdminToken, injectAdminToken, readSessionTenantId, readSessionPayload, makeDebugStamp, applyDebugHeaders, isDebugAllowed } from '../../_lib/proxy';
 
 function apiBase() {
   const v = process.env.API_BASE || process.env.BOOKING_API_BASE || process.env.NEXT_PUBLIC_API_BASE;
@@ -38,7 +38,8 @@ async function tenantIdFrom(req: Request): Promise<string> {
 
 async function buildUpstream(req: Request) {
   const u = new URL(req.url);
-  const isDebug = u.searchParams.get("debug") === "1";
+  const _da = isDebugAllowed();
+  const isDebug = _da && u.searchParams.get("debug") === "1";
   const tenantId = await tenantIdFrom(req);
 
   const upstream = new URL(apiBase() + "/admin/settings");
@@ -69,9 +70,9 @@ function buildResponse(body: string, status: number, opts: {
   isDebug: boolean; tokenConfigured: boolean; tokenInjected: boolean; tenantId: string;
 }) {
   const out = new Response(body, { status, headers: { "content-type": "application/json" } });
-  if (opts.tokenInjected) out.headers.set("x-admin-token-present", "1");
-  out.headers.set("x-tenant-resolved", opts.tenantId);
   if (opts.isDebug) {
+    if (opts.tokenInjected) out.headers.set("x-admin-token-present", "1");
+    out.headers.set("x-tenant-resolved", opts.tenantId);
     applyDebugHeaders(out.headers, { stamp: makeDebugStamp(), isAdminRoute: true, tokenConfigured: opts.tokenConfigured, tokenInjected: opts.tokenInjected });
   }
   return out;

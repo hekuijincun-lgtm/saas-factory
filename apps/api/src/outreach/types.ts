@@ -227,6 +227,8 @@ export interface OutreachSettings {
   /** Phase 6: auto-process after source import */
   autoAnalyzeOnImport: boolean;
   autoScoreOnImport: boolean;
+  /** UX: default LP URL for {{lp_url}} token */
+  defaultLpUrl: string;
 }
 
 export const DEFAULT_OUTREACH_SETTINGS: OutreachSettings = {
@@ -239,6 +241,7 @@ export const DEFAULT_OUTREACH_SETTINGS: OutreachSettings = {
   contactCooldownDays: 7,
   autoAnalyzeOnImport: false,
   autoScoreOnImport: false,
+  defaultLpUrl: "",
 };
 
 // ── Phase 4 types ──────────────────────────────────────────────────────────
@@ -318,6 +321,7 @@ export interface OutreachCampaign {
   niche: string | null;
   area: string | null;
   min_score: number | null;
+  landing_page_url: string | null;
   status: CampaignStatus;
   created_at: string;
   updated_at: string;
@@ -653,3 +657,197 @@ export interface OutreachAnalytics {
   totalMeetings: number;
   avgScore: number | null;
 }
+
+// ── Phase 14: Auto Reply AI types ──────────────────────────────────────
+
+export type ReplyIntent =
+  | "question"
+  | "interested"
+  | "not_interested"
+  | "later"
+  | "pricing"
+  | "demo"
+  | "unknown";
+
+export type ReplySource = "email" | "instagram" | "line" | "webform";
+
+export interface OutreachReply {
+  id: string;
+  tenant_id: string;
+  lead_id: string;
+  campaign_id: string | null;
+  message_id: string | null;
+  reply_text: string;
+  reply_source: ReplySource;
+  sentiment: string | null;
+  intent: ReplyIntent | null;
+  intent_confidence: number | null;
+  ai_handled: number;
+  ai_response: string | null;
+  ai_response_sent: number;
+  created_at: string;
+}
+
+export interface OutreachReplyLog {
+  id: string;
+  tenant_id: string;
+  lead_id: string;
+  reply_id: string | null;
+  ai_decision: string;
+  ai_response: string | null;
+  execution_status: "pending" | "sent" | "failed" | "skipped";
+  error_message: string | null;
+  created_at: string;
+}
+
+export interface AutoReplySettings {
+  autoReplyEnabled: boolean;
+  maxRepliesPerLead: number;
+  cooldownMinutes: number;
+  confidenceThreshold: number;
+}
+
+export const DEFAULT_AUTO_REPLY_SETTINGS: AutoReplySettings = {
+  autoReplyEnabled: false,
+  maxRepliesPerLead: 3,
+  cooldownMinutes: 60,
+  confidenceThreshold: 0.7,
+};
+
+export const REPLY_INTENT_LABELS: Record<ReplyIntent, string> = {
+  question: "質問",
+  interested: "興味あり",
+  not_interested: "興味なし",
+  later: "後日",
+  pricing: "料金確認",
+  demo: "デモ希望",
+  unknown: "不明",
+};
+
+/** Map reply intent to CRM pipeline stage transition */
+export const INTENT_TO_PIPELINE: Partial<Record<ReplyIntent, PipelineStage>> = {
+  interested: "meeting",
+  pricing: "meeting",
+  demo: "meeting",
+  not_interested: "lost",
+};
+
+// ── Phase 15: Auto Close AI ─────────────────────────────────────────────
+
+/** Close-specific intent types */
+export type CloseIntent =
+  | "pricing_request"
+  | "demo_request"
+  | "compare_request"
+  | "implementation_question"
+  | "schedule_request"
+  | "signup_request"
+  | "warm_lead"
+  | "cold_lead"
+  | "not_close_relevant";
+
+export type DealTemperature = "hot" | "warm" | "cold";
+
+export type RecommendedNextStep =
+  | "send_pricing"
+  | "send_demo_link"
+  | "send_booking_link"
+  | "ask_qualification_question"
+  | "human_followup"
+  | "mark_lost"
+  | "none";
+
+/** Close-stage for fine-grained CRM tracking */
+export type CloseStage =
+  | "interested"
+  | "meeting_requested"
+  | "pricing_sent"
+  | "demo_sent"
+  | "qualified"
+  | "negotiation"
+  | "won"
+  | "lost";
+
+/** Map close intent to close stage */
+export const CLOSE_INTENT_TO_STAGE: Partial<Record<CloseIntent, CloseStage>> = {
+  pricing_request: "pricing_sent",
+  demo_request: "demo_sent",
+  schedule_request: "meeting_requested",
+  signup_request: "qualified",
+  warm_lead: "interested",
+  cold_lead: "lost",
+};
+
+/** Audit log row */
+export interface OutreachCloseLog {
+  id: string;
+  tenant_id: string;
+  lead_id: string;
+  reply_id: string | null;
+  close_intent: string;
+  close_confidence: number;
+  deal_temperature: string;
+  suggested_action: string | null;
+  ai_response: string | null;
+  execution_status: string;
+  handoff_required: number;
+  created_at: string;
+}
+
+/** Close settings */
+export interface CloseSettings {
+  auto_close_enabled: boolean;
+  auto_send_pricing_enabled: boolean;
+  auto_send_demo_link_enabled: boolean;
+  auto_send_booking_link_enabled: boolean;
+  auto_escalate_complex_replies: boolean;
+  close_confidence_threshold: number;
+  demo_booking_url: string;
+  sales_contact_url: string;
+  pricing_page_url: string;
+  calendly_url: string;
+  human_handoff_email: string;
+}
+
+export const DEFAULT_CLOSE_SETTINGS: CloseSettings = {
+  auto_close_enabled: false,
+  auto_send_pricing_enabled: false,
+  auto_send_demo_link_enabled: false,
+  auto_send_booking_link_enabled: false,
+  auto_escalate_complex_replies: true,
+  close_confidence_threshold: 0.75,
+  demo_booking_url: "",
+  sales_contact_url: "",
+  pricing_page_url: "",
+  calendly_url: "",
+  human_handoff_email: "",
+};
+
+/** Close insights for dashboard */
+export interface CloseInsights {
+  pricingRequestsToday: number;
+  demoRequestsToday: number;
+  meetingRequestedCount: number;
+  hotLeadsCount: number;
+  handoffRequiredCount: number;
+  closeRateBySource: Array<{ source: string; closeRate: number; sampleSize: number }>;
+  closeRateByNiche: Array<{ niche: string; closeRate: number; sampleSize: number }>;
+}
+
+export const CLOSE_INTENT_LABELS: Record<CloseIntent, string> = {
+  pricing_request: "料金確認",
+  demo_request: "デモ希望",
+  compare_request: "比較検討",
+  implementation_question: "導入相談",
+  schedule_request: "日程調整",
+  signup_request: "申込希望",
+  warm_lead: "温かいリード",
+  cold_lead: "冷たいリード",
+  not_close_relevant: "該当なし",
+};
+
+export const DEAL_TEMPERATURE_LABELS: Record<DealTemperature, string> = {
+  hot: "ホット",
+  warm: "ウォーム",
+  cold: "コールド",
+};

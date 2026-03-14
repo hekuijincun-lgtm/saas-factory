@@ -3564,15 +3564,21 @@ app.post('/billing/checkout', async (c) => {
   const webOrigin: string = (env.WEB_ORIGIN ?? env.WEB_BASE ?? 'https://saas-factory-web-v2.pages.dev')
     .replace(/\/+$/, '');
 
-  const session = await stripe.checkout.sessions.create({
-    mode: 'subscription',
-    line_items: [{ price: priceId, quantity: 1 }],
-    metadata: { planId },
-    success_url: `${webOrigin}/signup?session_id={CHECKOUT_SESSION_ID}`,
-    cancel_url: `${webOrigin}/lp/eyebrow?canceled=1#pricing`,
-  });
+  try {
+    const session = await stripe.checkout.sessions.create({
+      mode: 'subscription',
+      line_items: [{ price: priceId, quantity: 1 }],
+      metadata: { planId },
+      success_url: `${webOrigin}/signup?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${webOrigin}/lp/eyebrow?canceled=1#pricing`,
+    });
 
-  return c.json({ ok: true, url: session.url });
+    return c.json({ ok: true, url: session.url });
+  } catch (err: any) {
+    const msg: string = err?.message ?? 'checkout_failed';
+    console.error('billing/checkout error:', msg);
+    return c.json({ ok: false, error: 'checkout_failed', detail: msg }, 500);
+  }
 });
 
 app.post('/billing/verify-session', async (c) => {
@@ -7511,6 +7517,193 @@ async function scheduled(_event: any, env: Env, _ctx: any): Promise<void> {
       }
     } catch (aaeErr: any) {
       console.error(`[${AAE_STAMP}] error:`, String(aaeErr?.message ?? aaeErr));
+    }
+  }
+
+  // ── Phase 14: Auto Reply Engine (cron) ────────────────────────────────
+  if (db) {
+    const ARE_STAMP = "AUTO_REPLY_ENGINE_V1";
+    try {
+      const { processUnhandledReplies, getAutoReplySettings } = await import("./outreach/reply-dispatcher");
+      const areUid = () => `ol_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+      const areNow = () => new Date().toISOString();
+
+      // Process all tenants that have unhandled replies
+      const tenantRows = await db
+        .prepare("SELECT DISTINCT tenant_id FROM outreach_replies WHERE ai_handled = 0 LIMIT 20")
+        .all<{ tenant_id: string }>();
+
+      for (const row of tenantRows.results ?? []) {
+        const tid = row.tenant_id;
+        const arSettings = await getAutoReplySettings(kv, tid);
+        if (!arSettings.autoReplyEnabled) continue;
+
+        const areResult = await processUnhandledReplies({
+          db, kv, tenantId: tid,
+          openaiApiKey: (env as any).OPENAI_API_KEY,
+          uid: areUid, now: areNow,
+        });
+        if (areResult.processed > 0 || areResult.errors > 0) {
+          console.log(`[${ARE_STAMP}] tenant=${tid} processed=${areResult.processed} sent=${areResult.sent} skipped=${areResult.skipped} errors=${areResult.errors}`);
+        }
+      }
+    } catch (areErr: any) {
+      console.error(`[AUTO_REPLY_ENGINE_V1] error:`, String(areErr?.message ?? areErr));
+    }
+  }
+
+  // ── Phase 15: Auto Close Engine (cron) ────────────────────────────────
+  if (db) {
+    const ACE_STAMP = "AUTO_CLOSE_ENGINE_V1";
+    try {
+      const { classifyCloseIntent } = await import("./outreach/close-classifier");
+      const { getCloseSettings, generateCloseResponse } = await import("./outreach/close-generator");
+      const { CLOSE_INTENT_TO_STAGE } = await import("./outreach/types");
+      const aceUid = () => `cl_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+      const aceNow = () => new Date().toISOString();
+
+      // Find tenants with replies that have been classified (intent set) but not close-evaluated
+      const tenantRows = await db
+        .prepare(
+          `SELECT DISTINCT tenant_id FROM outreach_replies
+           WHERE intent IS NOT NULL AND close_intent IS NULL
+           LIMIT 20`
+        )
+        .all<{ tenant_id: string }>();
+
+      for (const row of tenantRows.results ?? []) {
+        const tid = row.tenant_id;
+        const closeSettings = await getCloseSettings(kv, tid);
+        if (!closeSettings.auto_close_enabled) continue;
+
+        // Get unprocessed replies (classified by Phase 14 but not close-evaluated)
+        const replies = await db
+          .prepare(
+            `SELECT id, lead_id, reply_text, intent, close_intent
+             FROM outreach_replies
+             WHERE tenant_id = ?1 AND intent IS NOT NULL AND close_intent IS NULL
+             ORDER BY created_at ASC LIMIT 10`
+          )
+          .bind(tid)
+          .all();
+
+        let evaluated = 0;
+        for (const reply of replies.results ?? []) {
+          try {
+            const result = await classifyCloseIntent(
+              reply.reply_text as string,
+              (env as any).OPENAI_API_KEY
+            );
+
+            // Update reply
+            await db
+              .prepare(
+                `UPDATE outreach_replies
+                 SET close_intent = ?1, close_confidence = ?2, recommended_next_step = ?3,
+                     deal_temperature = ?4, handoff_required = ?5
+                 WHERE id = ?6 AND tenant_id = ?7`
+              )
+              .bind(
+                result.close_intent, result.close_confidence, result.recommended_next_step,
+                result.deal_temperature, result.recommended_next_step === "human_followup" ? 1 : 0,
+                reply.id, tid
+              )
+              .run();
+
+            // Update lead
+            const closeStage = CLOSE_INTENT_TO_STAGE[result.close_intent] || null;
+            await db
+              .prepare(
+                `UPDATE sales_leads
+                 SET deal_temperature = ?1, handoff_required = ?2, close_stage = ?3, close_evaluated_at = ?4, updated_at = ?5
+                 WHERE id = ?6 AND tenant_id = ?7`
+              )
+              .bind(
+                result.deal_temperature,
+                result.recommended_next_step === "human_followup" ? 1 : 0,
+                closeStage, aceNow(), aceNow(),
+                reply.lead_id, tid
+              )
+              .run();
+
+            // Close log
+            await db
+              .prepare(
+                `INSERT INTO outreach_close_logs
+                 (id, tenant_id, lead_id, reply_id, close_intent, close_confidence, deal_temperature,
+                  suggested_action, execution_status, handoff_required, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)`
+              )
+              .bind(
+                aceUid(), tid, reply.lead_id, reply.id,
+                result.close_intent, result.close_confidence, result.deal_temperature,
+                result.recommended_next_step,
+                "suggested",
+                result.recommended_next_step === "human_followup" ? 1 : 0,
+                aceNow()
+              )
+              .run();
+
+            evaluated++;
+
+            // Auto-send close response if enabled and confidence is high enough
+            if (
+              closeSettings.auto_close_enabled &&
+              result.close_confidence >= closeSettings.close_confidence_threshold &&
+              result.close_intent !== "not_close_relevant" &&
+              result.close_intent !== "cold_lead" &&
+              result.recommended_next_step !== "human_followup" &&
+              result.recommended_next_step !== "mark_lost"
+            ) {
+              const lead = await db
+                .prepare("SELECT store_name FROM sales_leads WHERE id = ?1 AND tenant_id = ?2")
+                .bind(reply.lead_id as string, tid)
+                .first<{ store_name: string }>();
+
+              const closeResp = await generateCloseResponse({
+                closeIntent: result.close_intent,
+                dealTemperature: result.deal_temperature,
+                recommendedNextStep: result.recommended_next_step,
+                replyText: reply.reply_text as string,
+                storeName: lead?.store_name || "弊社",
+                settings: closeSettings,
+                openaiApiKey: (env as any).OPENAI_API_KEY,
+              });
+
+              // Log the auto-generated response (but don't auto-send unless specific settings are on)
+              const shouldAutoSend =
+                (result.recommended_next_step === "send_pricing" && closeSettings.auto_send_pricing_enabled) ||
+                (result.recommended_next_step === "send_demo_link" && closeSettings.auto_send_demo_link_enabled) ||
+                (result.recommended_next_step === "send_booking_link" && closeSettings.auto_send_booking_link_enabled);
+
+              await db
+                .prepare(
+                  `INSERT INTO outreach_close_logs
+                   (id, tenant_id, lead_id, reply_id, close_intent, close_confidence, deal_temperature,
+                    suggested_action, ai_response, execution_status, handoff_required, created_at)
+                   VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)`
+                )
+                .bind(
+                  aceUid(), tid, reply.lead_id, reply.id,
+                  result.close_intent, result.close_confidence, result.deal_temperature,
+                  result.recommended_next_step, closeResp.response_text,
+                  shouldAutoSend ? "auto_sent" : "pending_review",
+                  closeResp.handoff_required ? 1 : 0,
+                  aceNow()
+                )
+                .run();
+            }
+          } catch (innerErr: any) {
+            console.error(`[${ACE_STAMP}] reply ${reply.id} error:`, innerErr.message);
+          }
+        }
+
+        if (evaluated > 0) {
+          console.log(`[${ACE_STAMP}] tenant=${tid} evaluated=${evaluated}`);
+        }
+      }
+    } catch (aceErr: any) {
+      console.error(`[AUTO_CLOSE_ENGINE_V1] error:`, String(aceErr?.message ?? aceErr));
     }
   }
 
