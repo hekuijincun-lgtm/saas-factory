@@ -4,7 +4,7 @@
 import { useState, useEffect } from 'react';
 import { useAdminTenantId } from '@/src/lib/useAdminTenantId';
 import { CalendarDays, Building2, Clock, Link as LinkIcon, AlertCircle, RefreshCw, Save, Scissors, Plus, Trash2 } from 'lucide-react';
-import type { EyebrowSurveyQuestion } from '@/src/types/settings';
+import { getVerticalConfig, type EyebrowSurveyQuestion } from '@/src/types/settings';
 import { useVertical } from '../_lib/useVertical';
 import {
   fetchAdminSettings,
@@ -325,21 +325,21 @@ export default function AdminSettingsClient() {
       setStoreAddress(sa); setSavedStoreAddress(sa);
       const cv = raw.consentText || DEFAULT_CONSENT;
       setConsentText(cv); setSavedConsentText(cv);
-      // 眉毛施術設定
-      const eyebrow = raw.eyebrow || {};
-      const ec = eyebrow.consentText || DEFAULT_EYEBROW_CONSENT;
+      // 眉毛施術設定 — Phase 1b: verticalConfig → eyebrow legacy の優先順位で読む
+      const vc = getVerticalConfig(raw);
+      const ec = vc.consentText || DEFAULT_EYEBROW_CONSENT;
       setEyebrowConsentText(ec); setSavedEyebrowConsentText(ec);
-      const re = eyebrow.repeat?.enabled ?? false;
+      const re = vc.repeat?.enabled ?? false;
       setEyebrowRepeatEnabled(re); setSavedEyebrowRepeatEnabled(re);
-      const ri = eyebrow.repeat?.intervalDays ?? 42;
+      const ri = vc.repeat?.intervalDays ?? 42;
       setEyebrowIntervalDays(ri); setSavedEyebrowIntervalDays(ri);
-      const rt = eyebrow.repeat?.template || '前回のご来店からそろそろ{interval}週が経ちます。眉毛のリタッチはいかがでしょうか？';
+      const rt = vc.repeat?.template || '前回のご来店からそろそろ{interval}週が経ちます。眉毛のリタッチはいかがでしょうか？';
       setEyebrowTemplate(rt); setSavedEyebrowTemplate(rt);
-      const bc = eyebrow.bedCount ?? 1;
+      const bc = vc.bedCount ?? 1;
       setEyebrowBedCount(bc); setSavedEyebrowBedCount(bc);
-      const se = eyebrow.surveyEnabled ?? false;
+      const se = vc.surveyEnabled ?? false;
       setEyebrowSurveyEnabled(se); setSavedEyebrowSurveyEnabled(se);
-      const sq: EyebrowSurveyQuestion[] = Array.isArray(eyebrow.surveyQuestions) ? eyebrow.surveyQuestions : [];
+      const sq: EyebrowSurveyQuestion[] = Array.isArray(vc.surveyQuestions) ? vc.surveyQuestions : [];
       setEyebrowSurveyQuestions(sq); setSavedEyebrowSurveyQuestions(sq);
       const al: string[] = Array.isArray(raw.allowedAdminLineUserIds) ? raw.allowedAdminLineUserIds : [];
       setAllowedAdminLineUserIds(al); setSavedAllowedAdminLineUserIds(al);
@@ -555,7 +555,19 @@ export default function AdminSettingsClient() {
     try {
       // Sync session cookie tenant before PUT to prevent forbidden_tenant_mismatch
       await fetch(`/api/auth/me?tenantId=${encodeURIComponent(tenantId)}`, { credentials: 'include', cache: 'no-store' });
-      // API に storeName + 営業時間設定 + 住所 + 同意文 + 眉毛設定を保存
+      // API に storeName + 営業時間設定 + 住所 + 同意文 + 業種設定を保存
+      // Phase 1b: eyebrow (legacy) + verticalConfig (new) を dual-write
+      const verticalSettingsPayload = isEyebrow ? {
+        consentText: eyebrowConsentText,
+        repeat: {
+          enabled: eyebrowRepeatEnabled,
+          intervalDays: eyebrowIntervalDays,
+          template: eyebrowTemplate,
+        },
+        bedCount: eyebrowBedCount,
+        surveyEnabled: eyebrowSurveyEnabled,
+        surveyQuestions: eyebrowSurveyQuestions,
+      } : undefined;
       await saveAdminSettings({
         storeName: storeNameInput,
         tenant: { email: contactEmail },
@@ -564,17 +576,13 @@ export default function AdminSettingsClient() {
         slotIntervalMin,
         storeAddress,
         consentText,
-        eyebrow: {
-          consentText: eyebrowConsentText,
-          repeat: {
-            enabled: eyebrowRepeatEnabled,
-            intervalDays: eyebrowIntervalDays,
-            template: eyebrowTemplate,
-          },
-          bedCount: eyebrowBedCount,
-          surveyEnabled: eyebrowSurveyEnabled,
-          surveyQuestions: eyebrowSurveyQuestions,
-        },
+        // Legacy eyebrow path (backward compat — still needed until Phase 2)
+        ...(isEyebrow && verticalSettingsPayload ? { eyebrow: verticalSettingsPayload } : {}),
+        // New verticalConfig path (Phase 1b: dual-write for forward compat)
+        ...(isEyebrow && verticalSettingsPayload ? {
+          vertical: 'eyebrow' as const,
+          verticalConfig: verticalSettingsPayload,
+        } : {}),
         allowedAdminLineUserIds,
         notifications: {
           lineReminder: {
