@@ -1659,6 +1659,16 @@ app.patch("/admin/menu/:id", async (c) => {
  * --- Staff (multi-tenant, KV) ---
  * key: admin:staff:list:${tenantId}
  */
+/** Phase 2b: KV 読み出し時に eyebrow-only staff データへ verticalAttributes を注入する */
+function normalizeStaffItems(items: any[]): any[] {
+  return items.map(item => {
+    if (item.eyebrow && !item.verticalAttributes) {
+      return { ...item, verticalAttributes: { ...item.eyebrow } };
+    }
+    return item;
+  });
+}
+
 app.get("/admin/staff", async (c) => {
   const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
   // Query-first resolution: booking flow always sends explicit ?tenantId=
@@ -1671,7 +1681,7 @@ app.get("/admin/staff", async (c) => {
   setTenantDebugHeaders(c, tenantId, key)
 
   const raw = await c.env.SAAS_FACTORY.get(key)
-  const data = raw ? JSON.parse(raw) : []
+  const data = raw ? normalizeStaffItems(JSON.parse(raw)) : []
 
   return c.json({ ok: true, tenantId, data })
 })
@@ -1689,6 +1699,9 @@ app.post("/admin/staff", async (c) => {
 
   const id = body?.id || `staff_${Date.now()}_${Math.random().toString(16).slice(2)}`
   const item = { ...body, id }
+  // Phase 2b: dual-write eyebrow ↔ verticalAttributes
+  if (item.eyebrow && !item.verticalAttributes) item.verticalAttributes = { ...item.eyebrow };
+  if (item.verticalAttributes && !item.eyebrow) item.eyebrow = { ...item.verticalAttributes };
 
   const next = [item, ...list]
   await c.env.SAAS_FACTORY.put(key, JSON.stringify(next))
@@ -1716,6 +1729,18 @@ app.all("/admin/staff/:id", async (c) => {
     if (idx < 0) return c.json({ ok: false, where: "STAFF_ALL_V3", error: "not_found", id, tenantId }, 404)
 
     const updated = { ...list[idx], ...body, id }
+    // Phase 2b: dual-write eyebrow ↔ verticalAttributes
+    if (body.eyebrow !== undefined) {
+      if (body.eyebrow === null) { delete updated.eyebrow; delete updated.verticalAttributes; }
+      else { updated.eyebrow = body.eyebrow; updated.verticalAttributes = { ...body.eyebrow }; }
+    }
+    if (body.verticalAttributes !== undefined) {
+      if (body.verticalAttributes === null) { delete updated.verticalAttributes; }
+      else {
+        updated.verticalAttributes = body.verticalAttributes;
+        if (body.eyebrow === undefined) updated.eyebrow = { ...body.verticalAttributes };
+      }
+    }
     list[idx] = updated
     await c.env.SAAS_FACTORY.put(key, JSON.stringify(list))
     return c.json({ ok: true, where: "STAFF_ALL_V3", tenantId, data: updated })

@@ -129,7 +129,21 @@ export interface Staff {
   role?: string;
   active: boolean;
   sortOrder: number;
-  eyebrow?: StaffEyebrow;  // 眉毛特化スキル（optional）
+  /** @deprecated use verticalAttributes instead */
+  eyebrow?: StaffEyebrow;  // 眉毛特化スキル（legacy）
+  /** Phase 2b: 業種共通スキル属性（verticalAttributes → eyebrow の優先順位で読む） */
+  verticalAttributes?: Record<string, unknown>;
+}
+
+/**
+ * Phase 2b: スタッフの業種属性を正規化して返す read adapter。
+ * 優先順位: verticalAttributes → eyebrow legacy → undefined
+ */
+export function getStaffVerticalAttrs(staff: Staff): StaffEyebrow | undefined {
+  if (staff.verticalAttributes && Object.keys(staff.verticalAttributes).length > 0) {
+    return staff.verticalAttributes as unknown as StaffEyebrow;
+  }
+  return staff.eyebrow;
 }
 
 export interface MenuItemEyebrow {

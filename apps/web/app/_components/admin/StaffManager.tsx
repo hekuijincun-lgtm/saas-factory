@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { getStaff, createStaff, updateStaff, type Staff, type StaffEyebrow } from '@/src/lib/bookingApi';
+import { getStaff, createStaff, updateStaff, getStaffVerticalAttrs, type Staff, type StaffEyebrow } from '@/src/lib/bookingApi';
 import { useAdminTenantId } from '@/src/lib/useAdminTenantId';
 import { ApiClientError } from '@/src/lib/apiClient';
 import Card from '../ui/Card';
@@ -110,14 +110,16 @@ export default function StaffManager() {
 
   const handleEdit = (staff: Staff) => {
     setEditingStaff(staff);
+    // Phase 2b: verticalAttributes → eyebrow 優先で読む
+    const attrs = getStaffVerticalAttrs(staff);
     setFormData({
       name: staff.name,
       role: staff.role || '',
       active: staff.active,
       sortOrder: staff.sortOrder,
       eyebrow: {
-        skillLevel: staff.eyebrow?.skillLevel,
-        specialties: staff.eyebrow?.specialties ?? [],
+        skillLevel: attrs?.skillLevel,
+        specialties: attrs?.specialties ?? [],
       },
       specialtyInput: '',
     });
@@ -134,12 +136,18 @@ export default function StaffManager() {
     setError(null);
 
     try {
+      // Phase 2b: eyebrow テナントのみ dual-write、非 eyebrow では eyebrow 非送信
       const eyebrowPayload: StaffEyebrow = {};
       if (formData.eyebrow.skillLevel) eyebrowPayload.skillLevel = formData.eyebrow.skillLevel;
       if (formData.eyebrow.specialties && formData.eyebrow.specialties.length > 0) {
         eyebrowPayload.specialties = formData.eyebrow.specialties;
       }
-      const eyebrow = Object.keys(eyebrowPayload).length > 0 ? eyebrowPayload : undefined;
+      const hasAttrs = Object.keys(eyebrowPayload).length > 0;
+      const verticalFields: Record<string, any> = {};
+      if (isEyebrow && hasAttrs) {
+        verticalFields.eyebrow = eyebrowPayload;
+        verticalFields.verticalAttributes = eyebrowPayload;
+      }
 
       if (editingStaff) {
         await updateStaff(editingStaff.id, {
@@ -147,7 +155,7 @@ export default function StaffManager() {
           role: formData.role.trim() || undefined,
           active: formData.active,
           sortOrder: formData.sortOrder,
-          eyebrow,
+          ...verticalFields,
         }, tenantId);
       } else {
         await createStaff({
@@ -155,7 +163,7 @@ export default function StaffManager() {
           role: formData.role.trim() || undefined,
           active: formData.active,
           sortOrder: formData.sortOrder,
-          eyebrow,
+          ...verticalFields,
         }, tenantId);
       }
       await fetchStaff();
