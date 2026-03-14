@@ -482,13 +482,16 @@ export async function runBatchJob(
     }
 
     // 5. Generate campaign draft if we have imported leads
-    if (totalImported > 0) {
+    //    Also run if existing matching leads are available (draft counts all matching, not just new)
+    let draftDiagnostics: Record<string, number> | null = null;
+    if (totalImported > 0 || totalSearched > 0) {
       try {
         const draftResult = await generateCampaignDraft(db, tenantId, {
           niche: job.niche,
           auto_variants: true,
         }, uid, now);
         totalDrafted = draftResult.matchingLeads;
+        draftDiagnostics = draftResult.diagnostics ?? null;
 
         // Update items with draft status
         for (const item of items) {
@@ -502,6 +505,7 @@ export async function runBatchJob(
         }
       } catch (err: any) {
         totalErrors++;
+        console.error(`[BATCH_DRAFT] error: tenant=${tenantId} job=${jobId} err=${(err as Error).message}`);
       }
     }
 
@@ -515,6 +519,7 @@ export async function runBatchJob(
       skippedDedup: totalSkippedDedup,
       skippedQuality: totalSkippedQuality,
       skippedNoContact: totalSkippedNoContact,
+      draftDiagnostics,
     };
 
     console.log(`[BATCH] tenant=${tenantId} job=${jobId} searched=${totalSearched} imported=${totalImported} drafted=${totalDrafted} skippedDedup=${totalSkippedDedup} skippedQuality=${totalSkippedQuality} skippedNoContact=${totalSkippedNoContact} errors=${totalErrors}`);

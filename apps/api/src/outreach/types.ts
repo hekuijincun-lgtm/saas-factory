@@ -501,6 +501,15 @@ export interface CampaignDraftResult {
     topHypothesis: string | null;
     nicheTemplate: string | null;
   };
+  diagnostics?: {
+    totalLeads: number;
+    skippedCategoryMismatch: number;
+    skippedPipelineStage: number;
+    skippedUnsubscribed: number;
+    skippedLowScore: number;
+    skippedAreaMismatch: number;
+    matchedCount: number;
+  };
 }
 
 export interface LearningRefreshLog {
@@ -573,6 +582,10 @@ export interface BatchJobResult {
     imported: number;
     drafted: number;
     errors: number;
+    skippedDedup?: number;
+    skippedQuality?: number;
+    skippedNoContact?: number;
+    draftDiagnostics?: Record<string, number> | null;
   };
 }
 

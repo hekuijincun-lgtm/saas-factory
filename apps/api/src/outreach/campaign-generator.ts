@@ -110,7 +110,52 @@ export async function generateCampaignDraft(
     }
   }
 
-  // 6. Count matching leads
+  // 6. Count matching leads + diagnostics
+  const totalRow = await db
+    .prepare("SELECT COUNT(*) as cnt FROM sales_leads WHERE tenant_id = ?1")
+    .bind(tenantId)
+    .first<{ cnt: number }>();
+  const totalLeads = totalRow?.cnt ?? 0;
+
+  // Diagnostic: count leads excluded by each filter
+  const diagBase = `FROM sales_leads WHERE tenant_id = ?1`;
+  const skippedPipelineRow = await db
+    .prepare(`SELECT COUNT(*) as cnt ${diagBase} AND pipeline_stage NOT IN ('new','approved')`)
+    .bind(tenantId).first<{ cnt: number }>();
+  const skippedUnsubRow = await db
+    .prepare(`SELECT COUNT(*) as cnt ${diagBase} AND pipeline_stage IN ('new','approved') AND status = 'unsubscribed'`)
+    .bind(tenantId).first<{ cnt: number }>();
+
+  let skippedCategory = 0;
+  if (input.niche) {
+    const r = await db
+      .prepare(`SELECT COUNT(*) as cnt ${diagBase} AND pipeline_stage IN ('new','approved') AND status != 'unsubscribed' AND (category IS NULL OR category != ?2)`)
+      .bind(tenantId, input.niche).first<{ cnt: number }>();
+    skippedCategory = r?.cnt ?? 0;
+  }
+
+  let skippedArea = 0;
+  if (input.area) {
+    const r = await db
+      .prepare(`SELECT COUNT(*) as cnt ${diagBase} AND pipeline_stage IN ('new','approved') AND status != 'unsubscribed'${input.niche ? " AND category = ?2" : ""} AND (area IS NULL OR area != ?${input.niche ? 3 : 2})`)
+      .bind(...(input.niche ? [tenantId, input.niche, input.area] : [tenantId, input.area])).first<{ cnt: number }>();
+    skippedArea = r?.cnt ?? 0;
+  }
+
+  let skippedScore = 0;
+  if (input.min_score != null) {
+    const scoreBinds: any[] = [tenantId];
+    let scoreQ = `SELECT COUNT(*) as cnt ${diagBase} AND pipeline_stage IN ('new','approved') AND status != 'unsubscribed'`;
+    let si = 2;
+    if (input.niche) { scoreQ += ` AND category = ?${si}`; scoreBinds.push(input.niche); si++; }
+    if (input.area) { scoreQ += ` AND area = ?${si}`; scoreBinds.push(input.area); si++; }
+    scoreQ += ` AND (score IS NULL OR score < ?${si})`;
+    scoreBinds.push(input.min_score);
+    const r = await db.prepare(scoreQ).bind(...scoreBinds).first<{ cnt: number }>();
+    skippedScore = r?.cnt ?? 0;
+  }
+
+  // Final match count
   let matchQuery = `SELECT COUNT(*) as cnt FROM sales_leads
     WHERE tenant_id = ?1 AND pipeline_stage IN ('new','approved') AND status != 'unsubscribed'`;
   const binds: any[] = [tenantId];
@@ -137,15 +182,30 @@ export async function generateCampaignDraft(
     .bind(...binds)
     .first<{ cnt: number }>();
 
+  const matchedCount = matchResult?.cnt ?? 0;
+
+  const diagnostics = {
+    totalLeads,
+    skippedCategoryMismatch: skippedCategory,
+    skippedPipelineStage: skippedPipelineRow?.cnt ?? 0,
+    skippedUnsubscribed: skippedUnsubRow?.cnt ?? 0,
+    skippedLowScore: skippedScore,
+    skippedAreaMismatch: skippedArea,
+    matchedCount,
+  };
+
+  console.log(`[DRAFT] tenant=${tenantId} niche=${input.niche} area=${input.area ?? "all"} total=${totalLeads} matched=${matchedCount} skipCategory=${skippedCategory} skipPipeline=${diagnostics.skippedPipelineStage} skipUnsub=${diagnostics.skippedUnsubscribed} skipScore=${skippedScore} skipArea=${skippedArea}`);
+
   return {
     campaign,
     variants,
-    matchingLeads: matchResult?.cnt ?? 0,
+    matchingLeads: matchedCount,
     learningContext: {
       topTone: learning.topTone?.key ?? null,
       topHypothesis: learning.topHypothesis?.label ?? null,
       nicheTemplate: nicheTemplate?.name ?? null,
     },
+    diagnostics,
   };
 }
 

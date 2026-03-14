@@ -2485,7 +2485,7 @@ export function createOutreachRoutes(getTenantId: GetTenantId) {
         ).bind(
           leadId, tenantId, cand.store_name,
           cand.website_url, cand.email,
-          cand.category, cand.area,
+          run.niche ?? cand.category, cand.area,
           cand.rating ?? 0, cand.review_count ?? 0,
           cand.normalized_domain, cand.normalized_domain,
           cand.source_type, cand.source_type, runId, cand.external_id ?? cand.id,
@@ -2767,7 +2767,7 @@ export function createOutreachRoutes(getTenantId: GetTenantId) {
         ).bind(
           leadId, tenantId, cand.store_name,
           cand.website_url, cand.email,
-          cand.category, cand.area,
+          run.niche ?? cand.category, cand.area,
           cand.rating ?? 0, cand.review_count ?? 0,
           cand.normalized_domain, cand.normalized_domain,
           cand.source_type, cand.source_type, runId, cand.external_id ?? cand.id,
