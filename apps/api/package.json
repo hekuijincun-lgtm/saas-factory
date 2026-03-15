@@ -8,7 +8,8 @@
     "deploy:prod": "wrangler deploy --env production",
     "migrate:prod": "wrangler d1 migrations apply saas-factory-staging --env production --remote",
     "migrate:local": "wrangler d1 migrations apply saas-factory-staging --local",
-    "ship": "pnpm migrate:prod && pnpm deploy:prod"
+    "ship": "pnpm migrate:prod && pnpm deploy:prod",
+    "test:auto-send": "node scripts/e2e-auto-outreach-send.mjs"
   },
   "dependencies": {
     "@cloudflare/ai": "^1.2.2",
