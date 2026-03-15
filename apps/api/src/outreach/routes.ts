@@ -512,13 +512,32 @@ export function createOutreachRoutes(getTenantId: GetTenantId) {
       hypotheses
     );
 
-    // 7. Update lead with score + features_json + pain_points
+    // 6.5. Auto-enrich contact_email if empty and emails found by analyzer
+    let enrichedEmail: string | null = null;
+    if (!lead.contact_email && features.rawSignals.emails?.length > 0) {
+      // Prefer domain-matching email over free email
+      const siteDomain = (() => { try { return new URL(lead.website_url || "").hostname.replace(/^www\./, ""); } catch { return ""; } })();
+      const FREE = ["gmail.com", "yahoo.co.jp", "yahoo.com", "hotmail.com", "outlook.com"];
+      const domainMatch = features.rawSignals.emails.find((e: string) => {
+        const d = e.split("@")[1]?.toLowerCase() || "";
+        return siteDomain && (d === siteDomain || siteDomain.includes(d));
+      });
+      const nonFree = features.rawSignals.emails.find((e: string) => {
+        const d = e.split("@")[1]?.toLowerCase() || "";
+        return !FREE.includes(d);
+      });
+      enrichedEmail = domainMatch || nonFree || features.rawSignals.emails[0];
+    }
+
+    // 7. Update lead with score + features_json + pain_points + enriched email
     const painSummary = hypotheses.map((h) => h.label).join(", ");
+    const emailUpdateClause = enrichedEmail ? ", contact_email = ?8" : "";
+    const emailBinds = enrichedEmail ? [enrichedEmail] : [];
     await db
       .prepare(
         `UPDATE sales_leads
          SET score = ?1, features_json = ?2, pain_points = ?3,
-             has_booking_link = ?4, updated_at = ?5
+             has_booking_link = ?4, updated_at = ?5${emailUpdateClause}
          WHERE id = ?6 AND tenant_id = ?7`
       )
       .bind(
@@ -528,7 +547,8 @@ export function createOutreachRoutes(getTenantId: GetTenantId) {
         features.hasBookingLink ? 1 : 0,
         ts,
         leadId,
-        tenantId
+        tenantId,
+        ...emailBinds
       )
       .run();
 
