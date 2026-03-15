@@ -26,6 +26,7 @@ import {
   SCHEDULE_RUN_STATUS_LABELS,
   SCHEDULE_RUN_STATUS_COLORS,
 } from "@/src/types/outreach";
+import { AREA_SUGGESTIONS, PREFECTURES, MAJOR_CITIES_PRESET } from "@/src/lib/outreachAreaSuggestions";
 
 export default function OutreachAutomationClient() {
   const { tenantId, loading: tenantLoading } = useOwnerTenantId();
@@ -48,6 +49,7 @@ export default function OutreachAutomationClient() {
   const [formAreaMode, setFormAreaMode] = useState<ScheduleAreaMode>("manual");
   const [formDailySendLimit, setFormDailySendLimit] = useState("0");
   const [formMinScore, setFormMinScore] = useState("40");
+  const [formPrefecture, setFormPrefecture] = useState("");
   const [creating, setCreating] = useState(false);
 
   // Detail / runs
@@ -119,6 +121,7 @@ export default function OutreachAutomationClient() {
     setFormAreaMode("manual");
     setFormDailySendLimit("0");
     setFormMinScore("40");
+    setFormPrefecture("");
   };
 
   const handleToggle = async (schedule: OutreachSchedule) => {
@@ -260,9 +263,50 @@ export default function OutreachAutomationClient() {
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">エリア（カンマ区切り or 改行）</label>
+                {/* エリア自動入力 */}
+                <div className="flex gap-2 mb-2">
+                  <select
+                    value={formPrefecture}
+                    onChange={e => setFormPrefecture(e.target.value)}
+                    className="flex-1 border rounded-lg px-3 py-2 text-sm"
+                  >
+                    <option value="">都道府県を選択...</option>
+                    {PREFECTURES.map(p => (
+                      <option key={p} value={p}>{p}</option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (formPrefecture && AREA_SUGGESTIONS[formPrefecture]) {
+                        setFormAreas(AREA_SUGGESTIONS[formPrefecture].join("\n"));
+                      }
+                    }}
+                    disabled={!formPrefecture}
+                    className="px-3 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
+                  >
+                    おすすめエリア入力
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFormAreas(MAJOR_CITIES_PRESET.join("\n"));
+                      setFormPrefecture("");
+                    }}
+                    className="px-3 py-2 border border-gray-300 text-gray-700 rounded-lg text-sm hover:bg-gray-50 whitespace-nowrap"
+                    title="全国の主要都市を一括入力"
+                  >
+                    全国主要
+                  </button>
+                </div>
                 <textarea value={formAreas} onChange={e => setFormAreas(e.target.value)}
-                  placeholder={"渋谷\n新宿\n池袋\n大宮"} rows={3}
+                  placeholder={"渋谷\n新宿\n池袋\n大宮"} rows={4}
                   className="w-full border rounded-lg px-3 py-2 text-sm font-mono" />
+                {formAreas.trim() && (
+                  <p className="text-xs text-gray-400 mt-1">
+                    {formAreas.split(/[,\n]/).map(a => a.trim()).filter(Boolean).length}件のエリア
+                  </p>
+                )}
               </div>
               <div className="grid grid-cols-3 gap-3">
                 <div>
