@@ -26,6 +26,14 @@ const VERTICAL_OPTIONS = [
   { value: "dental", label: "歯科・クリニック" },
 ] as const;
 
+const VERTICAL_DESCRIPTIONS: Record<string, string> = {
+  eyebrow: '眉毛スタイリング・WAX・パーマなどの予約管理に最適化されたプランです',
+  nail: 'ジェルネイル・アート・ケアなどデザイン別メニュー管理に対応しています',
+  hair: 'カット・カラー・パーマなどカテゴリ別の施術管理に対応しています',
+  esthetic: 'フェイシャル・ボディ・毛穴ケアなど施術カテゴリ別管理に対応しています',
+  dental: '診療種別管理・問診票・定期検診リマインドに対応しています',
+};
+
 export default function SignupPage() {
   const [email, setEmail] = useState("");
   const [storeName, setStoreName] = useState("");
@@ -267,9 +275,11 @@ export default function SignupPage() {
                   </option>
                 ))}
               </select>
-              <p className="mt-1 text-xs text-slate-400">
-                後から管理画面で変更できます
-              </p>
+              {vertical !== 'generic' && VERTICAL_DESCRIPTIONS[vertical] ? (
+                <p className="mt-1.5 text-xs text-indigo-500">{VERTICAL_DESCRIPTIONS[vertical]}</p>
+              ) : (
+                <p className="mt-1 text-xs text-slate-400">後から管理画面で変更できます</p>
+              )}
             </div>
 
             {status === "error" && (

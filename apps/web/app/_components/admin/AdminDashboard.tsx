@@ -284,15 +284,15 @@ export default function AdminDashboard() {
                 </div>
               </div>
             )}
-            {/* スタイル別内訳 */}
+            {/* Phase 11: vertical-dynamic 内訳テーブル */}
             {eyebrowKpi.styleBreakdown && Object.keys(eyebrowKpi.styleBreakdown).length > 0 && (
               <div className="mt-4 pt-4 border-t border-gray-100">
-                <div className="text-xs font-medium text-gray-500 mb-2">スタイル別内訳</div>
+                <div className="text-xs font-medium text-gray-500 mb-2">{vPlugin.menuFilterConfig?.label ?? 'スタイル'}別内訳</div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-xs">
                     <thead>
                       <tr className="border-b border-gray-100 text-gray-400">
-                        <th className="text-left py-1.5 pr-4 font-medium">スタイル</th>
+                        <th className="text-left py-1.5 pr-4 font-medium">{vPlugin.menuFilterConfig?.label ?? 'スタイル'}</th>
                         <th className="text-right py-1.5 px-2 font-medium">予約数</th>
                         <th className="text-right py-1.5 px-2 font-medium">顧客数</th>
                         <th className="text-right py-1.5 px-2 font-medium">リピート顧客</th>
@@ -304,7 +304,7 @@ export default function AdminDashboard() {
                         .sort(([, a], [, b]) => b.reservationsCount - a.reservationsCount)
                         .map(([style, d]) => (
                           <tr key={style} className="hover:bg-gray-50">
-                            <td className="py-1.5 pr-4 text-gray-700 font-medium">{style}</td>
+                            <td className="py-1.5 pr-4 text-gray-700 font-medium">{vPlugin.menuFilterConfig?.options?.[style] ?? style}</td>
                             <td className="py-1.5 px-2 text-right text-gray-600 tabular-nums">{d.reservationsCount}</td>
                             <td className="py-1.5 px-2 text-right text-gray-600 tabular-nums">{d.customersCount}</td>
                             <td className="py-1.5 px-2 text-right text-gray-600 tabular-nums">{d.repeatCustomersCount}</td>

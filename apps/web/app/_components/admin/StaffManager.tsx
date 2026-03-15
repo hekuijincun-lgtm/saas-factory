@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { getStaff, createStaff, updateStaff, getStaffVerticalAttrs, type Staff, type StaffVerticalAttributes } from '@/src/lib/bookingApi';
+import { getStaff, createStaff, updateStaff, type Staff } from '@/src/lib/bookingApi';
 import { useAdminTenantId } from '@/src/lib/useAdminTenantId';
 import { ApiClientError } from '@/src/lib/apiClient';
 import Card from '../ui/Card';
@@ -36,14 +36,14 @@ export default function StaffManager() {
   const [shiftEditorStaffName, setShiftEditorStaffName] = useState<string>('');
   const [formData, setFormData] = useState<{
     name: string; role: string; active: boolean; sortOrder: number;
-    eyebrow: StaffVerticalAttributes;
+    verticalAttrs: Record<string, unknown>;
     specialtyInput: string;
   }>({
     name: '',
     role: '',
     active: true,
     sortOrder: 0,
-    eyebrow: { skillLevel: undefined, specialties: [] },
+    verticalAttrs: {},
     specialtyInput: '',
   });
 
@@ -103,23 +103,18 @@ export default function StaffManager() {
 
   const handleCreate = () => {
     setEditingStaff(null);
-    setFormData({ name: '', role: '', active: true, sortOrder: staffList.length, eyebrow: { skillLevel: undefined, specialties: [] }, specialtyInput: '' });
+    setFormData({ name: '', role: '', active: true, sortOrder: staffList.length, verticalAttrs: {}, specialtyInput: '' });
     setShowModal(true);
   };
 
   const handleEdit = (staff: Staff) => {
     setEditingStaff(staff);
-    // Phase 2b: verticalAttributes → eyebrow 優先で読む
-    const attrs = getStaffVerticalAttrs(staff);
     setFormData({
       name: staff.name,
       role: staff.role || '',
       active: staff.active,
       sortOrder: staff.sortOrder,
-      eyebrow: {
-        skillLevel: attrs?.skillLevel,
-        specialties: attrs?.specialties ?? [],
-      },
+      verticalAttrs: (staff as any).verticalAttributes ?? {},
       specialtyInput: '',
     });
     setShowModal(true);
@@ -135,16 +130,11 @@ export default function StaffManager() {
     setError(null);
 
     try {
-      // Phase 6: verticalAttributes のみ write（eyebrow legacy write 停止）
-      const eyebrowPayload: StaffVerticalAttributes = {};
-      if (formData.eyebrow.skillLevel) eyebrowPayload.skillLevel = formData.eyebrow.skillLevel;
-      if (formData.eyebrow.specialties && formData.eyebrow.specialties.length > 0) {
-        eyebrowPayload.specialties = formData.eyebrow.specialties;
-      }
-      const hasAttrs = Object.keys(eyebrowPayload).length > 0;
+      // Phase 11: verticalAttributes — dynamic vertical attrs
+      const hasAttrs = Object.keys(formData.verticalAttrs).length > 0;
       const verticalFields: Record<string, any> = {};
       if (vPlugin.flags.hasStaffAttributes && hasAttrs) {
-        verticalFields.verticalAttributes = eyebrowPayload;
+        verticalFields.verticalAttributes = formData.verticalAttrs;
       }
 
       if (editingStaff) {
@@ -328,14 +318,14 @@ export default function StaffManager() {
               <label htmlFor="active" className="text-sm text-brand-text">有効</label>
             </div>
 
-            {/* Phase 5a: スタッフ属性セクション — registry flags/labels で制御 */}
+            {/* Phase 11: vertical-dynamic スタッフ属性セクション */}
             {vPlugin.flags.hasStaffAttributes && (<div className="border-t border-gray-100 pt-4">
               <div className="flex items-center gap-2 mb-3">
                 <Scissors className="w-4 h-4 text-pink-500" />
                 <span className="text-sm font-medium text-gray-700">{vPlugin.labels.staffSettingsHeading}</span>
               </div>
               <div className="space-y-3">
-                {/* スキルレベル */}
+                {/* 技術レベル（共通） */}
                 <div>
                   <label className="block text-xs font-medium text-gray-600 mb-1.5">技術レベル</label>
                   <div className="flex gap-1.5">
@@ -343,9 +333,9 @@ export default function StaffManager() {
                       <button
                         key={lv}
                         type="button"
-                        onClick={() => setFormData({ ...formData, eyebrow: { ...formData.eyebrow, skillLevel: formData.eyebrow.skillLevel === lv ? undefined : lv } })}
+                        onClick={() => setFormData({ ...formData, verticalAttrs: { ...formData.verticalAttrs, skillLevel: formData.verticalAttrs.skillLevel === lv ? undefined : lv } })}
                         className={`w-9 h-9 rounded-lg text-sm font-bold transition-all ${
-                          formData.eyebrow.skillLevel === lv
+                          formData.verticalAttrs.skillLevel === lv
                             ? 'bg-pink-500 text-white shadow-sm'
                             : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
                         }`}
@@ -355,20 +345,20 @@ export default function StaffManager() {
                       </button>
                     ))}
                     <span className="ml-2 text-xs text-gray-400 self-center">
-                      {formData.eyebrow.skillLevel ? ['', '初級', '初中級', '中級', '上級', 'エキスパート'][formData.eyebrow.skillLevel] : '未設定'}
+                      {typeof formData.verticalAttrs.skillLevel === 'number' ? ['', '初級', '初中級', '中級', '上級', 'エキスパート'][formData.verticalAttrs.skillLevel] : '未設定'}
                     </span>
                   </div>
                 </div>
-                {/* 得意技術タグ */}
+                {/* 得意技術タグ（共通） */}
                 <div>
                   <label className="block text-xs font-medium text-gray-600 mb-1.5">得意技術タグ</label>
                   <div className="flex gap-1.5 flex-wrap mb-2">
-                    {(formData.eyebrow.specialties ?? []).map(tag => (
+                    {(Array.isArray(formData.verticalAttrs.specialties) ? formData.verticalAttrs.specialties as string[] : []).map(tag => (
                       <span key={tag} className="inline-flex items-center gap-1 px-2 py-1 bg-pink-100 text-pink-700 rounded-full text-xs">
                         {tag}
                         <button
                           type="button"
-                          onClick={() => setFormData({ ...formData, eyebrow: { ...formData.eyebrow, specialties: formData.eyebrow.specialties?.filter(t => t !== tag) } })}
+                          onClick={() => setFormData({ ...formData, verticalAttrs: { ...formData.verticalAttrs, specialties: (formData.verticalAttrs.specialties as string[]).filter((t: string) => t !== tag) } })}
                           className="text-pink-500 hover:text-pink-700"
                         >
                           ×
@@ -379,15 +369,16 @@ export default function StaffManager() {
                   <div className="flex gap-2">
                     <input
                       type="text"
-                      placeholder="例: ナチュラル, 韓国風, メンズ"
+                      placeholder={`例: ${vPlugin.key === 'dental' ? '矯正, インプラント' : vPlugin.key === 'hair' ? 'カラーリスト, 縮毛矯正' : 'ナチュラル, 韓国風'}`}
                       value={formData.specialtyInput}
                       onChange={e => setFormData({ ...formData, specialtyInput: e.target.value })}
                       onKeyDown={e => {
                         if ((e.key === 'Enter' || e.key === ',') && formData.specialtyInput.trim()) {
                           e.preventDefault();
                           const tag = formData.specialtyInput.trim().replace(/,$/, '');
-                          if (tag && !(formData.eyebrow.specialties ?? []).includes(tag)) {
-                            setFormData({ ...formData, specialtyInput: '', eyebrow: { ...formData.eyebrow, specialties: [...(formData.eyebrow.specialties ?? []), tag] } });
+                          const current = Array.isArray(formData.verticalAttrs.specialties) ? formData.verticalAttrs.specialties as string[] : [];
+                          if (tag && !current.includes(tag)) {
+                            setFormData({ ...formData, specialtyInput: '', verticalAttrs: { ...formData.verticalAttrs, specialties: [...current, tag] } });
                           }
                         }
                       }}
@@ -397,8 +388,9 @@ export default function StaffManager() {
                       type="button"
                       onClick={() => {
                         const tag = formData.specialtyInput.trim();
-                        if (tag && !(formData.eyebrow.specialties ?? []).includes(tag)) {
-                          setFormData({ ...formData, specialtyInput: '', eyebrow: { ...formData.eyebrow, specialties: [...(formData.eyebrow.specialties ?? []), tag] } });
+                        const current = Array.isArray(formData.verticalAttrs.specialties) ? formData.verticalAttrs.specialties as string[] : [];
+                        if (tag && !current.includes(tag)) {
+                          setFormData({ ...formData, specialtyInput: '', verticalAttrs: { ...formData.verticalAttrs, specialties: [...current, tag] } });
                         }
                       }}
                       className="px-3 py-1.5 text-sm bg-pink-100 text-pink-700 rounded-lg hover:bg-pink-200 transition-all"

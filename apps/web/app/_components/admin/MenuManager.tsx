@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { getMenu, deleteMenuItem, getMenuVerticalAttrs, type MenuItem, type MenuVerticalAttributes } from '@/src/lib/bookingApi';
+import { getMenu, deleteMenuItem, type MenuItem } from '@/src/lib/bookingApi';
 import { useAdminTenantId } from '@/src/lib/useAdminTenantId';
 import { ApiClientError } from '@/src/lib/apiClient';
 import { compressImage, MAX_UPLOAD_BYTES } from '@/src/lib/compressImage';
@@ -23,7 +23,7 @@ export default function MenuManager({ tenantId: tenantIdProp }: { tenantId?: str
   const [editingItem, setEditingItem] = useState<MenuItem | null>(null);
   const [formData, setFormData] = useState<{
     name: string; price: string; durationMin: string; active: boolean; sortOrder: number;
-    eyebrow: MenuVerticalAttributes;
+    verticalAttrs: Record<string, unknown>;
     imageKey?: string;
     imageUrl?: string;
   }>({
@@ -32,7 +32,7 @@ export default function MenuManager({ tenantId: tenantIdProp }: { tenantId?: str
     durationMin: '60',
     active: true,
     sortOrder: 0,
-    eyebrow: { firstTimeOnly: false, genderTarget: 'both', styleType: undefined },
+    verticalAttrs: {},
   });
 
   // 画像アップロード用
@@ -88,7 +88,7 @@ export default function MenuManager({ tenantId: tenantIdProp }: { tenantId?: str
     setFormData({
       name: '', price: '0', durationMin: '60', active: true,
       sortOrder: menuList.length,
-      eyebrow: { firstTimeOnly: false, genderTarget: 'both', styleType: undefined },
+      verticalAttrs: {},
     });
     setShowModal(true);
   };
@@ -98,19 +98,13 @@ export default function MenuManager({ tenantId: tenantIdProp }: { tenantId?: str
     resetImageState();
     // 既存画像があればプレビューに表示（blob URL ではなく imageUrl をそのまま使う）
     setImagePreviewUrl(item.imageUrl ?? null);
-    // Phase 2a: verticalAttributes → eyebrow の優先順位で読む
-    const attrs = getMenuVerticalAttrs(item);
     setFormData({
       name: item.name,
       price: String(item.price),
       durationMin: String(item.durationMin),
       active: item.active,
       sortOrder: item.sortOrder,
-      eyebrow: {
-        firstTimeOnly: attrs?.firstTimeOnly ?? false,
-        genderTarget: attrs?.genderTarget ?? 'both',
-        styleType: attrs?.styleType,
-      },
+      verticalAttrs: item.verticalAttributes ?? {},
       imageKey: item.imageKey,
       imageUrl: item.imageUrl,
     });
@@ -181,7 +175,7 @@ export default function MenuManager({ tenantId: tenantIdProp }: { tenantId?: str
         imageUrl: imageUrl ?? null,
       };
       if (vPlugin.flags.hasMenuAttributes) {
-        itemPayload.verticalAttributes = formData.eyebrow;
+        itemPayload.verticalAttributes = formData.verticalAttrs;
       }
 
       // tenantId を URL に含めて fetch（updateMenuItem/createMenuItem は tenantId 非対応）
@@ -452,7 +446,7 @@ export default function MenuManager({ tenantId: tenantIdProp }: { tenantId?: str
               </label>
             </div>
 
-            {/* Phase 5a: メニュー属性セクション — registry flags/labels で制御 */}
+            {/* Phase 11: vertical-dynamic メニュー属性セクション */}
             {vPlugin.flags.hasMenuAttributes && (
             <div className="border-t border-gray-100 pt-4">
               <div className="flex items-center gap-2 mb-3">
@@ -460,16 +454,18 @@ export default function MenuManager({ tenantId: tenantIdProp }: { tenantId?: str
                 <span className="text-sm font-medium text-gray-700">{vPlugin.labels.menuSettingsHeading}</span>
               </div>
               <div className="space-y-3">
+                {/* 初回限定メニュー (共通属性) */}
                 <div className="flex items-center gap-2">
                   <input
                     type="checkbox"
                     id="firstTimeOnly"
-                    checked={formData.eyebrow.firstTimeOnly ?? false}
-                    onChange={(e) => setFormData({ ...formData, eyebrow: { ...formData.eyebrow, firstTimeOnly: e.target.checked } })}
+                    checked={!!formData.verticalAttrs.firstTimeOnly}
+                    onChange={(e) => setFormData({ ...formData, verticalAttrs: { ...formData.verticalAttrs, firstTimeOnly: e.target.checked } })}
                     className="w-4 h-4 text-pink-500 border-gray-300 rounded"
                   />
                   <label htmlFor="firstTimeOnly" className="text-sm text-gray-700">初回限定メニュー</label>
                 </div>
+                {/* 性別ターゲット (共通属性) */}
                 <div>
                   <label className="block text-xs font-medium text-gray-600 mb-1.5">性別ターゲット</label>
                   <div className="flex gap-2">
@@ -477,9 +473,9 @@ export default function MenuManager({ tenantId: tenantIdProp }: { tenantId?: str
                       <button
                         key={v}
                         type="button"
-                        onClick={() => setFormData({ ...formData, eyebrow: { ...formData.eyebrow, genderTarget: v } })}
+                        onClick={() => setFormData({ ...formData, verticalAttrs: { ...formData.verticalAttrs, genderTarget: v } })}
                         className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                          formData.eyebrow.genderTarget === v
+                          formData.verticalAttrs.genderTarget === v
                             ? 'bg-pink-500 text-white'
                             : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                         }`}
@@ -489,25 +485,43 @@ export default function MenuManager({ tenantId: tenantIdProp }: { tenantId?: str
                     ))}
                   </div>
                 </div>
+                {/* vertical 固有フィルタ属性 — menuFilterConfig から動的生成 */}
+                {vPlugin.menuFilterConfig && (
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1.5">スタイル種別</label>
+                  <label className="block text-xs font-medium text-gray-600 mb-1.5">{vPlugin.menuFilterConfig.label}</label>
                   <div className="flex flex-wrap gap-2">
-                    {([undefined, 'natural', 'sharp', 'korean', 'custom'] as const).map(v => (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const next = { ...formData.verticalAttrs };
+                        delete next[vPlugin.menuFilterConfig!.filterKey];
+                        setFormData({ ...formData, verticalAttrs: next });
+                      }}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                        !formData.verticalAttrs[vPlugin.menuFilterConfig.filterKey]
+                          ? 'bg-pink-500 text-white'
+                          : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                      }`}
+                    >
+                      指定なし
+                    </button>
+                    {Object.entries(vPlugin.menuFilterConfig.options).map(([key, label]) => (
                       <button
-                        key={v ?? 'none'}
+                        key={key}
                         type="button"
-                        onClick={() => setFormData({ ...formData, eyebrow: { ...formData.eyebrow, styleType: v } })}
+                        onClick={() => setFormData({ ...formData, verticalAttrs: { ...formData.verticalAttrs, [vPlugin.menuFilterConfig!.filterKey]: key } })}
                         className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                          formData.eyebrow.styleType === v
+                          formData.verticalAttrs[vPlugin.menuFilterConfig!.filterKey] === key
                             ? 'bg-pink-500 text-white'
                             : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                         }`}
                       >
-                        {v === undefined ? '指定なし' : v === 'natural' ? 'ナチュラル' : v === 'sharp' ? 'シャープ' : v === 'korean' ? '韓国風' : 'カスタム'}
+                        {label}
                       </button>
                     ))}
                   </div>
                 </div>
+                )}
               </div>
             </div>
             )}
