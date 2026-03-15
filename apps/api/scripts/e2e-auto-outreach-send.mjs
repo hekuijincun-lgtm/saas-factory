@@ -251,12 +251,12 @@ function finish() {
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 function adminGet(p) {
-  return fetch(`${API_BASE}${p}`, { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } });
+  return fetch(`${API_BASE}${p}`, { headers: { "X-Admin-Token": ADMIN_TOKEN } });
 }
 function adminPost(p, b) {
   return fetch(`${API_BASE}${p}`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${ADMIN_TOKEN}`, "Content-Type": "application/json" },
+    headers: { "X-Admin-Token": ADMIN_TOKEN, "Content-Type": "application/json" },
     body: JSON.stringify(b),
   });
 }

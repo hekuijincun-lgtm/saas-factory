@@ -265,7 +265,7 @@ async function runCase(caseKey) {
 // ── Helpers ─────────────────────────────────────────────────────────────
 function adminGet(path) {
   return fetch(`${API_BASE}${path}`, {
-    headers: { "Authorization": `Bearer ${ADMIN_TOKEN}` },
+    headers: { "X-Admin-Token": ADMIN_TOKEN },
   });
 }
 
@@ -273,7 +273,7 @@ function adminPost(path, body) {
   return fetch(`${API_BASE}${path}`, {
     method: "POST",
     headers: {
-      "Authorization": `Bearer ${ADMIN_TOKEN}`,
+      "X-Admin-Token": ADMIN_TOKEN,
       "Content-Type": "application/json",
     },
     body: JSON.stringify(body),

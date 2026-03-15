@@ -15,7 +15,7 @@ pnpm test:auto-send -- --admin-token YOUR_TOKEN --tenant YOUR_TENANT_ID
 
 | Flag | Env Fallback | Required | Description |
 |------|-------------|----------|-------------|
-| `--admin-token` | `ADMIN_TOKEN` | Yes | Workers admin API token |
+| `--admin-token` | `ADMIN_TOKEN` | Yes | Workers admin token (sent as X-Admin-Token header) |
 | `--tenant` | `OUTREACH_TENANT_ID` | Yes | Target tenant ID |
 | `--api-base` | `OUTREACH_API_BASE` | No | API URL (default: production) |
 | `--retries` | — | No | Pipeline verify retries (default: 3) |
