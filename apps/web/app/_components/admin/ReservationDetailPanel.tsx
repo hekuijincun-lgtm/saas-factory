@@ -5,8 +5,10 @@ import { Scissors } from 'lucide-react';
 import { compressImage, MAX_UPLOAD_BYTES } from '@/src/lib/compressImage';
 import { detectAuthError } from '@/src/lib/adminAuthError';
 import type { Reservation, ReservationMeta, Staff } from '@/src/lib/bookingApi';
+import { getReservationVerticalData } from '@/src/lib/bookingApi';
 
 import { useVertical } from '../../admin/_lib/useVertical';
+import { getVerticalConfig } from '@/src/types/settings';
 
 type DetailTab = 'basic' | 'karte' | 'consent' | 'image' | 'survey';
 
@@ -159,7 +161,7 @@ export default function ReservationDetailPanel({
   const surveyAnswers = reservation.meta?.surveyAnswers;
   const hasSurvey = !!surveyAnswers && Object.keys(surveyAnswers).length > 0;
 
-  // questionId → label map (fetched from settings.eyebrow.surveyQuestions)
+  // questionId → label map (Phase 1b: verticalConfig → eyebrow legacy 経由で取得)
   const [qMap, setQMap] = useState<Record<string, string>>({});
   useEffect(() => {
     if (!tenantId) return;
@@ -167,7 +169,8 @@ export default function ReservationDetailPanel({
       .then(r => r.ok ? r.json() : null)
       .then((json: any) => {
         const s = json?.data ?? json;
-        const qs: Array<{ id: string; label: string }> = s?.eyebrow?.surveyQuestions ?? [];
+        const vc = getVerticalConfig(s);
+        const qs: Array<{ id: string; label: string }> = vc.surveyQuestions ?? [];
         const map: Record<string, string> = {};
         for (const q of qs) { if (q.id && q.label) map[q.id] = q.label; }
         setQMap(map);
@@ -395,8 +398,15 @@ export default function ReservationDetailPanel({
                   <label className="block text-xs font-medium text-gray-600 mb-1">{f.label}</label>
                   <input
                     type="text"
-                    value={(metaForm.eyebrowDesign as any)?.[f.key] ?? ''}
-                    onChange={e => setMetaForm(m => ({ ...m, eyebrowDesign: { ...m.eyebrowDesign, [f.key]: e.target.value } }))}
+                    value={(getReservationVerticalData(metaForm) as any)?.[f.key] ?? ''}
+                    onChange={e => {
+                      const patch = { [f.key]: e.target.value };
+                      setMetaForm(m => ({
+                        ...m,
+                        eyebrowDesign: { ...m.eyebrowDesign, ...patch },
+                        verticalData:  { ...m.verticalData,  ...patch },
+                      }));
+                    }}
                     placeholder={f.placeholder}
                     className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-pink-400"
                   />
@@ -407,8 +417,12 @@ export default function ReservationDetailPanel({
               <label className="block text-xs font-medium text-gray-600 mb-1">カルテメモ</label>
               <textarea
                 rows={3}
-                value={metaForm.eyebrowDesign?.memo ?? ''}
-                onChange={e => setMetaForm(m => ({ ...m, eyebrowDesign: { ...m.eyebrowDesign, memo: e.target.value } }))}
+                value={getReservationVerticalData(metaForm)?.memo ?? ''}
+                onChange={e => setMetaForm(m => ({
+                  ...m,
+                  eyebrowDesign: { ...m.eyebrowDesign, memo: e.target.value },
+                  verticalData:  { ...m.verticalData,  memo: e.target.value },
+                }))}
                 className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-pink-400 resize-none"
               />
             </div>

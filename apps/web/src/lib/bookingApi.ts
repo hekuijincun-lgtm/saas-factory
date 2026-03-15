@@ -167,6 +167,19 @@ export interface MenuItem {
   imageUrl?: string;          // 公開URL
 }
 
+// ── Phase 2c: ReservationMeta vertical data read helper ──────────
+
+/**
+ * 予約メタの業種データを正規化して返す read adapter。
+ * 優先順位: verticalData → eyebrowDesign legacy → undefined
+ */
+export function getReservationVerticalData(meta?: ReservationMeta): ReservationMeta['eyebrowDesign'] | undefined {
+  if (meta?.verticalData && Object.keys(meta.verticalData).length > 0) {
+    return meta.verticalData as unknown as ReservationMeta['eyebrowDesign'];
+  }
+  return meta?.eyebrowDesign;
+}
+
 // ── Phase 2a: MenuItem vertical attributes read helper ───────────
 
 /**

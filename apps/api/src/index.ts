@@ -1822,6 +1822,15 @@ app.delete("/admin/menu/:id", async (c) => {
 });
 // NOTE: duplicate PUT /admin/settings removed — the primary handler (earlier in file) handles all fields.
 
+/** Phase 2c: D1 meta JSON 読み出し時に eyebrowDesign-only データへ verticalData を注入する */
+function normalizeReservationMeta(meta: any): any {
+  if (!meta || typeof meta !== 'object') return meta;
+  if (meta.eyebrowDesign && !meta.verticalData) {
+    return { ...meta, verticalData: { ...meta.eyebrowDesign } };
+  }
+  return meta;
+}
+
 /** =========================
  * Admin Reservations (READ / UPDATE / DELETE)
  * GET  /admin/reservations?tenantId=&date=YYYY-MM-DD
@@ -1860,7 +1869,7 @@ app.get("/admin/reservations", async (c) => {
 
       let meta: any = undefined;
       if (r.meta) {
-        try { meta = JSON.parse(r.meta); } catch { meta = undefined; }
+        try { meta = normalizeReservationMeta(JSON.parse(r.meta)); } catch { meta = undefined; }
       }
       return {
         reservationId: r.id,
@@ -1909,7 +1918,7 @@ app.get("/admin/reservations/:id", async (c) => {
     const slotStr = String(row.slot_start || row.start_at || "");
     const dtMatch = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/.exec(slotStr);
     let meta: any = undefined;
-    if (row.meta) { try { meta = JSON.parse(row.meta); } catch {} }
+    if (row.meta) { try { meta = normalizeReservationMeta(JSON.parse(row.meta)); } catch {} }
 
     return c.json({
       ok: true,
@@ -1965,12 +1974,17 @@ app.on(["PUT", "PATCH"], "/admin/reservations/:id", async (c) => {
       if (body.meta?.consentLog && existingMeta.consentLog) {
         mergedMeta.consentLog = { ...existingMeta.consentLog, ...body.meta.consentLog };
       }
-      // P3: verticalData sub-merge (新形式) + eyebrowDesign から自動派生
+      // Phase 2c: verticalData sub-merge (新形式) + 双方向 dual-write
       if (body.meta?.verticalData && existingMeta.verticalData) {
         mergedMeta.verticalData = { ...existingMeta.verticalData, ...body.meta.verticalData };
       }
-      if (mergedMeta.eyebrowDesign?.styleType && !mergedMeta.verticalData) {
-        mergedMeta.verticalData = { styleType: mergedMeta.eyebrowDesign.styleType };
+      // eyebrowDesign → verticalData 自動派生
+      if (mergedMeta.eyebrowDesign && !mergedMeta.verticalData) {
+        mergedMeta.verticalData = { ...mergedMeta.eyebrowDesign };
+      }
+      // verticalData → eyebrowDesign 逆方向派生（legacy client 互換）
+      if (mergedMeta.verticalData && !mergedMeta.eyebrowDesign) {
+        mergedMeta.eyebrowDesign = { ...mergedMeta.verticalData };
       }
       sets.push("meta = ?"); vals.push(JSON.stringify(mergedMeta));
     }
@@ -3380,9 +3394,12 @@ async function upsertCustomer(
   const email = body.email ? String(body.email).trim().toLowerCase() : null;
   const customerKey = buildCustomerKey({ lineUserId, phone, email });
   const bodyMeta: Record<string, any> = (body.meta && typeof body.meta === 'object' && !Array.isArray(body.meta)) ? body.meta : {};
-  // P3: dual-write verticalData (primary) alongside eyebrowDesign (legacy)
-  if (bodyMeta.eyebrowDesign?.styleType && !bodyMeta.verticalData) {
-    bodyMeta.verticalData = { styleType: bodyMeta.eyebrowDesign.styleType };
+  // Phase 2c: dual-write verticalData ↔ eyebrowDesign（双方向）
+  if (bodyMeta.eyebrowDesign && !bodyMeta.verticalData) {
+    bodyMeta.verticalData = { ...bodyMeta.eyebrowDesign };
+  }
+  if (bodyMeta.verticalData && !bodyMeta.eyebrowDesign) {
+    bodyMeta.eyebrowDesign = { ...bodyMeta.verticalData };
   }
   const finalMeta = { ...bodyMeta, ...(customerKey ? { customerKey } : {}) };
   if (Object.keys(finalMeta).length > 0) {
@@ -3496,14 +3513,18 @@ app.route("/admin/outreach", createOutreachRoutes(getTenantId));
 //   1. Resend inbound webhook: { type, created_at, data: { from, to, subject, text, html, ... } }
 //   2. Flat format: { from, to, subject, text, html, message_id }
 // Looks up lead by sender email (tenant-scoped), routes to existing ingest pipeline.
-// Protected by OUTREACH_WEBHOOK_SECRET (required when set; rejects if set but mismatch).
+// Protected by OUTREACH_WEBHOOK_SECRET (always required; 503 if not set, 401 if mismatch).
 app.post("/webhooks/email/inbound", async (c) => {
   const db = c.env.DB;
   const kv = c.env.SAAS_FACTORY;
 
-  // Webhook secret verification (required if configured)
+  // Webhook secret verification (always required — reject if not configured)
   const webhookSecret = (c.env as any).OUTREACH_WEBHOOK_SECRET;
-  if (webhookSecret) {
+  if (!webhookSecret) {
+    console.error("[email-inbound] OUTREACH_WEBHOOK_SECRET is not configured. Rejecting request.");
+    return c.json({ ok: false, error: "webhook not configured" }, 503);
+  }
+  {
     const authHeader = c.req.header("x-webhook-secret") || c.req.header("authorization");
     const provided = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : authHeader || "";
     // Timing-safe comparison to prevent timing attacks
@@ -3568,8 +3589,11 @@ app.post("/webhooks/email/inbound", async (c) => {
     return c.json({ ok: true, skipped: true, reason: "no_matching_lead", from: fromEmail });
   }
 
-  // Process reply for ALL matching leads (each in their own tenant)
+  // Process reply for ALL matching leads (each in their own tenant).
+  // Auto-reply is limited to at most 1 tenant to prevent sending duplicate replies
+  // to the same email address from multiple tenants.
   const results: Array<{ tenantId: string; leadId: string; replyId: string; autoProcessed: boolean }> = [];
+  let autoReplySentForThisEmail = false;
 
   for (const lead of matchedLeads) {
     const tenantId = lead.tenant_id;
@@ -3578,7 +3602,7 @@ app.post("/webhooks/email/inbound", async (c) => {
     const replyId = `or_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
     const ts = new Date().toISOString();
 
-    // Insert into outreach_replies
+    // Insert into outreach_replies (always — every tenant gets its record)
     await db
       .prepare(
         `INSERT INTO outreach_replies
@@ -3588,13 +3612,13 @@ app.post("/webhooks/email/inbound", async (c) => {
       .bind(replyId, tenantId, leadId, externalMessageId || null, replyText, ts)
       .run();
 
-    // Update lead last_replied_at
+    // Update lead last_replied_at (always)
     await db
       .prepare("UPDATE sales_leads SET last_replied_at = ?1, updated_at = ?2 WHERE id = ?3 AND tenant_id = ?4")
       .bind(ts, ts, leadId, tenantId)
       .run();
 
-    // Classify intent
+    // Classify intent (always — every tenant gets classification)
     const openaiApiKey = (c.env as any).OPENAI_API_KEY;
     let classifyResult: any = null;
     try {
@@ -3610,9 +3634,12 @@ app.post("/webhooks/email/inbound", async (c) => {
       console.error(`[email-inbound] Classification error for tenant=${tenantId}:`, clsErr?.message);
     }
 
-    // Auto-process if enabled
+    // Auto-process if enabled — but only for the FIRST tenant (most recently updated lead)
+    // to prevent sending duplicate auto-replies to the same email address.
     let autoProcessed = false;
-    try {
+    if (autoReplySentForThisEmail) {
+      console.log(`[email-inbound] Skipping auto-reply for tenant=${tenantId} lead=${leadId}: already sent for another tenant`);
+    } else try {
       const { getAutoReplySettings, processReply } = await import("./outreach/reply-dispatcher");
       const arSettings = await getAutoReplySettings(kv, tenantId);
       if (arSettings.autoReplyEnabled) {
@@ -3632,6 +3659,7 @@ app.post("/webhooks/email/inbound", async (c) => {
           }
         );
         autoProcessed = true;
+        autoReplySentForThisEmail = true;
       }
     } catch (procErr: any) {
       console.error(`[email-inbound] Auto-process error for tenant=${tenantId}:`, procErr?.message);
