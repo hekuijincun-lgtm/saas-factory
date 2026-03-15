@@ -4482,6 +4482,106 @@ export function createOutreachRoutes(getTenantId: GetTenantId) {
     return c.json({ ok: true, tenantId, data: rows.results ?? [] });
   });
 
+  // ── Phase 21: Debug pipeline status endpoint ────────────────────────────
+  // GET /debug/pipeline — recent inbound → classify → reply → close events
+  app.get("/debug/pipeline", async (c) => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    const limit = Math.min(Number(c.req.query("limit") || 10), 30);
+
+    // 1. Recent replies (inbound)
+    const replies = await db
+      .prepare(
+        `SELECT r.id, r.lead_id, r.from_email, r.subject, r.intent, r.intent_confidence, r.sentiment,
+                r.status, r.ai_handled, r.ai_response_sent, r.close_intent, r.close_confidence,
+                r.deal_temperature, r.handoff_required, r.created_at,
+                l.store_name, l.pipeline_stage, l.close_stage
+         FROM outreach_replies r
+         LEFT JOIN sales_leads l ON r.lead_id = l.id AND l.tenant_id = ?1
+         WHERE r.tenant_id = ?1
+         ORDER BY r.created_at DESC LIMIT ?2`
+      )
+      .bind(tenantId, limit)
+      .all();
+
+    // 2. Recent close logs
+    const closeLogs = await db
+      .prepare(
+        `SELECT id, lead_id, reply_id, close_intent, close_confidence, deal_temperature,
+                suggested_action, execution_status, handoff_required, close_variant_key, created_at
+         FROM outreach_close_logs
+         WHERE tenant_id = ?1
+         ORDER BY created_at DESC LIMIT ?2`
+      )
+      .bind(tenantId, limit)
+      .all();
+
+    // 3. Recent delivery events
+    const deliveryEvents = await db
+      .prepare(
+        `SELECT id, lead_id, message_id, channel, event_type, status, metadata_json, created_at
+         FROM outreach_delivery_events
+         WHERE tenant_id = ?1
+         ORDER BY created_at DESC LIMIT ?2`
+      )
+      .bind(tenantId, limit)
+      .all();
+
+    // 4. Recent handoffs
+    const handoffs = await db
+      .prepare(
+        `SELECT id, lead_id, reply_id, reason, priority, status, created_at
+         FROM outreach_handoffs
+         WHERE tenant_id = ?1
+         ORDER BY created_at DESC LIMIT ?2`
+      )
+      .bind(tenantId, limit)
+      .all();
+
+    // 5. Recent booking events
+    const bookingEvents = await db
+      .prepare(
+        `SELECT id, lead_id, close_log_id, event_type, booking_url, variant_key, created_at
+         FROM outreach_booking_events
+         WHERE tenant_id = ?1
+         ORDER BY created_at DESC LIMIT ?2`
+      )
+      .bind(tenantId, limit)
+      .all();
+
+    // 6. Reply logs (audit trail)
+    const replyLogs = await db
+      .prepare(
+        `SELECT id, lead_id, reply_id, ai_decision, execution_status, error_message, created_at
+         FROM outreach_reply_logs
+         WHERE tenant_id = ?1
+         ORDER BY created_at DESC LIMIT ?2`
+      )
+      .bind(tenantId, limit)
+      .all();
+
+    // Redact full email: show domain only
+    const redactEmail = (e: string | null) => e ? `***@${e.split("@")[1] || "?"}` : null;
+    const safeReplies = (replies.results ?? []).map((r: any) => ({
+      ...r,
+      from_email: redactEmail(r.from_email),
+      reply_text: undefined, // never expose full text in debug
+      ai_response: undefined,
+    }));
+
+    return c.json({
+      ok: true, tenantId,
+      data: {
+        replies: safeReplies,
+        closeLogs: closeLogs.results ?? [],
+        deliveryEvents: deliveryEvents.results ?? [],
+        handoffs: handoffs.results ?? [],
+        bookingEvents: bookingEvents.results ?? [],
+        replyLogs: replyLogs.results ?? [],
+      },
+    });
+  });
+
   // GET /hot-leads — list hot/warm leads with close evaluation
   app.get("/hot-leads", async (c) => {
     const tenantId = getTenantId(c);

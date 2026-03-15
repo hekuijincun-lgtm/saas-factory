@@ -1269,6 +1269,26 @@ export async function updateReplyStatus(
   await apiPut(`/admin/outreach/replies/${replyId}/status`, { status }, { tenantId });
 }
 
+// ── Phase 21: Debug Pipeline ─────────────────────────────────────────────
+
+export async function fetchDebugPipeline(
+  tenantId: string,
+  limit = 10
+): Promise<{
+  replies: any[];
+  closeLogs: any[];
+  deliveryEvents: any[];
+  handoffs: any[];
+  bookingEvents: any[];
+  replyLogs: any[];
+}> {
+  const res = await apiGet<{ ok: boolean; data: any }>(
+    `/admin/outreach/debug/pipeline?limit=${limit}`,
+    { tenantId }
+  );
+  return res.data;
+}
+
 // ── Phase 20: Booking Events ────────────────────────────────────────────
 
 export async function trackBookingEvent(

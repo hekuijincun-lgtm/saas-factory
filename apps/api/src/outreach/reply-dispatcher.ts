@@ -155,6 +155,7 @@ export async function processReply(
   if (CLOSE_ELIGIBLE_INTENTS.includes(classification.intent) && closeSettings.auto_close_enabled) {
     // ── Close-aware response: evaluate close intent + generate close response ──
     try {
+      console.log(JSON.stringify({ event: "OUTREACH_CLOSE_EVAL", tenantId, replyId: reply.id, leadId: reply.lead_id, replyIntent: classification.intent, phase: "start" }));
       const closeClassification = await classifyCloseIntent(reply.reply_text, openaiApiKey);
       closeIntentResult = closeClassification.close_intent;
       closeConfidence = closeClassification.close_confidence;
@@ -226,7 +227,15 @@ export async function processReply(
         responseText = closeResp.response_text;
         closeResponseType = closeResp.response_type;
 
+        console.log(JSON.stringify({
+          event: "OUTREACH_CLOSE_EVAL", tenantId, replyId: reply.id, phase: "result",
+          closeIntent: closeClassification.close_intent, closeConfidence: closeClassification.close_confidence,
+          dealTemperature: closeClassification.deal_temperature, responseType: closeResp.response_type,
+          handoff: closeResp.handoff_required, variantKey: variantTemplate?.variant_key || null,
+        }));
+
         if (closeResp.handoff_required) {
+          console.log(JSON.stringify({ event: "OUTREACH_HANDOFF_CREATED", tenantId, replyId: reply.id, leadId: reply.lead_id, reason: `close:${closeClassification.close_intent}` }));
           await createHandoff(db, uid(), tenantId, reply.lead_id, reply.id, `close:${closeClassification.close_intent}`, "high", ts);
         }
 

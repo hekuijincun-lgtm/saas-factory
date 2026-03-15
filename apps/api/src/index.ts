@@ -2089,6 +2089,26 @@ app.get("/admin/kpi", async (c) => {
       };
     }
 
+    // Phase 12: popular menu ranking — top menus by reservation count
+    const menuRankRes = await db.prepare(
+      `SELECT menu_name, COUNT(*) as cnt
+       FROM reservations
+       WHERE tenant_id = ? AND slot_start >= ? AND ${SQL_ACTIVE_FILTER}
+         AND menu_name IS NOT NULL AND menu_name != ''
+       GROUP BY menu_name
+       ORDER BY cnt DESC
+       LIMIT 10`
+    ).bind(tenantId, since + 'T').all();
+    const popularMenus: { name: string; count: number; share: number }[] = [];
+    const menuRankTotal = (menuRankRes.results || []).reduce((sum: number, r: any) => sum + r.cnt, 0);
+    for (const r of (menuRankRes.results || []) as any[]) {
+      popularMenus.push({
+        name: r.menu_name,
+        count: r.cnt,
+        share: menuRankTotal > 0 ? Math.round((r.cnt / menuRankTotal) * 100) : 0,
+      });
+    }
+
     return c.json({
       ok: true, tenantId, days, since,
       kpi: {
@@ -2101,6 +2121,7 @@ app.get("/admin/kpi", async (c) => {
         staffCounts,
         styleBreakdown,
         breakdownAxis: filterKey,
+        popularMenus,
       },
     });
   } catch (error) {
@@ -3769,22 +3790,23 @@ app.route("/admin/outreach", createOutreachRoutes(getTenantId));
 app.post("/webhooks/email/inbound", async (c) => {
   const db = c.env.DB;
   const kv = c.env.SAAS_FACTORY;
+  const _t0 = Date.now();
 
   // Webhook secret verification (always required — reject if not configured)
   const webhookSecret = (c.env as any).OUTREACH_WEBHOOK_SECRET;
   if (!webhookSecret) {
-    console.error("[email-inbound] OUTREACH_WEBHOOK_SECRET is not configured. Rejecting request.");
+    console.error(JSON.stringify({ event: "OUTREACH_INBOUND_RECEIVED", status: "fail", reason: "webhook_secret_not_configured" }));
     return c.json({ ok: false, error: "webhook not configured" }, 503);
   }
   {
     const authHeader = c.req.header("x-webhook-secret") || c.req.header("authorization");
     const provided = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : authHeader || "";
-    // Timing-safe comparison to prevent timing attacks
     let match = provided.length === webhookSecret.length;
     for (let i = 0; i < webhookSecret.length; i++) {
       match = match && (provided.charCodeAt(i) === webhookSecret.charCodeAt(i));
     }
     if (!match) {
+      console.error(JSON.stringify({ event: "OUTREACH_INBOUND_RECEIVED", status: "fail", reason: "auth_mismatch" }));
       return c.json({ ok: false, error: "unauthorized" }, 401);
     }
   }
@@ -3798,16 +3820,25 @@ app.post("/webhooks/email/inbound", async (c) => {
 
   // Normalize payload: support both Resend nested format and flat format
   const payload = rawBody?.data && typeof rawBody.data === "object" && rawBody.data.from
-    ? rawBody.data   // Resend format: { type, data: { from, to, subject, text, html } }
-    : rawBody;        // Flat format: { from, to, subject, text, html, message_id }
+    ? rawBody.data
+    : rawBody;
 
   const fromRaw = payload.from || "";
-  // Extract email from "Name <email@example.com>" or plain "email@example.com"
   const emailMatch = fromRaw.match(/<([^>]+)>/) || [null, fromRaw];
   const fromEmail = (emailMatch[1] || "").trim().toLowerCase();
   const replyText = (payload.text || payload.html || "").slice(0, 10000);
   const subject = payload.subject || "";
   const externalMessageId = payload.message_id || payload.messageId || payload.headers?.["message-id"] || "";
+  const fromDomain = fromEmail.split("@")[1] || "";
+  const subjectPreview = subject.slice(0, 80);
+  const textPreview = replyText.replace(/\s+/g, " ").slice(0, 120);
+
+  // P1: Structured receive log
+  console.log(JSON.stringify({
+    event: "OUTREACH_INBOUND_RECEIVED",
+    fromDomain, subjectPreview, textLen: replyText.length,
+    messageId: externalMessageId?.slice(0, 40) || null, authOk: true,
+  }));
 
   if (!fromEmail || !fromEmail.includes("@")) {
     return c.json({ ok: false, error: "valid 'from' email is required" }, 400);
@@ -3816,18 +3847,19 @@ app.post("/webhooks/email/inbound", async (c) => {
     return c.json({ ok: false, error: "reply text (text or html) is required" }, 400);
   }
 
-  // Idempotency: skip if this message_id was already ingested (cross-tenant is OK for dedup)
+  // Idempotency
   if (externalMessageId) {
     const existing = await db
       .prepare("SELECT id, tenant_id FROM outreach_replies WHERE message_id = ?1 LIMIT 1")
       .bind(externalMessageId)
       .first<{ id: string; tenant_id: string }>();
     if (existing) {
+      console.log(JSON.stringify({ event: "OUTREACH_INBOUND_RECEIVED", status: "skipped", reason: "duplicate", replyId: existing.id }));
       return c.json({ ok: true, skipped: true, reason: "duplicate_message_id", replyId: existing.id });
     }
   }
 
-  // Look up ALL leads with this email to handle multi-tenant correctly
+  // Lead lookup
   const leads = await db
     .prepare("SELECT id, tenant_id FROM sales_leads WHERE LOWER(contact_email) = ?1 ORDER BY updated_at DESC LIMIT 10")
     .bind(fromEmail)
@@ -3836,14 +3868,10 @@ app.post("/webhooks/email/inbound", async (c) => {
   const matchedLeads = leads.results ?? [];
 
   if (matchedLeads.length === 0) {
-    // Unknown sender — log and return 200 to not cause webhook retries
-    console.warn(`[email-inbound] No lead found for email: ${fromEmail}`);
+    console.log(JSON.stringify({ event: "OUTREACH_INBOUND_RECEIVED", status: "skipped", reason: "no_matching_lead", fromDomain }));
     return c.json({ ok: true, skipped: true, reason: "no_matching_lead", from: fromEmail });
   }
 
-  // Process reply for ALL matching leads (each in their own tenant).
-  // Auto-reply is limited to at most 1 tenant to prevent sending duplicate replies
-  // to the same email address from multiple tenants.
   const results: Array<{ tenantId: string; leadId: string; replyId: string; autoProcessed: boolean }> = [];
   let autoReplySentForThisEmail = false;
 
@@ -3854,7 +3882,6 @@ app.post("/webhooks/email/inbound", async (c) => {
     const replyId = `or_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
     const ts = new Date().toISOString();
 
-    // Insert into outreach_replies (always — every tenant gets its record)
     await db
       .prepare(
         `INSERT INTO outreach_replies
@@ -3864,16 +3891,16 @@ app.post("/webhooks/email/inbound", async (c) => {
       .bind(replyId, tenantId, leadId, externalMessageId || null, replyText, fromEmail, subject, ts)
       .run();
 
-    // Update lead last_replied_at (always)
     await db
       .prepare("UPDATE sales_leads SET last_replied_at = ?1, updated_at = ?2 WHERE id = ?3 AND tenant_id = ?4")
       .bind(ts, ts, leadId, tenantId)
       .run();
 
-    // Classify intent (always — every tenant gets classification)
+    // P2: Classify with structured logging
     const openaiApiKey = (c.env as any).OPENAI_API_KEY;
     let classifyResult: any = null;
     try {
+      console.log(JSON.stringify({ event: "OUTREACH_REPLY_CLASSIFY_START", tenantId, replyId, leadId }));
       const { classifyReplyIntent } = await import("./outreach/reply-classifier");
       classifyResult = await classifyReplyIntent(replyText, openaiApiKey);
       await db
@@ -3882,27 +3909,33 @@ app.post("/webhooks/email/inbound", async (c) => {
         )
         .bind(classifyResult.intent, classifyResult.sentiment, classifyResult.confidence, replyId, tenantId)
         .run();
+      console.log(JSON.stringify({
+        event: "OUTREACH_REPLY_CLASSIFY_RESULT", tenantId, replyId, leadId,
+        intent: classifyResult.intent, sentiment: classifyResult.sentiment,
+        confidence: classifyResult.confidence,
+      }));
     } catch (clsErr: any) {
-      console.error(`[email-inbound] Classification error for tenant=${tenantId}:`, clsErr?.message);
+      console.error(JSON.stringify({ event: "OUTREACH_REPLY_CLASSIFY_RESULT", tenantId, replyId, status: "fail", reason: clsErr?.message?.slice(0, 100) }));
     }
 
-    // Auto-process if enabled — but only for the FIRST tenant (most recently updated lead)
-    // to prevent sending duplicate auto-replies to the same email address.
+    // Auto-process with structured logging
     let autoProcessed = false;
     if (autoReplySentForThisEmail) {
-      console.log(`[email-inbound] Skipping auto-reply for tenant=${tenantId} lead=${leadId}: already sent for another tenant`);
+      console.log(JSON.stringify({ event: "OUTREACH_AUTO_REPLY_DECISION", tenantId, replyId, decision: "skipped_duplicate_tenant" }));
     } else try {
       const { getAutoReplySettings, processReply } = await import("./outreach/reply-dispatcher");
       const arSettings = await getAutoReplySettings(kv, tenantId);
+      console.log(JSON.stringify({ event: "OUTREACH_AUTO_REPLY_DECISION", tenantId, replyId, autoReplyEnabled: arSettings.autoReplyEnabled }));
       if (arSettings.autoReplyEnabled) {
         const uidFn = () => `or_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
         const nowFn = () => new Date().toISOString();
-        await processReply(
+        const procResult = await processReply(
           { db, kv, tenantId, openaiApiKey, resendApiKey: (c.env as any).RESEND_API_KEY, emailFrom: (c.env as any).EMAIL_FROM, uid: uidFn, now: nowFn },
           {
             id: replyId, tenant_id: tenantId, lead_id: leadId,
             campaign_id: null, message_id: externalMessageId || null,
             reply_text: replyText, reply_source: "email",
+            from_email: fromEmail, subject, status: "open" as any,
             sentiment: classifyResult?.sentiment || null,
             intent: classifyResult?.intent || null,
             intent_confidence: classifyResult?.confidence || null,
@@ -3912,14 +3945,25 @@ app.post("/webhooks/email/inbound", async (c) => {
         );
         autoProcessed = true;
         autoReplySentForThisEmail = true;
+        console.log(JSON.stringify({
+          event: "OUTREACH_AUTO_REPLY_SENT", tenantId, replyId, leadId,
+          sent: procResult.sent, intent: procResult.intent,
+          closeIntent: procResult.closeIntent || null,
+          closeResponseType: procResult.closeResponseType || null,
+          skippedReason: procResult.skippedReason || null,
+        }));
       }
     } catch (procErr: any) {
-      console.error(`[email-inbound] Auto-process error for tenant=${tenantId}:`, procErr?.message);
+      console.error(JSON.stringify({ event: "OUTREACH_AUTO_REPLY_SENT", tenantId, replyId, status: "fail", reason: procErr?.message?.slice(0, 100) }));
     }
 
     results.push({ tenantId, leadId, replyId, autoProcessed });
   }
 
+  console.log(JSON.stringify({
+    event: "OUTREACH_INBOUND_RECEIVED", status: "success",
+    matchedLeads: matchedLeads.length, processed: results.length, durationMs: Date.now() - _t0,
+  }));
   return c.json({ ok: true, processed: results.length, results });
 });
 
