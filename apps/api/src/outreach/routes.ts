@@ -771,7 +771,7 @@ export function createOutreachRoutes(getTenantId: GetTenantId) {
 
     const rows = await db
       .prepare(
-        `SELECT m.*, l.store_name, l.area, l.category, l.pipeline_stage
+        `SELECT m.*, l.store_name, l.area, l.category, l.pipeline_stage, l.contact_email
          FROM lead_message_drafts m
          JOIN sales_leads l ON m.lead_id = l.id
          WHERE m.tenant_id = ?1 AND m.status = ?2
@@ -3941,7 +3941,7 @@ export function createOutreachRoutes(getTenantId: GetTenantId) {
 
     const rows = await db
       .prepare(
-        `SELECT m.*, l.store_name, l.category, l.area, l.pipeline_stage, l.score as lead_score, l.rating
+        `SELECT m.*, l.store_name, l.category, l.area, l.pipeline_stage, l.score as lead_score, l.rating, l.contact_email
          FROM lead_message_drafts m
          JOIN sales_leads l ON m.lead_id = l.id AND l.tenant_id = ?1
          WHERE m.tenant_id = ?1 AND m.status = 'pending_review'

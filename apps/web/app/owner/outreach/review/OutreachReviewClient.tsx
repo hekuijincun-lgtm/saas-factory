@@ -306,12 +306,18 @@ export default function OutreachReviewClient() {
                           </>
                         )}
                         {activeTab === "approved" && (
-                          <button
-                            onClick={() => handleSend(msg.id)}
-                            className="px-4 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-                          >
-                            送信 ({sendStats?.sendMode === "real" ? "Real" : "Safe"})
-                          </button>
+                          msg.contact_email ? (
+                            <button
+                              onClick={() => handleSend(msg.id)}
+                              className="px-4 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                            >
+                              送信 ({sendStats?.sendMode === "real" ? "Real" : "Safe"})
+                            </button>
+                          ) : (
+                            <span className="text-xs text-red-500 bg-red-50 px-3 py-1.5 rounded-lg">
+                              送信不可: リードにメールアドレスが未設定です
+                            </span>
+                          )
                         )}
                       </div>
                     </div>

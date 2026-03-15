@@ -109,6 +109,10 @@ export interface OutreachMessage {
   area?: string;
   category?: string;
   pipeline_stage?: PipelineStage;
+  contact_email?: string | null;
+  // Prioritized review
+  lead_score?: number;
+  rating?: number;
 }
 
 export interface OutreachDeliveryEvent {
