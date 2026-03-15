@@ -12,7 +12,7 @@ jobs:
         env:
           CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
         run: |
-          ZONE_RESP=$(curl -sf \
+          ZONE_RESP=$(curl -s \
             -H "Authorization: Bearer ${CF_API_TOKEN}" \
             -H "Content-Type: application/json" \
             "https://api.cloudflare.com/client/v4/zones?name=kazukigroup.org")
@@ -33,7 +33,7 @@ jobs:
           ZONE_ID: ${{ steps.zone.outputs.zone_id }}
         run: |
           echo "=== Existing MX records ==="
-          curl -sf \
+          curl -s \
             -H "Authorization: Bearer ${CF_API_TOKEN}" \
             -H "Content-Type: application/json" \
             "https://api.cloudflare.com/client/v4/zones/${ZONE_ID}/dns_records?type=MX" \
@@ -45,12 +45,22 @@ jobs:
           CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
           ZONE_ID: ${{ steps.zone.outputs.zone_id }}
         run: |
-          EXISTING=$(curl -sf \
+          RESP=$(curl -s \
             -H "Authorization: Bearer ${CF_API_TOKEN}" \
             -H "Content-Type: application/json" \
-            "https://api.cloudflare.com/client/v4/zones/${ZONE_ID}/dns_records?type=MX&content=inbound-smtp.ap-northeast-1.amazonaws.com" \
-            | jq '.result | length')
+            "https://api.cloudflare.com/client/v4/zones/${ZONE_ID}/dns_records?type=MX&content=inbound-smtp.ap-northeast-1.amazonaws.com")
 
+          echo "API response:"
+          echo "$RESP" | jq .
+
+          SUCCESS=$(echo "$RESP" | jq -r '.success')
+          if [ "$SUCCESS" != "true" ]; then
+            echo "ERROR: DNS API call failed. Check CF_API_TOKEN has 'Zone / DNS / Edit' permission."
+            echo "Current token may only have Workers/Pages permissions."
+            exit 1
+          fi
+
+          EXISTING=$(echo "$RESP" | jq '.result | length')
           echo "existing_count=$EXISTING" >> $GITHUB_OUTPUT
 
           if [ "$EXISTING" -gt 0 ]; then
@@ -67,7 +77,7 @@ jobs:
         run: |
           echo "Adding MX record: kazukigroup.org → inbound-smtp.ap-northeast-1.amazonaws.com (priority 10)"
 
-          RESULT=$(curl -sf -X POST \
+          RESULT=$(curl -s -X POST \
             -H "Authorization: Bearer ${CF_API_TOKEN}" \
             -H "Content-Type: application/json" \
             "https://api.cloudflare.com/client/v4/zones/${ZONE_ID}/dns_records" \
@@ -99,7 +109,7 @@ jobs:
           ZONE_ID: ${{ steps.zone.outputs.zone_id }}
         run: |
           echo "=== Final MX records for kazukigroup.org ==="
-          curl -sf \
+          curl -s \
             -H "Authorization: Bearer ${CF_API_TOKEN}" \
             -H "Content-Type: application/json" \
             "https://api.cloudflare.com/client/v4/zones/${ZONE_ID}/dns_records?type=MX" \
