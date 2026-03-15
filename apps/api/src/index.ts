@@ -1482,6 +1482,25 @@ app.post("/admin/menu", async (c) => {
     // Phase 6: verticalAttributes のみ write（eyebrow legacy write 停止）
     const verticalAttributes = body?.verticalAttributes && typeof body.verticalAttributes === 'object' ? body.verticalAttributes : undefined;
 
+    // Phase 11: runtime validation of verticalAttributes
+    if (verticalAttributes) {
+      const settingsRaw = await kv.get(`settings:${tenantId}`);
+      const settings = settingsRaw ? JSON.parse(settingsRaw) : {};
+      const plugin = getVerticalPlugin(settings.vertical);
+      if (plugin.validateMenuAttrs) {
+        const result = plugin.validateMenuAttrs(verticalAttributes);
+        if (!result.valid) {
+          return c.json({
+            ok: false,
+            error: 'validation_error',
+            code: 'INVALID_VERTICAL_ATTRIBUTES',
+            field: 'verticalAttributes',
+            message: result.error || 'Invalid vertical attributes',
+          }, 400);
+        }
+      }
+    }
+
     // If body contains an existing item id, treat as update (upsert)
     const bodyId: string | undefined = typeof body?.id === 'string' && body.id.trim() ? body.id.trim() : undefined;
     const existingIdx = bodyId ? menu.findIndex((m: any) => m.id === bodyId) : -1;
@@ -1561,6 +1580,24 @@ app.patch("/admin/menu/:id", async (c) => {
     if (body.verticalAttributes !== undefined) {
       if (body.verticalAttributes === null) delete updated.verticalAttributes;
       else updated.verticalAttributes = body.verticalAttributes;
+    }
+    // Phase 11: runtime validation of verticalAttributes
+    if (body.verticalAttributes && body.verticalAttributes !== null) {
+      const settingsRaw = await kv.get(`settings:${tenantId}`);
+      const settings = settingsRaw ? JSON.parse(settingsRaw) : {};
+      const plugin = getVerticalPlugin(settings.vertical);
+      if (plugin.validateMenuAttrs) {
+        const result = plugin.validateMenuAttrs(body.verticalAttributes);
+        if (!result.valid) {
+          return c.json({
+            ok: false,
+            error: 'validation_error',
+            code: 'INVALID_VERTICAL_ATTRIBUTES',
+            field: 'verticalAttributes',
+            message: result.error || 'Invalid vertical attributes',
+          }, 400);
+        }
+      }
     }
     // imageKey/imageUrl: optional 画像フィールド
     if (body.imageKey !== undefined) {
@@ -1950,6 +1987,12 @@ app.get("/admin/kpi", async (c) => {
     const kv = (c.env as any).SAAS_FACTORY;
     if (!db) return c.json({ ok: false, error: "DB_not_bound" }, 500);
 
+    // Phase 11: resolve vertical for dynamic KPI axis
+    const settingsRaw = await kv.get(`settings:${tenantId}`);
+    const settings = settingsRaw ? JSON.parse(settingsRaw) : {};
+    const plugin = getVerticalPlugin(settings.vertical);
+    const filterKey = plugin.menuFilterConfig?.filterKey || 'styleType';
+
     // 対象期間
     const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
@@ -2016,9 +2059,11 @@ app.get("/admin/kpi", async (c) => {
     // 4) スタイル別内訳（styleBreakdown）
     // Query: per (metaStyleType, customerKey) group — aggregate in JS for flexibility
     // Note: menu_id/menu_name columns do not exist in D1 reservations table
+    // Phase 11: dynamic vertical axis based on plugin filterKey
+    const breakdownJsonPath = `$.verticalData.${filterKey}`;
     const styleRawRes = await db.prepare(
       `SELECT
-         json_extract(meta, '$.verticalData.styleType') as metaStyleType,
+         json_extract(meta, '${breakdownJsonPath}') as metaStyleType,
          json_extract(meta, '$.customerKey') as ckey,
          COUNT(*) as visits
        FROM reservations
@@ -2055,6 +2100,7 @@ app.get("/admin/kpi", async (c) => {
         missingCustomerKeyCount,
         staffCounts,
         styleBreakdown,
+        breakdownAxis: filterKey,
       },
     });
   } catch (error) {
@@ -3875,6 +3921,64 @@ app.post("/webhooks/email/inbound", async (c) => {
   }
 
   return c.json({ ok: true, processed: results.length, results });
+});
+
+// ── Phase 20: Booking link click tracker (public, no auth) ────────────────
+// Usage: /track/click?t={tenantId}&l={leadId}&u={encodedBookingUrl}&c={closeLogId}
+// Records a 'clicked' booking event then redirects to the actual booking URL.
+app.get("/track/click", async (c) => {
+  const tenantId = c.req.query("t") || "";
+  const leadId = c.req.query("l") || "";
+  const url = c.req.query("u") || "";
+  const closeLogId = c.req.query("c") || "";
+
+  if (!tenantId || !leadId || !url) {
+    return c.redirect(url || "https://example.com", 302);
+  }
+
+  // Record click event (best-effort, don't block redirect)
+  try {
+    const db = c.env.DB;
+    const id = `be_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    await db.prepare(
+      `INSERT INTO outreach_booking_events
+       (id, tenant_id, lead_id, close_log_id, event_type, booking_url, created_at)
+       VALUES (?1, ?2, ?3, ?4, 'clicked', ?5, ?6)`
+    ).bind(id, tenantId, leadId, closeLogId || null, url, new Date().toISOString()).run();
+  } catch (err: any) {
+    console.error("[track/click] Error recording click:", err.message);
+  }
+
+  return c.redirect(url, 302);
+});
+
+// POST /booking-events/booked — Record a booked event (for webhook or manual trigger)
+app.post("/booking-events/booked", async (c) => {
+  const db = c.env.DB;
+  const body = await c.req.json<{ tenant_id: string; lead_id: string; close_log_id?: string; variant_key?: string }>();
+
+  if (!body.tenant_id || !body.lead_id) {
+    return c.json({ ok: false, error: "tenant_id and lead_id required" }, 400);
+  }
+
+  const id = `be_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  await db.prepare(
+    `INSERT INTO outreach_booking_events
+     (id, tenant_id, lead_id, close_log_id, event_type, variant_key, created_at)
+     VALUES (?1, ?2, ?3, ?4, 'booked', ?5, ?6)`
+  ).bind(id, body.tenant_id, body.lead_id, body.close_log_id || null, body.variant_key || null, new Date().toISOString()).run();
+
+  // Update variant close_count if variant_key provided
+  if (body.variant_key) {
+    try {
+      await db.prepare(
+        `UPDATE outreach_close_variants SET close_count = close_count + 1, updated_at = ?1
+         WHERE tenant_id = ?2 AND variant_key = ?3`
+      ).bind(new Date().toISOString(), body.tenant_id, body.variant_key).run();
+    } catch { /* best-effort */ }
+  }
+
+  return c.json({ ok: true, data: { id } });
 });
 
 export default { fetch: app.fetch, queue, scheduled };

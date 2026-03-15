@@ -175,6 +175,42 @@ export async function processReply(
         await createHandoff(db, uid(), tenantId, reply.lead_id, reply.id, "url_not_configured", "high", ts);
         await writeReplyLog(db, uid(), tenantId, reply.lead_id, reply.id, `close:url_missing:${closeClassification.recommended_next_step}`, "", "skipped", "required URL not configured", ts);
       } else {
+        // Phase 20: Fetch learning context for close-aware response quality
+        let closeLearningCtx = null;
+        try {
+          const { getLearningContext } = await import("./learning");
+          closeLearningCtx = await getLearningContext(db, tenantId);
+        } catch { /* learning optional — fail-open */ }
+
+        // Phase 20: Select best close variant if available
+        let variantTemplate = null;
+        const closeTypeMap: Record<string, string> = {
+          send_pricing: "pricing", send_demo_link: "demo_invite", send_booking_link: "booking_invite",
+        };
+        const closeType = closeTypeMap[closeClassification.recommended_next_step];
+        if (closeType) {
+          try {
+            const variant = await db
+              .prepare(
+                `SELECT variant_key, subject_template, body_template, sent_count, meeting_count, close_count
+                 FROM outreach_close_variants
+                 WHERE tenant_id = ?1 AND close_type = ?2 AND is_active = 1
+                 ORDER BY CASE WHEN (sent_count > 0 AND (meeting_count + close_count) > 0) THEN CAST(meeting_count + close_count AS REAL) / sent_count ELSE 0 END DESC, RANDOM()
+                 LIMIT 1`
+              )
+              .bind(tenantId, closeType)
+              .first<{ variant_key: string; subject_template: string | null; body_template: string }>();
+            if (variant) {
+              variantTemplate = variant;
+              // Increment sent_count
+              await db.prepare(
+                `UPDATE outreach_close_variants SET sent_count = sent_count + 1, updated_at = ?1
+                 WHERE tenant_id = ?2 AND close_type = ?3 AND variant_key = ?4`
+              ).bind(ts, tenantId, closeType, variant.variant_key).run();
+            }
+          } catch { /* variant selection optional */ }
+        }
+
         const closeResp = await generateCloseResponse({
           closeIntent: closeClassification.close_intent,
           dealTemperature: closeClassification.deal_temperature,
@@ -183,6 +219,8 @@ export async function processReply(
           storeName,
           settings: closeSettings,
           openaiApiKey,
+          learningContext: closeLearningCtx,
+          variantTemplate,
         });
 
         responseText = closeResp.response_text;
@@ -221,19 +259,19 @@ export async function processReply(
           ).bind(closeStage, closeClassification.deal_temperature, ts, ts, reply.lead_id, tenantId).run();
         }
 
-        // Write close log
+        // Write close log (with variant key if used)
         try {
           await db.prepare(
             `INSERT INTO outreach_close_logs
              (id, tenant_id, lead_id, reply_id, close_intent, close_confidence, deal_temperature,
-              suggested_action, ai_response, execution_status, handoff_required, created_at)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)`
+              suggested_action, ai_response, execution_status, handoff_required, close_variant_key, created_at)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)`
           ).bind(
             uid(), tenantId, reply.lead_id, reply.id,
             closeClassification.close_intent, closeClassification.close_confidence,
             closeClassification.deal_temperature, closeClassification.recommended_next_step,
             responseText, closeResp.handoff_required ? "escalated" : "auto_sent",
-            closeResp.handoff_required ? 1 : 0, ts
+            closeResp.handoff_required ? 1 : 0, variantTemplate?.variant_key || null, ts
           ).run();
         } catch { /* close log is best-effort */ }
       }

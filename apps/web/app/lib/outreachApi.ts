@@ -1269,6 +1269,22 @@ export async function updateReplyStatus(
   await apiPut(`/admin/outreach/replies/${replyId}/status`, { status }, { tenantId });
 }
 
+// ── Phase 20: Booking Events ────────────────────────────────────────────
+
+export async function trackBookingEvent(
+  tenantId: string,
+  leadId: string,
+  eventType: "link_sent" | "clicked" | "booked",
+  opts?: { closeLogId?: string; bookingUrl?: string; variantKey?: string }
+): Promise<{ id: string }> {
+  const res = await apiPost<{ ok: boolean; data: { id: string } }>(
+    "/admin/outreach/booking-events",
+    { lead_id: leadId, event_type: eventType, close_log_id: opts?.closeLogId, booking_url: opts?.bookingUrl, variant_key: opts?.variantKey },
+    { tenantId }
+  );
+  return res.data;
+}
+
 // ── Phase 15: Auto Close AI ─────────────────────────────────────────────
 
 import type {

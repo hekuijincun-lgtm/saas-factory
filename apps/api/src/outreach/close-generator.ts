@@ -54,6 +54,8 @@ export interface CloseResponse {
   cta_type: CtaType;
   followup_window_hours: number;
   handoff_required: boolean;
+  /** Variant key used (if any) for tracking */
+  variant_key?: string;
 }
 
 // ── Template-based responses ────────────────────────────────────────────
@@ -121,12 +123,14 @@ export interface GenerateCloseResponseInput {
   openaiApiKey?: string;
   /** Phase 18: Learning context for win-pattern injection */
   learningContext?: { topTone?: { key: string } | null; topHypothesis?: { key: string; label: string } | null } | null;
+  /** Phase 20: Close variant template override (from outreach_close_variants) */
+  variantTemplate?: { variant_key: string; subject_template?: string; body_template: string } | null;
 }
 
 export async function generateCloseResponse(
   input: GenerateCloseResponseInput
 ): Promise<CloseResponse> {
-  const { closeIntent, recommendedNextStep, storeName, settings, openaiApiKey } = input;
+  const { closeIntent, recommendedNextStep, storeName, settings, openaiApiKey, variantTemplate } = input;
 
   // Determine if handoff is needed
   const needsHandoff =
@@ -134,6 +138,27 @@ export async function generateCloseResponse(
 
   if (needsHandoff) {
     return buildEscalationResponse(storeName);
+  }
+
+  // Phase 20: If a variant template is provided, use it (with token expansion)
+  if (variantTemplate?.body_template) {
+    const expanded = expandCloseTokens(variantTemplate.body_template, settings, storeName);
+    const responseTypeMap: Record<string, CloseResponseType> = {
+      send_pricing: "pricing", send_demo_link: "demo_invite",
+      send_booking_link: "booking_invite",
+    };
+    const ctaMap: Record<string, CtaType> = {
+      send_pricing: settings.pricing_page_url ? "pricing_link" : "contact_owner",
+      send_demo_link: (settings.demo_booking_url || settings.calendly_url) ? "demo_link" : "contact_owner",
+      send_booking_link: (settings.calendly_url || settings.demo_booking_url) ? "booking_link" : "contact_owner",
+    };
+    return {
+      response_text: expanded,
+      response_type: responseTypeMap[recommendedNextStep] || "faq_answer",
+      cta_type: ctaMap[recommendedNextStep] || "none",
+      followup_window_hours: 48,
+      handoff_required: false,
+    };
   }
 
   // Route by recommended_next_step
@@ -186,18 +211,40 @@ export async function generateCloseResponse(
   }
 }
 
+/** Expand tokens in variant templates */
+function expandCloseTokens(template: string, settings: CloseSettings, storeName: string): string {
+  return template
+    .replace(/\{\{store_name\}\}/g, storeName)
+    .replace(/\{\{pricing_url\}\}/g, settings.pricing_page_url || "")
+    .replace(/\{\{demo_url\}\}/g, settings.demo_booking_url || settings.calendly_url || "")
+    .replace(/\{\{booking_url\}\}/g, settings.calendly_url || settings.demo_booking_url || "")
+    .replace(/\{\{sales_contact_url\}\}/g, settings.sales_contact_url || "");
+}
+
 // ── AI-generated close response ─────────────────────────────────────────
 
 async function generateAICloseResponse(
   input: GenerateCloseResponseInput
 ): Promise<CloseResponse> {
-  const { closeIntent, replyText, storeName, settings, openaiApiKey } = input;
+  const { closeIntent, replyText, storeName, settings, openaiApiKey, learningContext } = input;
 
   const linksContext = [
     settings.pricing_page_url && `料金ページ: ${settings.pricing_page_url}`,
     settings.demo_booking_url && `デモ予約: ${settings.demo_booking_url}`,
     settings.calendly_url && `予約リンク: ${settings.calendly_url}`,
   ].filter(Boolean).join("\n");
+
+  // Phase 20: Inject learning context into system prompt
+  const learningHints: string[] = [];
+  if (learningContext?.topTone?.key) {
+    learningHints.push(`最も効果的なトーン: ${learningContext.topTone.key}`);
+  }
+  if (learningContext?.topHypothesis?.label) {
+    learningHints.push(`最も刺さる課題: ${learningContext.topHypothesis.label}`);
+  }
+  const learningPrompt = learningHints.length > 0
+    ? `\n\n過去の実績から得られた知見:\n${learningHints.join("\n")}\nこれらを参考にして返信してください。`
+    : "";
 
   try {
     const resp = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -215,7 +262,7 @@ async function generateAICloseResponse(
 3〜5文程度で回答してください。日本語で回答してください。
 相手の質問や関心に直接答えてください。
 ${linksContext ? `\n利用可能なリンク:\n${linksContext}` : ""}
-適切な場合はリンクを含めてください。`,
+適切な場合はリンクを含めてください。${learningPrompt}`,
           },
           {
             role: "user",
