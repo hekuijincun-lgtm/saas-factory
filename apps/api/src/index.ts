@@ -2185,6 +2185,329 @@ app.post("/admin/kpi/backfill-customer-key", async (c) => {
 });
 
 /** =========================
+ * Phase 5b: Vertical Backfill
+ * POST /admin/backfill/vertical?tenantId=&dryRun=1&scope=all|settings|menu|staff|reservations&limit=200
+ *
+ * Populates new-path fields from legacy eyebrow fields:
+ *   settings.verticalConfig      ← settings.eyebrow
+ *   menu[i].verticalAttributes   ← menu[i].eyebrow
+ *   staff[i].verticalAttributes  ← staff[i].eyebrow
+ *   meta.verticalData            ← meta.eyebrowDesign
+ *
+ * dryRun=1 (default): scan only, no writes
+ * dryRun=0: apply changes
+ * scope=all (default): all 4 layers
+ * limit=200: max D1 rows per call (KV has no limit since it's single-key arrays)
+ *
+ * Safe: idempotent, never overwrites existing new-path data,
+ *       never deletes legacy fields, never creates eyebrow data for generic tenants.
+ * ========================= */
+app.post("/admin/backfill/vertical", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
+  const rbac = await requireRole(c, 'owner'); if (rbac) return rbac;
+  try {
+    const tenantId = getTenantId(c);
+    const dryRun = c.req.query("dryRun") !== "0";
+    const scope = c.req.query("scope") || "all";
+    const limit = Math.min(Math.max(Number(c.req.query("limit") || "200"), 1), 1000);
+    const kv = (c.env as any).SAAS_FACTORY;
+    const db = (c.env as any).DB;
+    if (!kv) return c.json({ ok: false, error: "KV_not_bound" }, 500);
+
+    const report: Record<string, any> = {
+      tenantId,
+      dryRun,
+      scope,
+      timestamp: new Date().toISOString(),
+    };
+    const errors: string[] = [];
+
+    // ── Settings backfill ──────────────────────────────────────────
+    if (scope === "all" || scope === "settings") {
+      const settingsKey = `settings:${tenantId}`;
+      const raw = await kv.get(settingsKey, "json") as any;
+      const sr: any = { scanned: 0, updated: 0, skipped: 0, alreadyMigrated: 0, legacyOnly: 0 };
+
+      if (raw && typeof raw === "object") {
+        sr.scanned = 1;
+        const hasLegacy = raw.eyebrow && typeof raw.eyebrow === "object" && Object.keys(raw.eyebrow).length > 0;
+        const hasNew = raw.verticalConfig && typeof raw.verticalConfig === "object" && Object.keys(raw.verticalConfig).length > 0;
+
+        if (hasLegacy && hasNew) {
+          sr.alreadyMigrated = 1;
+          sr.skipped = 1;
+        } else if (hasLegacy && !hasNew) {
+          sr.legacyOnly = 1;
+          sr.updated = 1;
+          if (!dryRun) {
+            const patched = { ...raw, verticalConfig: { ...raw.eyebrow } };
+            // Also set vertical if not set (legacy eyebrow tenant)
+            if (!patched.vertical) patched.vertical = "eyebrow";
+            await kv.put(settingsKey, JSON.stringify(patched));
+          }
+        } else {
+          // No eyebrow data — nothing to backfill
+          sr.skipped = 1;
+        }
+      }
+      report.settings = sr;
+    }
+
+    // ── Menu backfill ──────────────────────────────────────────────
+    if (scope === "all" || scope === "menu") {
+      const menuKey = `admin:menu:list:${tenantId}`;
+      const menuRaw = await kv.get(menuKey);
+      const mr: any = { scanned: 0, updated: 0, skipped: 0, alreadyMigrated: 0, legacyOnly: 0 };
+
+      if (menuRaw) {
+        try {
+          const items: any[] = JSON.parse(menuRaw);
+          mr.scanned = items.length;
+          let changed = false;
+          for (const item of items) {
+            const hasLegacy = item.eyebrow && typeof item.eyebrow === "object" && Object.keys(item.eyebrow).length > 0;
+            const hasNew = item.verticalAttributes && typeof item.verticalAttributes === "object";
+            if (hasLegacy && hasNew) {
+              mr.alreadyMigrated++;
+              mr.skipped++;
+            } else if (hasLegacy && !hasNew) {
+              mr.legacyOnly++;
+              mr.updated++;
+              if (!dryRun) {
+                item.verticalAttributes = { ...item.eyebrow };
+                changed = true;
+              }
+            } else {
+              mr.skipped++;
+            }
+          }
+          if (changed && !dryRun) {
+            await kv.put(menuKey, JSON.stringify(items));
+          }
+        } catch (e: any) {
+          errors.push(`menu: JSON parse error — ${e?.message ?? e}`);
+        }
+      }
+      report.menu = mr;
+    }
+
+    // ── Staff backfill ─────────────────────────────────────────────
+    if (scope === "all" || scope === "staff") {
+      const staffKey = `admin:staff:list:${tenantId}`;
+      const staffRaw = await kv.get(staffKey);
+      const str: any = { scanned: 0, updated: 0, skipped: 0, alreadyMigrated: 0, legacyOnly: 0 };
+
+      if (staffRaw) {
+        try {
+          const items: any[] = JSON.parse(staffRaw);
+          str.scanned = items.length;
+          let changed = false;
+          for (const item of items) {
+            const hasLegacy = item.eyebrow && typeof item.eyebrow === "object" && Object.keys(item.eyebrow).length > 0;
+            const hasNew = item.verticalAttributes && typeof item.verticalAttributes === "object";
+            if (hasLegacy && hasNew) {
+              str.alreadyMigrated++;
+              str.skipped++;
+            } else if (hasLegacy && !hasNew) {
+              str.legacyOnly++;
+              str.updated++;
+              if (!dryRun) {
+                item.verticalAttributes = { ...item.eyebrow };
+                changed = true;
+              }
+            } else {
+              str.skipped++;
+            }
+          }
+          if (changed && !dryRun) {
+            await kv.put(staffKey, JSON.stringify(items));
+          }
+        } catch (e: any) {
+          errors.push(`staff: JSON parse error — ${e?.message ?? e}`);
+        }
+      }
+      report.staff = str;
+    }
+
+    // ── ReservationMeta backfill ───────────────────────────────────
+    if ((scope === "all" || scope === "reservations") && db) {
+      const rr: any = { scanned: 0, updated: 0, skipped: 0, alreadyMigrated: 0, legacyOnly: 0, hasMore: false };
+
+      // Find rows where meta has eyebrowDesign but no verticalData
+      const rows: any[] = (await db.prepare(
+        `SELECT id, meta
+         FROM reservations
+         WHERE tenant_id = ?
+           AND meta IS NOT NULL
+           AND json_extract(meta, '$.eyebrowDesign') IS NOT NULL
+         LIMIT ?`
+      ).bind(tenantId, limit + 1).all()).results || [];
+
+      if (rows.length > limit) {
+        rr.hasMore = true;
+        rows.pop(); // remove the extra row used for hasMore detection
+      }
+      rr.scanned = rows.length;
+
+      for (const row of rows) {
+        try {
+          const meta = JSON.parse(row.meta);
+          const hasLegacy = meta.eyebrowDesign && typeof meta.eyebrowDesign === "object";
+          const hasNew = meta.verticalData && typeof meta.verticalData === "object";
+
+          if (hasLegacy && hasNew) {
+            rr.alreadyMigrated++;
+            rr.skipped++;
+          } else if (hasLegacy && !hasNew) {
+            rr.legacyOnly++;
+            rr.updated++;
+            if (!dryRun) {
+              const patched = { ...meta, verticalData: { ...meta.eyebrowDesign } };
+              await db.prepare("UPDATE reservations SET meta = ? WHERE id = ? AND tenant_id = ?")
+                .bind(JSON.stringify(patched), row.id, tenantId)
+                .run()
+                .catch((e: any) => {
+                  errors.push(`reservation id=${row.id} err=${e?.message ?? e}`);
+                  rr.updated--; // undo count on failure
+                });
+            }
+          } else {
+            rr.skipped++;
+          }
+        } catch (e: any) {
+          errors.push(`reservation id=${row.id} JSON parse error — ${e?.message ?? e}`);
+          rr.skipped++;
+        }
+      }
+      report.reservations = rr;
+    }
+
+    report.errors = errors.length > 0 ? errors : undefined;
+    return c.json({ ok: true, ...report });
+  } catch (error) {
+    return c.json({ ok: false, error: "Backfill failed", message: String(error) }, 500);
+  }
+});
+
+/** =========================
+ * Phase 5b: Vertical Backfill Status (Readiness Report)
+ * GET /admin/backfill/vertical/status?tenantId=
+ *
+ * Returns new-path coverage metrics for each layer.
+ * Used to determine Phase 6 readiness (dual-write removal).
+ * ========================= */
+app.get("/admin/backfill/vertical/status", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
+  const rbac = await requireRole(c, 'owner'); if (rbac) return rbac;
+  try {
+    const tenantId = getTenantId(c);
+    const kv = (c.env as any).SAAS_FACTORY;
+    const db = (c.env as any).DB;
+    if (!kv) return c.json({ ok: false, error: "KV_not_bound" }, 500);
+
+    const status: Record<string, any> = { tenantId, timestamp: new Date().toISOString() };
+
+    // ── Settings ───────────────────────────────────────────────────
+    const settingsRaw = await kv.get(`settings:${tenantId}`, "json") as any;
+    if (settingsRaw && typeof settingsRaw === "object") {
+      const hasLegacy = settingsRaw.eyebrow && typeof settingsRaw.eyebrow === "object" && Object.keys(settingsRaw.eyebrow).length > 0;
+      const hasNew = settingsRaw.verticalConfig && typeof settingsRaw.verticalConfig === "object" && Object.keys(settingsRaw.verticalConfig).length > 0;
+      status.settings = {
+        exists: true,
+        vertical: settingsRaw.vertical || "generic",
+        hasLegacy,
+        hasNew,
+        migrated: hasNew,
+        needsBackfill: hasLegacy && !hasNew,
+      };
+    } else {
+      status.settings = { exists: false, migrated: false, needsBackfill: false };
+    }
+
+    // ── Menu ───────────────────────────────────────────────────────
+    const menuRaw = await kv.get(`admin:menu:list:${tenantId}`);
+    if (menuRaw) {
+      try {
+        const items: any[] = JSON.parse(menuRaw);
+        let total = items.length, legacyOnly = 0, newOnly = 0, both = 0, neither = 0;
+        for (const item of items) {
+          const hasL = item.eyebrow && typeof item.eyebrow === "object" && Object.keys(item.eyebrow).length > 0;
+          const hasN = item.verticalAttributes && typeof item.verticalAttributes === "object";
+          if (hasL && hasN) both++;
+          else if (hasL && !hasN) legacyOnly++;
+          else if (!hasL && hasN) newOnly++;
+          else neither++;
+        }
+        status.menu = { total, legacyOnly, newOnly, both, neither, coverageRate: total > 0 ? Math.round(((both + newOnly) / total) * 100) : 100 };
+      } catch { status.menu = { error: "JSON parse failed" }; }
+    } else {
+      status.menu = { total: 0, coverageRate: 100 };
+    }
+
+    // ── Staff ──────────────────────────────────────────────────────
+    const staffRaw = await kv.get(`admin:staff:list:${tenantId}`);
+    if (staffRaw) {
+      try {
+        const items: any[] = JSON.parse(staffRaw);
+        let total = items.length, legacyOnly = 0, newOnly = 0, both = 0, neither = 0;
+        for (const item of items) {
+          const hasL = item.eyebrow && typeof item.eyebrow === "object" && Object.keys(item.eyebrow).length > 0;
+          const hasN = item.verticalAttributes && typeof item.verticalAttributes === "object";
+          if (hasL && hasN) both++;
+          else if (hasL && !hasN) legacyOnly++;
+          else if (!hasL && hasN) newOnly++;
+          else neither++;
+        }
+        status.staff = { total, legacyOnly, newOnly, both, neither, coverageRate: total > 0 ? Math.round(((both + newOnly) / total) * 100) : 100 };
+      } catch { status.staff = { error: "JSON parse failed" }; }
+    } else {
+      status.staff = { total: 0, coverageRate: 100 };
+    }
+
+    // ── Reservations ───────────────────────────────────────────────
+    if (db) {
+      const totalRow = await db.prepare(
+        `SELECT COUNT(*) AS cnt FROM reservations WHERE tenant_id = ? AND meta IS NOT NULL AND json_extract(meta, '$.eyebrowDesign') IS NOT NULL`
+      ).bind(tenantId).first() as any;
+      const migratedRow = await db.prepare(
+        `SELECT COUNT(*) AS cnt FROM reservations WHERE tenant_id = ? AND meta IS NOT NULL AND json_extract(meta, '$.eyebrowDesign') IS NOT NULL AND json_extract(meta, '$.verticalData') IS NOT NULL`
+      ).bind(tenantId).first() as any;
+      const totalWithLegacy = totalRow?.cnt ?? 0;
+      const migrated = migratedRow?.cnt ?? 0;
+      const legacyOnly = totalWithLegacy - migrated;
+      status.reservations = {
+        totalWithLegacy,
+        migrated,
+        legacyOnly,
+        coverageRate: totalWithLegacy > 0 ? Math.round((migrated / totalWithLegacy) * 100) : 100,
+      };
+    } else {
+      status.reservations = { error: "DB_not_bound" };
+    }
+
+    // ── Phase 6 Readiness ──────────────────────────────────────────
+    const settingsReady = status.settings.migrated || !status.settings.needsBackfill;
+    const menuReady = (status.menu.coverageRate ?? 0) === 100;
+    const staffReady = (status.staff.coverageRate ?? 0) === 100;
+    const reservationsReady = (status.reservations.coverageRate ?? 0) === 100;
+    status.phase6Readiness = {
+      settingsReady,
+      menuReady,
+      staffReady,
+      reservationsReady,
+      allReady: settingsReady && menuReady && staffReady && reservationsReady,
+      summary: settingsReady && menuReady && staffReady && reservationsReady
+        ? "Phase 6 へ移行可能（dual-write 停止 OK）"
+        : "未移行データあり — backfill 実行が必要",
+    };
+
+    return c.json({ ok: true, ...status });
+  } catch (error) {
+    return c.json({ ok: false, error: "Status check failed", message: String(error) }, 500);
+  }
+});
+
+/** =========================
  * GET /admin/onboarding-status?tenantId=
  * Returns checklist of setup tasks and completion rate.
  * J1: Onboarding progress card data source.
@@ -7776,6 +8099,8 @@ async function scheduled(_event: any, env: Env, _ctx: any): Promise<void> {
       const schedResult = await processScheduledJobs(db, kv, schedUid, schedNow, {
         GOOGLE_MAPS_API_KEY: (env as any).GOOGLE_MAPS_API_KEY,
         OPENAI_API_KEY: (env as any).OPENAI_API_KEY,
+        RESEND_API_KEY: (env as any).RESEND_API_KEY,
+        EMAIL_FROM: (env as any).EMAIL_FROM,
       });
       if (schedResult.processed > 0 || schedResult.errors > 0) {
         console.log(`[${SCHED_STAMP}] processed=${schedResult.processed} errors=${schedResult.errors}`);
@@ -7946,6 +8271,13 @@ async function scheduled(_event: any, env: Env, _ctx: any): Promise<void> {
                 .bind(reply.lead_id as string, tid)
                 .first<{ store_name: string }>();
 
+              // Phase 18: Inject learning context into close response
+              let closeLearningCtx = null;
+              try {
+                const { getLearningContext } = await import("./outreach/learning");
+                closeLearningCtx = await getLearningContext(db, tid);
+              } catch { /* learning optional */ }
+
               const closeResp = await generateCloseResponse({
                 closeIntent: result.close_intent,
                 dealTemperature: result.deal_temperature,
@@ -7954,6 +8286,7 @@ async function scheduled(_event: any, env: Env, _ctx: any): Promise<void> {
                 storeName: lead?.store_name || "弊社",
                 settings: closeSettings,
                 openaiApiKey: (env as any).OPENAI_API_KEY,
+                learningContext: closeLearningCtx,
               });
 
               // Log the auto-generated response (but don't auto-send unless specific settings are on)
@@ -8016,6 +8349,32 @@ async function scheduled(_event: any, env: Env, _ctx: any): Promise<void> {
                   aceNow()
                 )
                 .run();
+
+              // Phase 18: Track booking event if a link was sent
+              if (closeSent && (result.recommended_next_step === "send_booking_link" || result.recommended_next_step === "send_demo_link" || result.recommended_next_step === "send_pricing")) {
+                try {
+                  await db.prepare(
+                    `INSERT INTO outreach_booking_events
+                     (id, tenant_id, lead_id, event_type, created_at)
+                     VALUES (?1, ?2, ?3, 'link_sent', ?4)`
+                  ).bind(aceUid(), tid, reply.lead_id, aceNow()).run();
+                } catch { /* booking event tracking is best-effort */ }
+              }
+
+              // Phase 18: Auto-handoff for escalations
+              if (closeResp.handoff_required) {
+                try {
+                  await db.prepare(
+                    `INSERT INTO outreach_handoffs
+                     (id, tenant_id, lead_id, reply_id, reason, priority, status, created_at)
+                     VALUES (?1, ?2, ?3, ?4, 'escalation', ?5, 'open', ?6)`
+                  ).bind(
+                    aceUid(), tid, reply.lead_id, reply.id,
+                    result.deal_temperature === "hot" ? "urgent" : "high",
+                    aceNow()
+                  ).run();
+                } catch { /* handoff creation is best-effort */ }
+              }
             }
           } catch (innerErr: any) {
             console.error(`[${ACE_STAMP}] reply ${reply.id} error:`, innerErr.message);
@@ -8049,8 +8408,18 @@ async function scheduled(_event: any, env: Env, _ctx: any): Promise<void> {
         )
         .all<{ tenant_id: string }>();
 
+      const { writeHealthSnapshot, checkAndAutoPause } = await import("./outreach/monitoring");
+
       for (const row of tenantRows.results ?? []) {
         const tid = row.tenant_id;
+
+        // Phase 18: Auto-pause check before processing
+        const wasPaused = await checkAndAutoPause(db, kv, tid);
+        if (wasPaused) {
+          console.log(`[${ACR_STAMP}] tenant=${tid} auto-paused, skipping`);
+          continue;
+        }
+
         const acrResult = await runAutoCampaign(db, kv, tid, acrUid, acrNow, {
           OPENAI_API_KEY: (env as any).OPENAI_API_KEY,
           RESEND_API_KEY: (env as any).RESEND_API_KEY,
@@ -8059,6 +8428,11 @@ async function scheduled(_event: any, env: Env, _ctx: any): Promise<void> {
         if (acrResult.processed > 0 || acrResult.errors > 0) {
           console.log(`[${ACR_STAMP}] tenant=${tid} processed=${acrResult.processed} drafted=${acrResult.drafted} sent=${acrResult.sent} skipped=${acrResult.skipped} errors=${acrResult.errors}`);
         }
+
+        // Phase 18: Write health snapshot
+        try {
+          await writeHealthSnapshot(db, tid, "AUTO_CAMPAIGN", acrResult.sent, acrResult.errors, acrUid, acrNow);
+        } catch { /* monitoring is best-effort */ }
       }
     } catch (acrErr: any) {
       console.error(`[${ACR_STAMP}] error:`, String(acrErr?.message ?? acrErr));
