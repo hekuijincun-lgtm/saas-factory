@@ -105,7 +105,7 @@ export async function executeRecommendationAction(
   executedBy: ExecutedBy,
   uid: UidFn,
   now: NowFn,
-  env: { GOOGLE_MAPS_API_KEY?: string; OPENAI_API_KEY?: string }
+  env: { GOOGLE_MAPS_API_KEY?: string; OPENAI_API_KEY?: string; RESEND_API_KEY?: string; EMAIL_FROM?: string }
 ): Promise<{ ok: boolean; result?: any; error?: string }> {
   const rec = await db
     .prepare("SELECT * FROM outreach_copilot_recommendations WHERE id = ?1 AND tenant_id = ?2")
@@ -174,7 +174,7 @@ async function dispatchAction(
   payload: any,
   uid: UidFn,
   now: NowFn,
-  env: { GOOGLE_MAPS_API_KEY?: string; OPENAI_API_KEY?: string }
+  env: { GOOGLE_MAPS_API_KEY?: string; OPENAI_API_KEY?: string; RESEND_API_KEY?: string; EMAIL_FROM?: string }
 ): Promise<any> {
   switch (actionType) {
     case "run_schedule_now": {
@@ -263,7 +263,7 @@ async function dispatchAction(
     }
 
     case "send_existing_approved_only": {
-      return await executeSendExistingApproved(db, kv, tenantId, uid, now);
+      return await executeSendExistingApproved(db, kv, tenantId, uid, now, env);
     }
 
     default:
@@ -280,7 +280,8 @@ async function executeSendExistingApproved(
   kv: KVNamespace,
   tenantId: string,
   uid: UidFn,
-  now: NowFn
+  now: NowFn,
+  env: { RESEND_API_KEY?: string; EMAIL_FROM?: string }
 ): Promise<any> {
   // Get outreach settings
   const settingsJson = await kv.get(`outreach:settings:${tenantId}`);
@@ -351,9 +352,9 @@ async function executeSendExistingApproved(
       }
     }
 
-    // All guards passed — send
+    // All guards passed — send via provider (respects safe/real mode)
     try {
-      const provider = new SafeModeSender();
+      const provider = resolveProvider(settings.sendMode || "safe", env);
       const sendResult = await provider.send({
         leadId: msg.lead_id,
         tenantId,
@@ -456,7 +457,7 @@ export async function processAutoActions(
   kv: KVNamespace,
   uid: UidFn,
   now: NowFn,
-  env: { GOOGLE_MAPS_API_KEY?: string; OPENAI_API_KEY?: string }
+  env: { GOOGLE_MAPS_API_KEY?: string; OPENAI_API_KEY?: string; RESEND_API_KEY?: string; EMAIL_FROM?: string }
 ): Promise<{ processed: number; skipped: number; errors: number }> {
   // Get all tenants with auto_action enabled
   const tenants = await db

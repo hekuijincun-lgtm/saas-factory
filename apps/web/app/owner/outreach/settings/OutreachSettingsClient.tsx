@@ -131,7 +131,8 @@ export default function OutreachSettingsClient() {
             <div className="bg-white rounded-xl p-6 max-w-sm w-full shadow-xl space-y-4">
               <h3 className="text-lg font-semibold text-red-600">Real モードに切り替え</h3>
               <p className="text-sm text-gray-600">
-                Real モードでは実際にメッセージが送信されます（現在はプレースホルダーのため動作は Safe と同じです）。
+                Real モードでは <strong>emailチャネルのみ</strong> 実際にメッセージが送信されます（Resend API経由）。
+                LINE・Instagram DMチャネルは未対応のため、送信エラーとなります。
                 切り替えますか？
               </p>
               <div className="flex gap-2 justify-end">
@@ -180,7 +181,7 @@ export default function OutreachSettingsClient() {
             </button>
           </div>
           {settings?.sendMode === "real" && (
-            <p className="text-xs text-red-500">Real モードが有効です。送信が実行されます。</p>
+            <p className="text-xs text-red-500">Real モードが有効です。emailチャネルは実際に送信されます（LINE/Instagram DMは未対応）。</p>
           )}
         </div>
 
@@ -370,7 +371,100 @@ export default function OutreachSettingsClient() {
           </p>
         </div>
 
-        {/* 6. 配信停止リスト */}
+        {/* 7. Guard Rails — Auto Pause */}
+        <div className="bg-white rounded-xl border p-5 space-y-3">
+          <h2 className="font-semibold text-sm">ガードレール（自動一時停止）</h2>
+          <p className="text-xs text-gray-400">
+            異常検知時にキャンペーンを自動停止します。モニタリングページで状態を確認できます。
+          </p>
+          <label className="flex items-center gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={settings?.autoPauseEnabled ?? false}
+              onChange={(e) => handleSave({ autoPauseEnabled: e.target.checked })}
+              className="w-4 h-4 rounded"
+            />
+            <span className="text-sm text-gray-700">自動一時停止を有効にする</span>
+          </label>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="space-y-1">
+              <label className="text-xs text-gray-500">送信失敗閾値 (24h)</label>
+              <input
+                type="number"
+                min={1}
+                max={100}
+                value={settings?.autoPauseFailureThreshold ?? 10}
+                onChange={(e) => {
+                  const v = Math.min(100, Math.max(1, parseInt(e.target.value) || 10));
+                  handleSave({ autoPauseFailureThreshold: v });
+                }}
+                className="w-full border rounded-lg px-3 py-1.5 text-sm"
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs text-gray-500">バウンス閾値 (24h)</label>
+              <input
+                type="number"
+                min={1}
+                max={50}
+                value={settings?.autoPauseBounceThreshold ?? 5}
+                onChange={(e) => {
+                  const v = Math.min(50, Math.max(1, parseInt(e.target.value) || 5));
+                  handleSave({ autoPauseBounceThreshold: v });
+                }}
+                className="w-full border rounded-lg px-3 py-1.5 text-sm"
+              />
+            </div>
+          </div>
+          <label className="flex items-center gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={settings?.monitoringAlertsEnabled ?? false}
+              onChange={(e) => handleSave({ monitoringAlertsEnabled: e.target.checked })}
+              className="w-4 h-4 rounded"
+            />
+            <span className="text-sm text-gray-700">モニタリングアラートを有効にする</span>
+          </label>
+        </div>
+
+        {/* 8. Auto Lead Supply */}
+        <div className="bg-white rounded-xl border p-5 space-y-3">
+          <h2 className="font-semibold text-sm">自動リード供給</h2>
+          <p className="text-xs text-gray-400">
+            スケジューラがリード不足時に自動でソース検索・インポートを実行します。
+          </p>
+          <label className="flex items-center gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={settings?.autoLeadSupplyEnabled ?? false}
+              onChange={(e) => handleSave({ autoLeadSupplyEnabled: e.target.checked })}
+              className="w-4 h-4 rounded"
+            />
+            <span className="text-sm text-gray-700">自動リード供給を有効にする</span>
+          </label>
+        </div>
+
+        {/* 9. Auto Close */}
+        <div className="bg-white rounded-xl border p-5 space-y-3">
+          <h2 className="font-semibold text-sm">自動クロージング</h2>
+          <p className="text-xs text-gray-400">
+            返信のクロージング意図を自動判定し、テンプレートバリアントで応答します。
+          </p>
+          <label className="flex items-center gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={settings?.autoCloseEnabled ?? false}
+              onChange={(e) => handleSave({ autoCloseEnabled: e.target.checked })}
+              className="w-4 h-4 rounded"
+            />
+            <span className="text-sm text-gray-700">自動クロージングを有効にする</span>
+          </label>
+          <p className="text-xs text-gray-400">
+            詳細設定は「クロージング」ページで管理できます。
+          </p>
+        </div>
+
+        {/* 10. 配信停止リスト */}
         <div className="bg-white rounded-xl border p-5 space-y-3">
           <h2 className="font-semibold text-sm">配信停止リスト ({unsubs.length}件)</h2>
           {unsubs.length === 0 ? (

@@ -20,6 +20,8 @@ export interface DispatchContext {
   kv: KVNamespace;
   tenantId: string;
   openaiApiKey?: string;
+  resendApiKey?: string;
+  emailFrom?: string;
   uid: () => string;
   now: () => string;
 }
@@ -124,17 +126,25 @@ export async function processReply(
     };
   }
 
+  // 3.5. Auto-suppress on unsubscribe intent is deferred to AFTER successful send (see step 6.5)
+
   // 4. Generate reply
   const lead = await db
     .prepare("SELECT store_name FROM sales_leads WHERE id = ?1 AND tenant_id = ?2")
     .bind(reply.lead_id, tenantId)
     .first<{ store_name: string }>();
 
+  // Resolve booking URL for positive intent templates
+  const closeSettingsRaw = await kv.get(`outreach:close-settings:${tenantId}`);
+  const closeSettings = closeSettingsRaw ? JSON.parse(closeSettingsRaw) : {};
+  const bookingUrl = closeSettings.calendly_url || closeSettings.demo_booking_url || "";
+
   const generated = await generateReply({
     intent: classification.intent,
     replyText: reply.reply_text,
     storeName: lead?.store_name || "弊社",
     openaiApiKey,
+    bookingUrl,
   });
 
   if (!generated.response) {
@@ -151,10 +161,35 @@ export async function processReply(
     };
   }
 
+  // 4.5. Auto-create handoff for high-value or complex replies
+  if (
+    classification.intent === "unknown" ||
+    (classification.confidence < 0.7 && classification.intent !== "not_interested")
+  ) {
+    try {
+      await db
+        .prepare(
+          `INSERT INTO outreach_handoffs
+           (id, tenant_id, lead_id, reply_id, reason, priority, status, created_at)
+           VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'open', ?7)`
+        )
+        .bind(
+          uid(), tenantId, reply.lead_id, reply.id,
+          classification.intent === "unknown" ? "ai_uncertain" : "complex_question",
+          classification.intent === "unknown" ? "normal" : "high",
+          ts
+        )
+        .run();
+    } catch { /* handoff creation is best-effort */ }
+  }
+
   // 5. Dispatch via send provider
   const outreachSettingsRaw = await kv.get(`outreach:settings:${tenantId}`);
   const outreachSettings = outreachSettingsRaw ? JSON.parse(outreachSettingsRaw) : { sendMode: "safe" };
-  const provider = resolveProvider(outreachSettings.sendMode || "safe");
+  const provider = resolveProvider(outreachSettings.sendMode || "safe", {
+    RESEND_API_KEY: ctx.resendApiKey,
+    EMAIL_FROM: ctx.emailFrom,
+  });
 
   const leadDetail = await db
     .prepare("SELECT contact_email, line_user_id FROM sales_leads WHERE id = ?1 AND tenant_id = ?2")
@@ -188,15 +223,22 @@ export async function processReply(
     errorMsg = "no_contact_info";
   }
 
-  // 6. Update reply record
+  // 6. Update reply record (mark handled + resolved if sent)
   await db
     .prepare(
       `UPDATE outreach_replies
-       SET ai_handled = 1, ai_response = ?1, ai_response_sent = ?2
-       WHERE id = ?3 AND tenant_id = ?4`
+       SET ai_handled = 1, ai_response = ?1, ai_response_sent = ?2, status = ?3
+       WHERE id = ?4 AND tenant_id = ?5`
     )
-    .bind(generated.response, sent ? 1 : 0, reply.id, tenantId)
+    .bind(generated.response, sent ? 1 : 0, sent ? "resolved" : "open", reply.id, tenantId)
     .run();
+
+  // 6.5. Auto-suppress on unsubscribe intent (AFTER successful send of confirmation)
+  if (classification.intent === "unsubscribe" && sent) {
+    const unsubKey = `outreach:unsub:${tenantId}:${reply.lead_id}`;
+    await kv.put(unsubKey, "1");
+    console.log(`[reply-dispatcher] Auto-suppressed lead=${reply.lead_id} tenant=${tenantId} (unsubscribe intent)`);
+  }
 
   // 7. Update lead: ai_reply_count + last_ai_reply_at
   if (sent) {

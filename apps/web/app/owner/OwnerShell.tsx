@@ -20,6 +20,9 @@ import {
   Zap,
   Clock,
   MessageSquareReply,
+  Activity,
+  UserCheck,
+  FlaskConical,
 } from "lucide-react";
 
 function Sidebar({
@@ -45,6 +48,9 @@ function Sidebar({
     { href: "/owner/outreach/batches", label: "自動バッチ", icon: Zap },
     { href: "/owner/outreach/automation", label: "スケジューラ", icon: Clock },
     { href: "/owner/outreach/replies", label: "Auto Reply", icon: MessageSquareReply },
+    { href: "/owner/outreach/monitoring", label: "モニタリング", icon: Activity },
+    { href: "/owner/outreach/handoffs", label: "ハンドオフ", icon: UserCheck },
+    { href: "/owner/outreach/close-variants", label: "クロージング", icon: FlaskConical },
     { href: "/owner/outreach/settings", label: "配信設定", icon: Settings2 },
   ];
 

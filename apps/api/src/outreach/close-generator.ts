@@ -119,6 +119,8 @@ export interface GenerateCloseResponseInput {
   storeName: string;
   settings: CloseSettings;
   openaiApiKey?: string;
+  /** Phase 18: Learning context for win-pattern injection */
+  learningContext?: { topTone?: { key: string } | null; topHypothesis?: { key: string; label: string } | null } | null;
 }
 
 export async function generateCloseResponse(

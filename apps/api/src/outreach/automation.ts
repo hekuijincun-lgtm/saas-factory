@@ -418,7 +418,8 @@ async function executeAutoSend(
   schedule: OutreachSchedule,
   settings: OutreachSettings,
   uid: UidFn,
-  now: NowFn
+  now: NowFn,
+  env: { RESEND_API_KEY?: string; EMAIL_FROM?: string }
 ): Promise<AutoSendResult> {
   const result: AutoSendResult = { sentCount: 0, skippedCount: 0, reviewCount: 0, skippedReasons: {} };
 
@@ -663,7 +664,10 @@ async function executeScheduleRun(
         ? { ...DEFAULT_OUTREACH_SETTINGS, ...JSON.parse(settingsRaw) }
         : { ...DEFAULT_OUTREACH_SETTINGS };
 
-      sendResult = await executeAutoSend(db, kv, tenantId, schedule, settings, uid, now);
+      sendResult = await executeAutoSend(db, kv, tenantId, schedule, settings, uid, now, {
+        RESEND_API_KEY: env.RESEND_API_KEY,
+        EMAIL_FROM: env.EMAIL_FROM,
+      });
     }
 
     // ── Update run record ──

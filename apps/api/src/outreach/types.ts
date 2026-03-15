@@ -738,6 +738,15 @@ export type ReplyIntent =
 
 export type ReplySource = "email" | "instagram" | "line" | "webform";
 
+export type ReplyStatus = "open" | "in_progress" | "resolved" | "dismissed";
+
+export const REPLY_STATUS_LABELS: Record<ReplyStatus, string> = {
+  open: "未対応",
+  in_progress: "対応中",
+  resolved: "対応済み",
+  dismissed: "却下",
+};
+
 export interface OutreachReply {
   id: string;
   tenant_id: string;
@@ -746,6 +755,9 @@ export interface OutreachReply {
   message_id: string | null;
   reply_text: string;
   reply_source: ReplySource;
+  from_email: string | null;
+  subject: string | null;
+  status: ReplyStatus;
   sentiment: string | null;
   intent: ReplyIntent | null;
   intent_confidence: number | null;

@@ -1,8 +1,8 @@
 // Outreach OS — Send Provider Abstraction
 // ============================================================
 // Provider interface for sending outreach messages.
-// Phase 1: SafeModeSender (logs only, no real send).
-// Future: EmailSender, LineSender, InstagramDmSender.
+// - SafeModeSender: logs only, no real send (safe mode).
+// - RealModeSender: email via Resend API; other channels return explicit failure.
 
 export interface SendResult {
   success: boolean;
@@ -53,16 +53,122 @@ export class SafeModeSender implements SendProvider {
   }
 }
 
+// ── Real Mode Provider (email via Resend) ─────────────────────────────────
+
+export interface RealModeEnv {
+  RESEND_API_KEY?: string;
+  EMAIL_FROM?: string;
+}
+
+/**
+ * Real mode sender.
+ * - email: sends via Resend API (requires RESEND_API_KEY).
+ * - line / instagram_dm: returns explicit failure (not yet implemented).
+ */
+export class RealModeSender implements SendProvider {
+  readonly name = "real_mode";
+  private resendApiKey: string;
+  private emailFrom: string;
+
+  constructor(env: RealModeEnv) {
+    this.resendApiKey = env.RESEND_API_KEY ?? "";
+    this.emailFrom = env.EMAIL_FROM ?? "Outreach <no-reply@saas-factory.app>";
+  }
+
+  async send(req: SendRequest): Promise<SendResult> {
+    // Only email is supported in real mode for now
+    if (req.channel !== "email") {
+      console.warn(`[RealModeSender] Channel "${req.channel}" is not yet supported for real sending`);
+      return {
+        success: false,
+        error: `real_send_not_supported: channel "${req.channel}" は未対応です。Safeモードにするか、emailチャネルを使用してください。`,
+        provider: this.name,
+      };
+    }
+
+    if (!this.resendApiKey) {
+      console.error("[RealModeSender] RESEND_API_KEY is not configured");
+      return {
+        success: false,
+        error: "RESEND_API_KEY が設定されていません。Workers の環境変数を確認してください。",
+        provider: this.name,
+      };
+    }
+
+    if (!req.to) {
+      return {
+        success: false,
+        error: "送信先メールアドレスが指定されていません",
+        provider: this.name,
+      };
+    }
+
+    try {
+      const res = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${this.resendApiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          from: this.emailFrom,
+          to: [req.to],
+          subject: req.subject || "(件名なし)",
+          html: req.body,
+        }),
+      });
+
+      if (!res.ok) {
+        const errText = await res.text().catch(() => "(unreadable)");
+        console.error(`[RealModeSender] Resend API error ${res.status}:`, errText);
+        return {
+          success: false,
+          error: `Resend送信失敗 (HTTP ${res.status}): ${errText.slice(0, 200)}`,
+          provider: this.name,
+        };
+      }
+
+      const data = await res.json<{ id?: string }>();
+      return {
+        success: true,
+        messageId: data.id || `resend_${Date.now()}`,
+        provider: this.name,
+      };
+    } catch (err: any) {
+      console.error("[RealModeSender] Unexpected error:", err);
+      return {
+        success: false,
+        error: `送信中にエラーが発生しました: ${err.message || "unknown"}`,
+        provider: this.name,
+      };
+    }
+  }
+}
+
 // ── Provider factory ──────────────────────────────────────────────────────
 
 /**
  * Resolve send provider based on mode.
- * 'real' still returns SafeModeSender (placeholder until real providers).
+ * - 'safe': always returns SafeModeSender (logs only).
+ * - 'real': returns RealModeSender (email via Resend). Requires env with RESEND_API_KEY.
+ *           Returns a FailingModeSender if RESEND_API_KEY is not set (explicit failure, not silent fallback).
  */
-export function resolveProvider(sendMode: "safe" | "real"): SendProvider {
+export function resolveProvider(sendMode: "safe" | "real", env?: RealModeEnv): SendProvider {
   if (sendMode === "real") {
-    console.warn("[resolveProvider] Real mode requested — still using SafeModeSender (no real provider configured)");
-    return new SafeModeSender();
+    if (env?.RESEND_API_KEY) {
+      return new RealModeSender(env);
+    }
+    console.error("[resolveProvider] Real mode requested but RESEND_API_KEY not available — returning explicit failure provider");
+    return {
+      name: "real_mode_unconfigured",
+      async send(): Promise<SendResult> {
+        return {
+          success: false,
+          error: "RESEND_API_KEY が未設定のため Real mode で送信できません。Workers の環境変数を確認してください。",
+          provider: "real_mode_unconfigured",
+        };
+      },
+    };
   }
   return new SafeModeSender();
 }
@@ -75,8 +181,8 @@ export interface RateLimitConfig {
 }
 
 const DEFAULT_RATE_LIMIT: RateLimitConfig = {
-  dailyCap: 50,
-  perTenantPerHour: 10,
+  dailyCap: 200,
+  perTenantPerHour: 20,
 };
 
 /**

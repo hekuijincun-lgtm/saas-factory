@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import { useOwnerTenantId } from "@/src/lib/useOwnerTenantId";
 import {
   MessageSquare,
   RefreshCw,
@@ -50,11 +51,13 @@ import {
   markReplyWon,
   markReplyLost,
   fetchCloseInsights,
+  updateReplyStatus,
 } from "@/app/lib/outreachApi";
-
-const TENANT_ID = "default";
+import type { ReplyStatus } from "@/src/types/outreach";
+import { REPLY_STATUS_LABELS, REPLY_STATUS_COLORS } from "@/src/types/outreach";
 
 export default function OutreachRepliesClient() {
+  const { tenantId, loading: tenantLoading } = useOwnerTenantId();
   const [replies, setReplies] = useState<OutreachReply[]>([]);
   const [unhandled, setUnhandled] = useState<OutreachReply[]>([]);
   const [logs, setLogs] = useState<OutreachReplyLog[]>([]);
@@ -63,7 +66,9 @@ export default function OutreachRepliesClient() {
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<"all" | "unhandled" | "logs" | "settings" | "close-logs" | "close-settings">("all");
   const [toast, setToast] = useState("");
+  const [error, setError] = useState<string | null>(null);
   const [intentFilter, setIntentFilter] = useState<string>("");
+  const [statusFilter, setStatusFilter] = useState<string>("");
   const [processing, setProcessing] = useState<string | null>(null);
   const [closeSettings, setCloseSettingsState] = useState<CloseSettings>(DEFAULT_CLOSE_SETTINGS);
   const [closeLogs, setCloseLogs] = useState<OutreachCloseLog[]>([]);
@@ -75,14 +80,16 @@ export default function OutreachRepliesClient() {
   }, []);
 
   const fetchAll = useCallback(async () => {
+    if (!tenantId) return;
     setLoading(true);
+    setError(null);
     try {
       const [r, u, l, s, st] = await Promise.all([
-        fetchAutoReplies(TENANT_ID, { intent: intentFilter || undefined, limit: 50 }),
-        fetchUnhandledReplies(TENANT_ID),
-        fetchReplyLogs(TENANT_ID, 30),
-        fetchAutoReplySettings(TENANT_ID),
-        fetchAutoReplyStats(TENANT_ID),
+        fetchAutoReplies(tenantId, { intent: intentFilter || undefined, limit: 50 }),
+        fetchUnhandledReplies(tenantId),
+        fetchReplyLogs(tenantId, 30),
+        fetchAutoReplySettings(tenantId),
+        fetchAutoReplyStats(tenantId),
       ]);
       setReplies(r);
       setUnhandled(u);
@@ -90,15 +97,16 @@ export default function OutreachRepliesClient() {
       setSettings(s);
       setStats(st);
       // Phase 15: fetch close data (non-blocking)
-      fetchCloseSettings(TENANT_ID).then(setCloseSettingsState).catch(() => {});
-      fetchCloseLogs(TENANT_ID, 30).then(setCloseLogs).catch(() => {});
-      fetchCloseInsights(TENANT_ID).then(setCloseInsights).catch(() => {});
+      fetchCloseSettings(tenantId).then(setCloseSettingsState).catch(() => {});
+      fetchCloseLogs(tenantId, 30).then(setCloseLogs).catch(() => {});
+      fetchCloseInsights(tenantId).then(setCloseInsights).catch(() => {});
     } catch (err: any) {
       console.error("Failed to fetch replies:", err);
+      setError(err.message || "データの読み込みに失敗しました");
     } finally {
       setLoading(false);
     }
-  }, [intentFilter]);
+  }, [tenantId, intentFilter]);
 
   useEffect(() => {
     fetchAll();
@@ -107,7 +115,7 @@ export default function OutreachRepliesClient() {
   const handleExecute = async (replyId: string) => {
     setProcessing(replyId);
     try {
-      await executeAutoReply(TENANT_ID, replyId);
+      await executeAutoReply(tenantId, replyId);
       showToast("AI返信を実行しました");
       await fetchAll();
     } catch (err: any) {
@@ -120,7 +128,7 @@ export default function OutreachRepliesClient() {
   const handleProcessAll = async () => {
     setProcessing("all");
     try {
-      const result = await processAllUnhandledReplies(TENANT_ID);
+      const result = await processAllUnhandledReplies(tenantId);
       showToast(`処理完了: ${result.sent}件送信 / ${result.skipped}件スキップ / ${result.errors}件エラー`);
       await fetchAll();
     } catch (err: any) {
@@ -132,7 +140,7 @@ export default function OutreachRepliesClient() {
 
   const handleSaveSettings = async (updates: Partial<AutoReplySettings>) => {
     try {
-      const saved = await saveSettingsApi(TENANT_ID, updates);
+      const saved = await saveSettingsApi(tenantId, updates);
       setSettings(saved);
       showToast("設定を保存しました");
     } catch (err: any) {
@@ -143,7 +151,7 @@ export default function OutreachRepliesClient() {
   const handleCloseEvaluate = async (replyId: string) => {
     setProcessing(replyId);
     try {
-      const result = await closeEvaluateReply(TENANT_ID, replyId);
+      const result = await closeEvaluateReply(tenantId, replyId);
       showToast(`Close評価完了: ${result.close_intent} (${result.deal_temperature})`);
       await fetchAll();
     } catch (err: any) {
@@ -156,7 +164,7 @@ export default function OutreachRepliesClient() {
   const handleCloseRespond = async (replyId: string) => {
     setProcessing(replyId);
     try {
-      const result = await closeRespondToReply(TENANT_ID, replyId);
+      const result = await closeRespondToReply(tenantId, replyId);
       showToast(`Close返信生成: ${result.response_type}`);
       await fetchAll();
     } catch (err: any) {
@@ -168,7 +176,7 @@ export default function OutreachRepliesClient() {
 
   const handleHandoff = async (replyId: string) => {
     try {
-      await handoffReply(TENANT_ID, replyId);
+      await handoffReply(tenantId, replyId);
       showToast("人間にエスカレーションしました");
       await fetchAll();
     } catch (err: any) {
@@ -178,7 +186,7 @@ export default function OutreachRepliesClient() {
 
   const handleMarkWon = async (replyId: string) => {
     try {
-      await markReplyWon(TENANT_ID, replyId);
+      await markReplyWon(tenantId, replyId);
       showToast("成約としてマークしました");
       await fetchAll();
     } catch (err: any) {
@@ -188,7 +196,7 @@ export default function OutreachRepliesClient() {
 
   const handleMarkLost = async (replyId: string) => {
     try {
-      await markReplyLost(TENANT_ID, replyId);
+      await markReplyLost(tenantId, replyId);
       showToast("失注としてマークしました");
       await fetchAll();
     } catch (err: any) {
@@ -196,9 +204,19 @@ export default function OutreachRepliesClient() {
     }
   };
 
+  const handleStatusChange = async (replyId: string, status: ReplyStatus) => {
+    try {
+      await updateReplyStatus(tenantId, replyId, status);
+      showToast(`ステータスを「${REPLY_STATUS_LABELS[status]}」に変更しました`);
+      await fetchAll();
+    } catch (err: any) {
+      showToast("エラー: " + (err.message || "変更失敗"));
+    }
+  };
+
   const handleSaveCloseSettings = async (updates: Partial<CloseSettings>) => {
     try {
-      const saved = await saveCloseSettingsApi(TENANT_ID, updates);
+      const saved = await saveCloseSettingsApi(tenantId, updates);
       setCloseSettingsState(saved);
       showToast("Close設定を保存しました");
     } catch (err: any) {
@@ -215,12 +233,24 @@ export default function OutreachRepliesClient() {
     { key: "close-settings" as const, label: "Close 設定", icon: Settings },
   ];
 
+  if (!tenantId || tenantLoading) {
+    return <div className="p-6 text-sm text-gray-500">読み込み中...</div>;
+  }
+
   return (
     <div className="space-y-6">
       {/* Toast */}
       {toast && (
         <div className="fixed top-4 right-4 z-50 bg-gray-900 text-white px-4 py-2 rounded-lg shadow-lg text-sm">
           {toast}
+        </div>
+      )}
+
+      {/* Error banner */}
+      {error && (
+        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm flex items-center justify-between">
+          <span>{error}</span>
+          <button onClick={() => { setError(null); fetchAll(); }} className="text-red-500 hover:text-red-700 text-xs ml-4">再試行</button>
         </div>
       )}
 
@@ -282,7 +312,7 @@ export default function OutreachRepliesClient() {
       {/* Tab Content */}
       {tab === "all" && (
         <div className="space-y-3">
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
             <select
               value={intentFilter}
               onChange={(e) => setIntentFilter(e.target.value)}
@@ -293,11 +323,23 @@ export default function OutreachRepliesClient() {
                 <option key={k} value={k}>{REPLY_INTENT_LABELS[k]}</option>
               ))}
             </select>
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="text-sm border border-gray-200 rounded-lg px-3 py-1.5"
+            >
+              <option value="">全ステータス</option>
+              {(Object.keys(REPLY_STATUS_LABELS) as ReplyStatus[]).map((k) => (
+                <option key={k} value={k}>{REPLY_STATUS_LABELS[k]}</option>
+              ))}
+            </select>
           </div>
           <ReplyList
-            replies={replies} onExecute={handleExecute} processing={processing}
+            replies={statusFilter ? replies.filter(r => r.status === statusFilter) : replies}
+            onExecute={handleExecute} processing={processing}
             onCloseEvaluate={handleCloseEvaluate} onCloseRespond={handleCloseRespond}
             onHandoff={handleHandoff} onMarkWon={handleMarkWon} onMarkLost={handleMarkLost}
+            onStatusChange={handleStatusChange}
           />
         </div>
       )}
@@ -317,7 +359,7 @@ export default function OutreachRepliesClient() {
           <ReplyList
             replies={unhandled} onExecute={handleExecute} processing={processing}
             onCloseEvaluate={handleCloseEvaluate} onCloseRespond={handleCloseRespond}
-            onHandoff={handleHandoff}
+            onHandoff={handleHandoff} onStatusChange={handleStatusChange}
           />
         </div>
       )}
@@ -447,6 +489,7 @@ function ReplyList({
   onHandoff,
   onMarkWon,
   onMarkLost,
+  onStatusChange,
 }: {
   replies: OutreachReply[];
   onExecute: (id: string) => void;
@@ -456,6 +499,7 @@ function ReplyList({
   onHandoff?: (id: string) => void;
   onMarkWon?: (id: string) => void;
   onMarkLost?: (id: string) => void;
+  onStatusChange?: (id: string, status: ReplyStatus) => void;
 }) {
   if (replies.length === 0) {
     return <div className="text-center py-12 text-gray-400">返信データなし</div>;
@@ -469,6 +513,11 @@ function ReplyList({
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 mb-1 flex-wrap">
                 <span className="font-medium text-gray-900">{r.store_name || "—"}</span>
+                {r.status && (
+                  <span className={`px-2 py-0.5 rounded-full text-xs ${REPLY_STATUS_COLORS[r.status] || "bg-gray-100"}`}>
+                    {REPLY_STATUS_LABELS[r.status] || r.status}
+                  </span>
+                )}
                 {r.intent && (
                   <span className={`px-2 py-0.5 rounded-full text-xs ${REPLY_INTENT_COLORS[r.intent] || "bg-gray-100"}`}>
                     {REPLY_INTENT_LABELS[r.intent] || r.intent}
@@ -495,6 +544,13 @@ function ReplyList({
                   <span className="px-2 py-0.5 rounded-full text-xs bg-gray-100 text-gray-600">処理済(未送信)</span>
                 ) : null}
               </div>
+              {/* From email & subject */}
+              {(r.from_email || r.subject) && (
+                <div className="text-xs text-gray-500 mb-1">
+                  {r.from_email && <span className="mr-3">From: {r.from_email}</span>}
+                  {r.subject && <span>件名: {r.subject}</span>}
+                </div>
+              )}
               <p className="text-sm text-gray-700 line-clamp-2">{r.reply_text}</p>
               {r.ai_response && (
                 <div className="mt-2 p-2 bg-blue-50 rounded-lg text-sm text-blue-800">
@@ -570,6 +626,17 @@ function ReplyList({
                 >
                   失注
                 </button>
+              )}
+              {onStatusChange && (
+                <select
+                  value={r.status || "open"}
+                  onChange={(e) => onStatusChange(r.id, e.target.value as ReplyStatus)}
+                  className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 mt-1"
+                >
+                  {(Object.keys(REPLY_STATUS_LABELS) as ReplyStatus[]).map((s) => (
+                    <option key={s} value={s}>{REPLY_STATUS_LABELS[s]}</option>
+                  ))}
+                </select>
               )}
             </div>
           </div>

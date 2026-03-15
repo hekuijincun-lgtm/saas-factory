@@ -64,6 +64,11 @@ import type {
   OutreachReplyLog,
   AutoReplySettings,
   AutoReplyStats,
+  HealthResult,
+  MonitoringTimeSeries,
+  OutreachHandoff,
+  OutreachCloseVariant,
+  CloseAnalytics,
 } from "@/src/types/outreach";
 
 // ── Leads ──────────────────────────────────────────────────────────────────
@@ -1256,6 +1261,14 @@ export async function processAllUnhandledReplies(
   return res.data;
 }
 
+export async function updateReplyStatus(
+  tenantId: string,
+  replyId: string,
+  status: "open" | "in_progress" | "resolved" | "dismissed"
+): Promise<void> {
+  await apiPut(`/admin/outreach/replies/${replyId}/status`, { status }, { tenantId });
+}
+
 // ── Phase 15: Auto Close AI ─────────────────────────────────────────────
 
 import type {
@@ -1396,6 +1409,107 @@ export async function fetchMeetingSuggestion(
   const res = await apiPost<{ ok: boolean; data: MeetingSuggestion }>(
     `/admin/outreach/replies/${replyId}/meeting-suggest`,
     {},
+    { tenantId }
+  );
+  return res.data;
+}
+
+// ── Phase 18: Monitoring & Guard Rails ──────────────────────────────────
+
+export async function fetchHealth(tenantId: string): Promise<HealthResult> {
+  const res = await apiGet<{ ok: boolean } & HealthResult>(
+    `/admin/outreach/health`,
+    { tenantId }
+  );
+  return res;
+}
+
+export async function fetchMonitoring(
+  tenantId: string,
+  days: number = 14
+): Promise<MonitoringTimeSeries[]> {
+  const res = await apiGet<{ ok: boolean; data: MonitoringTimeSeries[] }>(
+    `/admin/outreach/monitoring?days=${days}`,
+    { tenantId }
+  );
+  return res.data;
+}
+
+export async function emergencyPause(
+  tenantId: string,
+  reason: string
+): Promise<void> {
+  await apiPost<{ ok: boolean }>(
+    `/admin/outreach/emergency-pause`,
+    { reason },
+    { tenantId }
+  );
+}
+
+export async function emergencyResume(tenantId: string): Promise<void> {
+  await apiPost<{ ok: boolean }>(
+    `/admin/outreach/emergency-resume`,
+    {},
+    { tenantId }
+  );
+}
+
+// ── Handoffs ──
+
+export async function fetchHandoffs(
+  tenantId: string,
+  status?: string
+): Promise<OutreachHandoff[]> {
+  const qs = status ? `&status=${status}` : "";
+  const res = await apiGet<{ ok: boolean; data: OutreachHandoff[] }>(
+    `/admin/outreach/handoffs?${qs}`,
+    { tenantId }
+  );
+  return res.data;
+}
+
+export async function updateHandoff(
+  tenantId: string,
+  handoffId: string,
+  patch: { status?: string; assigned_to?: string; resolution_notes?: string }
+): Promise<void> {
+  await apiRequest<{ ok: boolean }>(
+    `/admin/outreach/handoffs/${handoffId}`,
+    { method: "PATCH", body: JSON.stringify(patch), headers: { "Content-Type": "application/json" }, tenantId }
+  );
+}
+
+// ── Close Variants ──
+
+export async function fetchCloseVariants(
+  tenantId: string,
+  closeType?: string
+): Promise<OutreachCloseVariant[]> {
+  const qs = closeType ? `&close_type=${closeType}` : "";
+  const res = await apiGet<{ ok: boolean; data: OutreachCloseVariant[] }>(
+    `/admin/outreach/close/variants?${qs}`,
+    { tenantId }
+  );
+  return res.data;
+}
+
+export async function createCloseVariant(
+  tenantId: string,
+  input: { close_type: string; variant_key: string; subject_template?: string; body_template: string }
+): Promise<{ id: string }> {
+  const res = await apiPost<{ ok: boolean; id: string }>(
+    `/admin/outreach/close/variants`,
+    input,
+    { tenantId }
+  );
+  return { id: res.id };
+}
+
+// ── Close Analytics ──
+
+export async function fetchCloseAnalytics(tenantId: string): Promise<CloseAnalytics> {
+  const res = await apiGet<{ ok: boolean; data: CloseAnalytics }>(
+    `/admin/outreach/analytics/close`,
     { tenantId }
   );
   return res.data;

@@ -10,11 +10,16 @@ const REPLY_TEMPLATES: Record<ReplyIntent, string> = {
   pricing: `ありがとうございます！
 料金は現在9,800円/月です。
 詳細はこちらをご覧ください。
-ご不明点があればお気軽にどうぞ。`,
+ご不明点があればお気軽にどうぞ。
+
+▼ 10分だけお時間ください — デモ予約はこちら
+{{booking_url}}`,
 
   interested: `ありがとうございます！
-もしよければ5分ほどデモさせていただけます。
-こちらから日程をお選びいただけます。`,
+もしよければ10分ほどデモさせていただけます。
+
+▼ こちらから日程をお選びいただけます
+{{booking_url}}`,
 
   question: `ご質問ありがとうございます。
 以下の通りお答えいたします:`,
@@ -28,7 +33,12 @@ const REPLY_TEMPLATES: Record<ReplyIntent, string> = {
 
   demo: `ありがとうございます！
 ぜひデモをご案内させてください。
-ご都合の良い日時を教えていただけますか？`,
+
+▼ こちらから10分だけお時間ください
+{{booking_url}}`,
+
+  unsubscribe: `承知しました。今後メールをお送りしないよう設定いたしました。
+ご迷惑をおかけし申し訳ございませんでした。`,
 
   unknown: "",
 };
@@ -38,6 +48,7 @@ export interface GenerateReplyInput {
   replyText: string;
   storeName: string;
   openaiApiKey?: string;
+  bookingUrl?: string;
 }
 
 export interface GenerateReplyResult {
@@ -53,14 +64,18 @@ export interface GenerateReplyResult {
 export async function generateReply(
   input: GenerateReplyInput
 ): Promise<GenerateReplyResult> {
-  const { intent, replyText, storeName, openaiApiKey } = input;
+  const { intent, replyText, storeName, openaiApiKey, bookingUrl } = input;
 
   // Unknown intent → needs human review, no auto-reply
   if (intent === "unknown") {
     return { response: "", method: "template" };
   }
 
-  const template = REPLY_TEMPLATES[intent];
+  let template = REPLY_TEMPLATES[intent];
+
+  // Inject booking URL (or remove placeholder if not available)
+  const url = bookingUrl || "";
+  template = template.replace(/\{\{booking_url\}\}/g, url || "(予約URLは管理画面で設定してください)");
 
   // Try AI-enhanced reply for question intent (needs contextual answer)
   if (intent === "question" && openaiApiKey) {

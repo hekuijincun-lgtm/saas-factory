@@ -1187,9 +1187,26 @@ export type ReplyIntent =
   | "later"
   | "pricing"
   | "demo"
+  | "unsubscribe"
   | "unknown";
 
 export type ReplySource = "email" | "instagram" | "line" | "webform";
+
+export type ReplyStatus = "open" | "in_progress" | "resolved" | "dismissed";
+
+export const REPLY_STATUS_LABELS: Record<ReplyStatus, string> = {
+  open: "未対応",
+  in_progress: "対応中",
+  resolved: "対応済み",
+  dismissed: "却下",
+};
+
+export const REPLY_STATUS_COLORS: Record<ReplyStatus, string> = {
+  open: "bg-red-100 text-red-700",
+  in_progress: "bg-yellow-100 text-yellow-700",
+  resolved: "bg-green-100 text-green-700",
+  dismissed: "bg-gray-100 text-gray-600",
+};
 
 export interface OutreachReply {
   id: string;
@@ -1199,6 +1216,9 @@ export interface OutreachReply {
   message_id: string | null;
   reply_text: string;
   reply_source: ReplySource;
+  from_email: string | null;
+  subject: string | null;
+  status: ReplyStatus;
   sentiment: string | null;
   intent: ReplyIntent | null;
   intent_confidence: number | null;
@@ -1252,6 +1272,7 @@ export const REPLY_INTENT_LABELS: Record<ReplyIntent, string> = {
   later: "後日",
   pricing: "料金確認",
   demo: "デモ希望",
+  unsubscribe: "配信停止",
   unknown: "不明",
 };
 
@@ -1262,6 +1283,7 @@ export const REPLY_INTENT_COLORS: Record<ReplyIntent, string> = {
   later: "bg-yellow-100 text-yellow-700",
   pricing: "bg-purple-100 text-purple-700",
   demo: "bg-emerald-100 text-emerald-700",
+  unsubscribe: "bg-orange-100 text-orange-700",
   unknown: "bg-gray-100 text-gray-600",
 };
 

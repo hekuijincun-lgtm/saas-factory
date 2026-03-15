@@ -71,7 +71,7 @@ export async function createBatchJob(
     quality_threshold: qualityThreshold,
     mode: input.mode === "approved_send" ? "approved_send" : "review_only",
     status: "pending",
-    source_type: input.source_type ?? "directory",
+    source_type: input.source_type ?? "map",
     created_count: 0,
     imported_count: 0,
     draft_count: 0,

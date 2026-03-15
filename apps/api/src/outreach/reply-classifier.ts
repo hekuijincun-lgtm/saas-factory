@@ -168,6 +168,7 @@ async function classifyIntentWithAI(
 - pricing: 料金・費用・コストについて聞いている
 - demo: デモ・体験・試用を希望している
 - not_interested: 不要、結構です、興味ない
+- unsubscribe: 配信停止、メール不要、今後送らないで、unsubscribe
 - later: 今は忙しい、また後で、検討します
 - unknown: 上記に当てはまらない、自動返信、不在通知
 
@@ -196,7 +197,7 @@ JSON形式で返してください:
   if (!content) throw new Error("empty response");
 
   const parsed = JSON.parse(content);
-  const validIntents: ReplyIntent[] = ["question", "interested", "not_interested", "later", "pricing", "demo", "unknown"];
+  const validIntents: ReplyIntent[] = ["question", "interested", "not_interested", "later", "pricing", "demo", "unsubscribe", "unknown"];
   const validSentiments = ["positive", "neutral", "negative"] as const;
 
   return {
@@ -215,8 +216,12 @@ function classifyIntentWithKeywords(text: string): IntentClassifyResult {
   const questionKw = ["どう", "どんな", "何が", "できます", "対応", "教えて", "質問"];
   const interestedKw = ["興味", "詳しく", "資料", "お話", "ぜひ", "検討したい", "聞きたい"];
   const notInterestedKw = ["不要", "結構です", "興味ない", "必要ない", "お断り", "いらない"];
+  const unsubscribeKw = ["配信停止", "配信解除", "メール不要", "送らないで", "unsubscribe", "opt out", "opt-out", "停止して", "解除して"];
   const laterKw = ["忙しい", "また後で", "今は", "検討します", "改めて", "時期を見て"];
 
+  if (unsubscribeKw.some((kw) => lower.includes(kw))) {
+    return { intent: "unsubscribe", sentiment: "negative", confidence: 0.9, reason: "keyword_match" };
+  }
   if (notInterestedKw.some((kw) => lower.includes(kw))) {
     return { intent: "not_interested", sentiment: "negative", confidence: 0.7, reason: "keyword_match" };
   }

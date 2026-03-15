@@ -50,7 +50,7 @@ import {
 import type { LearningPattern } from "./learning";
 import { generateCampaignDraft } from "./campaign-generator";
 import { createBatchJob, runBatchJob } from "./batches";
-import { createSchedule, updateSchedule, runScheduleNow } from "./automation";
+import { createSchedule, updateSchedule, runScheduleNow, runAutoCampaign } from "./automation";
 import {
   generateRecommendations,
   getCopilotOverview,
@@ -271,8 +271,8 @@ export function createOutreachRoutes(getTenantId: GetTenantId) {
       .run();
 
     const lead = await db
-      .prepare("SELECT * FROM sales_leads WHERE id = ?1")
-      .bind(id)
+      .prepare("SELECT * FROM sales_leads WHERE id = ?1 AND tenant_id = ?2")
+      .bind(id, tenantId)
       .first();
 
     return c.json({ ok: true, tenantId, data: lead }, 201);
@@ -318,6 +318,7 @@ export function createOutreachRoutes(getTenantId: GetTenantId) {
       ["best_offer", "best_offer"],
       ["recommended_channel", "recommended_channel"],
       ["next_action", "next_action"],
+      ["score", "score"],
     ];
 
     for (const [key, col] of fields) {
@@ -918,7 +919,7 @@ export function createOutreachRoutes(getTenantId: GetTenantId) {
     }
 
     // 4. Resolve provider via settings
-    const sender = resolveProvider(settings.sendMode);
+    const sender = resolveProvider(settings.sendMode, { RESEND_API_KEY: c.env.RESEND_API_KEY, EMAIL_FROM: c.env.EMAIL_FROM });
     const lead = await db
       .prepare("SELECT * FROM sales_leads WHERE id = ?1 AND tenant_id = ?2")
       .bind(leadId, tenantId)
@@ -1041,6 +1042,16 @@ export function createOutreachRoutes(getTenantId: GetTenantId) {
           .bind(uid(), tenantId, leadId, day7, sendTs)
           .run();
       }
+      if (settings.followupDay14Enabled) {
+        const day14 = new Date(Date.now() + 14 * 86400 * 1000).toISOString();
+        await db
+          .prepare(
+            `INSERT INTO outreach_followups (id, tenant_id, lead_id, step, scheduled_at, status, created_at)
+             VALUES (?1, ?2, ?3, 'breakup', ?4, 'scheduled', ?5)`
+          )
+          .bind(uid(), tenantId, leadId, day14, sendTs)
+          .run();
+      }
     }
 
     return c.json({
@@ -1076,11 +1087,16 @@ export function createOutreachRoutes(getTenantId: GetTenantId) {
         .prepare(
           `SELECT
              SUM(CASE WHEN status = 'sent' THEN 1 ELSE 0 END) as sent,
-             SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) as approved
+             SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) as approved,
+             SUM(CASE WHEN status = 'sent' AND EXISTS (
+               SELECT 1 FROM outreach_delivery_events e
+               WHERE e.message_id = lead_message_drafts.id AND e.tenant_id = lead_message_drafts.tenant_id
+                 AND json_extract(e.metadata_json, '$.sendMode') = 'real'
+             ) THEN 1 ELSE 0 END) as real_sent
            FROM lead_message_drafts WHERE tenant_id = ?1`
         )
         .bind(tenantId)
-        .first<{ sent: number; approved: number }>(),
+        .first<{ sent: number; approved: number; real_sent: number }>(),
       db
         .prepare(
           "SELECT AVG(score) as avg_score FROM sales_leads WHERE tenant_id = ?1 AND score IS NOT NULL"
@@ -1100,13 +1116,365 @@ export function createOutreachRoutes(getTenantId: GetTenantId) {
       data: {
         totalLeads: totalResult?.total ?? 0,
         byPipelineStage: byStage,
-        totalMessagesSent: msgStats?.sent ?? 0,
+        totalMessagesSent: msgStats?.real_sent ?? 0,
+        totalMessagesSentAll: msgStats?.sent ?? 0,
         totalApproved: (msgStats?.approved ?? 0) + (msgStats?.sent ?? 0),
         totalReplied: byStage["replied"] ?? 0,
         totalMeetings: byStage["meeting"] ?? 0,
         avgScore: scoreResult?.avg_score != null ? Math.round(scoreResult.avg_score) : null,
       },
     });
+  });
+
+  // ── GET /analytics/full-auto — Full automation dashboard ────────────────
+  app.get("/analytics/full-auto", async (c) => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    const kv = c.env.SAAS_FACTORY;
+
+    const [
+      totalLeads,
+      pipelineStats,
+      sendStats,
+      replyStats,
+      followupStats,
+      unsubCount,
+    ] = await Promise.all([
+      db.prepare("SELECT COUNT(*) as cnt FROM sales_leads WHERE tenant_id = ?1").bind(tenantId).first<{ cnt: number }>(),
+      db.prepare(
+        `SELECT pipeline_stage, COUNT(*) as cnt FROM sales_leads WHERE tenant_id = ?1 GROUP BY pipeline_stage`
+      ).bind(tenantId).all<{ pipeline_stage: string; cnt: number }>(),
+      db.prepare(
+        `SELECT
+           COUNT(*) as total_sent,
+           SUM(CASE WHEN status = 'sent' AND EXISTS (
+             SELECT 1 FROM outreach_delivery_events e
+             WHERE e.message_id = lead_message_drafts.id AND e.tenant_id = lead_message_drafts.tenant_id
+               AND json_extract(e.metadata_json, '$.sendMode') = 'real'
+           ) THEN 1 ELSE 0 END) as real_sent
+         FROM lead_message_drafts WHERE tenant_id = ?1 AND status = 'sent'`
+      ).bind(tenantId).first<{ total_sent: number; real_sent: number }>(),
+      db.prepare(
+        `SELECT
+           COUNT(*) as total_replies,
+           SUM(CASE WHEN intent IN ('interested', 'pricing', 'demo') THEN 1 ELSE 0 END) as positive_replies,
+           SUM(CASE WHEN intent = 'not_interested' THEN 1 ELSE 0 END) as negative_replies,
+           SUM(CASE WHEN intent = 'unsubscribe' THEN 1 ELSE 0 END) as unsubscribe_replies
+         FROM outreach_replies WHERE tenant_id = ?1`
+      ).bind(tenantId).first<{ total_replies: number; positive_replies: number; negative_replies: number; unsubscribe_replies: number }>(),
+      db.prepare(
+        `SELECT
+           COUNT(*) as total_followups,
+           SUM(CASE WHEN status = 'sent' THEN 1 ELSE 0 END) as sent_followups,
+           SUM(CASE WHEN step = 'breakup' AND status = 'sent' THEN 1 ELSE 0 END) as breakup_sent
+         FROM outreach_followups WHERE tenant_id = ?1`
+      ).bind(tenantId).first<{ total_followups: number; sent_followups: number; breakup_sent: number }>(),
+      db.prepare(
+        `SELECT COUNT(*) as cnt FROM sales_leads l WHERE l.tenant_id = ?1
+         AND EXISTS (SELECT 1 FROM outreach_replies r WHERE r.lead_id = l.id AND r.tenant_id = l.tenant_id AND r.intent = 'unsubscribe')`
+      ).bind(tenantId).first<{ cnt: number }>(),
+    ]);
+
+    const stages: Record<string, number> = {};
+    for (const row of pipelineStats.results ?? []) stages[row.pipeline_stage] = row.cnt;
+
+    const totalSent = sendStats?.total_sent ?? 0;
+    const realSent = sendStats?.real_sent ?? 0;
+    const totalReplies = replyStats?.total_replies ?? 0;
+    const positiveReplies = replyStats?.positive_replies ?? 0;
+    const meetings = stages["meeting"] ?? 0;
+    const customers = stages["customer"] ?? 0;
+
+    // Use real_sent as denominator for rates (safe mode sends don't generate real replies)
+    const rateDenom = realSent > 0 ? realSent : totalSent;
+
+    return c.json({
+      ok: true,
+      tenantId,
+      data: {
+        messages_sent: totalSent,
+        messages_sent_real: realSent,
+        reply_rate: rateDenom > 0 ? Math.round((totalReplies / rateDenom) * 100 * 10) / 10 : 0,
+        meeting_rate: rateDenom > 0 ? Math.round((meetings / rateDenom) * 100 * 10) / 10 : 0,
+        close_rate: rateDenom > 0 ? Math.round((customers / rateDenom) * 100 * 10) / 10 : 0,
+        positive_reply_rate: totalReplies > 0 ? Math.round((positiveReplies / totalReplies) * 100 * 10) / 10 : 0,
+        pipeline: stages,
+        followups: {
+          total: followupStats?.total_followups ?? 0,
+          sent: followupStats?.sent_followups ?? 0,
+          breakup_sent: followupStats?.breakup_sent ?? 0,
+        },
+        suppressed: unsubCount?.cnt ?? 0,
+        unsubscribe_replies: replyStats?.unsubscribe_replies ?? 0,
+      },
+    });
+  });
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // Phase 18: Monitoring, Health, Emergency Pause, Close Analytics, Handoffs
+  // ══════════════════════════════════════════════════════════════════════════
+
+  // ── GET /health — System health check ────────────────────────────────────
+  app.get("/health", async (c) => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    const kv = c.env.SAAS_FACTORY;
+    const { getHealth } = await import("./monitoring");
+    const result = await getHealth(db, kv, tenantId);
+    return c.json({ ok: true, tenantId, data: result });
+  });
+
+  // ── GET /monitoring — Time series monitoring data ────────────────────────
+  app.get("/monitoring", async (c) => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    const days = parseInt(c.req.query("days") || "14", 10);
+    const { getMonitoringTimeSeries } = await import("./monitoring");
+    const series = await getMonitoringTimeSeries(db, tenantId, Math.min(days, 90));
+    return c.json({ ok: true, tenantId, data: series });
+  });
+
+  // ── POST /emergency-pause — Emergency stop ──────────────────────────────
+  app.post("/emergency-pause", async (c) => {
+    const tenantId = getTenantId(c);
+    const kv = c.env.SAAS_FACTORY;
+    const body = await c.req.json<{ reason?: string }>().catch(() => ({}));
+    const { emergencyPause } = await import("./monitoring");
+    await emergencyPause(kv, tenantId, (body as any).reason || "Manual emergency pause");
+    await logAudit(c.env.DB, tenantId, "admin", "outreach.emergency_pause", { reason: (body as any).reason });
+    return c.json({ ok: true, tenantId, paused: true });
+  });
+
+  // ── POST /emergency-resume — Resume from pause ──────────────────────────
+  app.post("/emergency-resume", async (c) => {
+    const tenantId = getTenantId(c);
+    const kv = c.env.SAAS_FACTORY;
+    const { emergencyResume } = await import("./monitoring");
+    await emergencyResume(kv, tenantId);
+    await logAudit(c.env.DB, tenantId, "admin", "outreach.emergency_resume", {});
+    return c.json({ ok: true, tenantId, paused: false });
+  });
+
+  // ── GET /analytics/close — Close optimization analytics ─────────────────
+  app.get("/analytics/close", async (c) => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+
+    const [closeLogs, variantPerf, bookingEvents] = await Promise.all([
+      db.prepare(
+        `SELECT
+           COUNT(*) as total,
+           SUM(CASE WHEN execution_status = 'auto_sent' THEN 1 ELSE 0 END) as auto_sent,
+           SUM(CASE WHEN handoff_required = 1 THEN 1 ELSE 0 END) as handoffs,
+           SUM(CASE WHEN close_intent = 'pricing_request' THEN 1 ELSE 0 END) as pricing,
+           SUM(CASE WHEN close_intent = 'demo_request' THEN 1 ELSE 0 END) as demo,
+           SUM(CASE WHEN close_intent = 'schedule_request' THEN 1 ELSE 0 END) as schedule,
+           SUM(CASE WHEN close_intent = 'signup_request' THEN 1 ELSE 0 END) as signup
+         FROM outreach_close_logs WHERE tenant_id = ?1`
+      ).bind(tenantId).first<any>(),
+      db.prepare(
+        `SELECT close_variant_key as variant, COUNT(*) as sent,
+                SUM(CASE WHEN l.pipeline_stage = 'meeting' THEN 1 ELSE 0 END) as meetings,
+                SUM(CASE WHEN l.pipeline_stage = 'customer' THEN 1 ELSE 0 END) as closes
+         FROM outreach_close_logs cl
+         JOIN sales_leads l ON cl.lead_id = l.id AND cl.tenant_id = l.tenant_id
+         WHERE cl.tenant_id = ?1 AND cl.close_variant_key IS NOT NULL
+         GROUP BY cl.close_variant_key`
+      ).bind(tenantId).all<{ variant: string; sent: number; meetings: number; closes: number }>(),
+      db.prepare(
+        `SELECT event_type, COUNT(*) as cnt
+         FROM outreach_booking_events
+         WHERE tenant_id = ?1
+         GROUP BY event_type`
+      ).bind(tenantId).all<{ event_type: string; cnt: number }>(),
+    ]);
+
+    const bookingByType: Record<string, number> = {};
+    for (const row of bookingEvents.results ?? []) {
+      bookingByType[row.event_type] = row.cnt;
+    }
+
+    const totalMeetings = await db
+      .prepare("SELECT COUNT(*) as cnt FROM sales_leads WHERE tenant_id = ?1 AND pipeline_stage IN ('meeting', 'customer')")
+      .bind(tenantId)
+      .first<{ cnt: number }>();
+
+    return c.json({
+      ok: true,
+      tenantId,
+      data: {
+        close_messages_sent: closeLogs?.total ?? 0,
+        auto_sent: closeLogs?.auto_sent ?? 0,
+        handoffs_created: closeLogs?.handoffs ?? 0,
+        by_intent: {
+          pricing: closeLogs?.pricing ?? 0,
+          demo: closeLogs?.demo ?? 0,
+          schedule: closeLogs?.schedule ?? 0,
+          signup: closeLogs?.signup ?? 0,
+        },
+        booking_links_sent: bookingByType["link_sent"] ?? 0,
+        booking_clicked: bookingByType["clicked"] ?? 0,
+        booking_booked: bookingByType["booked"] ?? 0,
+        meetings_created: totalMeetings?.cnt ?? 0,
+        close_rate: (closeLogs?.total ?? 0) > 0
+          ? Math.round(((totalMeetings?.cnt ?? 0) / closeLogs.total) * 100 * 10) / 10
+          : 0,
+        variant_performance: (variantPerf.results ?? []).map(v => ({
+          variant: v.variant,
+          sent: v.sent,
+          meetings: v.meetings,
+          closes: v.closes,
+          meeting_rate: v.sent > 0 ? Math.round((v.meetings / v.sent) * 100 * 10) / 10 : 0,
+        })),
+      },
+    });
+  });
+
+  // ── GET /handoffs — Human handoff queue ─────────────────────────────────
+  app.get("/handoffs", async (c) => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    const status = c.req.query("status") || "open";
+    const limit = Math.min(parseInt(c.req.query("limit") || "50", 10), 100);
+
+    const rows = await db
+      .prepare(
+        `SELECT h.*, l.store_name, l.contact_email, l.pipeline_stage, l.deal_temperature,
+                r.reply_text, r.intent
+         FROM outreach_handoffs h
+         LEFT JOIN sales_leads l ON h.lead_id = l.id AND h.tenant_id = l.tenant_id
+         LEFT JOIN outreach_replies r ON h.reply_id = r.id AND h.tenant_id = r.tenant_id
+         WHERE h.tenant_id = ?1 AND h.status = ?2
+         ORDER BY CASE h.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END, h.created_at DESC
+         LIMIT ?3`
+      )
+      .bind(tenantId, status, limit)
+      .all();
+
+    return c.json({ ok: true, tenantId, data: rows.results ?? [] });
+  });
+
+  // ── POST /handoffs — Create handoff ─────────────────────────────────────
+  app.post("/handoffs", async (c) => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    const body = await c.req.json<{
+      lead_id: string; reply_id?: string; reason: string; priority?: string;
+    }>();
+
+    if (!body.lead_id || !body.reason) {
+      return c.json({ ok: false, error: "lead_id and reason are required" }, 400);
+    }
+
+    const id = uid();
+    await db
+      .prepare(
+        `INSERT INTO outreach_handoffs
+         (id, tenant_id, lead_id, reply_id, reason, priority, status, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'open', ?7)`
+      )
+      .bind(id, tenantId, body.lead_id, body.reply_id || null, body.reason, body.priority || "normal", now())
+      .run();
+
+    return c.json({ ok: true, tenantId, data: { id } });
+  });
+
+  // ── PATCH /handoffs/:id — Update handoff (assign/resolve/dismiss) ───────
+  app.patch("/handoffs/:id", async (c) => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    const handoffId = c.req.param("id");
+    const body = await c.req.json<{
+      status?: string; assigned_to?: string; resolution_notes?: string;
+    }>();
+
+    const sets: string[] = [];
+    const vals: any[] = [];
+    let idx = 1;
+
+    if (body.status) { sets.push(`status = ?${idx++}`); vals.push(body.status); }
+    if (body.assigned_to !== undefined) { sets.push(`assigned_to = ?${idx++}`); vals.push(body.assigned_to); }
+    if (body.resolution_notes !== undefined) { sets.push(`resolution_notes = ?${idx++}`); vals.push(body.resolution_notes); }
+    if (body.status === "resolved" || body.status === "dismissed") {
+      sets.push(`resolved_at = ?${idx++}`); vals.push(now());
+    }
+
+    if (sets.length === 0) return c.json({ ok: false, error: "No fields" }, 400);
+
+    vals.push(handoffId, tenantId);
+    await db
+      .prepare(`UPDATE outreach_handoffs SET ${sets.join(", ")} WHERE id = ?${idx++} AND tenant_id = ?${idx}`)
+      .bind(...vals)
+      .run();
+
+    return c.json({ ok: true, tenantId, updated: handoffId });
+  });
+
+  // ── POST /booking-events — Track booking conversion ─────────────────────
+  app.post("/booking-events", async (c) => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    const body = await c.req.json<{
+      lead_id: string; event_type: string; close_log_id?: string;
+      booking_url?: string; variant_key?: string;
+    }>();
+
+    if (!body.lead_id || !body.event_type) {
+      return c.json({ ok: false, error: "lead_id and event_type required" }, 400);
+    }
+
+    const id = uid();
+    await db
+      .prepare(
+        `INSERT INTO outreach_booking_events
+         (id, tenant_id, lead_id, close_log_id, event_type, booking_url, variant_key, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`
+      )
+      .bind(id, tenantId, body.lead_id, body.close_log_id || null, body.event_type, body.booking_url || null, body.variant_key || null, now())
+      .run();
+
+    return c.json({ ok: true, tenantId, data: { id } });
+  });
+
+  // ── GET /close/variants — List close template variants ──────────────────
+  app.get("/close/variants", async (c) => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    const closeType = c.req.query("close_type");
+
+    let q = `SELECT * FROM outreach_close_variants WHERE tenant_id = ?1 AND is_active = 1`;
+    const binds: any[] = [tenantId];
+    if (closeType) { q += ` AND close_type = ?2`; binds.push(closeType); }
+    q += ` ORDER BY close_type, variant_key`;
+
+    const rows = await db.prepare(q).bind(...binds).all();
+    return c.json({ ok: true, tenantId, data: rows.results ?? [] });
+  });
+
+  // ── POST /close/variants — Create close template variant ────────────────
+  app.post("/close/variants", async (c) => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    const body = await c.req.json<{
+      close_type: string; variant_key: string; subject_template?: string; body_template: string;
+    }>();
+
+    if (!body.close_type || !body.variant_key || !body.body_template) {
+      return c.json({ ok: false, error: "close_type, variant_key, body_template required" }, 400);
+    }
+
+    const id = uid();
+    const ts = now();
+    await db
+      .prepare(
+        `INSERT INTO outreach_close_variants
+         (id, tenant_id, close_type, variant_key, subject_template, body_template, is_active, sent_count, meeting_count, close_count, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, 0, 0, 0, ?7, ?8)`
+      )
+      .bind(id, tenantId, body.close_type, body.variant_key, body.subject_template || null, body.body_template, ts, ts)
+      .run();
+
+    return c.json({ ok: true, tenantId, data: { id } });
   });
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -1148,10 +1516,22 @@ export function createOutreachRoutes(getTenantId: GetTenantId) {
       requireApproval: body.requireApproval ?? prev.requireApproval,
       followupDay3Enabled: body.followupDay3Enabled ?? prev.followupDay3Enabled,
       followupDay7Enabled: body.followupDay7Enabled ?? prev.followupDay7Enabled,
+      followupDay14Enabled: body.followupDay14Enabled ?? prev.followupDay14Enabled,
+      autoCampaignEnabled: body.autoCampaignEnabled ?? prev.autoCampaignEnabled,
+      autoCampaignMinScore: Math.min(Math.max(body.autoCampaignMinScore ?? prev.autoCampaignMinScore, 0), 100),
       contactCooldownDays: Math.min(Math.max(body.contactCooldownDays ?? prev.contactCooldownDays, 1), 90),
       autoAnalyzeOnImport: body.autoAnalyzeOnImport ?? prev.autoAnalyzeOnImport,
       autoScoreOnImport: body.autoScoreOnImport ?? prev.autoScoreOnImport,
       defaultLpUrl: (body.defaultLpUrl ?? prev.defaultLpUrl ?? "").slice(0, 2048),
+      // Phase 18: Guard rails
+      autoCampaignPaused: body.autoCampaignPaused ?? prev.autoCampaignPaused,
+      pauseReason: body.pauseReason ?? prev.pauseReason ?? "",
+      autoLeadSupplyEnabled: body.autoLeadSupplyEnabled ?? prev.autoLeadSupplyEnabled,
+      autoCloseEnabled: body.autoCloseEnabled ?? prev.autoCloseEnabled,
+      monitoringAlertsEnabled: body.monitoringAlertsEnabled ?? prev.monitoringAlertsEnabled,
+      autoPauseEnabled: body.autoPauseEnabled ?? prev.autoPauseEnabled,
+      autoPauseFailureThreshold: Math.min(Math.max(body.autoPauseFailureThreshold ?? prev.autoPauseFailureThreshold, 1), 100),
+      autoPauseBounceThreshold: Math.min(Math.max(body.autoPauseBounceThreshold ?? prev.autoPauseBounceThreshold, 1), 100),
     };
 
     await kv.put(`outreach:settings:${tenantId}`, JSON.stringify(next));
@@ -1548,6 +1928,11 @@ export function createOutreachRoutes(getTenantId: GetTenantId) {
          FROM lead_message_drafts m
          JOIN sales_leads l ON m.lead_id = l.id AND m.tenant_id = l.tenant_id
          WHERE m.tenant_id = ?1 AND m.status = 'sent' AND m.tone IS NOT NULL
+           AND EXISTS (
+             SELECT 1 FROM outreach_delivery_events e
+             WHERE e.message_id = m.id AND e.tenant_id = m.tenant_id
+               AND json_extract(e.metadata_json, '$.sendMode') = 'real'
+           )
          GROUP BY m.tone
          ORDER BY replied_leads DESC`
       )
@@ -1706,7 +2091,7 @@ export function createOutreachRoutes(getTenantId: GetTenantId) {
         }
 
         if (existingId) {
-          const existing = await db.prepare("SELECT * FROM sales_leads WHERE id = ?1").bind(existingId).first();
+          const existing = await db.prepare("SELECT * FROM sales_leads WHERE id = ?1 AND tenant_id = ?2").bind(existingId, tenantId).first();
           if (existing) {
             const { sets, vals } = buildMergeSets(existing as any, row);
             if (sets.length > 0) {
@@ -2192,6 +2577,11 @@ export function createOutreachRoutes(getTenantId: GetTenantId) {
          JOIN sales_leads l ON m.lead_id = l.id AND m.tenant_id = l.tenant_id
          LEFT JOIN outreach_campaigns c ON m.campaign_id = c.id
          WHERE m.tenant_id = ?1 AND m.status = 'sent' AND m.campaign_id IS NOT NULL
+           AND EXISTS (
+             SELECT 1 FROM outreach_delivery_events e
+             WHERE e.message_id = m.id AND e.tenant_id = m.tenant_id
+               AND json_extract(e.metadata_json, '$.sendMode') = 'real'
+           )
          GROUP BY m.campaign_id, m.variant_key
          ORDER BY replied DESC`
       )
@@ -3574,6 +3964,8 @@ export function createOutreachRoutes(getTenantId: GetTenantId) {
     const result = await executeRecommendationAction(db, kv, tenantId, recId, "user", uid, now, {
       GOOGLE_MAPS_API_KEY: c.env.GOOGLE_MAPS_API_KEY,
       OPENAI_API_KEY: c.env.OPENAI_API_KEY,
+      RESEND_API_KEY: c.env.RESEND_API_KEY,
+      EMAIL_FROM: c.env.EMAIL_FROM,
     });
     return c.json({ ok: result.ok, tenantId, result: result.result, error: result.error });
   });
@@ -3616,6 +4008,19 @@ export function createOutreachRoutes(getTenantId: GetTenantId) {
     return c.json({ ok: true, tenantId, data: result });
   });
 
+  // POST /auto-campaign/run — Manually trigger auto campaign for this tenant
+  app.post("/auto-campaign/run", async (c) => {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    const kv = c.env.SAAS_FACTORY;
+    const result = await runAutoCampaign(db, kv, tenantId, uid, now, {
+      OPENAI_API_KEY: c.env.OPENAI_API_KEY,
+      RESEND_API_KEY: c.env.RESEND_API_KEY,
+      EMAIL_FROM: c.env.EMAIL_FROM,
+    });
+    return c.json({ ok: true, tenantId, data: result });
+  });
+
   // ── Phase 14: Auto Reply AI ────────────────────────────────────────────
 
   // POST /replies/ingest — Ingest a new reply (from webhook/manual)
@@ -3629,6 +4034,8 @@ export function createOutreachRoutes(getTenantId: GetTenantId) {
       message_id?: string;
       reply_text: string;
       reply_source?: ReplySource;
+      from_email?: string;
+      subject?: string;
     }>();
 
     if (!body.lead_id || !body.reply_text?.trim()) {
@@ -3652,10 +4059,10 @@ export function createOutreachRoutes(getTenantId: GetTenantId) {
     await db
       .prepare(
         `INSERT INTO outreach_replies
-         (id, tenant_id, lead_id, campaign_id, message_id, reply_text, reply_source, ai_handled, ai_response_sent, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, 0, ?8)`
+         (id, tenant_id, lead_id, campaign_id, message_id, reply_text, reply_source, from_email, subject, status, ai_handled, ai_response_sent, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'open', 0, 0, ?10)`
       )
-      .bind(replyId, tenantId, body.lead_id, body.campaign_id || null, body.message_id || null, body.reply_text, replySource, ts)
+      .bind(replyId, tenantId, body.lead_id, body.campaign_id || null, body.message_id || null, body.reply_text, replySource, body.from_email || null, body.subject || null, ts)
       .run();
 
     // Auto-process immediately if enabled
@@ -3680,7 +4087,7 @@ export function createOutreachRoutes(getTenantId: GetTenantId) {
         created_at: ts,
       };
       processResult = await processReply(
-        { db, kv, tenantId, openaiApiKey: c.env.OPENAI_API_KEY, uid, now },
+        { db, kv, tenantId, openaiApiKey: c.env.OPENAI_API_KEY, resendApiKey: c.env.RESEND_API_KEY, emailFrom: c.env.EMAIL_FROM, uid, now },
         reply
       );
     } else {
@@ -3788,7 +4195,7 @@ export function createOutreachRoutes(getTenantId: GetTenantId) {
     }
 
     const result = await processReply(
-      { db, kv, tenantId, openaiApiKey: c.env.OPENAI_API_KEY, uid, now },
+      { db, kv, tenantId, openaiApiKey: c.env.OPENAI_API_KEY, resendApiKey: c.env.RESEND_API_KEY, emailFrom: c.env.EMAIL_FROM, uid, now },
       reply
     );
     return c.json({ ok: true, tenantId, data: result });
@@ -3867,9 +4274,35 @@ export function createOutreachRoutes(getTenantId: GetTenantId) {
     const db = c.env.DB;
     const kv = c.env.SAAS_FACTORY;
     const result = await processUnhandledReplies({
-      db, kv, tenantId, openaiApiKey: c.env.OPENAI_API_KEY, uid, now,
+      db, kv, tenantId, openaiApiKey: c.env.OPENAI_API_KEY, resendApiKey: c.env.RESEND_API_KEY, emailFrom: c.env.EMAIL_FROM, uid, now,
     });
     return c.json({ ok: true, tenantId, data: result });
+  });
+
+  // PUT /replies/:id/status — Update reply status (open/in_progress/resolved/dismissed)
+  app.put("/replies/:id/status", async (c) => {
+    const tenantId = getTenantId(c);
+    const replyId = c.req.param("id");
+    const db = c.env.DB;
+    const body = await c.req.json<{ status: string }>();
+
+    const validStatuses = ["open", "in_progress", "resolved", "dismissed"];
+    if (!validStatuses.includes(body.status)) {
+      return c.json({ ok: false, error: `status must be one of: ${validStatuses.join(", ")}` }, 400);
+    }
+
+    const existing = await db
+      .prepare("SELECT id FROM outreach_replies WHERE id = ?1 AND tenant_id = ?2")
+      .bind(replyId, tenantId)
+      .first();
+    if (!existing) return c.json({ ok: false, error: "reply_not_found" }, 404);
+
+    await db
+      .prepare("UPDATE outreach_replies SET status = ?1 WHERE id = ?2 AND tenant_id = ?3")
+      .bind(body.status, replyId, tenantId)
+      .run();
+
+    return c.json({ ok: true, tenantId, replyId, status: body.status });
   });
 
   // ── Phase 15: Auto Close AI ──────────────────────────────────────────
