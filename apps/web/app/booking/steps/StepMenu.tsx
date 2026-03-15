@@ -27,19 +27,16 @@ function ErrorMsg({ msg }: { msg: string }) {
   );
 }
 
-type StyleType = 'natural' | 'sharp' | 'korean' | 'custom';
-type GenderTarget = 'male' | 'female' | 'both';
-
 export default function StepMenu({ tenantId, onSelect }: Props) {
   const [items, setItems] = useState<MenuItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [vertical, setVertical] = useState<string>('generic');
 
-  // 眉毛フィルタ状態
-  const [isFirstTime, setIsFirstTime] = useState<boolean | null>(null); // null=全て
-  const [genderFilter, setGenderFilter] = useState<GenderTarget | null>(null); // null=全て
-  const [styleFilter, setStyleFilter] = useState<StyleType | null>(null); // null=全て
+  // フィルタ状態
+  const [isFirstTime, setIsFirstTime] = useState<boolean | null>(null);
+  const [genderFilter, setGenderFilter] = useState<string | null>(null);
+  const [verticalFilter, setVerticalFilter] = useState<string | null>(null);
 
   useEffect(() => {
     getMenu(tenantId)
@@ -52,55 +49,51 @@ export default function StepMenu({ tenantId, onSelect }: Props) {
       )
       .catch(e => setError(e.message || 'メニューの取得に失敗しました'))
       .finally(() => setLoading(false));
-    // Phase 4: vertical を取得してフィルタ見出しを registry 経由で表示
     fetchBookingSettings(tenantId)
       .then(s => setVertical(resolveVertical(s as any)))
       .catch(() => {});
   }, [tenantId]);
 
-  // Phase 4: registry 経由で labels を取得
   const vPlugin = getVerticalPluginUI(vertical);
+  const filterConfig = vPlugin.menuFilterConfig;
 
   if (loading) return <Spinner />;
   if (error) return <ErrorMsg msg={error} />;
 
-  // Phase 2a: verticalAttributes → eyebrow 優先で属性判定
+  // フィルタ検出
   const hasFirstTimeItems = items.some(m => getMenuVerticalAttrs(m)?.firstTimeOnly);
-  const hasGenderItems = items.some(m => !!getMenuVerticalAttrs(m)?.genderTarget);
-  const allStyleTypes = [...new Set(
-    items.map(m => getMenuVerticalAttrs(m)?.styleType).filter((s): s is StyleType => !!s)
-  )];
-  const hasEyebrowFilters = hasFirstTimeItems || hasGenderItems || allStyleTypes.length > 0;
+  const hasGenderItems = items.some(m => !!(getMenuVerticalAttrs(m) as any)?.genderTarget);
+  const allVerticalValues = filterConfig
+    ? [...new Set(items.map(m => (getMenuVerticalAttrs(m) as any)?.[filterConfig.filterKey]).filter(Boolean))]
+    : [];
+  const hasFilters = hasFirstTimeItems || hasGenderItems || allVerticalValues.length > 0;
 
   // フィルタ適用
   const filtered = items.filter(m => {
-    const attrs = getMenuVerticalAttrs(m);
-    // 初回/リピートフィルタ
+    const attrs = getMenuVerticalAttrs(m) as Record<string, any> | undefined;
     if (isFirstTime === true && !attrs?.firstTimeOnly) return false;
     if (isFirstTime === false && attrs?.firstTimeOnly) return false;
-    // 性別フィルタ（'both' は両性向けなので female/male どちらでも表示）
     if (genderFilter !== null) {
       const g = attrs?.genderTarget;
       if (g && g !== 'both' && g !== genderFilter) return false;
     }
-    // スタイルフィルタ
-    if (styleFilter !== null) {
-      const s = attrs?.styleType;
-      if (s && s !== styleFilter) return false;
+    if (verticalFilter !== null && filterConfig) {
+      const val = attrs?.[filterConfig.filterKey];
+      if (val && val !== verticalFilter) return false;
     }
     return true;
   });
 
-  const hasActiveFilter = isFirstTime !== null || genderFilter !== null || styleFilter !== null;
+  const hasActiveFilter = isFirstTime !== null || genderFilter !== null || verticalFilter !== null;
 
   return (
     <div className="space-y-3">
       <h2 className="text-lg font-semibold text-brand-text mb-4">メニューを選択</h2>
 
-      {/* 眉毛フィルタ（属性付きメニューがある場合のみ表示） */}
-      {hasEyebrowFilters && (
-        <div className="bg-pink-50 border border-pink-100 rounded-2xl p-4 space-y-3 mb-2">
-          <p className="text-xs font-semibold text-pink-700">✦ {vPlugin.labels.menuFilterHeading}</p>
+      {/* フィルタパネル（属性付きメニューがある場合のみ表示） */}
+      {hasFilters && (
+        <div className="bg-gray-50 border border-gray-200 rounded-2xl p-4 space-y-3 mb-2">
+          <p className="text-xs font-semibold text-gray-700">{vPlugin.labels.menuFilterHeading}</p>
 
           {/* 初回/リピート */}
           {hasFirstTimeItems && (
@@ -114,8 +107,8 @@ export default function StepMenu({ tenantId, onSelect }: Props) {
                     onClick={() => setIsFirstTime(val)}
                     className={`px-3 py-1 rounded-full text-xs border transition-colors ${
                       isFirstTime === val
-                        ? 'bg-pink-500 text-white border-pink-500'
-                        : 'bg-white text-gray-600 border-gray-200 hover:border-pink-300'
+                        ? 'bg-brand-primary text-white border-brand-primary'
+                        : 'bg-white text-gray-600 border-gray-200 hover:border-brand-primary/50'
                     }`}
                   >
                     {label}
@@ -129,7 +122,7 @@ export default function StepMenu({ tenantId, onSelect }: Props) {
           {hasGenderItems && (
             <div className="flex items-center gap-2 flex-wrap">
               <span className="text-xs text-gray-500 w-16 shrink-0">性別</span>
-              {([null, 'female', 'male'] as (GenderTarget | null)[]).map(val => {
+              {([null, 'female', 'male'] as (string | null)[]).map(val => {
                 const label = val === null ? 'すべて' : val === 'female' ? '女性' : '男性';
                 return (
                   <button
@@ -137,8 +130,8 @@ export default function StepMenu({ tenantId, onSelect }: Props) {
                     onClick={() => setGenderFilter(val)}
                     className={`px-3 py-1 rounded-full text-xs border transition-colors ${
                       genderFilter === val
-                        ? 'bg-pink-500 text-white border-pink-500'
-                        : 'bg-white text-gray-600 border-gray-200 hover:border-pink-300'
+                        ? 'bg-brand-primary text-white border-brand-primary'
+                        : 'bg-white text-gray-600 border-gray-200 hover:border-brand-primary/50'
                     }`}
                   >
                     {label}
@@ -148,38 +141,33 @@ export default function StepMenu({ tenantId, onSelect }: Props) {
             </div>
           )}
 
-          {/* スタイルタイプ */}
-          {allStyleTypes.length > 0 && (
+          {/* vertical-specific フィルタ */}
+          {allVerticalValues.length > 0 && filterConfig && (
             <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-xs text-gray-500 w-16 shrink-0">スタイル</span>
+              <span className="text-xs text-gray-500 w-16 shrink-0">{filterConfig.label}</span>
               <button
-                onClick={() => setStyleFilter(null)}
+                onClick={() => setVerticalFilter(null)}
                 className={`px-3 py-1 rounded-full text-xs border transition-colors ${
-                  styleFilter === null
-                    ? 'bg-pink-500 text-white border-pink-500'
-                    : 'bg-white text-gray-600 border-gray-200 hover:border-pink-300'
+                  verticalFilter === null
+                    ? 'bg-brand-primary text-white border-brand-primary'
+                    : 'bg-white text-gray-600 border-gray-200 hover:border-brand-primary/50'
                 }`}
               >
                 すべて
               </button>
-              {allStyleTypes.map(st => {
-                const label: Record<StyleType, string> = {
-                  natural: 'ナチュラル', sharp: 'シャープ', korean: '韓国風', custom: 'カスタム',
-                };
-                return (
-                  <button
-                    key={st}
-                    onClick={() => setStyleFilter(st)}
-                    className={`px-3 py-1 rounded-full text-xs border transition-colors ${
-                      styleFilter === st
-                        ? 'bg-pink-500 text-white border-pink-500'
-                        : 'bg-white text-gray-600 border-gray-200 hover:border-pink-300'
-                    }`}
-                  >
-                    {label[st] ?? st}
-                  </button>
-                );
-              })}
+              {allVerticalValues.map(val => (
+                <button
+                  key={val}
+                  onClick={() => setVerticalFilter(val)}
+                  className={`px-3 py-1 rounded-full text-xs border transition-colors ${
+                    verticalFilter === val
+                      ? 'bg-brand-primary text-white border-brand-primary'
+                      : 'bg-white text-gray-600 border-gray-200 hover:border-brand-primary/50'
+                  }`}
+                >
+                  {filterConfig.options[val] ?? val}
+                </button>
+              ))}
             </div>
           )}
         </div>
@@ -213,27 +201,29 @@ export default function StepMenu({ tenantId, onSelect }: Props) {
                     {item.name}
                   </p>
                   <p className="text-sm text-brand-muted mt-0.5">{item.durationMin}分</p>
-                  {/* Phase 2a: verticalAttributes → eyebrow 優先でバッジ表示 */}
-                  {(() => { const a = getMenuVerticalAttrs(item); return (a?.firstTimeOnly || a?.genderTarget || a?.styleType) ? (
-                    <div className="flex flex-wrap gap-1 mt-1.5">
-                      {a?.firstTimeOnly && (
-                        <span className="text-xs bg-pink-50 text-pink-600 border border-pink-200 rounded-full px-2 py-0.5">
-                          初回限定
-                        </span>
-                      )}
-                      {a?.genderTarget && (
-                        <span className="text-xs bg-purple-50 text-purple-600 border border-purple-200 rounded-full px-2 py-0.5">
-                          {a.genderTarget === 'female' ? '女性向け'
-                           : a.genderTarget === 'male' ? '男性向け' : '両性向け'}
-                        </span>
-                      )}
-                      {a?.styleType && (
-                        <span className="text-xs bg-blue-50 text-blue-600 border border-blue-200 rounded-full px-2 py-0.5">
-                          {({ natural: 'ナチュラル', sharp: 'シャープ', korean: '韓国風', custom: 'カスタム' } as Record<StyleType, string>)[a.styleType] ?? a.styleType}
-                        </span>
-                      )}
-                    </div>
-                  ) : null; })()}
+                  {(() => {
+                    const a = getMenuVerticalAttrs(item) as Record<string, any> | undefined;
+                    if (!a) return null;
+                    const badges: Array<{ label: string; color: string }> = [];
+                    if (a.firstTimeOnly) badges.push({ label: '初回限定', color: 'bg-pink-50 text-pink-600 border-pink-200' });
+                    if (a.genderTarget && a.genderTarget !== 'both') {
+                      badges.push({ label: a.genderTarget === 'female' ? '女性向け' : '男性向け', color: 'bg-purple-50 text-purple-600 border-purple-200' });
+                    }
+                    if (filterConfig) {
+                      const val = a[filterConfig.filterKey];
+                      if (val) badges.push({ label: filterConfig.options[val] ?? val, color: 'bg-blue-50 text-blue-600 border-blue-200' });
+                    }
+                    if (badges.length === 0) return null;
+                    return (
+                      <div className="flex flex-wrap gap-1 mt-1.5">
+                        {badges.map((b, i) => (
+                          <span key={i} className={`text-xs ${b.color} border rounded-full px-2 py-0.5`}>
+                            {b.label}
+                          </span>
+                        ))}
+                      </div>
+                    );
+                  })()}
                 </div>
                 <span className="text-brand-primary font-semibold ml-4 flex-shrink-0">
                   ¥{item.price.toLocaleString()}

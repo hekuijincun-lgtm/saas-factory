@@ -43,6 +43,12 @@ export interface VerticalPluginUI {
   label: string;
   labels: VerticalPluginLabels;
   flags: VerticalPluginFlags;
+  /** メニューフィルタ設定（booking 画面のフィルタ UI 用） */
+  menuFilterConfig?: {
+    filterKey: string;
+    options: Record<string, string>;
+    label: string;
+  };
 }
 
 // ── eyebrow ─────────────────────────────────────────────────────────
@@ -66,6 +72,11 @@ const eyebrowPlugin: VerticalPluginUI = {
     hasStaffAttributes: true,
     hasMenuAttributes: true,
     hasVerticalSettings: true,
+  },
+  menuFilterConfig: {
+    filterKey: 'styleType',
+    options: { natural: 'ナチュラル', sharp: 'シャープ', korean: '韓国風', custom: 'カスタム' },
+    label: 'スタイル',
   },
 };
 
@@ -91,6 +102,11 @@ const nailPlugin: VerticalPluginUI = {
     hasMenuAttributes: true,
     hasVerticalSettings: true,
   },
+  menuFilterConfig: {
+    filterKey: 'designType',
+    options: { simple: 'シンプル', art: 'アート', gel: 'ジェル', care: 'ケア', off: 'オフ' },
+    label: 'デザイン',
+  },
 };
 
 // ── hair ─────────────────────────────────────────────────────────────
@@ -114,6 +130,11 @@ const hairPlugin: VerticalPluginUI = {
     hasStaffAttributes: true,
     hasMenuAttributes: true,
     hasVerticalSettings: true,
+  },
+  menuFilterConfig: {
+    filterKey: 'category',
+    options: { cut: 'カット', color: 'カラー', perm: 'パーマ', treatment: 'トリートメント', set: 'セット', spa: 'ヘッドスパ' },
+    label: 'カテゴリ',
   },
 };
 
@@ -141,14 +162,63 @@ const genericPlugin: VerticalPluginUI = {
   },
 };
 
-// ── stub plugins ────────────────────────────────────────────────────
+// ── dental ──────────────────────────────────────────────────────────
 
-function createStub(key: VerticalType, label: string): VerticalPluginUI {
-  return { ...genericPlugin, key, label };
-}
+const dentalPlugin: VerticalPluginUI = {
+  key: 'dental',
+  label: '歯科・クリニック',
+  labels: {
+    karteTab: '診療記録',
+    menuFilterHeading: '診療メニュー絞り込み',
+    kpiHeading: 'クリニック KPI',
+    settingsHeading: '診療設定',
+    menuSettingsHeading: '診療メニュー設定',
+    staffSettingsHeading: 'スタッフ資格・専門',
+    settingsDescription: '歯科クリニック特化の問診票・定期検診リマインドを設定します',
+  },
+  flags: {
+    hasKarte: true,
+    hasMenuFilter: true,
+    hasVerticalKpi: true,
+    hasStaffAttributes: true,
+    hasMenuAttributes: true,
+    hasVerticalSettings: true,
+  },
+  menuFilterConfig: {
+    filterKey: 'treatmentType',
+    options: { checkup: '定期検診', cleaning: 'クリーニング', whitening: 'ホワイトニング', filling: '虫歯治療', consultation: '初診相談' },
+    label: '診療種別',
+  },
+};
 
-const dentalPlugin = createStub('dental', '歯科・クリニック');
-const estheticPlugin = createStub('esthetic', 'エステ・リラクゼーション');
+// ── esthetic ────────────────────────────────────────────────────────
+
+const estheticPlugin: VerticalPluginUI = {
+  key: 'esthetic',
+  label: 'エステ・リラクゼーション',
+  labels: {
+    karteTab: '施術カルテ',
+    menuFilterHeading: 'エステメニュー絞り込み',
+    kpiHeading: 'エステサロン KPI',
+    settingsHeading: 'エステ施術設定',
+    menuSettingsHeading: '施術カテゴリ設定',
+    staffSettingsHeading: 'エステスキル・資格',
+    settingsDescription: 'エステサロン特化の同意文・リピート施策を設定します',
+  },
+  flags: {
+    hasKarte: true,
+    hasMenuFilter: true,
+    hasVerticalKpi: true,
+    hasStaffAttributes: true,
+    hasMenuAttributes: true,
+    hasVerticalSettings: true,
+  },
+  menuFilterConfig: {
+    filterKey: 'treatmentCategory',
+    options: { facial: 'フェイシャル', body: 'ボディ', pore: '毛穴ケア', relaxation: 'リラクゼーション', slimming: '痩身' },
+    label: '施術カテゴリ',
+  },
+};
 
 // ── Registry ────────────────────────────────────────────────────────
 

@@ -18,6 +18,8 @@ import type { VerticalType } from '../settings';
 import { GENERIC_REPEAT_TEMPLATE } from '../settings';
 import { DEFAULT_REPEAT_TEMPLATE as NAIL_REPEAT_TEMPLATE } from './nail';
 import { DEFAULT_REPEAT_TEMPLATE as HAIR_REPEAT_TEMPLATE } from './hair';
+import { DEFAULT_REPEAT_TEMPLATE as DENTAL_REPEAT_TEMPLATE } from './dental';
+import { DEFAULT_REPEAT_TEMPLATE as ESTHETIC_REPEAT_TEMPLATE } from './esthetic';
 
 // ── VerticalPlugin interface ────────────────────────────────────────
 
@@ -85,6 +87,19 @@ export interface VerticalPlugin {
 
   /** 表示制御フラグ */
   flags: VerticalPluginFlags;
+
+  /** メニューフィルタ設定（booking 画面のフィルタ UI 用） */
+  menuFilterConfig?: {
+    /** フィルタ対象の verticalAttributes キー名 */
+    filterKey: string;
+    /** フィルタ選択肢のラベル（キー → 日本語） */
+    options: Record<string, string>;
+    /** フィルタ行ラベル */
+    label: string;
+  };
+
+  /** verticalAttributes のランタイムバリデーション（optional） */
+  validateMenuAttrs?(attrs: Record<string, unknown>): { valid: boolean; error?: string };
 }
 
 // ── eyebrow plugin ──────────────────────────────────────────────────
@@ -152,6 +167,19 @@ const eyebrowPlugin: VerticalPlugin = {
     hasMenuAttributes: true,
     hasVerticalSettings: true,
   },
+
+  menuFilterConfig: {
+    filterKey: 'styleType',
+    options: { natural: 'ナチュラル', sharp: 'シャープ', korean: '韓国風', custom: 'カスタム' },
+    label: 'スタイル',
+  },
+  validateMenuAttrs(attrs) {
+    const validStyles = ['natural', 'sharp', 'korean', 'custom'];
+    if (attrs.styleType && typeof attrs.styleType === 'string' && !validStyles.includes(attrs.styleType)) {
+      return { valid: false, error: `Invalid styleType: ${attrs.styleType}` };
+    }
+    return { valid: true };
+  },
 };
 
 // ── generic plugin ──────────────────────────────────────────────────
@@ -196,11 +224,7 @@ const genericPlugin: VerticalPlugin = {
   },
 };
 
-// ── stub plugins (generic ベース) ───────────────────────────────────
-
-function createStubPlugin(key: VerticalType, label: string): VerticalPlugin {
-  return { ...genericPlugin, key, label };
-}
+// ── nail plugin ──────────────────────────────────────────────────────
 
 const nailPlugin: VerticalPlugin = {
   key: 'nail',
@@ -266,8 +290,111 @@ const nailPlugin: VerticalPlugin = {
     hasMenuAttributes: true,
     hasVerticalSettings: true,
   },
+
+  menuFilterConfig: {
+    filterKey: 'designType',
+    options: { simple: 'シンプル', art: 'アート', gel: 'ジェル', care: 'ケア', off: 'オフ' },
+    label: 'デザイン',
+  },
+  validateMenuAttrs(attrs) {
+    const validTypes = ['simple', 'art', 'gel', 'care', 'off'];
+    if (attrs.designType && typeof attrs.designType === 'string' && !validTypes.includes(attrs.designType)) {
+      return { valid: false, error: `Invalid designType: ${attrs.designType}` };
+    }
+    return { valid: true };
+  },
 };
-const dentalPlugin = createStubPlugin('dental', '歯科・クリニック');
+
+// ── dental plugin ────────────────────────────────────────────────────
+
+const dentalPlugin: VerticalPlugin = {
+  key: 'dental',
+  label: '歯科・クリニック',
+
+  defaultMenu() {
+    return [
+      { id: 'dental-consultation', name: '初診相談', price: 3000, durationMin: 30, active: true, sortOrder: 1 },
+      { id: 'dental-cleaning', name: 'クリーニング', price: 5000, durationMin: 45, active: true, sortOrder: 2 },
+      { id: 'dental-whitening', name: 'ホワイトニング', price: 15000, durationMin: 60, active: true, sortOrder: 3 },
+      { id: 'dental-checkup', name: '定期検診', price: 3500, durationMin: 30, active: true, sortOrder: 4 },
+      { id: 'dental-filling', name: '虫歯治療', price: 8000, durationMin: 60, active: true, sortOrder: 5 },
+    ];
+  },
+
+  getDefaultSettingsPatch() {
+    return {
+      vertical: 'dental',
+      verticalConfig: {
+        surveyEnabled: true,
+        bedCount: 3,
+        styleTypes: ['checkup', 'cleaning', 'whitening', 'filling', 'extraction', 'orthodontics', 'consultation'],
+        surveyQuestions: [
+          { id: 'q_dental_1', label: '現在痛みや違和感のある箇所はありますか？', type: 'text' as const, enabled: true },
+          { id: 'q_dental_2', label: 'アレルギー（薬剤・金属等）はありますか？', type: 'text' as const, enabled: true },
+          { id: 'q_dental_3', label: '現在服用中のお薬はありますか？', type: 'text' as const, enabled: true },
+        ],
+      },
+    };
+  },
+
+  getOnboardingChecks({ menuVerticalCount, repeatEnabled, templateSet }) {
+    return [
+      {
+        key: 'menuDental',
+        label: '診療メニュー登録（1件以上）',
+        done: menuVerticalCount > 0,
+        action: '/admin/menu',
+        detail: menuVerticalCount > 0 ? `${menuVerticalCount}件` : undefined,
+      },
+      {
+        key: 'repeatConfig',
+        label: '定期検診リマインド設定',
+        done: repeatEnabled && templateSet,
+        action: '/admin/settings',
+      },
+    ];
+  },
+
+  getRepeatTemplateFallback() {
+    return DENTAL_REPEAT_TEMPLATE;
+  },
+
+  labels: {
+    karteTab: '診療記録',
+    menuFilterHeading: '診療メニュー絞り込み',
+    kpiHeading: 'クリニック KPI',
+    settingsHeading: '診療設定',
+    menuSettingsHeading: '診療メニュー設定',
+    staffSettingsHeading: 'スタッフ資格・専門',
+    settingsDescription: '歯科クリニック特化の問診票・定期検診リマインドを設定します',
+  },
+
+  flags: {
+    hasKarte: true,
+    hasMenuFilter: true,
+    hasVerticalKpi: true,
+    hasStaffAttributes: true,
+    hasMenuAttributes: true,
+    hasVerticalSettings: true,
+  },
+
+  menuFilterConfig: {
+    filterKey: 'treatmentType',
+    options: { checkup: '定期検診', cleaning: 'クリーニング', whitening: 'ホワイトニング', filling: '虫歯治療', consultation: '初診相談' },
+    label: '診療種別',
+  },
+
+  validateMenuAttrs(attrs) {
+    const valid = ['checkup', 'cleaning', 'whitening', 'filling', 'extraction', 'orthodontics', 'consultation'];
+    if (attrs.treatmentType && typeof attrs.treatmentType === 'string' && !valid.includes(attrs.treatmentType)) {
+      return { valid: false, error: `Invalid treatmentType: ${attrs.treatmentType}` };
+    }
+    return { valid: true };
+  },
+};
+
+// ── hair plugin ──────────────────────────────────────────────────────
+
 const hairPlugin: VerticalPlugin = {
   key: 'hair',
   label: 'ヘアサロン',
@@ -333,8 +460,107 @@ const hairPlugin: VerticalPlugin = {
     hasMenuAttributes: true,
     hasVerticalSettings: true,
   },
+
+  menuFilterConfig: {
+    filterKey: 'category',
+    options: { cut: 'カット', color: 'カラー', perm: 'パーマ', treatment: 'トリートメント', set: 'セット', spa: 'ヘッドスパ' },
+    label: 'カテゴリ',
+  },
+  validateMenuAttrs(attrs) {
+    const validCats = ['cut', 'color', 'perm', 'treatment', 'set', 'spa'];
+    if (attrs.category && typeof attrs.category === 'string' && !validCats.includes(attrs.category)) {
+      return { valid: false, error: `Invalid category: ${attrs.category}` };
+    }
+    return { valid: true };
+  },
 };
-const estheticPlugin = createStubPlugin('esthetic', 'エステ・リラクゼーション');
+
+// ── esthetic plugin ──────────────────────────────────────────────────
+
+const estheticPlugin: VerticalPlugin = {
+  key: 'esthetic',
+  label: 'エステ・リラクゼーション',
+
+  defaultMenu() {
+    return [
+      { id: 'esthe-facial', name: 'フェイシャルエステ', price: 8000, durationMin: 60, active: true, sortOrder: 1 },
+      { id: 'esthe-body', name: 'ボディトリートメント', price: 10000, durationMin: 90, active: true, sortOrder: 2 },
+      { id: 'esthe-pore', name: '毛穴ケア', price: 6000, durationMin: 45, active: true, sortOrder: 3 },
+      { id: 'esthe-relax', name: 'リラクゼーション', price: 7000, durationMin: 60, active: true, sortOrder: 4 },
+      { id: 'esthe-counseling', name: '初回カウンセリング', price: 0, durationMin: 30, active: true, sortOrder: 5 },
+    ];
+  },
+
+  getDefaultSettingsPatch() {
+    return {
+      vertical: 'esthetic',
+      verticalConfig: {
+        surveyEnabled: true,
+        bedCount: 2,
+        styleTypes: ['facial', 'body', 'pore', 'relaxation', 'slimming', 'depilation'],
+        surveyQuestions: [
+          { id: 'q_esthe_1', label: 'お肌で気になるお悩みはありますか？', type: 'text' as const, enabled: true },
+          { id: 'q_esthe_2', label: 'アレルギーや敏感肌の既往はありますか？', type: 'text' as const, enabled: true },
+        ],
+      },
+    };
+  },
+
+  getOnboardingChecks({ menuVerticalCount, repeatEnabled, templateSet }) {
+    return [
+      {
+        key: 'menuEsthetic',
+        label: '施術メニュー登録（1件以上）',
+        done: menuVerticalCount > 0,
+        action: '/admin/menu',
+        detail: menuVerticalCount > 0 ? `${menuVerticalCount}件` : undefined,
+      },
+      {
+        key: 'repeatConfig',
+        label: 'リピート施策設定（有効化 + テンプレ設定）',
+        done: repeatEnabled && templateSet,
+        action: '/admin/settings',
+      },
+    ];
+  },
+
+  getRepeatTemplateFallback() {
+    return ESTHETIC_REPEAT_TEMPLATE;
+  },
+
+  labels: {
+    karteTab: '施術カルテ',
+    menuFilterHeading: 'エステメニュー絞り込み',
+    kpiHeading: 'エステサロン KPI',
+    settingsHeading: 'エステ施術設定',
+    menuSettingsHeading: '施術カテゴリ設定',
+    staffSettingsHeading: 'エステスキル・資格',
+    settingsDescription: 'エステサロン特化の同意文・リピート施策を設定します',
+  },
+
+  flags: {
+    hasKarte: true,
+    hasMenuFilter: true,
+    hasVerticalKpi: true,
+    hasStaffAttributes: true,
+    hasMenuAttributes: true,
+    hasVerticalSettings: true,
+  },
+
+  menuFilterConfig: {
+    filterKey: 'treatmentCategory',
+    options: { facial: 'フェイシャル', body: 'ボディ', pore: '毛穴ケア', relaxation: 'リラクゼーション', slimming: '痩身' },
+    label: '施術カテゴリ',
+  },
+
+  validateMenuAttrs(attrs) {
+    const valid = ['facial', 'body', 'pore', 'relaxation', 'slimming', 'depilation'];
+    if (attrs.treatmentCategory && typeof attrs.treatmentCategory === 'string' && !valid.includes(attrs.treatmentCategory)) {
+      return { valid: false, error: `Invalid treatmentCategory: ${attrs.treatmentCategory}` };
+    }
+    return { valid: true };
+  },
+};
 
 // ── Registry ────────────────────────────────────────────────────────
 
