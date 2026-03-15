@@ -9,6 +9,7 @@ import { getReservationVerticalData } from '@/src/lib/bookingApi';
 
 import { useVertical } from '../../admin/_lib/useVertical';
 import { getVerticalConfig } from '@/src/types/settings';
+import { getVerticalPluginUI } from '@/src/lib/verticalPlugins';
 
 type DetailTab = 'basic' | 'karte' | 'consent' | 'image' | 'survey';
 
@@ -24,14 +25,6 @@ interface Props {
   isCancelling?: boolean;
 }
 
-const ALL_TABS: { id: DetailTab; label: string; icon?: boolean }[] = [
-  { id: 'basic',   label: '基本情報' },
-  { id: 'karte',   label: '眉毛カルテ', icon: true },
-  { id: 'consent', label: '同意ログ',   icon: true },
-  { id: 'image',   label: '画像',       icon: true },
-  { id: 'survey',  label: 'アンケート' },
-];
-
 export default function ReservationDetailPanel({
   reservation,
   staffList,
@@ -43,8 +36,17 @@ export default function ReservationDetailPanel({
   isCancelling,
 }: Props) {
   const { vertical } = useVertical(tenantId);
-  const isEyebrow = vertical === 'eyebrow';
-  const TABS = isEyebrow ? ALL_TABS : ALL_TABS.filter(t => t.id !== 'karte');
+  // Phase 4: registry 経由で labels / flags を取得
+  const vPlugin = getVerticalPluginUI(vertical);
+
+  const ALL_TABS: { id: DetailTab; label: string; icon?: boolean }[] = [
+    { id: 'basic',   label: '基本情報' },
+    { id: 'karte',   label: vPlugin.labels.karteTab, icon: true },
+    { id: 'consent', label: '同意ログ',   icon: true },
+    { id: 'image',   label: '画像',       icon: true },
+    { id: 'survey',  label: 'アンケート' },
+  ];
+  const TABS = vPlugin.flags.hasKarte ? ALL_TABS : ALL_TABS.filter(t => t.id !== 'karte');
   const [tab, setTab] = useState<DetailTab>('basic');
   const [editMode, setEditMode] = useState(false);
   const [editForm, setEditForm] = useState({ name: '', phone: '', note: '', staffId: 'any' });

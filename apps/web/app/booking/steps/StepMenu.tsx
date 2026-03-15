@@ -2,6 +2,9 @@
 
 import { useEffect, useState } from 'react';
 import { getMenu, getMenuVerticalAttrs, type MenuItem } from '@/src/lib/bookingApi';
+import { getVerticalPluginUI } from '@/src/lib/verticalPlugins';
+import { fetchBookingSettings } from '@/src/lib/bookingApi';
+import { resolveVertical } from '@/src/types/settings';
 
 interface Props {
   tenantId: string;
@@ -31,6 +34,7 @@ export default function StepMenu({ tenantId, onSelect }: Props) {
   const [items, setItems] = useState<MenuItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [vertical, setVertical] = useState<string>('generic');
 
   // 眉毛フィルタ状態
   const [isFirstTime, setIsFirstTime] = useState<boolean | null>(null); // null=全て
@@ -48,7 +52,14 @@ export default function StepMenu({ tenantId, onSelect }: Props) {
       )
       .catch(e => setError(e.message || 'メニューの取得に失敗しました'))
       .finally(() => setLoading(false));
+    // Phase 4: vertical を取得してフィルタ見出しを registry 経由で表示
+    fetchBookingSettings(tenantId)
+      .then(s => setVertical(resolveVertical(s as any)))
+      .catch(() => {});
   }, [tenantId]);
+
+  // Phase 4: registry 経由で labels を取得
+  const vPlugin = getVerticalPluginUI(vertical);
 
   if (loading) return <Spinner />;
   if (error) return <ErrorMsg msg={error} />;
@@ -89,7 +100,7 @@ export default function StepMenu({ tenantId, onSelect }: Props) {
       {/* 眉毛フィルタ（属性付きメニューがある場合のみ表示） */}
       {hasEyebrowFilters && (
         <div className="bg-pink-50 border border-pink-100 rounded-2xl p-4 space-y-3 mb-2">
-          <p className="text-xs font-semibold text-pink-700">✦ 眉毛メニュー絞り込み</p>
+          <p className="text-xs font-semibold text-pink-700">✦ {vPlugin.labels.menuFilterHeading}</p>
 
           {/* 初回/リピート */}
           {hasFirstTimeItems && (

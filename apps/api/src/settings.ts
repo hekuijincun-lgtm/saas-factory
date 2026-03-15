@@ -108,7 +108,7 @@ export type VerticalType = 'eyebrow' | 'nail' | 'dental' | 'hair' | 'esthetic' |
 export const GENERIC_REPEAT_TEMPLATE =
   '前回のご来店からそろそろ{interval}週が経ちます。またのご来店をお待ちしております。';
 
-/** 業種ラベル（UI表示用） */
+/** @deprecated Phase 4: use getVerticalPlugin(vertical).label instead — registry.ts に移行済み */
 export const VERTICAL_LABELS: Record<VerticalType, string> = {
   generic: '汎用（業種を選択してください）',
   eyebrow: 'アイブロウサロン',

@@ -1,6 +1,9 @@
 /**
  * Vertical Bridge — legacy eyebrow ↔ new vertical data normalizers
  *
+ * 責務: legacy data bridge（normalize / dual-write）
+ * ※ vertical ごとの差分定義（labels / flags / defaultMenu 等）は verticals/registry.ts が担当
+ *
  * Phase 3: index.ts から切り出し。legacy フィールドの読み書き変換を一箇所に集約。
  *
  * ┌──────────────────────────────────────────────────────────────────┐

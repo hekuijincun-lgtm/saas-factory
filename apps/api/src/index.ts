@@ -3,7 +3,8 @@ import { cors } from "hono/cors";
 import Stripe from "stripe";
 import { resolveVertical, DEFAULT_ADMIN_SETTINGS, mergeSettings, GENERIC_REPEAT_TEMPLATE } from "./settings";
 import type { PlanId, SubscriptionInfo } from "./settings";
-import { getRepeatConfig, getStyleLabel, buildRepeatMessage, eyebrowOnboardingChecks, DEFAULT_REPEAT_TEMPLATE } from "./verticals/eyebrow";
+import { getRepeatConfig, getStyleLabel, buildRepeatMessage, DEFAULT_REPEAT_TEMPLATE } from "./verticals/eyebrow";
+import { getVerticalPlugin } from "./verticals/registry";
 import { normalizeMenuItems, normalizeStaffItems, normalizeReservationMeta, dualWriteVerticalAttributes, dualWriteVerticalAttributesPatch, dualWriteReservationMeta } from "./vertical-bridge";
 import { registerOwnerRoutes, getOwnerIds, bootstrapOwnerIfEmpty, isPrincipalAllowed, normalizePrincipal } from "./routes/owner";
 import { registerOwnerLeadRoutes } from "./routes/ownerLeads";
@@ -1315,19 +1316,9 @@ type MenuItem = {
   verticalAttributes?: Record<string, any>;
 };
 
-// CLEANUP(Phase4+): normalizeMenuItems は vertical-bridge.ts に切り出し済み
-/** Phase 1a: vertical-aware デフォルトメニュー */
+// Phase 4: defaultMenu は registry 経由で取得
 function defaultMenu(vertical?: string): MenuItem[] {
-  if (vertical === 'eyebrow') {
-    return [
-      { id: "eyebrow-styling", name: "眉毛スタイリング",      price: 4500, durationMin: 45, active: true, sortOrder: 1 },
-      { id: "eyebrow-wax",     name: "眉毛WAX",              price: 5500, durationMin: 60, active: true, sortOrder: 2 },
-      { id: "eyebrow-wax-trim",name: "眉毛WAX＋間引き",       price: 6500, durationMin: 75, active: true, sortOrder: 3 },
-      { id: "eyebrow-perm",    name: "眉毛パーマ",            price: 7000, durationMin: 60, active: true, sortOrder: 4 },
-    ];
-  }
-  // generic / nail / dental / hair / esthetic → 空配列（テナントが自分で登録する）
-  return [];
+  return getVerticalPlugin(vertical).defaultMenu() as MenuItem[];
 }
 
 app.get("/admin/menu", async (c) => {
@@ -2251,11 +2242,13 @@ app.get("/admin/onboarding-status", async (c) => {
     }
     items.push({ key: 'menu', label: 'メニュー登録（1件以上）', done: menuCount > 0, action: '/admin/menu', detail: menuCount > 0 ? `${menuCount}件` : undefined });
 
-    // Phase 1a: eyebrow 固有チェックは eyebrow vertical の場合のみ注入
-    if (vertical === 'eyebrow') {
-      const eyebrowItems = eyebrowOnboardingChecks({ menuEyebrowCount, repeatEnabled: eyebrowRepeatEnabled, templateSet: eyebrowTemplateSet });
-      for (const item of eyebrowItems) items.push(item);
-    }
+    // Phase 4: vertical 固有チェックは registry 経由で注入
+    const verticalChecks = getVerticalPlugin(vertical).getOnboardingChecks({
+      menuVerticalCount: menuEyebrowCount,
+      repeatEnabled: eyebrowRepeatEnabled,
+      templateSet: eyebrowTemplateSet,
+    });
+    for (const item of verticalChecks) items.push(item);
 
     // Staff check
     let staffCount = 0;
@@ -7560,6 +7553,13 @@ async function scheduled(_event: any, env: Env, _ctx: any): Promise<void> {
             await db.prepare(
               "UPDATE sales_leads SET last_contacted_at = ?, updated_at = ? WHERE id = ? AND tenant_id = ?"
             ).bind(nowIso, nowIso, fLeadId, fTenantId).run();
+
+            // Breakup: mark lead as 'lost' to prevent further outreach
+            if (isBreakup) {
+              await db.prepare(
+                "UPDATE sales_leads SET pipeline_stage = 'lost', updated_at = ? WHERE id = ? AND tenant_id = ? AND pipeline_stage NOT IN ('meeting', 'customer')"
+              ).bind(nowIso, fLeadId, fTenantId).run();
+            }
           }
 
           console.log(`[${OUTREACH_STAMP}] ${fuStatus} ${fStep} to ${fLeadId} (${sendMode}, provider=${fuProvider.name})`);
@@ -7962,6 +7962,44 @@ async function scheduled(_event: any, env: Env, _ctx: any): Promise<void> {
                 (result.recommended_next_step === "send_demo_link" && closeSettings.auto_send_demo_link_enabled) ||
                 (result.recommended_next_step === "send_booking_link" && closeSettings.auto_send_booking_link_enabled);
 
+              // Actually send if auto-send is enabled for this action
+              let closeSent = false;
+              let closeError: string | null = null;
+              if (shouldAutoSend) {
+                try {
+                  const { resolveProvider: resolveCloseProvider } = await import("./outreach/send-provider");
+                  let closeSendMode: "safe" | "real" = "safe";
+                  try {
+                    const osRaw = await kv.get(`outreach:settings:${tid}`);
+                    if (osRaw) closeSendMode = JSON.parse(osRaw).sendMode ?? "safe";
+                  } catch { /* default safe */ }
+                  const closeProvider = resolveCloseProvider(closeSendMode, {
+                    RESEND_API_KEY: (env as any).RESEND_API_KEY,
+                    EMAIL_FROM: (env as any).EMAIL_FROM,
+                  });
+                  const leadContact = await db
+                    .prepare("SELECT contact_email FROM sales_leads WHERE id = ?1 AND tenant_id = ?2")
+                    .bind(reply.lead_id, tid)
+                    .first<{ contact_email: string | null }>();
+                  if (leadContact?.contact_email) {
+                    const closeSendResult = await closeProvider.send({
+                      leadId: reply.lead_id as string,
+                      tenantId: tid,
+                      channel: "email",
+                      to: leadContact.contact_email,
+                      subject: "Re: お問い合わせありがとうございます",
+                      body: closeResp.response_text,
+                    });
+                    closeSent = closeSendResult.success;
+                    if (!closeSendResult.success) closeError = closeSendResult.error || "close_send_failed";
+                  } else {
+                    closeError = "no_contact_email";
+                  }
+                } catch (sendErr: any) {
+                  closeError = sendErr.message || "close_dispatch_error";
+                }
+              }
+
               await db
                 .prepare(
                   `INSERT INTO outreach_close_logs
@@ -7973,7 +8011,7 @@ async function scheduled(_event: any, env: Env, _ctx: any): Promise<void> {
                   aceUid(), tid, reply.lead_id, reply.id,
                   result.close_intent, result.close_confidence, result.deal_temperature,
                   result.recommended_next_step, closeResp.response_text,
-                  shouldAutoSend ? "auto_sent" : "pending_review",
+                  shouldAutoSend ? (closeSent ? "auto_sent" : `failed:${closeError}`) : "pending_review",
                   closeResp.handoff_required ? 1 : 0,
                   aceNow()
                 )
