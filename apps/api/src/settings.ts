@@ -130,16 +130,25 @@ export interface VerticalConfig {
     intervalDays?: number;
     template?: string;
   };
+  /** 事前アンケート ON/OFF（Phase 1b: eyebrow.surveyEnabled から昇格） */
+  surveyEnabled?: boolean;
+  /** 事前アンケート質問リスト（Phase 1b: eyebrow.surveyQuestions から昇格） */
+  surveyQuestions?: EyebrowSurveyQuestion[];
+  /** ベッド数（同時施術キャパ、Phase 1b: eyebrow.bedCount から昇格） */
+  bedCount?: number;
 }
 
+// CLEANUP(Phase4+): EyebrowSurveyQuestion → SurveyQuestion にリネーム可能
 export interface EyebrowSurveyQuestion {
   id: string;
   label: string;
   type: 'text' | 'textarea' | 'checkbox';
   enabled: boolean;
 }
+/** Phase 3: vertical-agnostic alias（今後はこちらを優先して使用） */
+export type SurveyQuestion = EyebrowSurveyQuestion;
 
-/** @deprecated use EyebrowSettings via verticalConfig instead */
+/** @deprecated use verticalConfig instead — CLEANUP(Phase4+): 全テナント移行後に削除 */
 export interface EyebrowSettings {
   consentText?: string;        // 眉毛施術同意文
   repeat?: {
@@ -476,6 +485,7 @@ export function mergeSettings(defaults: AdminSettings, partial: Partial<AdminSet
           enabled: partial.onboarding?.enabled ?? defaults.onboarding?.enabled,
         }
       : undefined,
+    // CLEANUP(Phase4+): eyebrow merge — 全テナント verticalConfig 移行後に削除
     eyebrow: (partial.eyebrow || defaults.eyebrow)
       ? {
           consentText: partial.eyebrow?.consentText ?? defaults.eyebrow?.consentText,
@@ -517,6 +527,9 @@ export function mergeSettings(defaults: AdminSettings, partial: Partial<AdminSet
                 template: partial.verticalConfig?.repeat?.template ?? defaults.verticalConfig?.repeat?.template,
               }
             : undefined,
+          surveyEnabled: partial.verticalConfig?.surveyEnabled ?? defaults.verticalConfig?.surveyEnabled,
+          surveyQuestions: partial.verticalConfig?.surveyQuestions ?? defaults.verticalConfig?.surveyQuestions,
+          bedCount: partial.verticalConfig?.bedCount ?? defaults.verticalConfig?.bedCount,
         }
       : undefined,
   };
@@ -532,13 +545,16 @@ export function resolveVertical(s: Partial<AdminSettings>): { vertical: Vertical
   if (s.vertical && s.verticalConfig) {
     return { vertical: s.vertical, verticalConfig: s.verticalConfig };
   }
-  // 2. 旧形式: eyebrow から派生
+  // CLEANUP(Phase4+): eyebrow legacy fallback — 全テナント vertical+verticalConfig 設定後に削除
   if (s.eyebrow) {
     return {
       vertical: 'eyebrow',
       verticalConfig: {
         consentText: s.eyebrow.consentText,
         repeat: s.eyebrow.repeat,
+        surveyEnabled: s.eyebrow.surveyEnabled,
+        surveyQuestions: s.eyebrow.surveyQuestions,
+        bedCount: s.eyebrow.bedCount,
       },
     };
   }

@@ -116,16 +116,26 @@ export interface VerticalConfig {
     intervalDays?: number;
     template?: string;
   };
+  /** 事前アンケート ON/OFF（Phase 1b: eyebrow.surveyEnabled から昇格） */
+  surveyEnabled?: boolean;
+  /** 事前アンケート質問リスト（Phase 1b: eyebrow.surveyQuestions から昇格） */
+  surveyQuestions?: EyebrowSurveyQuestion[];
+  /** ベッド数（同時施術キャパ、Phase 1b: eyebrow.bedCount から昇格） */
+  bedCount?: number;
 }
 
+// CLEANUP(Phase4+): EyebrowSurveyQuestion → SurveyQuestion にリネーム可能
+// （全参照を SurveyQuestion に切り替え後、EyebrowSurveyQuestion を削除）
 export interface EyebrowSurveyQuestion {
   id: string;
   label: string;
   type: 'text' | 'textarea' | 'checkbox';
   enabled: boolean;
 }
+/** Phase 3: vertical-agnostic alias（今後はこちらを優先して使用） */
+export type SurveyQuestion = EyebrowSurveyQuestion;
 
-/** @deprecated use EyebrowSettings via verticalConfig instead */
+/** @deprecated use verticalConfig instead — CLEANUP(Phase4+): 全テナント verticalConfig 移行後に削除 */
 export interface EyebrowSettings {
   consentText?: string;        // 眉毛施術同意文（スキンケアリスク等）
   repeat?: {
@@ -238,4 +248,42 @@ export const DEFAULT_ADMIN_SETTINGS: AdminSettings = {
   },
 };
 
+// ── Phase 1b: vertical 読み取り helper ─────────────────────────────
 
+/**
+ * resolveVertical — API 側と同じロジックで vertical type を解決する。
+ * 優先順位: settings.vertical → settings.eyebrow 存在 → 'generic'
+ * CLEANUP(Phase4+): eyebrow フォールバック行を削除可能（全テナント vertical 設定済み後）
+ */
+export function resolveVertical(s: Partial<AdminSettings> | Record<string, any>): VerticalType {
+  if (s?.vertical) return s.vertical as VerticalType;
+  if ((s as any)?.eyebrow) return 'eyebrow'; // CLEANUP(Phase4+): legacy fallback
+  return 'generic';
+}
+
+/**
+ * getVerticalConfig — verticalConfig → legacy eyebrow → fallback の優先順位で
+ * 業種別設定を正規化して返す。read-only adapter。
+ *
+ * API GET /admin/settings は resolveVertical() の結果を verticalConfig に注入済みなので、
+ * 通常は verticalConfig が存在する。
+ * ただし booking settings API など verticalConfig を注入しない経路もあるため、
+ * eyebrow legacy へのフォールバックを維持する。
+ *
+ * CLEANUP(Phase4+): eb (EyebrowSettings) フォールバックを削除可能
+ * （全テナント verticalConfig 設定済み後）
+ */
+export function getVerticalConfig(raw: Partial<AdminSettings> | Record<string, any>): VerticalConfig {
+  const vc = (raw as any)?.verticalConfig as VerticalConfig | undefined;
+  // CLEANUP(Phase4+): legacy eyebrow fallback — 削除候補
+  const eb = (raw as any)?.eyebrow as EyebrowSettings | undefined;
+
+  return {
+    consentText:     vc?.consentText     ?? eb?.consentText,
+    repeat:          vc?.repeat          ?? eb?.repeat,
+    surveyEnabled:   vc?.surveyEnabled   ?? eb?.surveyEnabled,
+    surveyQuestions:  vc?.surveyQuestions  ?? (eb?.surveyQuestions ? [...eb.surveyQuestions] : undefined),
+    bedCount:        vc?.bedCount        ?? eb?.bedCount,
+    styleTypes:      vc?.styleTypes,
+  };
+}

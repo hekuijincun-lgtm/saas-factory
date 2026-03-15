@@ -118,10 +118,13 @@ export interface CancelReservationResponse {
 }
 
 // Admin API types
+// CLEANUP(Phase4+): StaffEyebrow → StaffVerticalAttributes にリネーム可能
 export interface StaffEyebrow {
-  skillLevel?: 1 | 2 | 3 | 4 | 5;     // 眉毛技術レベル（1:初級〜5:エキスパート）
+  skillLevel?: 1 | 2 | 3 | 4 | 5;     // 技術レベル（1:初級〜5:エキスパート）
   specialties?: string[];              // 得意技術タグ（例: "ナチュラル", "韓国風", etc）
 }
+/** Phase 3: vertical-agnostic alias（今後はこちらを優先して使用） */
+export type StaffVerticalAttributes = StaffEyebrow;
 
 export interface Staff {
   id: string;
@@ -136,21 +139,25 @@ export interface Staff {
 }
 
 /**
- * Phase 2b: スタッフの業種属性を正規化して返す read adapter。
+ * スタッフの業種属性を正規化して返す read adapter。
  * 優先順位: verticalAttributes → eyebrow legacy → undefined
+ * CLEANUP(Phase4+): eyebrow フォールバック行を削除可能（全 KV データ verticalAttributes 持ち後）
  */
 export function getStaffVerticalAttrs(staff: Staff): StaffEyebrow | undefined {
   if (staff.verticalAttributes && Object.keys(staff.verticalAttributes).length > 0) {
     return staff.verticalAttributes as unknown as StaffEyebrow;
   }
-  return staff.eyebrow;
+  return staff.eyebrow; // CLEANUP(Phase4+): legacy fallback
 }
 
+// CLEANUP(Phase4+): MenuItemEyebrow → MenuVerticalAttributes にリネーム可能
 export interface MenuItemEyebrow {
   firstTimeOnly?: boolean;                             // 初回限定メニュー
   genderTarget?: 'male' | 'female' | 'both';          // 性別ターゲット
   styleType?: 'natural' | 'sharp' | 'korean' | 'custom'; // スタイル種別
 }
+/** Phase 3: vertical-agnostic alias（今後はこちらを優先して使用） */
+export type MenuVerticalAttributes = MenuItemEyebrow;
 
 export interface MenuItem {
   id: string;
@@ -172,12 +179,13 @@ export interface MenuItem {
 /**
  * 予約メタの業種データを正規化して返す read adapter。
  * 優先順位: verticalData → eyebrowDesign legacy → undefined
+ * CLEANUP(Phase4+): eyebrowDesign フォールバック行を削除可能（全 D1 データ verticalData 持ち後）
  */
 export function getReservationVerticalData(meta?: ReservationMeta): ReservationMeta['eyebrowDesign'] | undefined {
   if (meta?.verticalData && Object.keys(meta.verticalData).length > 0) {
     return meta.verticalData as unknown as ReservationMeta['eyebrowDesign'];
   }
-  return meta?.eyebrowDesign;
+  return meta?.eyebrowDesign; // CLEANUP(Phase4+): legacy fallback
 }
 
 // ── Phase 2a: MenuItem vertical attributes read helper ───────────
@@ -186,14 +194,13 @@ export function getReservationVerticalData(meta?: ReservationMeta): ReservationM
  * メニューアイテムの業種属性を正規化して返す read adapter。
  * 優先順位: verticalAttributes → eyebrow legacy → undefined
  * 呼び出し側は eyebrow 固定参照を避け、この helper 経由で読む。
+ * CLEANUP(Phase4+): eyebrow フォールバック行を削除可能（全 KV データ verticalAttributes 持ち後）
  */
 export function getMenuVerticalAttrs(item: MenuItem): MenuItemEyebrow | undefined {
-  // verticalAttributes が存在すれば eyebrow 互換の shape にキャスト
   if (item.verticalAttributes && Object.keys(item.verticalAttributes).length > 0) {
     return item.verticalAttributes as unknown as MenuItemEyebrow;
   }
-  // legacy eyebrow にフォールバック
-  return item.eyebrow;
+  return item.eyebrow; // CLEANUP(Phase4+): legacy fallback
 }
 
 export interface AdminSettings {

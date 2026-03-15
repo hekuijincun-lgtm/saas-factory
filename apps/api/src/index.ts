@@ -4,6 +4,7 @@ import Stripe from "stripe";
 import { resolveVertical, DEFAULT_ADMIN_SETTINGS, mergeSettings, GENERIC_REPEAT_TEMPLATE } from "./settings";
 import type { PlanId, SubscriptionInfo } from "./settings";
 import { getRepeatConfig, getStyleLabel, buildRepeatMessage, eyebrowOnboardingChecks, DEFAULT_REPEAT_TEMPLATE } from "./verticals/eyebrow";
+import { normalizeMenuItems, normalizeStaffItems, normalizeReservationMeta, dualWriteVerticalAttributes, dualWriteVerticalAttributesPatch, dualWriteReservationMeta } from "./vertical-bridge";
 import { registerOwnerRoutes, getOwnerIds, bootstrapOwnerIfEmpty, isPrincipalAllowed, normalizePrincipal } from "./routes/owner";
 import { registerOwnerLeadRoutes } from "./routes/ownerLeads";
 import { createOutreachRoutes } from "./outreach/routes";
@@ -1314,15 +1315,7 @@ type MenuItem = {
   verticalAttributes?: Record<string, any>;
 };
 
-/** Phase 2a: KV 読み出し時に eyebrow-only データへ verticalAttributes を注入する */
-function normalizeMenuItems(items: any[]): any[] {
-  return items.map(item => {
-    if (item.eyebrow && !item.verticalAttributes) {
-      return { ...item, verticalAttributes: { ...item.eyebrow } };
-    }
-    return item;
-  });
-}
+// CLEANUP(Phase4+): normalizeMenuItems は vertical-bridge.ts に切り出し済み
 /** Phase 1a: vertical-aware デフォルトメニュー */
 function defaultMenu(vertical?: string): MenuItem[] {
   if (vertical === 'eyebrow') {
@@ -1554,15 +1547,10 @@ app.post("/admin/menu", async (c) => {
         active: active !== undefined ? active : existing.active,
         sortOrder: sortOrder !== undefined ? sortOrder : existing.sortOrder,
       };
-      // eyebrow (legacy)
+      // CLEANUP(Phase4+): dual-write eyebrow ↔ verticalAttributes (vertical-bridge)
       if (eyebrow !== undefined) updated.eyebrow = eyebrow;
-      else if ('eyebrow' in body && body.eyebrow === null) { delete updated.eyebrow; delete updated.verticalAttributes; }
-      // verticalAttributes (new)
       if (verticalAttributes !== undefined) updated.verticalAttributes = verticalAttributes;
-      else if ('verticalAttributes' in body && body.verticalAttributes === null) delete updated.verticalAttributes;
-      // Phase 2a: dual-write bridge — eyebrow → verticalAttributes or vice versa
-      if (eyebrow !== undefined && !verticalAttributes) updated.verticalAttributes = { ...eyebrow };
-      if (verticalAttributes !== undefined && !eyebrow) updated.eyebrow = { ...verticalAttributes };
+      dualWriteVerticalAttributesPatch(updated, body);
       // imageKey/imageUrl: optional 画像フィールド
       if (body.imageKey != null) {
         if (body.imageKey) updated.imageKey = String(body.imageKey);
@@ -1588,9 +1576,8 @@ app.post("/admin/menu", async (c) => {
     };
     if (eyebrow !== undefined) newItem.eyebrow = eyebrow;
     if (verticalAttributes !== undefined) newItem.verticalAttributes = verticalAttributes;
-    // Phase 2a: dual-write bridge
-    if (eyebrow !== undefined && !verticalAttributes) newItem.verticalAttributes = { ...eyebrow };
-    if (verticalAttributes !== undefined && !eyebrow) newItem.eyebrow = { ...verticalAttributes };
+    // CLEANUP(Phase4+): dual-write bridge (vertical-bridge)
+    dualWriteVerticalAttributes(newItem);
     if (body.imageKey) newItem.imageKey = String(body.imageKey);
     if (body.imageUrl) newItem.imageUrl = String(body.imageUrl);
     menu.push(newItem);
@@ -1625,19 +1612,8 @@ app.patch("/admin/menu/:id", async (c) => {
     if (body.durationMin !== undefined) updated.durationMin = Number(body.durationMin);
     if (body.active !== undefined) updated.active = Boolean(body.active);
     if (body.sortOrder !== undefined) updated.sortOrder = Number(body.sortOrder);
-    // Phase 2a: eyebrow / verticalAttributes dual-write
-    if (body.eyebrow !== undefined) {
-      if (body.eyebrow === null) { delete updated.eyebrow; delete updated.verticalAttributes; }
-      else { updated.eyebrow = body.eyebrow; updated.verticalAttributes = { ...body.eyebrow }; }
-    }
-    if (body.verticalAttributes !== undefined) {
-      if (body.verticalAttributes === null) { delete updated.verticalAttributes; }
-      else {
-        updated.verticalAttributes = body.verticalAttributes;
-        // reverse bridge: verticalAttributes → eyebrow (unless eyebrow explicitly set in same request)
-        if (body.eyebrow === undefined) updated.eyebrow = { ...body.verticalAttributes };
-      }
-    }
+    // CLEANUP(Phase4+): dual-write eyebrow ↔ verticalAttributes (vertical-bridge)
+    dualWriteVerticalAttributesPatch(updated, body);
     // imageKey/imageUrl: optional 画像フィールド
     if (body.imageKey !== undefined) {
       if (!body.imageKey) delete updated.imageKey;
@@ -1659,15 +1635,7 @@ app.patch("/admin/menu/:id", async (c) => {
  * --- Staff (multi-tenant, KV) ---
  * key: admin:staff:list:${tenantId}
  */
-/** Phase 2b: KV 読み出し時に eyebrow-only staff データへ verticalAttributes を注入する */
-function normalizeStaffItems(items: any[]): any[] {
-  return items.map(item => {
-    if (item.eyebrow && !item.verticalAttributes) {
-      return { ...item, verticalAttributes: { ...item.eyebrow } };
-    }
-    return item;
-  });
-}
+// CLEANUP(Phase4+): normalizeStaffItems は vertical-bridge.ts に切り出し済み
 
 app.get("/admin/staff", async (c) => {
   const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
@@ -1699,9 +1667,8 @@ app.post("/admin/staff", async (c) => {
 
   const id = body?.id || `staff_${Date.now()}_${Math.random().toString(16).slice(2)}`
   const item = { ...body, id }
-  // Phase 2b: dual-write eyebrow ↔ verticalAttributes
-  if (item.eyebrow && !item.verticalAttributes) item.verticalAttributes = { ...item.eyebrow };
-  if (item.verticalAttributes && !item.eyebrow) item.eyebrow = { ...item.verticalAttributes };
+  // CLEANUP(Phase4+): dual-write eyebrow ↔ verticalAttributes (vertical-bridge)
+  dualWriteVerticalAttributes(item);
 
   const next = [item, ...list]
   await c.env.SAAS_FACTORY.put(key, JSON.stringify(next))
@@ -1729,18 +1696,8 @@ app.all("/admin/staff/:id", async (c) => {
     if (idx < 0) return c.json({ ok: false, where: "STAFF_ALL_V3", error: "not_found", id, tenantId }, 404)
 
     const updated = { ...list[idx], ...body, id }
-    // Phase 2b: dual-write eyebrow ↔ verticalAttributes
-    if (body.eyebrow !== undefined) {
-      if (body.eyebrow === null) { delete updated.eyebrow; delete updated.verticalAttributes; }
-      else { updated.eyebrow = body.eyebrow; updated.verticalAttributes = { ...body.eyebrow }; }
-    }
-    if (body.verticalAttributes !== undefined) {
-      if (body.verticalAttributes === null) { delete updated.verticalAttributes; }
-      else {
-        updated.verticalAttributes = body.verticalAttributes;
-        if (body.eyebrow === undefined) updated.eyebrow = { ...body.verticalAttributes };
-      }
-    }
+    // CLEANUP(Phase4+): dual-write eyebrow ↔ verticalAttributes (vertical-bridge)
+    dualWriteVerticalAttributesPatch(updated, body);
     list[idx] = updated
     await c.env.SAAS_FACTORY.put(key, JSON.stringify(list))
     return c.json({ ok: true, where: "STAFF_ALL_V3", tenantId, data: updated })
@@ -1822,14 +1779,7 @@ app.delete("/admin/menu/:id", async (c) => {
 });
 // NOTE: duplicate PUT /admin/settings removed — the primary handler (earlier in file) handles all fields.
 
-/** Phase 2c: D1 meta JSON 読み出し時に eyebrowDesign-only データへ verticalData を注入する */
-function normalizeReservationMeta(meta: any): any {
-  if (!meta || typeof meta !== 'object') return meta;
-  if (meta.eyebrowDesign && !meta.verticalData) {
-    return { ...meta, verticalData: { ...meta.eyebrowDesign } };
-  }
-  return meta;
-}
+// CLEANUP(Phase4+): normalizeReservationMeta は vertical-bridge.ts に切り出し済み
 
 /** =========================
  * Admin Reservations (READ / UPDATE / DELETE)
@@ -1974,18 +1924,11 @@ app.on(["PUT", "PATCH"], "/admin/reservations/:id", async (c) => {
       if (body.meta?.consentLog && existingMeta.consentLog) {
         mergedMeta.consentLog = { ...existingMeta.consentLog, ...body.meta.consentLog };
       }
-      // Phase 2c: verticalData sub-merge (新形式) + 双方向 dual-write
+      // CLEANUP(Phase4+): verticalData sub-merge + dual-write (vertical-bridge)
       if (body.meta?.verticalData && existingMeta.verticalData) {
         mergedMeta.verticalData = { ...existingMeta.verticalData, ...body.meta.verticalData };
       }
-      // eyebrowDesign → verticalData 自動派生
-      if (mergedMeta.eyebrowDesign && !mergedMeta.verticalData) {
-        mergedMeta.verticalData = { ...mergedMeta.eyebrowDesign };
-      }
-      // verticalData → eyebrowDesign 逆方向派生（legacy client 互換）
-      if (mergedMeta.verticalData && !mergedMeta.eyebrowDesign) {
-        mergedMeta.eyebrowDesign = { ...mergedMeta.verticalData };
-      }
+      dualWriteReservationMeta(mergedMeta);
       sets.push("meta = ?"); vals.push(JSON.stringify(mergedMeta));
     }
 
@@ -2302,7 +2245,7 @@ app.get("/admin/onboarding-status", async (c) => {
           const menu: any[] = JSON.parse(menuRaw);
           const active = Array.isArray(menu) ? menu.filter((m: any) => m.active !== false) : [];
           menuCount = active.length;
-          menuEyebrowCount = active.filter((m: any) => m.eyebrow?.styleType).length;
+          menuEyebrowCount = active.filter((m: any) => (m.verticalAttributes?.styleType ?? m.eyebrow?.styleType)).length;
         }
       } catch { /* ignore */ }
     }
@@ -3394,13 +3337,8 @@ async function upsertCustomer(
   const email = body.email ? String(body.email).trim().toLowerCase() : null;
   const customerKey = buildCustomerKey({ lineUserId, phone, email });
   const bodyMeta: Record<string, any> = (body.meta && typeof body.meta === 'object' && !Array.isArray(body.meta)) ? body.meta : {};
-  // Phase 2c: dual-write verticalData ↔ eyebrowDesign（双方向）
-  if (bodyMeta.eyebrowDesign && !bodyMeta.verticalData) {
-    bodyMeta.verticalData = { ...bodyMeta.eyebrowDesign };
-  }
-  if (bodyMeta.verticalData && !bodyMeta.eyebrowDesign) {
-    bodyMeta.eyebrowDesign = { ...bodyMeta.verticalData };
-  }
+  // CLEANUP(Phase4+): dual-write verticalData ↔ eyebrowDesign (vertical-bridge)
+  dualWriteReservationMeta(bodyMeta);
   const finalMeta = { ...bodyMeta, ...(customerKey ? { customerKey } : {}) };
   if (Object.keys(finalMeta).length > 0) {
     await env.DB.prepare("UPDATE reservations SET meta = ? WHERE id = ? AND tenant_id = ?")
@@ -7528,10 +7466,51 @@ async function scheduled(_event: any, env: Env, _ctx: any): Promise<void> {
             if (settingsRaw) sendMode = JSON.parse(settingsRaw).sendMode ?? "safe";
           } catch { /* default safe */ }
 
-          // Generate followup message via template (no AI call in cron to avoid latency)
-          const stepLabel = fStep === "first_followup" ? "1回目" : "2回目";
-          const fSubject = `${(lead as any).store_name}様 — フォローアップ（${stepLabel}）`;
-          const fBody = `${(lead as any).store_name}様\n\n先日ご連絡させていただいた件につきまして、${stepLabel}のフォローアップをお送りいたします。\nご興味がございましたら、お気軽にご返信ください。`;
+          // Generate followup message (AI when key available, otherwise template)
+          const stepLabel = fStep === "first_followup" ? "1回目" : fStep === "second_followup" ? "2回目" : "最終";
+          const isBreakup = fStep === "breakup";
+          let fSubject: string;
+          let fBody: string;
+
+          const openaiKey = (env as any).OPENAI_API_KEY;
+          if (openaiKey) {
+            try {
+              const aiRes = await fetch("https://api.openai.com/v1/chat/completions", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "Authorization": `Bearer ${openaiKey}` },
+                body: JSON.stringify({
+                  model: "gpt-4o-mini",
+                  messages: [
+                    { role: "system", content: isBreakup
+                      ? `あなたはB2B営業の担当者です。最終フォローアップ（breakup）メールを書いてください。丁寧に、しかし明確に「最後のご連絡」であることを伝え、今後は連絡しない旨を伝えてください。短く3-4文で。件名と本文をJSON形式で返してください: {"subject":"...", "body":"..."}`
+                      : `あなたはB2B営業の担当者です。${stepLabel}のフォローアップメールを書いてください。前回の営業メールへの返信がない状況です。丁寧で簡潔に、3-4文で。件名と本文をJSON形式で返してください: {"subject":"...", "body":"..."}` },
+                    { role: "user", content: `宛先: ${(lead as any).store_name}様` },
+                  ],
+                  response_format: { type: "json_object" },
+                  temperature: 0.3, max_tokens: 300,
+                }),
+              });
+              if (aiRes.ok) {
+                const aiData = (await aiRes.json()) as any;
+                const parsed = JSON.parse(aiData.choices?.[0]?.message?.content || "{}");
+                fSubject = parsed.subject || `${(lead as any).store_name}様 — フォローアップ（${stepLabel}）`;
+                fBody = parsed.body || `${(lead as any).store_name}様\n\nフォローアップのご連絡です。`;
+              } else {
+                throw new Error(`AI ${aiRes.status}`);
+              }
+            } catch {
+              // Fallback to template
+              fSubject = `${(lead as any).store_name}様 — フォローアップ（${stepLabel}）`;
+              fBody = isBreakup
+                ? `${(lead as any).store_name}様\n\n何度かご連絡させていただきましたが、お忙しいところ恐縮です。\n本メールを最後のご連絡とさせていただきます。\nもし今後ご興味が出ましたら、いつでもお気軽にご連絡ください。`
+                : `${(lead as any).store_name}様\n\n先日ご連絡させていただいた件につきまして、${stepLabel}のフォローアップをお送りいたします。\nご興味がございましたら、お気軽にご返信ください。`;
+            }
+          } else {
+            fSubject = `${(lead as any).store_name}様 — フォローアップ（${stepLabel}）`;
+            fBody = isBreakup
+              ? `${(lead as any).store_name}様\n\n何度かご連絡させていただきましたが、お忙しいところ恐縮です。\n本メールを最後のご連絡とさせていただきます。\nもし今後ご興味が出ましたら、いつでもお気軽にご連絡ください。`
+              : `${(lead as any).store_name}様\n\n先日ご連絡させていただいた件につきまして、${stepLabel}のフォローアップをお送りいたします。\nご興味がございましたら、お気軽にご返信ください。`;
+          }
 
           // Save as draft
           const msgId = `ol_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
@@ -8011,6 +7990,40 @@ async function scheduled(_event: any, env: Env, _ctx: any): Promise<void> {
       }
     } catch (aceErr: any) {
       console.error(`[AUTO_CLOSE_ENGINE_V1] error:`, String(aceErr?.message ?? aceErr));
+    }
+  }
+
+  // ── Phase 17: Auto Campaign Runner (cron) ────────────────────────────
+  if (db) {
+    const ACR_STAMP = "AUTO_CAMPAIGN_RUNNER_V1";
+    try {
+      const { runAutoCampaign } = await import("./outreach/automation");
+      const acrUid = () => `ac_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+      const acrNow = () => new Date().toISOString();
+
+      // Find tenants with autoCampaignEnabled
+      // Use a simple heuristic: check tenants that have new leads with scores
+      const tenantRows = await db
+        .prepare(
+          `SELECT DISTINCT tenant_id FROM sales_leads
+           WHERE pipeline_stage = 'new' AND contact_email IS NOT NULL AND score >= 60
+           LIMIT 20`
+        )
+        .all<{ tenant_id: string }>();
+
+      for (const row of tenantRows.results ?? []) {
+        const tid = row.tenant_id;
+        const acrResult = await runAutoCampaign(db, kv, tid, acrUid, acrNow, {
+          OPENAI_API_KEY: (env as any).OPENAI_API_KEY,
+          RESEND_API_KEY: (env as any).RESEND_API_KEY,
+          EMAIL_FROM: (env as any).EMAIL_FROM,
+        });
+        if (acrResult.processed > 0 || acrResult.errors > 0) {
+          console.log(`[${ACR_STAMP}] tenant=${tid} processed=${acrResult.processed} drafted=${acrResult.drafted} sent=${acrResult.sent} skipped=${acrResult.skipped} errors=${acrResult.errors}`);
+        }
+      }
+    } catch (acrErr: any) {
+      console.error(`[${ACR_STAMP}] error:`, String(acrErr?.message ?? acrErr));
     }
   }
 

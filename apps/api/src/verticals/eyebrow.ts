@@ -51,7 +51,7 @@ export function getRepeatConfig(settings: any): RepeatConfig {
       template: String(vc.template || DEFAULT_REPEAT_TEMPLATE),
     };
   }
-  // 旧形式: eyebrow.repeat
+  // CLEANUP(Phase4+): legacy eyebrow.repeat fallback — 全テナント verticalConfig 移行後に削除
   const eb = settings?.eyebrow?.repeat;
   if (eb) {
     return {
