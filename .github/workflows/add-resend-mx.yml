@@ -1,0 +1,112 @@
+name: Add Resend Receiving MX Record
+
+on:
+  workflow_dispatch:
+
+jobs:
+  add-mx:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get Zone ID
+        id: zone
+        env:
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+        run: |
+          ZONE_RESP=$(curl -sf \
+            -H "Authorization: Bearer ${CF_API_TOKEN}" \
+            -H "Content-Type: application/json" \
+            "https://api.cloudflare.com/client/v4/zones?name=kazukigroup.org")
+
+          ZONE_ID=$(echo "$ZONE_RESP" | jq -r '.result[0].id')
+          echo "zone_id=$ZONE_ID" >> $GITHUB_OUTPUT
+          echo "Zone ID: $ZONE_ID"
+
+          if [ "$ZONE_ID" = "null" ] || [ -z "$ZONE_ID" ]; then
+            echo "ERROR: Could not find zone for kazukigroup.org"
+            echo "$ZONE_RESP" | jq .
+            exit 1
+          fi
+
+      - name: List existing MX records
+        env:
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          ZONE_ID: ${{ steps.zone.outputs.zone_id }}
+        run: |
+          echo "=== Existing MX records ==="
+          curl -sf \
+            -H "Authorization: Bearer ${CF_API_TOKEN}" \
+            -H "Content-Type: application/json" \
+            "https://api.cloudflare.com/client/v4/zones/${ZONE_ID}/dns_records?type=MX" \
+            | jq '.result[] | {id, name, content, priority, ttl}'
+
+      - name: Check if receiving MX already exists
+        id: check
+        env:
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          ZONE_ID: ${{ steps.zone.outputs.zone_id }}
+        run: |
+          EXISTING=$(curl -sf \
+            -H "Authorization: Bearer ${CF_API_TOKEN}" \
+            -H "Content-Type: application/json" \
+            "https://api.cloudflare.com/client/v4/zones/${ZONE_ID}/dns_records?type=MX&content=inbound-smtp.ap-northeast-1.amazonaws.com" \
+            | jq '.result | length')
+
+          echo "existing_count=$EXISTING" >> $GITHUB_OUTPUT
+
+          if [ "$EXISTING" -gt 0 ]; then
+            echo "Receiving MX already exists. Skipping creation."
+          else
+            echo "Receiving MX not found. Will create."
+          fi
+
+      - name: Add receiving MX record
+        if: steps.check.outputs.existing_count == '0'
+        env:
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          ZONE_ID: ${{ steps.zone.outputs.zone_id }}
+        run: |
+          echo "Adding MX record: kazukigroup.org → inbound-smtp.ap-northeast-1.amazonaws.com (priority 10)"
+
+          RESULT=$(curl -sf -X POST \
+            -H "Authorization: Bearer ${CF_API_TOKEN}" \
+            -H "Content-Type: application/json" \
+            "https://api.cloudflare.com/client/v4/zones/${ZONE_ID}/dns_records" \
+            -d '{
+              "type": "MX",
+              "name": "kazukigroup.org",
+              "content": "inbound-smtp.ap-northeast-1.amazonaws.com",
+              "priority": 10,
+              "proxied": false,
+              "ttl": 1
+            }')
+
+          SUCCESS=$(echo "$RESULT" | jq -r '.success')
+          echo "$RESULT" | jq .
+
+          if [ "$SUCCESS" != "true" ]; then
+            echo "ERROR: Failed to add MX record"
+            exit 1
+          fi
+
+          RECORD_ID=$(echo "$RESULT" | jq -r '.result.id')
+          echo "Successfully added MX record. Record ID: $RECORD_ID"
+          echo "=== ROLLBACK COMMAND ==="
+          echo "To delete this record: curl -X DELETE -H 'Authorization: Bearer \$CF_API_TOKEN' https://api.cloudflare.com/client/v4/zones/${ZONE_ID}/dns_records/$RECORD_ID"
+
+      - name: Verify final MX records
+        env:
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          ZONE_ID: ${{ steps.zone.outputs.zone_id }}
+        run: |
+          echo "=== Final MX records for kazukigroup.org ==="
+          curl -sf \
+            -H "Authorization: Bearer ${CF_API_TOKEN}" \
+            -H "Content-Type: application/json" \
+            "https://api.cloudflare.com/client/v4/zones/${ZONE_ID}/dns_records?type=MX" \
+            | jq '.result[] | {id, name, content, priority, ttl}'
+
+          echo ""
+          echo "=== Next Steps ==="
+          echo "1. Check Resend dashboard: https://resend.com/domains"
+          echo "2. Verify Receiving status changes from Pending to Verified"
+          echo "3. DNS propagation may take up to 5 minutes"
