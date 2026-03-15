@@ -219,6 +219,45 @@ export default function OutreachAutomationClient() {
                 <input type="text" value={formNiche} onChange={e => setFormNiche(e.target.value)}
                   placeholder="例: 眉毛サロン" className="w-full border rounded-lg px-3 py-2 text-sm" />
               </div>
+              {/* Area selection mode — radio buttons above area input */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">エリア選定モード</label>
+                <div className="flex gap-4 mb-3">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input type="radio" name="areaMode" value="manual"
+                      checked={formAreaMode === "manual"}
+                      onChange={() => setFormAreaMode("manual")}
+                      className="text-indigo-600" />
+                    <span className="text-sm text-gray-700">手動</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input type="radio" name="areaMode" value="rotation"
+                      checked={formAreaMode === "rotation"}
+                      onChange={() => setFormAreaMode("rotation")}
+                      className="text-indigo-600" />
+                    <span className="text-sm text-gray-700">ローテーション（おすすめ）</span>
+                  </label>
+                </div>
+                {formAreaMode === "rotation" && (
+                  <div className="p-3 mb-3 rounded-lg bg-indigo-50 border border-indigo-200 text-sm text-indigo-800">
+                    入力したエリアを実行ごとに1つずつ順番に使用します。
+                    <span className="block text-xs text-indigo-600 mt-1">例: 新宿 → 渋谷 → 池袋 → (最初に戻る)</span>
+                    {(() => {
+                      const previewAreas = formAreas.split(/[,\n]/).map(a => a.trim()).filter(Boolean);
+                      if (previewAreas.length >= 2) {
+                        return (
+                          <p className="text-xs text-indigo-700 mt-1.5 font-medium">
+                            実行順: {previewAreas.map((a, i) => (
+                              <span key={i}>{i > 0 && " → "}{a}</span>
+                            ))} → (先頭に戻る)
+                          </p>
+                        );
+                      }
+                      return null;
+                    })()}
+                  </div>
+                )}
+              </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">エリア（カンマ区切り or 改行）</label>
                 <textarea value={formAreas} onChange={e => setFormAreas(e.target.value)}
@@ -313,18 +352,6 @@ export default function OutreachAutomationClient() {
                   </div>
                 </div>
               )}
-              {/* Area mode */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">エリア選定モード</label>
-                <select value={formAreaMode} onChange={e => setFormAreaMode(e.target.value as ScheduleAreaMode)}
-                  className="w-full border rounded-lg px-3 py-2 text-sm">
-                  <option value="manual">手動指定（登録エリアを順番に使用）</option>
-                  <option value="auto">AI 自動選定（反応率・鮮度で最適エリアを選択）</option>
-                </select>
-                {formAreaMode === "auto" && (
-                  <p className="text-xs text-blue-600 mt-1">次回実行時に AI が最適エリアを自動選定します</p>
-                )}
-              </div>
             </div>
             <div className="flex justify-end gap-3 mt-6">
               <button onClick={() => { setShowCreate(false); resetForm(); }}
@@ -372,7 +399,16 @@ export default function OutreachAutomationClient() {
                       {s.niche} | {areas.slice(0, 4).join(", ")}{areas.length > 4 && ` +${areas.length - 4}`}
                       {" | "}{SCHEDULE_MODE_LABELS[s.mode]}
                       {s.area_mode === "auto" && " | エリア自動"}
+                      {s.area_mode === "rotation" && areas.length > 0 && (
+                        <span className="text-indigo-600">
+                          {" | "} ローテ {((s.rotation_index ?? 0) % areas.length) + 1}/{areas.length}
+                          {" 次回: "}{areas[(s.rotation_index ?? 0) % areas.length]}
+                        </span>
+                      )}
                       {s.last_run_at && <> | 最終実行: {new Date(s.last_run_at).toLocaleDateString("ja-JP")}</>}
+                      {s.last_executed_area && s.area_mode === "rotation" && (
+                        <span className="text-gray-400"> (前回: {s.last_executed_area})</span>
+                      )}
                     </div>
                   </div>
                   <div className="flex gap-1 shrink-0">
@@ -416,7 +452,21 @@ export default function OutreachAutomationClient() {
               <div>目標: <span className="font-medium">{selectedSchedule.max_target_count}件</span></div>
               <div>品質閾値: <span className="font-medium">{selectedSchedule.quality_threshold}</span></div>
               <div>モード: <span className="font-medium">{SCHEDULE_MODE_LABELS[selectedSchedule.mode]}</span></div>
-              <div>エリア選定: <span className="font-medium">{SCHEDULE_AREA_MODE_LABELS[selectedSchedule.area_mode] ?? "手動指定"}</span></div>
+              <div>エリア選定: <span className="font-medium">{SCHEDULE_AREA_MODE_LABELS[selectedSchedule.area_mode] ?? "手動固定"}</span></div>
+              {selectedSchedule.area_mode === "rotation" && (() => {
+                const detailAreas: string[] = (() => { try { return JSON.parse(selectedSchedule.areas_json); } catch { return []; } })();
+                if (detailAreas.length === 0) return null;
+                const idx = (selectedSchedule.rotation_index ?? 0) % detailAreas.length;
+                return (
+                  <div className="col-span-2 sm:col-span-3 bg-indigo-50 rounded p-2">
+                    <span className="text-indigo-700">ローテーション位置: <span className="font-medium">{idx + 1}/{detailAreas.length}</span></span>
+                    <span className="text-indigo-600 ml-2">次回エリア: <span className="font-medium">{detailAreas[idx]}</span></span>
+                    {selectedSchedule.last_executed_area && (
+                      <span className="text-gray-500 ml-2">前回: {selectedSchedule.last_executed_area}</span>
+                    )}
+                  </div>
+                );
+              })()}
               {(selectedSchedule.mode === "hybrid" || selectedSchedule.mode === "auto_send") && (
                 <>
                   <div>送信上限/日: <span className="font-medium">{selectedSchedule.daily_send_limit || "無制限"}</span></div>

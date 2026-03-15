@@ -144,6 +144,7 @@ export interface UpdateLeadInput {
   best_offer?: string;
   recommended_channel?: string;
   next_action?: string;
+  score?: number;
 }
 
 export interface GenerateMessageInput {
@@ -222,6 +223,11 @@ export interface OutreachSettings {
   /** Phase 4: followup automation */
   followupDay3Enabled: boolean;
   followupDay7Enabled: boolean;
+  /** Phase 17: Day 14 breakup message */
+  followupDay14Enabled: boolean;
+  /** Phase 17: Auto campaign for new leads */
+  autoCampaignEnabled: boolean;
+  autoCampaignMinScore: number;
   /** Phase 4: minimum days between contacts to same lead */
   contactCooldownDays: number;
   /** Phase 6: auto-process after source import */
@@ -229,24 +235,47 @@ export interface OutreachSettings {
   autoScoreOnImport: boolean;
   /** UX: default LP URL for {{lp_url}} token */
   defaultLpUrl: string;
+  /** Phase 18: Emergency pause (stops all auto-send) */
+  autoCampaignPaused: boolean;
+  pauseReason: string;
+  /** Phase 18: Auto Lead Supply */
+  autoLeadSupplyEnabled: boolean;
+  /** Phase 18: Close Optimization */
+  autoCloseEnabled: boolean;
+  /** Phase 18: Monitoring thresholds */
+  monitoringAlertsEnabled: boolean;
+  autoPauseEnabled: boolean;
+  autoPauseFailureThreshold: number;
+  autoPauseBounceThreshold: number;
 }
 
 export const DEFAULT_OUTREACH_SETTINGS: OutreachSettings = {
   sendMode: "safe",
-  dailyCap: 50,
-  hourlyCap: 10,
+  dailyCap: 200,
+  hourlyCap: 20,
   requireApproval: true,
   followupDay3Enabled: true,
   followupDay7Enabled: true,
+  followupDay14Enabled: true,
+  autoCampaignEnabled: false,
+  autoCampaignMinScore: 60,
   contactCooldownDays: 7,
   autoAnalyzeOnImport: false,
   autoScoreOnImport: false,
   defaultLpUrl: "",
+  autoCampaignPaused: false,
+  pauseReason: "",
+  autoLeadSupplyEnabled: false,
+  autoCloseEnabled: false,
+  monitoringAlertsEnabled: false,
+  autoPauseEnabled: false,
+  autoPauseFailureThreshold: 10,
+  autoPauseBounceThreshold: 5,
 };
 
 // ── Phase 4 types ──────────────────────────────────────────────────────────
 
-export type FollowupStep = "first_followup" | "second_followup";
+export type FollowupStep = "first_followup" | "second_followup" | "breakup";
 export type FollowupStatus = "scheduled" | "sent" | "cancelled" | "skipped";
 
 export interface OutreachFollowup {
@@ -593,7 +622,7 @@ export interface BatchJobResult {
 
 export type ScheduleFrequency = "daily" | "weekdays" | "weekly";
 export type ScheduleMode = "review_only" | "approved_send_existing_only" | "hybrid" | "auto_send";
-export type ScheduleAreaMode = "manual" | "auto";
+export type ScheduleAreaMode = "manual" | "auto" | "rotation";
 export type ScheduleRunStatus = "pending" | "running" | "completed" | "failed" | "cancelled";
 
 export interface OutreachSchedule {
@@ -622,6 +651,10 @@ export interface OutreachSchedule {
   daily_send_limit: number;
   /** Phase 16: minimum lead score for auto-send (hybrid/auto_send) */
   min_score_for_auto_send: number;
+  /** Phase 19: area rotation state */
+  rotation_index: number;
+  rotation_cursor_updated_at: string | null;
+  last_executed_area: string | null;
   last_run_at: string | null;
   next_run_at: string | null;
   created_at: string;
@@ -700,6 +733,7 @@ export type ReplyIntent =
   | "later"
   | "pricing"
   | "demo"
+  | "unsubscribe"
   | "unknown";
 
 export type ReplySource = "email" | "instagram" | "line" | "webform";
@@ -754,6 +788,7 @@ export const REPLY_INTENT_LABELS: Record<ReplyIntent, string> = {
   later: "後日",
   pricing: "料金確認",
   demo: "デモ希望",
+  unsubscribe: "配信停止",
   unknown: "不明",
 };
 
@@ -763,6 +798,7 @@ export const INTENT_TO_PIPELINE: Partial<Record<ReplyIntent, PipelineStage>> = {
   pricing: "meeting",
   demo: "meeting",
   not_interested: "lost",
+  unsubscribe: "lost",
 };
 
 // ── Phase 15: Auto Close AI ─────────────────────────────────────────────

@@ -157,6 +157,15 @@ export interface OutreachSettings {
   autoScoreOnImport: boolean;
   /** UX: default LP URL for {{lp_url}} token */
   defaultLpUrl: string;
+  /** Phase 18: Guard Rails */
+  autoCampaignPaused?: boolean;
+  pauseReason?: string;
+  autoLeadSupplyEnabled?: boolean;
+  autoCloseEnabled?: boolean;
+  monitoringAlertsEnabled?: boolean;
+  autoPauseEnabled?: boolean;
+  autoPauseFailureThreshold?: number;
+  autoPauseBounceThreshold?: number;
 }
 
 export interface SendStats {
@@ -877,7 +886,7 @@ export interface BatchJobResult {
 
 export type ScheduleFrequency = "daily" | "weekdays" | "weekly";
 export type ScheduleMode = "review_only" | "approved_send_existing_only" | "hybrid" | "auto_send";
-export type ScheduleAreaMode = "manual" | "auto";
+export type ScheduleAreaMode = "manual" | "auto" | "rotation";
 export type ScheduleRunStatus = "pending" | "running" | "completed" | "failed" | "cancelled";
 
 export const SCHEDULE_FREQUENCY_LABELS: Record<ScheduleFrequency, string> = {
@@ -894,8 +903,9 @@ export const SCHEDULE_MODE_LABELS: Record<ScheduleMode, string> = {
 };
 
 export const SCHEDULE_AREA_MODE_LABELS: Record<ScheduleAreaMode, string> = {
-  manual: "手動指定",
+  manual: "手動固定",
   auto: "AI 自動選定",
+  rotation: "ローテーション",
 };
 
 export const SCHEDULE_RUN_STATUS_LABELS: Record<ScheduleRunStatus, string> = {
@@ -937,6 +947,10 @@ export interface OutreachSchedule {
   area_mode: ScheduleAreaMode;
   daily_send_limit: number;
   min_score_for_auto_send: number;
+  /** Phase 19: area rotation state */
+  rotation_index: number;
+  rotation_cursor_updated_at: string | null;
+  last_executed_area: string | null;
   last_run_at: string | null;
   next_run_at: string | null;
   created_at: string;
@@ -1422,3 +1436,121 @@ export const CLOSE_STAGE_COLORS: Record<CloseStage, string> = {
   won: "bg-green-200 text-green-800",
   lost: "bg-red-100 text-red-700",
 };
+
+// ── Phase 18: Monitoring & Guard Rails ──────────────────────────────────
+
+export interface HealthMetrics {
+  last_auto_campaign_run_at: string | null;
+  last_followup_run_at: string | null;
+  last_close_engine_run_at: string | null;
+  sent_last_24h: number;
+  failed_last_24h: number;
+  bounce_like_failures_last_24h: number;
+  reply_count_last_24h: number;
+  unsubscribe_count_last_24h: number;
+  auto_campaign_enabled: boolean;
+  auto_campaign_paused: boolean;
+  pending_followups: number;
+  stale_followups: number;
+}
+
+export interface UnhealthyFlag {
+  code: string;
+  severity: "warning" | "critical";
+  message: string;
+}
+
+export interface HealthResult {
+  status: "healthy" | "degraded" | "unhealthy";
+  tenantId: string;
+  timestamp: string;
+  metrics: HealthMetrics;
+  flags: UnhealthyFlag[];
+}
+
+export interface MonitoringTimeSeries {
+  period: string;
+  sent: number;
+  failed: number;
+  replies: number;
+  unsubscribes: number;
+  meetings: number;
+  closes: number;
+}
+
+export interface OutreachHandoff {
+  id: string;
+  tenant_id: string;
+  lead_id: string;
+  reply_id: string | null;
+  reason: string;
+  priority: "high" | "normal" | "low";
+  status: "open" | "assigned" | "resolved" | "dismissed";
+  assigned_to: string | null;
+  resolution_notes: string | null;
+  resolved_at: string | null;
+  created_at: string;
+  store_name?: string;
+  contact_email?: string | null;
+  reply_text?: string;
+}
+
+export const HANDOFF_PRIORITY_LABELS: Record<string, string> = {
+  high: "高",
+  normal: "通常",
+  low: "低",
+};
+
+export const HANDOFF_PRIORITY_COLORS: Record<string, string> = {
+  high: "bg-red-100 text-red-700",
+  normal: "bg-blue-100 text-blue-700",
+  low: "bg-gray-100 text-gray-600",
+};
+
+export const HANDOFF_STATUS_LABELS: Record<string, string> = {
+  open: "未対応",
+  assigned: "対応中",
+  resolved: "解決済",
+  dismissed: "却下",
+};
+
+export const HANDOFF_STATUS_COLORS: Record<string, string> = {
+  open: "bg-yellow-100 text-yellow-700",
+  assigned: "bg-blue-100 text-blue-700",
+  resolved: "bg-green-100 text-green-700",
+  dismissed: "bg-gray-100 text-gray-400",
+};
+
+export interface OutreachCloseVariant {
+  id: string;
+  tenant_id: string;
+  close_type: string;
+  variant_key: string;
+  subject_template: string | null;
+  body_template: string;
+  is_active: number;
+  sent_count: number;
+  meeting_count: number;
+  close_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CloseAnalytics {
+  total_close_evaluations: number;
+  by_intent: Record<string, number>;
+  by_temperature: Record<string, number>;
+  handoffs_created: number;
+  variant_performance: Array<{
+    variant: string;
+    sent: number;
+    meetings: number;
+    closes: number;
+    meeting_rate: number;
+  }>;
+  booking_funnel: {
+    links_sent: number;
+    clicked: number;
+    booked: number;
+  };
+}

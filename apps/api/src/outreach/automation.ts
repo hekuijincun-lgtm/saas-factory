@@ -34,7 +34,7 @@ const MAX_SCHEDULES_PER_TENANT = 10;
 
 /** Allowed schedule modes */
 const VALID_MODES = ["review_only", "approved_send_existing_only", "hybrid", "auto_send"];
-const VALID_AREA_MODES: ScheduleAreaMode[] = ["manual", "auto"];
+const VALID_AREA_MODES: ScheduleAreaMode[] = ["manual", "auto", "rotation"];
 
 // ── CRUD ────────────────────────────────────────────────────────────────
 
@@ -67,7 +67,7 @@ export async function createSchedule(
     name: input.name || `${input.niche} 自動営業`,
     niche: input.niche,
     areas_json: JSON.stringify(input.areas),
-    source_type: input.source_type ?? "directory",
+    source_type: input.source_type ?? "map",
     enabled: 0,
     frequency: input.frequency ?? "daily",
     run_hour: input.run_hour ?? 9,
@@ -84,6 +84,9 @@ export async function createSchedule(
     area_mode: areaMode,
     daily_send_limit: Math.max(0, Math.min(input.daily_send_limit ?? 0, 200)),
     min_score_for_auto_send: Math.max(0, Math.min(input.min_score_for_auto_send ?? 40, 100)),
+    rotation_index: 0,
+    rotation_cursor_updated_at: null,
+    last_executed_area: null,
     last_run_at: null,
     next_run_at: nextRun,
     created_at: ts,
@@ -97,8 +100,9 @@ export async function createSchedule(
         run_hour, run_minute, max_target_count, max_per_area, quality_threshold,
         auto_accept_enabled, auto_import_enabled, auto_analyze_enabled, auto_score_enabled, auto_draft_enabled,
         mode, area_mode, daily_send_limit, min_score_for_auto_send,
+        rotation_index, rotation_cursor_updated_at, last_executed_area,
         last_run_at, next_run_at, created_at, updated_at)
-       VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25,?26)`
+       VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25,?26,?27,?28,?29)`
     )
     .bind(
       id, tenantId, schedule.name, schedule.niche, schedule.areas_json, schedule.source_type,
@@ -107,6 +111,7 @@ export async function createSchedule(
       schedule.auto_accept_enabled, schedule.auto_import_enabled, schedule.auto_analyze_enabled,
       schedule.auto_score_enabled, schedule.auto_draft_enabled,
       schedule.mode, schedule.area_mode, schedule.daily_send_limit, schedule.min_score_for_auto_send,
+      0, null, null,
       null, nextRun, ts, ts
     )
     .run();
@@ -203,7 +208,7 @@ export async function runScheduleNow(
   scheduleId: string,
   uid: UidFn,
   now: NowFn,
-  env: { GOOGLE_MAPS_API_KEY?: string; OPENAI_API_KEY?: string }
+  env: { GOOGLE_MAPS_API_KEY?: string; OPENAI_API_KEY?: string; RESEND_API_KEY?: string; EMAIL_FROM?: string }
 ): Promise<OutreachScheduleRun> {
   const schedule = await db
     .prepare("SELECT * FROM outreach_schedules WHERE id = ?1 AND tenant_id = ?2")
@@ -221,7 +226,7 @@ export async function processScheduledJobs(
   kv: KVNamespace,
   uid: UidFn,
   now: NowFn,
-  env: { GOOGLE_MAPS_API_KEY?: string; OPENAI_API_KEY?: string }
+  env: { GOOGLE_MAPS_API_KEY?: string; OPENAI_API_KEY?: string; RESEND_API_KEY?: string; EMAIL_FROM?: string }
 ): Promise<{ processed: number; errors: number }> {
   const nowIso = now();
   const nowJst = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Tokyo" }));
@@ -248,6 +253,15 @@ export async function processScheduledJobs(
   let errors = 0;
 
   for (const schedule of (schedules.results ?? [])) {
+    // Phase 18: Check tenant-level autoLeadSupplyEnabled flag
+    try {
+      const tenantSettingsRaw = await kv.get(`outreach:settings:${schedule.tenant_id}`);
+      if (tenantSettingsRaw) {
+        const tenantSettings = JSON.parse(tenantSettingsRaw);
+        if (tenantSettings.autoLeadSupplyEnabled === false) continue;
+      }
+    } catch { /* default: allow if setting absent */ }
+
     // Check frequency
     if (schedule.frequency === "weekdays" && (currentDay === 0 || currentDay === 6)) continue;
     if (schedule.frequency === "weekly" && currentDay !== 1) continue; // Monday only
@@ -498,7 +512,7 @@ async function executeAutoSend(
 
     // ── Execute send ──
     const ts = now();
-    const sender = resolveProvider(settings.sendMode);
+    const sender = resolveProvider(settings.sendMode, env);
 
     // Token expansion
     let lpUrl = settings.defaultLpUrl || "";
@@ -574,7 +588,7 @@ async function executeScheduleRun(
   schedule: OutreachSchedule,
   uid: UidFn,
   now: NowFn,
-  env: { GOOGLE_MAPS_API_KEY?: string; OPENAI_API_KEY?: string }
+  env: { GOOGLE_MAPS_API_KEY?: string; OPENAI_API_KEY?: string; RESEND_API_KEY?: string; EMAIL_FROM?: string }
 ): Promise<OutreachScheduleRun> {
   const runId = uid();
   const ts = now();
@@ -594,8 +608,24 @@ async function executeScheduleRun(
     let areas: string[] = JSON.parse(schedule.areas_json);
     let chosenArea: string | null = null;
     let selectionReason: string | null = null;
+    let advanceRotation = false;
 
-    if ((schedule.area_mode ?? "manual") === "auto") {
+    const areaMode = schedule.area_mode ?? "manual";
+
+    if (areaMode === "rotation") {
+      // Phase 19: Deterministic area rotation
+      if (areas.length === 0) {
+        chosenArea = "";
+        selectionReason = "エリア未設定";
+      } else {
+        const idx = (schedule.rotation_index ?? 0) % areas.length;
+        const selectedArea = areas[idx];
+        chosenArea = selectedArea;
+        areas = [selectedArea]; // Pass only this area to batch job
+        selectionReason = `ローテーション: ${selectedArea} (${idx + 1}/${areas.length})`;
+        advanceRotation = true;
+      }
+    } else if (areaMode === "auto") {
       const selection = await selectAreaAutomatically(db, tenantId, schedule);
       areas = selection.areas;
       chosenArea = selection.chosenArea;
@@ -671,6 +701,20 @@ async function executeScheduleRun(
       )
       .run();
 
+    // Phase 19: Advance rotation index on success (optimistic lock via rotation_index match)
+    if (advanceRotation && areas.length > 0) {
+      const configuredAreas: string[] = JSON.parse(schedule.areas_json);
+      const currentIdx = schedule.rotation_index ?? 0;
+      const nextIdx = (currentIdx + 1) % configuredAreas.length;
+      await db
+        .prepare(
+          `UPDATE outreach_schedules SET rotation_index = ?1, rotation_cursor_updated_at = ?2, last_executed_area = ?3, updated_at = ?4
+           WHERE id = ?5 AND tenant_id = ?6 AND rotation_index = ?7`
+        )
+        .bind(nextIdx, finishedAt, chosenArea, finishedAt, schedule.id, tenantId, currentIdx)
+        .run();
+    }
+
     // Update schedule last_run_at + next_run_at
     const nextRun = computeNextRun(schedule.frequency, schedule.run_hour, schedule.run_minute);
     await db
@@ -697,6 +741,222 @@ async function executeScheduleRun(
 
     throw err;
   }
+}
+
+// ── Phase 17: Auto Campaign Runner ──────────────────────────────────────
+// Picks up new leads with score >= threshold, generates AI draft, sends automatically.
+
+export interface AutoCampaignResult {
+  processed: number;
+  drafted: number;
+  sent: number;
+  skipped: number;
+  errors: number;
+}
+
+/**
+ * Run auto-campaign: find unsent new leads → generate AI message → send.
+ * Called from cron every 5 minutes when autoCampaignEnabled=true.
+ */
+export async function runAutoCampaign(
+  db: D1Database,
+  kv: KVNamespace,
+  tenantId: string,
+  uid: UidFn,
+  now: NowFn,
+  env: { OPENAI_API_KEY?: string; RESEND_API_KEY?: string; EMAIL_FROM?: string }
+): Promise<AutoCampaignResult> {
+  const result: AutoCampaignResult = { processed: 0, drafted: 0, sent: 0, skipped: 0, errors: 0 };
+
+  // Load settings
+  const settingsRaw = await kv.get(`outreach:settings:${tenantId}`);
+  const settings: OutreachSettings = settingsRaw
+    ? { ...DEFAULT_OUTREACH_SETTINGS, ...JSON.parse(settingsRaw) }
+    : { ...DEFAULT_OUTREACH_SETTINGS };
+
+  if (!settings.autoCampaignEnabled) return result;
+  if (settings.autoCampaignPaused) {
+    console.log(`[auto-campaign] Paused for tenant=${tenantId}: ${settings.pauseReason || "no reason"}`);
+    return result;
+  }
+
+  const minScore = settings.autoCampaignMinScore ?? 60;
+
+  // 1. Find new leads that haven't been contacted yet
+  const leads = await db
+    .prepare(
+      `SELECT l.id, l.store_name, l.contact_email, l.industry, l.website_url,
+              l.area, l.region, l.score, l.notes, l.instagram_url, l.line_url,
+              l.has_booking_link, l.review_count, l.category
+       FROM sales_leads l
+       LEFT JOIN lead_message_drafts d ON d.lead_id = l.id AND d.tenant_id = l.tenant_id
+       WHERE l.tenant_id = ?1
+         AND l.pipeline_stage = 'new'
+         AND l.contact_email IS NOT NULL
+         AND l.contact_email != ''
+         AND l.score >= ?2
+         AND d.id IS NULL
+       ORDER BY l.score DESC
+       LIMIT 10`
+    )
+    .bind(tenantId, minScore)
+    .all<{
+      id: string; store_name: string; contact_email: string; industry: string | null;
+      website_url: string | null; area: string | null; region: string | null;
+      score: number; notes: string | null; instagram_url: string | null; line_url: string | null;
+      has_booking_link: number | null; review_count: number | null; category: string | null;
+    }>();
+
+  if (!leads.results?.length) return result;
+
+  // Load learning context for better AI messages
+  let learningCtx: any = null;
+  try {
+    const { getLearningContext } = await import("./learning");
+    learningCtx = await getLearningContext(db, tenantId);
+  } catch { /* learning optional */ }
+
+  const { generateOutreachMessage } = await import("./ai-generator");
+  const sender = resolveProvider(settings.sendMode, {
+    RESEND_API_KEY: env.RESEND_API_KEY,
+    EMAIL_FROM: env.EMAIL_FROM,
+  });
+
+  for (const lead of leads.results) {
+    result.processed++;
+
+    // Rate limit check
+    const rl = await checkRateLimit(kv, tenantId, {
+      dailyCap: settings.dailyCap,
+      perTenantPerHour: settings.hourlyCap,
+    });
+    if (!rl.allowed) { result.skipped++; break; } // Stop processing when rate limited
+
+    // Unsubscribe check
+    if (await isUnsubscribed(kv, tenantId, lead.id)) { result.skipped++; continue; }
+
+    // Dedup: KV lock to prevent concurrent cron processing same lead
+    const dedupKey = `outreach:campaign-lock:${tenantId}:${lead.id}`;
+    const existing = await kv.get(dedupKey);
+    if (existing) { result.skipped++; continue; }
+    await kv.put(dedupKey, "1", { expirationTtl: 300 }); // 5min TTL
+
+    const ts = now();
+
+    try {
+      // 2. Generate AI message
+      const generated = await generateOutreachMessage(
+        {
+          id: lead.id,
+          tenant_id: tenantId,
+          store_name: lead.store_name,
+          contact_email: lead.contact_email,
+          industry: lead.industry || "",
+          website_url: lead.website_url || "",
+          area: lead.area || "",
+          region: lead.region || "",
+          score: lead.score,
+          notes: lead.notes || "",
+          instagram_url: lead.instagram_url || "",
+          line_url: lead.line_url || "",
+        } as any,
+        { channel: "email", tone: "friendly" },
+        { openaiApiKey: env.OPENAI_API_KEY },
+        null, null, learningCtx
+      );
+
+      // Save draft as 'pending' first (update to 'sent' after successful send)
+      const draftId = uid();
+      await db
+        .prepare(
+          `INSERT INTO lead_message_drafts
+           (id, lead_id, tenant_id, kind, subject, body, status, tone, created_at)
+           VALUES (?1, ?2, ?3, 'email', ?4, ?5, 'pending', 'friendly', ?6)`
+        )
+        .bind(draftId, lead.id, tenantId, generated.subject, generated.body, ts)
+        .run();
+      result.drafted++;
+
+      // 3. Send immediately
+      const sendResult = await sender.send({
+        leadId: lead.id,
+        tenantId,
+        channel: "email",
+        to: lead.contact_email,
+        subject: generated.subject,
+        body: generated.body,
+      });
+
+      if (sendResult.success) {
+        // Mark draft as 'sent' after successful send
+        await db
+          .prepare("UPDATE lead_message_drafts SET status = 'sent' WHERE id = ?1 AND tenant_id = ?2")
+          .bind(draftId, tenantId)
+          .run();
+
+        // 4. Record delivery event
+        await db
+          .prepare(
+            `INSERT INTO outreach_delivery_events
+             (id, tenant_id, lead_id, message_id, channel, event_type, status, metadata_json, created_at)
+             VALUES (?1, ?2, ?3, ?4, 'email', 'sent', 'sent', ?5, ?6)`
+          )
+          .bind(
+            uid(), tenantId, lead.id, draftId,
+            JSON.stringify({ provider: sendResult.provider, sendMode: settings.sendMode, source: "auto_campaign", messageId: sendResult.messageId }),
+            ts
+          )
+          .run();
+
+        // 5. Update pipeline stage
+        await db
+          .prepare(
+            `UPDATE sales_leads SET pipeline_stage = 'contacted', last_contacted_at = ?1, updated_at = ?2
+             WHERE id = ?3 AND tenant_id = ?4`
+          )
+          .bind(ts, ts, lead.id, tenantId)
+          .run();
+
+        await incrementRateLimit(kv, tenantId);
+        await markSent(kv, tenantId, lead.id, draftId);
+
+        // Schedule followups
+        if (settings.followupDay3Enabled) {
+          await db.prepare(
+            `INSERT INTO outreach_followups (id, tenant_id, lead_id, step, scheduled_at, status, created_at)
+             VALUES (?1, ?2, ?3, 'first_followup', ?4, 'scheduled', ?5)`
+          ).bind(uid(), tenantId, lead.id, new Date(Date.now() + 3 * 86400000).toISOString(), ts).run();
+        }
+        if (settings.followupDay7Enabled) {
+          await db.prepare(
+            `INSERT INTO outreach_followups (id, tenant_id, lead_id, step, scheduled_at, status, created_at)
+             VALUES (?1, ?2, ?3, 'second_followup', ?4, 'scheduled', ?5)`
+          ).bind(uid(), tenantId, lead.id, new Date(Date.now() + 7 * 86400000).toISOString(), ts).run();
+        }
+        if (settings.followupDay14Enabled) {
+          await db.prepare(
+            `INSERT INTO outreach_followups (id, tenant_id, lead_id, step, scheduled_at, status, created_at)
+             VALUES (?1, ?2, ?3, 'breakup', ?4, 'scheduled', ?5)`
+          ).bind(uid(), tenantId, lead.id, new Date(Date.now() + 14 * 86400000).toISOString(), ts).run();
+        }
+
+        result.sent++;
+      } else {
+        // Mark draft as 'failed' so it can be retried
+        await db
+          .prepare("UPDATE lead_message_drafts SET status = 'failed' WHERE id = ?1 AND tenant_id = ?2")
+          .bind(draftId, tenantId)
+          .run();
+        await trackSendAttempt(db, tenantId, lead.id, sendResult.error);
+        result.skipped++;
+      }
+    } catch (err: any) {
+      console.error(`[auto-campaign] Error processing lead ${lead.id}:`, err.message);
+      result.errors++;
+    }
+  }
+
+  return result;
 }
 
 // ── Helper ──────────────────────────────────────────────────────────────
