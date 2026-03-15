@@ -1,38 +1,48 @@
 /**
  * Vertical Plugin Registry (Web-side)
  *
- * Phase 4: UI 用の labels / flags を vertical ごとに管理する。
- * API 側の verticals/registry.ts と labels / flags は同一定義。
+ * UI 用の labels / flags を vertical ごとに管理する。
+ * API 側の verticals/registry.ts と labels / flags は同一定義を維持すること。
  *
- * 責務: vertical ごとの UI 文言・表示制御
- * ※ legacy data bridge (normalize / dual-write) は bookingApi.ts が担当
- * ※ settings read adapter は types/settings.ts が担当
+ * 新 vertical 追加手順:
+ * 1. API 側: apps/api/src/verticals/{vertical}.ts を作成
+ * 2. API 側: apps/api/src/verticals/registry.ts に plugin 追加
+ * 3. ここ (verticalPlugins.ts) に VerticalPluginUI を追加
+ * 4. apps/api/src/settings.ts の VerticalType union に追加
+ * 5. apps/web/src/types/settings.ts の VerticalType union に追加
+ * ※ テンプレート: apps/web/src/lib/_verticalPluginTemplate.ts
  */
 
 import type { VerticalType } from '@/src/types/settings';
 
 // ── Plugin interface (UI subset) ────────────────────────────────────
 
+/** Plugin UI labels shape — must match API registry.ts VerticalPluginLabels */
+export interface VerticalPluginLabels {
+  karteTab: string;
+  menuFilterHeading: string;
+  kpiHeading: string;
+  settingsHeading: string;
+  menuSettingsHeading: string;
+  staffSettingsHeading: string;
+  settingsDescription: string;
+}
+
+/** Plugin feature flags shape — must match API registry.ts VerticalPluginFlags */
+export interface VerticalPluginFlags {
+  hasKarte: boolean;
+  hasMenuFilter: boolean;
+  hasVerticalKpi: boolean;
+  hasStaffAttributes: boolean;
+  hasMenuAttributes: boolean;
+  hasVerticalSettings: boolean;
+}
+
 export interface VerticalPluginUI {
   key: VerticalType;
   label: string;
-  labels: {
-    karteTab: string;
-    menuFilterHeading: string;
-    kpiHeading: string;
-    settingsHeading: string;
-    menuSettingsHeading: string;
-    staffSettingsHeading: string;
-    settingsDescription: string;
-  };
-  flags: {
-    hasKarte: boolean;
-    hasMenuFilter: boolean;
-    hasVerticalKpi: boolean;
-    hasStaffAttributes: boolean;
-    hasMenuAttributes: boolean;
-    hasVerticalSettings: boolean;
-  };
+  labels: VerticalPluginLabels;
+  flags: VerticalPluginFlags;
 }
 
 // ── eyebrow ─────────────────────────────────────────────────────────
@@ -48,6 +58,54 @@ const eyebrowPlugin: VerticalPluginUI = {
     menuSettingsHeading: '眉毛設定',
     staffSettingsHeading: '眉毛スキル',
     settingsDescription: '眉毛サロン特化の同意文・リピート施策を設定します',
+  },
+  flags: {
+    hasKarte: true,
+    hasMenuFilter: true,
+    hasVerticalKpi: true,
+    hasStaffAttributes: true,
+    hasMenuAttributes: true,
+    hasVerticalSettings: true,
+  },
+};
+
+// ── nail ─────────────────────────────────────────────────────────────
+
+const nailPlugin: VerticalPluginUI = {
+  key: 'nail',
+  label: 'ネイルサロン',
+  labels: {
+    karteTab: 'ネイルカルテ',
+    menuFilterHeading: 'ネイルメニュー絞り込み',
+    kpiHeading: 'ネイルサロン KPI',
+    settingsHeading: 'ネイル施術設定',
+    menuSettingsHeading: 'ネイル設定',
+    staffSettingsHeading: 'ネイルスキル',
+    settingsDescription: 'ネイルサロン特化の同意文・リピート施策を設定します',
+  },
+  flags: {
+    hasKarte: true,
+    hasMenuFilter: true,
+    hasVerticalKpi: true,
+    hasStaffAttributes: true,
+    hasMenuAttributes: true,
+    hasVerticalSettings: true,
+  },
+};
+
+// ── hair ─────────────────────────────────────────────────────────────
+
+const hairPlugin: VerticalPluginUI = {
+  key: 'hair',
+  label: 'ヘアサロン',
+  labels: {
+    karteTab: '施術カルテ',
+    menuFilterHeading: 'ヘアメニュー絞り込み',
+    kpiHeading: 'ヘアサロン KPI',
+    settingsHeading: 'ヘア施術設定',
+    menuSettingsHeading: 'ヘアメニュー設定',
+    staffSettingsHeading: 'ヘアスキル・ランク',
+    settingsDescription: 'ヘアサロン特化の同意文・リピート施策を設定します',
   },
   flags: {
     hasKarte: true,
@@ -89,9 +147,7 @@ function createStub(key: VerticalType, label: string): VerticalPluginUI {
   return { ...genericPlugin, key, label };
 }
 
-const nailPlugin = createStub('nail', 'ネイルサロン');
 const dentalPlugin = createStub('dental', '歯科・クリニック');
-const hairPlugin = createStub('hair', 'ヘアサロン');
 const estheticPlugin = createStub('esthetic', 'エステ・リラクゼーション');
 
 // ── Registry ────────────────────────────────────────────────────────

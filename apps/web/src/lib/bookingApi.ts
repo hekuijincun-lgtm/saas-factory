@@ -106,6 +106,32 @@ export interface CancelReservationResponse {
   time: string;
 }
 
+// ── Vertical Attributes / Data Extension Strategy ──────────────────
+//
+// verticalAttributes (menu / staff) と verticalData (reservation) は
+// vertical ごとに異なる schema を持つ。以下のルールに従って拡張すること:
+//
+// 1. 全フィールドは optional（?）で定義する
+// 2. vertical ごとの型は「参考型」として定義（実行時は Record<string, unknown>）
+// 3. plugin の flags で UI 表示を制御（flags.hasMenuAttributes 等）
+// 4. KPI 集計に使う field 名は vertical 間で揃える（例: styleType / designType / category）
+//
+// Menu verticalAttributes 例:
+//   eyebrow: { firstTimeOnly, genderTarget, styleType }
+//   nail:    { designType, handFoot, firstTimeOnly }
+//   hair:    { category, genderTarget, firstTimeOnly }
+//
+// Staff verticalAttributes 例:
+//   eyebrow: { skillLevel, specialties }
+//   nail:    { skillLevel, specialties }
+//   hair:    { skillLevel, specialties, rank }
+//
+// Reservation verticalData 例:
+//   eyebrow: { styleType }
+//   nail:    { designType, colorPreference }
+//   hair:    { category, lengthBefore }
+//
+
 // Admin API types
 export interface StaffVerticalAttributes {
   skillLevel?: 1 | 2 | 3 | 4 | 5;     // 技術レベル（1:初級〜5:エキスパート）

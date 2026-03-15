@@ -112,7 +112,7 @@ export const GENERIC_REPEAT_TEMPLATE =
 export interface VerticalConfig {
   /** 施術同意文（施術前に顧客に表示するリスク告知テキスト） */
   consentText?: string;
-  /** スタイルタイプ一覧（eyebrow なら ["natural","bold","feathering"] 等） */
+  /** スタイルタイプ一覧（vertical 固有の分類キー） */
   styleTypes?: string[];
   /** リピート促進設定 */
   repeat?: {
@@ -120,11 +120,11 @@ export interface VerticalConfig {
     intervalDays?: number;
     template?: string;
   };
-  /** 事前アンケート ON/OFF（Phase 1b: eyebrow.surveyEnabled から昇格） */
+  /** 事前アンケート ON/OFF */
   surveyEnabled?: boolean;
-  /** 事前アンケート質問リスト（Phase 1b: eyebrow.surveyQuestions から昇格） */
+  /** 事前アンケート質問リスト */
   surveyQuestions?: SurveyQuestion[];
-  /** ベッド数（同時施術キャパ、Phase 1b: eyebrow.bedCount から昇格） */
+  /** ベッド数（同時施術キャパ） */
   bedCount?: number;
 }
 

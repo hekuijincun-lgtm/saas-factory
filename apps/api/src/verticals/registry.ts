@@ -1,20 +1,46 @@
 /**
  * Vertical Plugin Registry
  *
- * Phase 4: vertical 依存ロジックを plugin interface + registry で管理する。
+ * 業種ごとの差分定義（defaultMenu / onboarding / repeat / labels / flags）を管理する。
  *
- * 責務: vertical ごとの差分定義（defaultMenu / onboarding / repeat / labels / flags）
- *
- * 使い方:
- *   import { getVerticalPlugin } from './verticals/registry';
- *   const plugin = getVerticalPlugin('eyebrow');
- *   const menu = plugin.defaultMenu();
+ * ┌─────────────────────────────────────────────────────────────────────┐
+ * │ 新 vertical 追加手順:                                               │
+ * │ 1. apps/api/src/verticals/{vertical}.ts を作成（eyebrow.ts を参照） │
+ * │ 2. このファイル (registry.ts) に plugin 定義を追加                   │
+ * │ 3. apps/web/src/lib/verticalPlugins.ts に UI plugin を追加          │
+ * │ 4. apps/api/src/settings.ts の VerticalType union に追加            │
+ * │ 5. apps/web/src/types/settings.ts の VerticalType union に追加      │
+ * │ ※ _template.ts にテンプレートあり                                   │
+ * └─────────────────────────────────────────────────────────────────────┘
  */
 
 import type { VerticalType } from '../settings';
 import { GENERIC_REPEAT_TEMPLATE } from '../settings';
+import { DEFAULT_REPEAT_TEMPLATE as NAIL_REPEAT_TEMPLATE } from './nail';
+import { DEFAULT_REPEAT_TEMPLATE as HAIR_REPEAT_TEMPLATE } from './hair';
 
 // ── VerticalPlugin interface ────────────────────────────────────────
+
+/** Plugin UI labels shape — shared between API and Web */
+export interface VerticalPluginLabels {
+  karteTab: string;
+  menuFilterHeading: string;
+  kpiHeading: string;
+  settingsHeading: string;
+  menuSettingsHeading: string;
+  staffSettingsHeading: string;
+  settingsDescription: string;
+}
+
+/** Plugin feature flags shape — shared between API and Web */
+export interface VerticalPluginFlags {
+  hasKarte: boolean;
+  hasMenuFilter: boolean;
+  hasVerticalKpi: boolean;
+  hasStaffAttributes: boolean;
+  hasMenuAttributes: boolean;
+  hasVerticalSettings: boolean;
+}
 
 export interface OnboardingCheckItem {
   key: string;
@@ -55,38 +81,10 @@ export interface VerticalPlugin {
   getRepeatTemplateFallback(): string;
 
   /** UI ラベル集（admin / booking 画面用） */
-  labels: {
-    /** カルテタブ名（例: '眉毛カルテ'） */
-    karteTab: string;
-    /** メニューフィルタ見出し（例: '眉毛メニュー絞り込み'） */
-    menuFilterHeading: string;
-    /** KPI セクション見出し（例: '眉毛サロン KPI'） */
-    kpiHeading: string;
-    /** 施術設定セクション見出し（例: '眉毛施術設定'） */
-    settingsHeading: string;
-    /** メニュー管理の属性セクション見出し（例: '眉毛設定'） */
-    menuSettingsHeading: string;
-    /** スタッフ管理の属性セクション見出し（例: '眉毛スキル'） */
-    staffSettingsHeading: string;
-    /** 施術設定カードの副題 */
-    settingsDescription: string;
-  };
+  labels: VerticalPluginLabels;
 
   /** 表示制御フラグ */
-  flags: {
-    /** カルテタブを表示するか */
-    hasKarte: boolean;
-    /** vertical 固有の menu 属性フィルタを表示するか */
-    hasMenuFilter: boolean;
-    /** vertical 固有の KPI セクションを表示するか */
-    hasVerticalKpi: boolean;
-    /** vertical 固有のスタッフ属性 UI を表示するか */
-    hasStaffAttributes: boolean;
-    /** vertical 固有のメニュー属性 UI を表示するか */
-    hasMenuAttributes: boolean;
-    /** vertical 固有の設定セクションを表示するか */
-    hasVerticalSettings: boolean;
-  };
+  flags: VerticalPluginFlags;
 }
 
 // ── eyebrow plugin ──────────────────────────────────────────────────
@@ -204,9 +202,138 @@ function createStubPlugin(key: VerticalType, label: string): VerticalPlugin {
   return { ...genericPlugin, key, label };
 }
 
-const nailPlugin = createStubPlugin('nail', 'ネイルサロン');
+const nailPlugin: VerticalPlugin = {
+  key: 'nail',
+  label: 'ネイルサロン',
+
+  defaultMenu() {
+    return [
+      { id: 'nail-gel-simple', name: 'ジェルネイル（ワンカラー）', price: 5000, durationMin: 60, active: true, sortOrder: 1 },
+      { id: 'nail-gel-art', name: 'ジェルネイル（アート）', price: 7500, durationMin: 90, active: true, sortOrder: 2 },
+      { id: 'nail-care', name: 'ネイルケア', price: 3500, durationMin: 45, active: true, sortOrder: 3 },
+      { id: 'nail-off', name: 'ジェルオフ', price: 2500, durationMin: 30, active: true, sortOrder: 4 },
+    ];
+  },
+
+  getDefaultSettingsPatch() {
+    return {
+      vertical: 'nail',
+      verticalConfig: {
+        surveyEnabled: false,
+        bedCount: 2,
+        styleTypes: ['simple', 'art', 'gel', 'care', 'off'],
+      },
+    };
+  },
+
+  getOnboardingChecks({ menuVerticalCount, repeatEnabled, templateSet }) {
+    return [
+      {
+        key: 'menuNail',
+        label: 'デザイン設定済みメニュー（1件以上）',
+        done: menuVerticalCount > 0,
+        action: '/admin/menu',
+        detail: menuVerticalCount > 0 ? `${menuVerticalCount}件` : undefined,
+      },
+      {
+        key: 'repeatConfig',
+        label: 'リピート設定（有効化 + テンプレ設定）',
+        done: repeatEnabled && templateSet,
+        action: '/admin/settings',
+      },
+    ];
+  },
+
+  getRepeatTemplateFallback() {
+    return NAIL_REPEAT_TEMPLATE;
+  },
+
+  labels: {
+    karteTab: 'ネイルカルテ',
+    menuFilterHeading: 'ネイルメニュー絞り込み',
+    kpiHeading: 'ネイルサロン KPI',
+    settingsHeading: 'ネイル施術設定',
+    menuSettingsHeading: 'ネイル設定',
+    staffSettingsHeading: 'ネイルスキル',
+    settingsDescription: 'ネイルサロン特化の同意文・リピート施策を設定します',
+  },
+
+  flags: {
+    hasKarte: true,
+    hasMenuFilter: true,
+    hasVerticalKpi: true,
+    hasStaffAttributes: true,
+    hasMenuAttributes: true,
+    hasVerticalSettings: true,
+  },
+};
 const dentalPlugin = createStubPlugin('dental', '歯科・クリニック');
-const hairPlugin = createStubPlugin('hair', 'ヘアサロン');
+const hairPlugin: VerticalPlugin = {
+  key: 'hair',
+  label: 'ヘアサロン',
+
+  defaultMenu() {
+    return [
+      { id: 'hair-cut', name: 'カット', price: 4500, durationMin: 45, active: true, sortOrder: 1 },
+      { id: 'hair-color', name: 'カラー', price: 7000, durationMin: 90, active: true, sortOrder: 2 },
+      { id: 'hair-perm', name: 'パーマ', price: 8000, durationMin: 120, active: true, sortOrder: 3 },
+      { id: 'hair-treatment', name: 'トリートメント', price: 3500, durationMin: 30, active: true, sortOrder: 4 },
+      { id: 'hair-cut-color', name: 'カット＋カラー', price: 10000, durationMin: 120, active: true, sortOrder: 5 },
+    ];
+  },
+
+  getDefaultSettingsPatch() {
+    return {
+      vertical: 'hair',
+      verticalConfig: {
+        surveyEnabled: false,
+        bedCount: 3,
+        styleTypes: ['cut', 'color', 'perm', 'treatment', 'set', 'spa'],
+      },
+    };
+  },
+
+  getOnboardingChecks({ menuVerticalCount, repeatEnabled, templateSet }) {
+    return [
+      {
+        key: 'menuHair',
+        label: 'カテゴリ設定済みメニュー（1件以上）',
+        done: menuVerticalCount > 0,
+        action: '/admin/menu',
+        detail: menuVerticalCount > 0 ? `${menuVerticalCount}件` : undefined,
+      },
+      {
+        key: 'repeatConfig',
+        label: 'リピート設定（有効化 + テンプレ設定）',
+        done: repeatEnabled && templateSet,
+        action: '/admin/settings',
+      },
+    ];
+  },
+
+  getRepeatTemplateFallback() {
+    return HAIR_REPEAT_TEMPLATE;
+  },
+
+  labels: {
+    karteTab: '施術カルテ',
+    menuFilterHeading: 'ヘアメニュー絞り込み',
+    kpiHeading: 'ヘアサロン KPI',
+    settingsHeading: 'ヘア施術設定',
+    menuSettingsHeading: 'ヘアメニュー設定',
+    staffSettingsHeading: 'ヘアスキル・ランク',
+    settingsDescription: 'ヘアサロン特化の同意文・リピート施策を設定します',
+  },
+
+  flags: {
+    hasKarte: true,
+    hasMenuFilter: true,
+    hasVerticalKpi: true,
+    hasStaffAttributes: true,
+    hasMenuAttributes: true,
+    hasVerticalSettings: true,
+  },
+};
 const estheticPlugin = createStubPlugin('esthetic', 'エステ・リラクゼーション');
 
 // ── Registry ────────────────────────────────────────────────────────
