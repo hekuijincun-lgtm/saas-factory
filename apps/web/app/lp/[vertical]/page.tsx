@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import { TrackingCTA } from '../_components/TrackingCTA';
 import {
   ArrowRight, Scissors, CalendarDays, Bell, Shield, BarChart3,
   MessageCircle, Users, ClipboardList, Zap, Star, CheckCircle2,
@@ -261,9 +262,9 @@ export default async function VerticalLandingPage({ params }: { params: Promise<
             <h1 className="text-4xl sm:text-5xl lg:text-6xl font-black tracking-tight leading-tight mb-6 whitespace-pre-line">{d.headline}</h1>
             <p className="text-lg sm:text-xl text-white/70 max-w-2xl mx-auto mb-10 leading-relaxed whitespace-pre-line">{d.subheadline}</p>
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-              <Link href={signupUrl} className="px-8 py-4 bg-rose-500 text-white font-bold rounded-full hover:bg-rose-600 transition-colors shadow-lg text-lg inline-flex items-center gap-2">
+              <TrackingCTA href={signupUrl} vertical={vertical} cta="hero_primary" eventType="lp_signup_click" className="px-8 py-4 bg-rose-500 text-white font-bold rounded-full hover:bg-rose-600 transition-colors shadow-lg text-lg inline-flex items-center gap-2">
                 無料で始める <ArrowRight className="w-5 h-5" />
-              </Link>
+              </TrackingCTA>
               <Link href="/booking" className="px-8 py-4 border border-white/20 text-white font-medium rounded-full hover:bg-white/10 transition-colors text-lg">
                 デモを見る
               </Link>
@@ -343,9 +344,9 @@ export default async function VerticalLandingPage({ params }: { params: Promise<
               ))}
             </div>
             <div className="text-center mt-12">
-              <Link href={signupUrl} className="inline-flex items-center gap-2 px-8 py-4 bg-rose-500 text-white font-bold rounded-full hover:bg-rose-600 transition-colors shadow-lg text-lg">
+              <TrackingCTA href={signupUrl} vertical={vertical} cta="flow_cta" eventType="lp_signup_click" className="inline-flex items-center gap-2 px-8 py-4 bg-rose-500 text-white font-bold rounded-full hover:bg-rose-600 transition-colors shadow-lg text-lg">
                 無料で始める <ArrowRight className="w-5 h-5" />
-              </Link>
+              </TrackingCTA>
             </div>
           </div>
         </section>
@@ -415,9 +416,9 @@ export default async function VerticalLandingPage({ params }: { params: Promise<
           <div className="mx-auto max-w-3xl px-5">
             <h2 className="text-3xl sm:text-4xl font-bold mb-6">{d.label}の予約管理を<br />今日から自動化しませんか？</h2>
             <p className="text-white/60 text-lg mb-10">初期費用無料・最短30分で運用開始できます</p>
-            <Link href={signupUrl} className="inline-flex items-center gap-2 px-10 py-5 bg-rose-500 text-white font-bold text-lg rounded-full hover:bg-rose-600 transition-colors shadow-lg">
+            <TrackingCTA href={signupUrl} vertical={vertical} cta="final_cta" eventType="lp_signup_click" className="inline-flex items-center gap-2 px-10 py-5 bg-rose-500 text-white font-bold text-lg rounded-full hover:bg-rose-600 transition-colors shadow-lg">
               無料で始める <ArrowRight className="w-5 h-5" />
-            </Link>
+            </TrackingCTA>
           </div>
         </section>
       </main>

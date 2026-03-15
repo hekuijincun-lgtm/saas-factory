@@ -1,0 +1,197 @@
+/**
+ * Phase 13: CRM / GTM Automation Metadata
+ *
+ * Defines campaign types, send reasons, and follow-up intents
+ * per vertical. This is the foundation for automated CRM workflows
+ * in future phases.
+ *
+ * Safety: No auto-send logic here — metadata only.
+ * Actual sending requires explicit admin enable + review queue.
+ */
+
+import type { VerticalType } from '../settings';
+
+// ── Campaign Types ───────────────────────────────────────────────────
+
+export type CampaignType =
+  | 'repeat_reminder'      // 定期リピート促進
+  | 'dormant_recovery'     // 休眠顧客掘り起こし
+  | 'first_visit_followup' // 初回来店後フォロー
+  | 'seasonal_campaign'    // 季節キャンペーン
+  | 'birthday_greeting'    // 誕生日メッセージ
+  | 'review_request';      // 口コミ依頼
+
+export type SendReason =
+  | 'interval_elapsed'     // リピート間隔経過
+  | 'dormant_threshold'    // 休眠閾値超過
+  | 'post_first_visit'     // 初回来店翌日
+  | 'seasonal_trigger'     // 季節トリガー
+  | 'birthday'             // 誕生日前日
+  | 'manual';              // 手動送信
+
+export interface CampaignTypeConfig {
+  type: CampaignType;
+  label: string;
+  description: string;
+  defaultEnabled: boolean;
+  safetyLevel: 'safe' | 'review' | 'manual_only';
+  /** 推奨送信タイミング（来店後の日数） */
+  defaultTriggerDays?: number;
+  /** vertical固有のメッセージヒント */
+  messageHint: string;
+}
+
+// ── Per-Vertical Campaign Configs ────────────────────────────────────
+
+const COMMON_CAMPAIGNS: CampaignTypeConfig[] = [
+  {
+    type: 'first_visit_followup',
+    label: '初回来店後フォロー',
+    description: '初めてのお客様に翌日お礼メッセージを送信',
+    defaultEnabled: false,
+    safetyLevel: 'safe',
+    defaultTriggerDays: 1,
+    messageHint: 'ご来店ありがとうございました。次回のご予約もお待ちしております。',
+  },
+  {
+    type: 'review_request',
+    label: '口コミ依頼',
+    description: '来店3日後に口コミをお願いするメッセージ',
+    defaultEnabled: false,
+    safetyLevel: 'review',
+    defaultTriggerDays: 3,
+    messageHint: '先日はありがとうございました。よろしければ感想をお聞かせください。',
+  },
+];
+
+const VERTICAL_CAMPAIGNS: Record<VerticalType, CampaignTypeConfig[]> = {
+  eyebrow: [
+    ...COMMON_CAMPAIGNS,
+    {
+      type: 'repeat_reminder',
+      label: 'リタッチリマインド',
+      description: '眉毛のリタッチ推奨時期にリマインド送信',
+      defaultEnabled: false,
+      safetyLevel: 'safe',
+      defaultTriggerDays: 28,
+      messageHint: '眉毛のラインが崩れてくる頃です。リタッチで美しい眉をキープしませんか？',
+    },
+    {
+      type: 'dormant_recovery',
+      label: '休眠顧客掘り起こし',
+      description: '60日以上来店がないお客様にメッセージ送信',
+      defaultEnabled: false,
+      safetyLevel: 'review',
+      defaultTriggerDays: 60,
+      messageHint: 'お久しぶりです。眉毛のお手入れ、お気軽にご予約ください。',
+    },
+  ],
+  nail: [
+    ...COMMON_CAMPAIGNS,
+    {
+      type: 'repeat_reminder',
+      label: '付け替えリマインド',
+      description: 'ジェルネイルの付け替え推奨時期にリマインド送信',
+      defaultEnabled: false,
+      safetyLevel: 'safe',
+      defaultTriggerDays: 21,
+      messageHint: 'ジェルネイルの付け替え時期です。爪への負担を防ぐためにも早めのご予約を。',
+    },
+    {
+      type: 'seasonal_campaign',
+      label: '季節デザインキャンペーン',
+      description: '季節の変わり目に新作デザインを案内',
+      defaultEnabled: false,
+      safetyLevel: 'review',
+      messageHint: '新作の季節デザインが入りました。トレンドネイルはいかがですか？',
+    },
+  ],
+  hair: [
+    ...COMMON_CAMPAIGNS,
+    {
+      type: 'repeat_reminder',
+      label: 'カット周期リマインド',
+      description: 'カット・カラーの推奨周期にリマインド送信',
+      defaultEnabled: false,
+      safetyLevel: 'safe',
+      defaultTriggerDays: 35,
+      messageHint: '前回のカットからそろそろ1ヶ月。毛先が気になる頃ではないですか？',
+    },
+    {
+      type: 'dormant_recovery',
+      label: '休眠顧客掘り起こし',
+      description: '90日以上来店がないお客様にメッセージ送信',
+      defaultEnabled: false,
+      safetyLevel: 'review',
+      defaultTriggerDays: 90,
+      messageHint: 'お久しぶりです。季節の変わり目、ヘアスタイルのリフレッシュはいかがですか？',
+    },
+  ],
+  dental: [
+    ...COMMON_CAMPAIGNS,
+    {
+      type: 'repeat_reminder',
+      label: '定期検診リマインド',
+      description: '前回検診から推奨間隔後にリマインド送信',
+      defaultEnabled: false,
+      safetyLevel: 'safe',
+      defaultTriggerDays: 180,
+      messageHint: '定期検診の時期です。症状が出る前の予防ケアが大切です。',
+    },
+    {
+      type: 'dormant_recovery',
+      label: '来院促進メッセージ',
+      description: '1年以上来院がない患者さんにメッセージ送信',
+      defaultEnabled: false,
+      safetyLevel: 'review',
+      defaultTriggerDays: 365,
+      messageHint: 'お口の健康を守るために、定期的なチェックをおすすめします。',
+    },
+  ],
+  esthetic: [
+    ...COMMON_CAMPAIGNS,
+    {
+      type: 'repeat_reminder',
+      label: '継続ケアリマインド',
+      description: '施術効果の持続に合わせたリマインド送信',
+      defaultEnabled: false,
+      safetyLevel: 'safe',
+      defaultTriggerDays: 28,
+      messageHint: 'お肌のターンオーバーに合わせた定期ケアで、効果を持続させませんか？',
+    },
+    {
+      type: 'seasonal_campaign',
+      label: '季節ケアキャンペーン',
+      description: '季節の変わり目に肌ケアを案内',
+      defaultEnabled: false,
+      safetyLevel: 'review',
+      messageHint: '季節の変わり目のお肌ケア。今の時期に合った施術をご提案します。',
+    },
+  ],
+  generic: [
+    ...COMMON_CAMPAIGNS,
+    {
+      type: 'repeat_reminder',
+      label: 'リピートリマインド',
+      description: '前回来店から一定期間後にリマインド送信',
+      defaultEnabled: false,
+      safetyLevel: 'safe',
+      defaultTriggerDays: 30,
+      messageHint: '前回のご来店からしばらく経ちました。またのご来店をお待ちしております。',
+    },
+  ],
+};
+
+/**
+ * Get CRM campaign type configs for a vertical.
+ */
+export function getVerticalCampaigns(vertical: VerticalType): CampaignTypeConfig[] {
+  return VERTICAL_CAMPAIGNS[vertical] ?? VERTICAL_CAMPAIGNS.generic;
+}
+
+/**
+ * Get the default repeat reminder config for a vertical.
+ */
+export function getDefaultRepeatCampaign(vertical: VerticalType): CampaignTypeConfig | undefined {
+  return getVerticalCampaigns(vertical).find(c => c.type === 'repeat_reminder');
+}

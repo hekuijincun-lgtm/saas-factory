@@ -100,6 +100,30 @@ export interface VerticalPlugin {
 
   /** verticalAttributes のランタイムバリデーション（optional） */
   validateMenuAttrs?(attrs: Record<string, unknown>): { valid: boolean; error?: string };
+
+  /** Phase 13: リピート推奨周期（日数） */
+  repeatCadence?: {
+    /** デフォルト推奨間隔（日数） */
+    defaultIntervalDays: number;
+    /** カテゴリ別の推奨間隔（filterKey 値 → 日数） */
+    categoryIntervals?: Record<string, number>;
+    /** 休眠判定閾値（日数）— これ以上来店がなければ休眠扱い */
+    dormantThresholdDays: number;
+    /** 初回来店後フォローアップ遅延（日数） */
+    firstVisitFollowupDays: number;
+  };
+
+  /** Phase 13: AI接客のvertical固有設定 */
+  aiConfig?: {
+    /** system prompt に追加される業種固有の指示 */
+    systemPromptHint: string;
+    /** 推奨される応対トーン */
+    recommendedVoice: string;
+    /** 業種固有の接客注意事項 */
+    safetyNotes?: string;
+    /** 予約誘導時の強調ポイント */
+    bookingEmphasis: string;
+  };
 }
 
 // ── eyebrow plugin ──────────────────────────────────────────────────
@@ -193,6 +217,17 @@ const eyebrowPlugin: VerticalPlugin = {
       return { valid: false, error: `Invalid styleType: ${attrs.styleType}` };
     }
     return { valid: true };
+  },
+  repeatCadence: {
+    defaultIntervalDays: 28,
+    categoryIntervals: { natural: 28, sharp: 21, korean: 28, custom: 35 },
+    dormantThresholdDays: 60,
+    firstVisitFollowupDays: 1,
+  },
+  aiConfig: {
+    systemPromptHint: 'このサロンは眉毛デザインの専門サロンです。スタイリング・WAX・パーマなどの施術を提供しています。お客様の顔型や好みに合わせたデザイン提案が強みです。',
+    recommendedVoice: 'friendly',
+    bookingEmphasis: 'デザインの相談は施術時にじっくりお伺いします。まずはご予約をお取りください。',
   },
 };
 
@@ -331,6 +366,17 @@ const nailPlugin: VerticalPlugin = {
     }
     return { valid: true };
   },
+  repeatCadence: {
+    defaultIntervalDays: 21,
+    categoryIntervals: { simple: 21, art: 28, gel: 21, care: 14, off: 0 },
+    dormantThresholdDays: 45,
+    firstVisitFollowupDays: 1,
+  },
+  aiConfig: {
+    systemPromptHint: 'このサロンはネイルサロンです。ジェルネイル・アート・ケア・オフなどの施術を提供しています。デザインの相談やケアのアドバイスが得意です。',
+    recommendedVoice: 'casual',
+    bookingEmphasis: '気になるデザインがあればお気軽にご相談ください。写真の持ち込みも大歓迎です。',
+  },
 };
 
 // ── dental plugin ────────────────────────────────────────────────────
@@ -433,6 +479,18 @@ const dentalPlugin: VerticalPlugin = {
     }
     return { valid: true };
   },
+  repeatCadence: {
+    defaultIntervalDays: 180,
+    categoryIntervals: { checkup: 180, cleaning: 90, whitening: 180, filling: 0, consultation: 0 },
+    dormantThresholdDays: 365,
+    firstVisitFollowupDays: 1,
+  },
+  aiConfig: {
+    systemPromptHint: 'この施設は歯科クリニックです。定期検診・クリーニング・ホワイトニング・虫歯治療・初診相談などを行っています。',
+    recommendedVoice: 'formal',
+    safetyNotes: '医療行為に関する具体的な診断・治療方針のアドバイスは行わないでください。必ず「担当医にご相談ください」と案内してください。',
+    bookingEmphasis: '症状やお悩みがある場合は、まず初診相談のご予約をお取りください。事前問診票にご記入いただけるとスムーズです。',
+  },
 };
 
 // ── hair plugin ──────────────────────────────────────────────────────
@@ -528,6 +586,17 @@ const hairPlugin: VerticalPlugin = {
       return { valid: false, error: `Invalid category: ${attrs.category}` };
     }
     return { valid: true };
+  },
+  repeatCadence: {
+    defaultIntervalDays: 35,
+    categoryIntervals: { cut: 30, color: 28, perm: 60, treatment: 21, set: 0, spa: 14 },
+    dormantThresholdDays: 90,
+    firstVisitFollowupDays: 1,
+  },
+  aiConfig: {
+    systemPromptHint: 'このサロンはヘアサロンです。カット・カラー・パーマ・トリートメントなどの施術を提供しています。スタイリストの指名予約も受け付けています。',
+    recommendedVoice: 'professional',
+    bookingEmphasis: 'スタイリストへのご要望は予約時のメモ欄にお書きください。カウンセリングで詳しくお伺いします。',
   },
 };
 
@@ -629,6 +698,18 @@ const estheticPlugin: VerticalPlugin = {
       return { valid: false, error: `Invalid treatmentCategory: ${attrs.treatmentCategory}` };
     }
     return { valid: true };
+  },
+  repeatCadence: {
+    defaultIntervalDays: 28,
+    categoryIntervals: { facial: 21, body: 28, pore: 14, relaxation: 14, slimming: 7, depilation: 28 },
+    dormantThresholdDays: 60,
+    firstVisitFollowupDays: 1,
+  },
+  aiConfig: {
+    systemPromptHint: 'このサロンはエステ・リラクゼーションサロンです。フェイシャル・ボディ・毛穴ケア・リラクゼーション・痩身などの施術を提供しています。',
+    recommendedVoice: 'friendly',
+    safetyNotes: '医療行為に該当する施術や効果の断定的な表現は避けてください。「個人差があります」と付け加えてください。',
+    bookingEmphasis: 'お肌のお悩みに合わせた施術をご提案します。初回はカウンセリング付きのメニューがおすすめです。',
   },
 };
 

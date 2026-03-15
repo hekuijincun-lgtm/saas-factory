@@ -2608,6 +2608,36 @@ app.get("/admin/onboarding-status", async (c) => {
     }
     items.push({ key: 'staff', label: 'スタッフ登録（1名以上）', done: staffCount > 0, action: '/admin/staff', detail: staffCount > 0 ? `${staffCount}名` : undefined });
 
+    // Phase 13: override vertical checklist items with real data
+    // lineSetup: check if LINE Messaging API is configured (channelAccessToken exists)
+    let lineConfigured = false;
+    let surveyConfigured = false;
+    try {
+      const settingsRaw = await kv.get(`settings:${tenantId}`);
+      if (settingsRaw) {
+        const s = JSON.parse(settingsRaw);
+        // LINE setup: check channelAccessToken in integrations.line
+        lineConfigured = !!(s?.integrations?.line?.channelAccessToken);
+        // Survey setup: check surveyEnabled + surveyQuestions length
+        const vc = s?.verticalConfig;
+        surveyConfigured = !!(vc?.surveyEnabled && Array.isArray(vc?.surveyQuestions) && vc.surveyQuestions.length > 0);
+      }
+    } catch { /* ignore */ }
+
+    // Patch items: override done for lineSetup, staffSetup, surveySetup
+    for (const item of items) {
+      if (item.key === 'lineSetup') {
+        item.done = lineConfigured;
+        if (lineConfigured) item.detail = '連携済み';
+      } else if (item.key === 'staffSetup') {
+        item.done = staffCount > 0;
+        if (staffCount > 0) item.detail = `${staffCount}名登録済み`;
+      } else if (item.key === 'surveySetup') {
+        item.done = surveyConfigured;
+        if (surveyConfigured) item.detail = '設定済み';
+      }
+    }
+
     // Test reservation (last 30 days)
     let hasTestReservation = false;
     if (db) {
@@ -7461,6 +7491,18 @@ app.post("/ai/chat", async (c) => {
     const voiceInstruction = voiceMap[aiSettings.voice] ?? voiceMap.friendly;
     const lengthInstruction = answerLengthMap[aiSettings.answerLength] ?? answerLengthMap.normal;
 
+    // Phase 13: vertical-aware AI prompt injection
+    const verticalPlugin = getVerticalPlugin(storeSettings?.vertical);
+    const verticalAiHint = verticalPlugin.aiConfig?.systemPromptHint
+      ? `\n## 業種情報\n${verticalPlugin.aiConfig.systemPromptHint}`
+      : "";
+    const verticalSafetyNotes = verticalPlugin.aiConfig?.safetyNotes
+      ? `\n## 業種固有の注意事項\n${verticalPlugin.aiConfig.safetyNotes}`
+      : "";
+    const verticalBookingEmphasis = verticalPlugin.aiConfig?.bookingEmphasis
+      ? `\n予約誘導のヒント: ${verticalPlugin.aiConfig.bookingEmphasis}`
+      : "";
+
     const systemContent = [
       storeSettings?.storeName
         ? `あなたは「${storeSettings.storeName}」のAIアシスタントです。`
@@ -7468,6 +7510,7 @@ app.post("/ai/chat", async (c) => {
       aiSettings.character ? `キャラクター設定: ${aiSettings.character}` : "",
       voiceInstruction,
       lengthInstruction,
+      verticalAiHint,
       storeBlock,
       "",
       "## 絶対に守るルール",
@@ -7481,6 +7524,8 @@ app.post("/ai/chat", async (c) => {
       faqBlock,
       hardRulesBlock,
       prohibitedBlock,
+      verticalSafetyNotes,
+      verticalBookingEmphasis,
     ].filter(Boolean).join("\n");
 
     console.log(`[AI_PROMPT_BUILD]`, JSON.stringify({
