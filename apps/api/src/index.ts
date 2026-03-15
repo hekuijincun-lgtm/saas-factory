@@ -5,7 +5,8 @@ import { resolveVertical, DEFAULT_ADMIN_SETTINGS, mergeSettings, GENERIC_REPEAT_
 import type { PlanId, SubscriptionInfo } from "./settings";
 import { getRepeatConfig, getStyleLabel, buildRepeatMessage, DEFAULT_REPEAT_TEMPLATE } from "./verticals/eyebrow";
 import { getVerticalPlugin } from "./verticals/registry";
-import { normalizeMenuItems, normalizeStaffItems, normalizeReservationMeta, dualWriteVerticalAttributes, dualWriteVerticalAttributesPatch, dualWriteReservationMeta } from "./vertical-bridge";
+// Phase 6: dualWrite* は停止済み — normalize* のみ使用（read fallback 維持）
+import { normalizeMenuItems, normalizeStaffItems, normalizeReservationMeta } from "./vertical-bridge";
 import { registerOwnerRoutes, getOwnerIds, bootstrapOwnerIfEmpty, isPrincipalAllowed, normalizePrincipal } from "./routes/owner";
 import { registerOwnerLeadRoutes } from "./routes/ownerLeads";
 import { createOutreachRoutes } from "./outreach/routes";
@@ -690,21 +691,20 @@ app.get('/admin/rbac/audit', async (c) => {
     if(body.onboarding != null && typeof body.onboarding === 'object') {
       patch.onboarding = { ...(existing.onboarding || {}), ...body.onboarding }
     }
-    // eyebrow: deep merge (repeat sub-object も保持) + P2: verticalConfig に正規化
+    // Phase 6: eyebrow legacy write 停止 — verticalConfig のみ write
+    // eyebrow フィールドが送られてきた場合は verticalConfig に変換して保存（legacy client 互換）
+    // 既存 eyebrow データは既に KV に残っているので read fallback (resolveVertical) で参照可能
     if(body.eyebrow != null && typeof body.eyebrow === 'object') {
-      const existingEyebrow = existing.eyebrow || {}
-      patch.eyebrow = { ...existingEyebrow, ...body.eyebrow }
-      if(body.eyebrow.repeat != null && typeof body.eyebrow.repeat === 'object') {
-        patch.eyebrow.repeat = { ...(existingEyebrow.repeat || {}), ...body.eyebrow.repeat }
-      }
-      // P2: eyebrow → verticalConfig に変換（明示的な vertical/verticalConfig 指定がない場合のみ）
+      // eyebrow → verticalConfig に変換（verticalConfig が明示指定されていない場合のみ）
       if(body.vertical == null && body.verticalConfig == null) {
         patch.vertical = 'eyebrow'
         patch.verticalConfig = {
-          consentText: patch.eyebrow.consentText,
-          repeat: patch.eyebrow.repeat,
+          consentText: body.eyebrow.consentText,
+          repeat: body.eyebrow.repeat,
         }
       }
+      // NOTE: patch.eyebrow への書き込みは停止（legacy write 停止）
+      // 既存 KV の eyebrow データはそのまま残る（read fallback で使用）
     }
     // P2: vertical / verticalConfig 直接指定
     if(body.vertical != null) patch.vertical = String(body.vertical)
@@ -1519,8 +1519,7 @@ app.post("/admin/menu", async (c) => {
     const seed = defaultMenu();
     const menu: any[] = value ? JSON.parse(value) : seed;
 
-    // Phase 2a: eyebrow / verticalAttributes dual-write
-    const eyebrow = body?.eyebrow && typeof body.eyebrow === 'object' ? body.eyebrow : undefined;
+    // Phase 6: verticalAttributes のみ write（eyebrow legacy write 停止）
     const verticalAttributes = body?.verticalAttributes && typeof body.verticalAttributes === 'object' ? body.verticalAttributes : undefined;
 
     // If body contains an existing item id, treat as update (upsert)
@@ -1538,10 +1537,8 @@ app.post("/admin/menu", async (c) => {
         active: active !== undefined ? active : existing.active,
         sortOrder: sortOrder !== undefined ? sortOrder : existing.sortOrder,
       };
-      // CLEANUP(Phase4+): dual-write eyebrow ↔ verticalAttributes (vertical-bridge)
-      if (eyebrow !== undefined) updated.eyebrow = eyebrow;
+      // Phase 6: verticalAttributes のみ write（eyebrow legacy write 停止）
       if (verticalAttributes !== undefined) updated.verticalAttributes = verticalAttributes;
-      dualWriteVerticalAttributesPatch(updated, body);
       // imageKey/imageUrl: optional 画像フィールド
       if (body.imageKey != null) {
         if (body.imageKey) updated.imageKey = String(body.imageKey);
@@ -1565,10 +1562,8 @@ app.post("/admin/menu", async (c) => {
       active: active !== undefined ? active : true,
       sortOrder: sortOrder !== undefined ? sortOrder : menu.length,
     };
-    if (eyebrow !== undefined) newItem.eyebrow = eyebrow;
+    // Phase 6: verticalAttributes のみ write（eyebrow legacy write 停止）
     if (verticalAttributes !== undefined) newItem.verticalAttributes = verticalAttributes;
-    // CLEANUP(Phase4+): dual-write bridge (vertical-bridge)
-    dualWriteVerticalAttributes(newItem);
     if (body.imageKey) newItem.imageKey = String(body.imageKey);
     if (body.imageUrl) newItem.imageUrl = String(body.imageUrl);
     menu.push(newItem);
@@ -1603,8 +1598,16 @@ app.patch("/admin/menu/:id", async (c) => {
     if (body.durationMin !== undefined) updated.durationMin = Number(body.durationMin);
     if (body.active !== undefined) updated.active = Boolean(body.active);
     if (body.sortOrder !== undefined) updated.sortOrder = Number(body.sortOrder);
-    // CLEANUP(Phase4+): dual-write eyebrow ↔ verticalAttributes (vertical-bridge)
-    dualWriteVerticalAttributesPatch(updated, body);
+    // Phase 6: verticalAttributes のみ write（eyebrow legacy write 停止）
+    // eyebrow が送られてきた場合は verticalAttributes に変換（legacy client 互換）
+    if (body.verticalAttributes !== undefined) {
+      if (body.verticalAttributes === null) delete updated.verticalAttributes;
+      else updated.verticalAttributes = body.verticalAttributes;
+    } else if (body.eyebrow !== undefined) {
+      // legacy client が eyebrow を送ってきた場合は verticalAttributes に変換
+      if (body.eyebrow === null) delete updated.verticalAttributes;
+      else updated.verticalAttributes = { ...body.eyebrow };
+    }
     // imageKey/imageUrl: optional 画像フィールド
     if (body.imageKey !== undefined) {
       if (!body.imageKey) delete updated.imageKey;
@@ -1657,9 +1660,15 @@ app.post("/admin/staff", async (c) => {
   const list = raw ? JSON.parse(raw) : []
 
   const id = body?.id || `staff_${Date.now()}_${Math.random().toString(16).slice(2)}`
-  const item = { ...body, id }
-  // CLEANUP(Phase4+): dual-write eyebrow ↔ verticalAttributes (vertical-bridge)
-  dualWriteVerticalAttributes(item);
+  // Phase 6: verticalAttributes のみ write（eyebrow legacy write 停止）
+  // body に eyebrow が含まれ verticalAttributes がない場合は変換
+  const { eyebrow: _legacyEyebrow, ...bodyWithoutLegacy } = body;
+  const item: any = { ...bodyWithoutLegacy, id };
+  if (body.verticalAttributes) {
+    item.verticalAttributes = body.verticalAttributes;
+  } else if (body.eyebrow && !body.verticalAttributes) {
+    item.verticalAttributes = { ...body.eyebrow };
+  }
 
   const next = [item, ...list]
   await c.env.SAAS_FACTORY.put(key, JSON.stringify(next))
@@ -1687,8 +1696,16 @@ app.all("/admin/staff/:id", async (c) => {
     if (idx < 0) return c.json({ ok: false, where: "STAFF_ALL_V3", error: "not_found", id, tenantId }, 404)
 
     const updated = { ...list[idx], ...body, id }
-    // CLEANUP(Phase4+): dual-write eyebrow ↔ verticalAttributes (vertical-bridge)
-    dualWriteVerticalAttributesPatch(updated, body);
+    // Phase 6: verticalAttributes のみ write（eyebrow legacy write 停止）
+    if (body.verticalAttributes !== undefined) {
+      if (body.verticalAttributes === null) delete updated.verticalAttributes;
+      else updated.verticalAttributes = body.verticalAttributes;
+    } else if (body.eyebrow !== undefined) {
+      // legacy client が eyebrow を送ってきた場合は verticalAttributes に変換
+      if (body.eyebrow === null) delete updated.verticalAttributes;
+      else updated.verticalAttributes = { ...body.eyebrow };
+    }
+    // eyebrow field は updated に spread されたまま残るが、新規 write はしない
     list[idx] = updated
     await c.env.SAAS_FACTORY.put(key, JSON.stringify(list))
     return c.json({ ok: true, where: "STAFF_ALL_V3", tenantId, data: updated })
@@ -1908,18 +1925,23 @@ app.on(["PUT", "PATCH"], "/admin/reservations/:id", async (c) => {
       let existingMeta: any = {};
       if (existingRow?.meta) { try { existingMeta = JSON.parse(existingRow.meta); } catch {} }
       const mergedMeta = { ...existingMeta, ...(body.meta ?? {}) };
-      // eyebrowDesign/consentLog/verticalData を sub-merge
-      if (body.meta?.eyebrowDesign && existingMeta.eyebrowDesign) {
-        mergedMeta.eyebrowDesign = { ...existingMeta.eyebrowDesign, ...body.meta.eyebrowDesign };
-      }
+      // Phase 6: verticalData のみ write（eyebrowDesign legacy write 停止）
+      // consentLog は vertical 非依存なので sub-merge 継続
       if (body.meta?.consentLog && existingMeta.consentLog) {
         mergedMeta.consentLog = { ...existingMeta.consentLog, ...body.meta.consentLog };
       }
-      // CLEANUP(Phase4+): verticalData sub-merge + dual-write (vertical-bridge)
+      // verticalData sub-merge
       if (body.meta?.verticalData && existingMeta.verticalData) {
         mergedMeta.verticalData = { ...existingMeta.verticalData, ...body.meta.verticalData };
       }
-      dualWriteReservationMeta(mergedMeta);
+      // legacy client が eyebrowDesign を送ってきた場合は verticalData に変換
+      if (body.meta?.eyebrowDesign && !body.meta?.verticalData) {
+        const legacyData = existingMeta.eyebrowDesign
+          ? { ...existingMeta.eyebrowDesign, ...body.meta.eyebrowDesign }
+          : body.meta.eyebrowDesign;
+        mergedMeta.verticalData = { ...(mergedMeta.verticalData || {}), ...legacyData };
+      }
+      // NOTE: eyebrowDesign への新規 write は停止。既存データは read fallback で参照可能
       sets.push("meta = ?"); vals.push(JSON.stringify(mergedMeta));
     }
 
@@ -3653,8 +3675,11 @@ async function upsertCustomer(
   const email = body.email ? String(body.email).trim().toLowerCase() : null;
   const customerKey = buildCustomerKey({ lineUserId, phone, email });
   const bodyMeta: Record<string, any> = (body.meta && typeof body.meta === 'object' && !Array.isArray(body.meta)) ? body.meta : {};
-  // CLEANUP(Phase4+): dual-write verticalData ↔ eyebrowDesign (vertical-bridge)
-  dualWriteReservationMeta(bodyMeta);
+  // Phase 6: verticalData のみ write（eyebrowDesign legacy write 停止）
+  // legacy client が eyebrowDesign を送ってきた場合は verticalData に変換
+  if (bodyMeta.eyebrowDesign && !bodyMeta.verticalData) {
+    bodyMeta.verticalData = { ...bodyMeta.eyebrowDesign };
+  }
   const finalMeta = { ...bodyMeta, ...(customerKey ? { customerKey } : {}) };
   if (Object.keys(finalMeta).length > 0) {
     await env.DB.prepare("UPDATE reservations SET meta = ? WHERE id = ? AND tenant_id = ?")

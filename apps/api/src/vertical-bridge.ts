@@ -26,7 +26,8 @@
  *   reservation meta → verticalData
  *
  * 読み順: new path → legacy path → fallback (undefined)
- * 書き込み: dual-write (new + legacy) を Phase 4 まで維持
+ * 書き込み: Phase 6 で dual-write 停止 → new path のみ write
+ * ※ dualWrite* 関数は legacy client 互換のため残存（Phase 7 で削除予定）
  */
 
 // ── Menu normalizer ─────────────────────────────────────────────────

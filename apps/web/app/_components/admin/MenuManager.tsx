@@ -171,18 +171,16 @@ export default function MenuManager({ tenantId: tenantIdProp }: { tenantId?: str
         imageUrl = upData.imageUrl;
       }
 
-      // Phase 2a: eyebrow テナントのみ eyebrow + verticalAttributes を dual-write
-      // 非 eyebrow テナントでは eyebrow を送らない（汚染防止）
+      // Phase 6: verticalAttributes のみ write（eyebrow legacy write 停止）
       const itemPayload: Record<string, any> = {
         name: formData.name.trim(),
         price: Number(formData.price),
         durationMin: Number(formData.durationMin),
         active: formData.active,
         sortOrder: formData.sortOrder,
-        imageUrl: imageUrl ?? null, // null = 削除指示（Workers PATCH が !imageUrl で delete）
+        imageUrl: imageUrl ?? null,
       };
       if (vPlugin.flags.hasMenuAttributes) {
-        itemPayload.eyebrow = formData.eyebrow;
         itemPayload.verticalAttributes = formData.eyebrow;
       }
 

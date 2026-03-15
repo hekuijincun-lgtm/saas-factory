@@ -115,10 +115,10 @@ export default function StepConfirm({ booking, onBack, onDone, consentText, trea
     setError(null);
     setIsDuplicate(false);
     try {
+      // Phase 6: verticalData のみ write（eyebrowDesign legacy write 停止）
       const metaPayload: Record<string, any> = {};
       if (booking.menuStyleType) {
-        metaPayload.verticalData  = { styleType: booking.menuStyleType };
-        metaPayload.eyebrowDesign = { styleType: booking.menuStyleType };
+        metaPayload.verticalData = { styleType: booking.menuStyleType };
       }
       if (booking.menuName) {
         metaPayload.menuName = booking.menuName;

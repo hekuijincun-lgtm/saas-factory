@@ -555,7 +555,7 @@ export default function AdminSettingsClient() {
       // Sync session cookie tenant before PUT to prevent forbidden_tenant_mismatch
       await fetch(`/api/auth/me?tenantId=${encodeURIComponent(tenantId)}`, { credentials: 'include', cache: 'no-store' });
       // API に storeName + 営業時間設定 + 住所 + 同意文 + 業種設定を保存
-      // Phase 1b: eyebrow (legacy) + verticalConfig (new) を dual-write
+      // Phase 6: verticalConfig のみ write（eyebrow legacy write 停止）
       const verticalSettingsPayload = vPlugin.flags.hasVerticalSettings ? {
         consentText: eyebrowConsentText,
         repeat: {
@@ -575,9 +575,7 @@ export default function AdminSettingsClient() {
         slotIntervalMin,
         storeAddress,
         consentText,
-        // Legacy eyebrow path (backward compat — still needed until Phase 2)
-        ...(vPlugin.flags.hasVerticalSettings && verticalSettingsPayload ? { eyebrow: verticalSettingsPayload } : {}),
-        // New verticalConfig path (Phase 1b: dual-write for forward compat)
+        // Phase 6: verticalConfig のみ（eyebrow legacy path 送信停止）
         ...(vPlugin.flags.hasVerticalSettings && verticalSettingsPayload ? {
           vertical: 'eyebrow' as const,
           verticalConfig: verticalSettingsPayload,

@@ -402,11 +402,11 @@ export default function ReservationDetailPanel({
                     type="text"
                     value={(getReservationVerticalData(metaForm) as any)?.[f.key] ?? ''}
                     onChange={e => {
+                      // Phase 6: verticalData のみ write（eyebrowDesign legacy write 停止）
                       const patch = { [f.key]: e.target.value };
                       setMetaForm(m => ({
                         ...m,
-                        eyebrowDesign: { ...m.eyebrowDesign, ...patch },
-                        verticalData:  { ...m.verticalData,  ...patch },
+                        verticalData: { ...m.verticalData, ...patch },
                       }));
                     }}
                     placeholder={f.placeholder}
@@ -421,9 +421,9 @@ export default function ReservationDetailPanel({
                 rows={3}
                 value={getReservationVerticalData(metaForm)?.memo ?? ''}
                 onChange={e => setMetaForm(m => ({
+                  // Phase 6: verticalData のみ write（eyebrowDesign legacy write 停止）
                   ...m,
-                  eyebrowDesign: { ...m.eyebrowDesign, memo: e.target.value },
-                  verticalData:  { ...m.verticalData,  memo: e.target.value },
+                  verticalData: { ...m.verticalData, memo: e.target.value },
                 }))}
                 className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-pink-400 resize-none"
               />

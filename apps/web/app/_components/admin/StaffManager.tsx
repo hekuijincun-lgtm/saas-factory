@@ -135,7 +135,7 @@ export default function StaffManager() {
     setError(null);
 
     try {
-      // Phase 2b: eyebrow テナントのみ dual-write、非 eyebrow では eyebrow 非送信
+      // Phase 6: verticalAttributes のみ write（eyebrow legacy write 停止）
       const eyebrowPayload: StaffEyebrow = {};
       if (formData.eyebrow.skillLevel) eyebrowPayload.skillLevel = formData.eyebrow.skillLevel;
       if (formData.eyebrow.specialties && formData.eyebrow.specialties.length > 0) {
@@ -144,7 +144,6 @@ export default function StaffManager() {
       const hasAttrs = Object.keys(eyebrowPayload).length > 0;
       const verticalFields: Record<string, any> = {};
       if (vPlugin.flags.hasStaffAttributes && hasAttrs) {
-        verticalFields.eyebrow = eyebrowPayload;
         verticalFields.verticalAttributes = eyebrowPayload;
       }
 

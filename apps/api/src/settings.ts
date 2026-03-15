@@ -485,19 +485,10 @@ export function mergeSettings(defaults: AdminSettings, partial: Partial<AdminSet
           enabled: partial.onboarding?.enabled ?? defaults.onboarding?.enabled,
         }
       : undefined,
-    // CLEANUP(Phase4+): eyebrow merge — 全テナント verticalConfig 移行後に削除
-    eyebrow: (partial.eyebrow || defaults.eyebrow)
-      ? {
-          consentText: partial.eyebrow?.consentText ?? defaults.eyebrow?.consentText,
-          repeat: (partial.eyebrow?.repeat || defaults.eyebrow?.repeat)
-            ? {
-                enabled: partial.eyebrow?.repeat?.enabled ?? defaults.eyebrow?.repeat?.enabled,
-                intervalDays: partial.eyebrow?.repeat?.intervalDays ?? defaults.eyebrow?.repeat?.intervalDays,
-                template: partial.eyebrow?.repeat?.template ?? defaults.eyebrow?.repeat?.template,
-              }
-            : undefined,
-        }
-      : undefined,
+    // Phase 6: eyebrow merge 停止 — 新規 write は verticalConfig のみ
+    // 既存 KV データの eyebrow はそのまま残る（read fallback resolveVertical で参照）
+    // partial.eyebrow が来ても mergeSettings では eyebrow を更新しない
+    eyebrow: defaults.eyebrow,  // 既存値を保持（新規 merge は行わない）
     subscription: partial.subscription ?? defaults.subscription,
     lineAccounts: partial.lineAccounts ?? defaults.lineAccounts,
     lineRouting: (partial.lineRouting || defaults.lineRouting)
