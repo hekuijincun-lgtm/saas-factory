@@ -1,21 +1,12 @@
 import { useState, useEffect } from 'react';
 import { fetchAdminSettings } from '../../lib/adminApi';
+import { resolveVertical, type VerticalType } from '@/src/types/settings';
 
-export type VerticalType = 'eyebrow' | 'nail' | 'dental' | 'hair' | 'esthetic' | 'generic';
+export type { VerticalType };
 
 // Module-scope cache (same pattern as useAdminSettings)
 const _verticalCache = new Map<string, { vertical: VerticalType; ts: number }>();
 const CACHE_TTL_MS = 30_000;
-
-/**
- * resolveVertical のクライアント版
- * settings.vertical を優先し、settings.eyebrow が存在すれば 'eyebrow' にフォールバック
- */
-function resolveVerticalClient(raw: any): VerticalType {
-  if (raw?.vertical) return raw.vertical as VerticalType;
-  if (raw?.eyebrow) return 'eyebrow';
-  return 'generic';
-}
 
 /**
  * テナントの vertical を取得する hook
@@ -38,7 +29,7 @@ export function useVertical(tenantId: string): { vertical: VerticalType; loading
     setLoading(true);
     fetchAdminSettings(tenantId)
       .then((raw: any) => {
-        const v = resolveVerticalClient(raw);
+        const v = resolveVertical(raw);
         _verticalCache.set(tenantId, { vertical: v, ts: Date.now() });
         setVertical(v);
       })

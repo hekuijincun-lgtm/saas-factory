@@ -5,8 +5,6 @@ import { resolveVertical, DEFAULT_ADMIN_SETTINGS, mergeSettings, GENERIC_REPEAT_
 import type { PlanId, SubscriptionInfo } from "./settings";
 import { getRepeatConfig, getStyleLabel, buildRepeatMessage, DEFAULT_REPEAT_TEMPLATE } from "./verticals/eyebrow";
 import { getVerticalPlugin } from "./verticals/registry";
-// Phase 6: dualWrite* は停止済み — normalize* のみ使用（read fallback 維持）
-import { normalizeMenuItems, normalizeStaffItems, normalizeReservationMeta } from "./vertical-bridge";
 import { registerOwnerRoutes, getOwnerIds, bootstrapOwnerIfEmpty, isPrincipalAllowed, normalizePrincipal } from "./routes/owner";
 import { registerOwnerLeadRoutes } from "./routes/ownerLeads";
 import { createOutreachRoutes } from "./outreach/routes";
@@ -514,19 +512,6 @@ app.get('/admin/rbac/audit', async (c) => {
       consentText: "予約内容を確認し、同意の上で予約を確定します",
       staffSelectionEnabled: true,
     }
-    // Eyebrow-specific defaults — injected only when vertical resolves to 'eyebrow'
-    const EYEBROW_DEFAULT_SETTINGS: any = {
-      eyebrow: {
-        surveyEnabled: true,
-        surveyQuestions: [
-          { id: "q_default_1", label: "理想の眉デザインやご希望の仕上がりはありますか？",                         type: "text", enabled: true },
-          { id: "q_default_2", label: "2〜3週間以内に眉毛の自己処理をされましたか？",                           type: "text", enabled: true },
-          { id: "q_default_3", label: "お肌が敏感、または赤みが出やすいなど気になることはありますか？",         type: "text", enabled: true },
-          { id: "q_default_4", label: "眉毛のお悩み（左右差・薄さ・濃さ・形など）があれば教えてください",       type: "text", enabled: true },
-        ],
-      },
-    }
-
     const deepMerge = (a: any, b: any) => {
       const out: any = Array.isArray(a) ? [...a] : { ...(a||{}) }
       for(const k of Object.keys(b||{})){
@@ -565,16 +550,7 @@ app.get('/admin/rbac/audit', async (c) => {
     if(sDefault) data = deepMerge(data, sDefault)
     if(sTenant)  data = deepMerge(data, sTenant)
 
-    // Phase 1a: inject eyebrow defaults only for eyebrow vertical (not for generic/nail/dental)
-    // Must run BEFORE resolveVertical so verticalConfig includes survey defaults
-    {
-      const preVertical = resolveVertical(data).vertical;
-      if (preVertical === 'eyebrow' && !data.eyebrow) {
-        data = deepMerge(data, EYEBROW_DEFAULT_SETTINGS)
-      }
-    }
-
-    // P1: inject resolved vertical fields (backward-compat: legacy eyebrow also kept)
+    // P1: inject resolved vertical fields
     const { vertical, verticalConfig } = resolveVertical(data)
     data = { ...data, vertical, verticalConfig }
 
@@ -690,21 +666,6 @@ app.get('/admin/rbac/audit', async (c) => {
     // onboarding: shallow merge
     if(body.onboarding != null && typeof body.onboarding === 'object') {
       patch.onboarding = { ...(existing.onboarding || {}), ...body.onboarding }
-    }
-    // Phase 6: eyebrow legacy write 停止 — verticalConfig のみ write
-    // eyebrow フィールドが送られてきた場合は verticalConfig に変換して保存（legacy client 互換）
-    // 既存 eyebrow データは既に KV に残っているので read fallback (resolveVertical) で参照可能
-    if(body.eyebrow != null && typeof body.eyebrow === 'object') {
-      // eyebrow → verticalConfig に変換（verticalConfig が明示指定されていない場合のみ）
-      if(body.vertical == null && body.verticalConfig == null) {
-        patch.vertical = 'eyebrow'
-        patch.verticalConfig = {
-          consentText: body.eyebrow.consentText,
-          repeat: body.eyebrow.repeat,
-        }
-      }
-      // NOTE: patch.eyebrow への書き込みは停止（legacy write 停止）
-      // 既存 KV の eyebrow データはそのまま残る（read fallback で使用）
     }
     // P2: vertical / verticalConfig 直接指定
     if(body.vertical != null) patch.vertical = String(body.vertical)
@@ -1312,7 +1273,6 @@ type MenuItem = {
   durationMin: number;
   active: boolean;
   sortOrder: number;
-  eyebrow?: Record<string, any>;
   verticalAttributes?: Record<string, any>;
 };
 
@@ -1331,7 +1291,7 @@ app.get("/admin/menu", async (c) => {
     const value = await kv.get(key);
 
     if (value) {
-      const menu = normalizeMenuItems(JSON.parse(value));
+      const menu = JSON.parse(value);
       return c.json({ ok: true, tenantId, data: menu });
     }
 
@@ -1575,7 +1535,7 @@ app.post("/admin/menu", async (c) => {
   }
 })
 
-/** PATCH /admin/menu/:id — update existing menu item (including eyebrow) */
+/** PATCH /admin/menu/:id — update existing menu item */
 app.patch("/admin/menu/:id", async (c) => {
   const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
   const rbac = await requireRole(c, 'admin'); if (rbac) return rbac;
@@ -1598,15 +1558,9 @@ app.patch("/admin/menu/:id", async (c) => {
     if (body.durationMin !== undefined) updated.durationMin = Number(body.durationMin);
     if (body.active !== undefined) updated.active = Boolean(body.active);
     if (body.sortOrder !== undefined) updated.sortOrder = Number(body.sortOrder);
-    // Phase 6: verticalAttributes のみ write（eyebrow legacy write 停止）
-    // eyebrow が送られてきた場合は verticalAttributes に変換（legacy client 互換）
     if (body.verticalAttributes !== undefined) {
       if (body.verticalAttributes === null) delete updated.verticalAttributes;
       else updated.verticalAttributes = body.verticalAttributes;
-    } else if (body.eyebrow !== undefined) {
-      // legacy client が eyebrow を送ってきた場合は verticalAttributes に変換
-      if (body.eyebrow === null) delete updated.verticalAttributes;
-      else updated.verticalAttributes = { ...body.eyebrow };
     }
     // imageKey/imageUrl: optional 画像フィールド
     if (body.imageKey !== undefined) {
@@ -1629,8 +1583,6 @@ app.patch("/admin/menu/:id", async (c) => {
  * --- Staff (multi-tenant, KV) ---
  * key: admin:staff:list:${tenantId}
  */
-// CLEANUP(Phase4+): normalizeStaffItems は vertical-bridge.ts に切り出し済み
-
 app.get("/admin/staff", async (c) => {
   const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
   // Query-first resolution: booking flow always sends explicit ?tenantId=
@@ -1643,7 +1595,7 @@ app.get("/admin/staff", async (c) => {
   setTenantDebugHeaders(c, tenantId, key)
 
   const raw = await c.env.SAAS_FACTORY.get(key)
-  const data = raw ? normalizeStaffItems(JSON.parse(raw)) : []
+  const data = raw ? JSON.parse(raw) : []
 
   return c.json({ ok: true, tenantId, data })
 })
@@ -1660,14 +1612,9 @@ app.post("/admin/staff", async (c) => {
   const list = raw ? JSON.parse(raw) : []
 
   const id = body?.id || `staff_${Date.now()}_${Math.random().toString(16).slice(2)}`
-  // Phase 6: verticalAttributes のみ write（eyebrow legacy write 停止）
-  // body に eyebrow が含まれ verticalAttributes がない場合は変換
-  const { eyebrow: _legacyEyebrow, ...bodyWithoutLegacy } = body;
-  const item: any = { ...bodyWithoutLegacy, id };
+  const item: any = { ...body, id };
   if (body.verticalAttributes) {
     item.verticalAttributes = body.verticalAttributes;
-  } else if (body.eyebrow && !body.verticalAttributes) {
-    item.verticalAttributes = { ...body.eyebrow };
   }
 
   const next = [item, ...list]
@@ -1696,16 +1643,10 @@ app.all("/admin/staff/:id", async (c) => {
     if (idx < 0) return c.json({ ok: false, where: "STAFF_ALL_V3", error: "not_found", id, tenantId }, 404)
 
     const updated = { ...list[idx], ...body, id }
-    // Phase 6: verticalAttributes のみ write（eyebrow legacy write 停止）
     if (body.verticalAttributes !== undefined) {
       if (body.verticalAttributes === null) delete updated.verticalAttributes;
       else updated.verticalAttributes = body.verticalAttributes;
-    } else if (body.eyebrow !== undefined) {
-      // legacy client が eyebrow を送ってきた場合は verticalAttributes に変換
-      if (body.eyebrow === null) delete updated.verticalAttributes;
-      else updated.verticalAttributes = { ...body.eyebrow };
     }
-    // eyebrow field は updated に spread されたまま残るが、新規 write はしない
     list[idx] = updated
     await c.env.SAAS_FACTORY.put(key, JSON.stringify(list))
     return c.json({ ok: true, where: "STAFF_ALL_V3", tenantId, data: updated })
@@ -1787,7 +1728,6 @@ app.delete("/admin/menu/:id", async (c) => {
 });
 // NOTE: duplicate PUT /admin/settings removed — the primary handler (earlier in file) handles all fields.
 
-// CLEANUP(Phase4+): normalizeReservationMeta は vertical-bridge.ts に切り出し済み
 
 /** =========================
  * Admin Reservations (READ / UPDATE / DELETE)
@@ -1827,7 +1767,7 @@ app.get("/admin/reservations", async (c) => {
 
       let meta: any = undefined;
       if (r.meta) {
-        try { meta = normalizeReservationMeta(JSON.parse(r.meta)); } catch { meta = undefined; }
+        try { meta = JSON.parse(r.meta); } catch { meta = undefined; }
       }
       return {
         reservationId: r.id,
@@ -1876,7 +1816,7 @@ app.get("/admin/reservations/:id", async (c) => {
     const slotStr = String(row.slot_start || row.start_at || "");
     const dtMatch = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/.exec(slotStr);
     let meta: any = undefined;
-    if (row.meta) { try { meta = normalizeReservationMeta(JSON.parse(row.meta)); } catch {} }
+    if (row.meta) { try { meta = JSON.parse(row.meta); } catch {} }
 
     return c.json({
       ok: true,
@@ -1925,7 +1865,6 @@ app.on(["PUT", "PATCH"], "/admin/reservations/:id", async (c) => {
       let existingMeta: any = {};
       if (existingRow?.meta) { try { existingMeta = JSON.parse(existingRow.meta); } catch {} }
       const mergedMeta = { ...existingMeta, ...(body.meta ?? {}) };
-      // Phase 6: verticalData のみ write（eyebrowDesign legacy write 停止）
       // consentLog は vertical 非依存なので sub-merge 継続
       if (body.meta?.consentLog && existingMeta.consentLog) {
         mergedMeta.consentLog = { ...existingMeta.consentLog, ...body.meta.consentLog };
@@ -1934,14 +1873,6 @@ app.on(["PUT", "PATCH"], "/admin/reservations/:id", async (c) => {
       if (body.meta?.verticalData && existingMeta.verticalData) {
         mergedMeta.verticalData = { ...existingMeta.verticalData, ...body.meta.verticalData };
       }
-      // legacy client が eyebrowDesign を送ってきた場合は verticalData に変換
-      if (body.meta?.eyebrowDesign && !body.meta?.verticalData) {
-        const legacyData = existingMeta.eyebrowDesign
-          ? { ...existingMeta.eyebrowDesign, ...body.meta.eyebrowDesign }
-          : body.meta.eyebrowDesign;
-        mergedMeta.verticalData = { ...(mergedMeta.verticalData || {}), ...legacyData };
-      }
-      // NOTE: eyebrowDesign への新規 write は停止。既存データは read fallback で参照可能
       sets.push("meta = ?"); vals.push(JSON.stringify(mergedMeta));
     }
 
@@ -2087,7 +2018,7 @@ app.get("/admin/kpi", async (c) => {
     // Note: menu_id/menu_name columns do not exist in D1 reservations table
     const styleRawRes = await db.prepare(
       `SELECT
-         COALESCE(json_extract(meta, '$.verticalData.styleType'), json_extract(meta, '$.eyebrowDesign.styleType')) as metaStyleType,
+         json_extract(meta, '$.verticalData.styleType') as metaStyleType,
          json_extract(meta, '$.customerKey') as ckey,
          COUNT(*) as visits
        FROM reservations
@@ -2171,7 +2102,7 @@ app.post("/admin/kpi/backfill-customer-key", async (c) => {
         continue;
       }
 
-      // Merge customerKey into existing meta (preserve other fields like eyebrowDesign)
+      // Merge customerKey into existing meta
       let existingMeta: Record<string, any> = {};
       if (row.meta) {
         try { existingMeta = JSON.parse(row.meta); } catch { /* ignore */ }
@@ -2225,6 +2156,7 @@ app.post("/admin/kpi/backfill-customer-key", async (c) => {
  *       never deletes legacy fields, never creates eyebrow data for generic tenants.
  * ========================= */
 app.post("/admin/backfill/vertical", async (c) => {
+  // @deprecated Phase 8: backfill is complete for all tenants. Kept for emergency re-run only.
   const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
   const rbac = await requireRole(c, 'owner'); if (rbac) return rbac;
   try {
@@ -2419,6 +2351,7 @@ app.post("/admin/backfill/vertical", async (c) => {
  * Used to determine Phase 6 readiness (dual-write removal).
  * ========================= */
 app.get("/admin/backfill/vertical/status", async (c) => {
+  // @deprecated Phase 8: backfill is complete for all tenants. Kept for emergency re-run only.
   const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
   const rbac = await requireRole(c, 'owner'); if (rbac) return rbac;
   try {
@@ -2547,8 +2480,8 @@ app.get("/admin/onboarding-status", async (c) => {
     let storeName = '';
     let bookingUrl = '';
     let vertical = 'generic';
-    let eyebrowRepeatEnabled = false;
-    let eyebrowTemplateSet = false;
+    let repeatEnabled = false;
+    let templateSet = false;
     if (kv) {
       try {
         const raw = await kv.get(`settings:${tenantId}`);
@@ -2558,8 +2491,8 @@ app.get("/admin/onboarding-status", async (c) => {
           bookingUrl = String(s?.integrations?.line?.bookingUrl ?? '').trim();
           vertical = resolveVertical(s).vertical;
           const rc = getRepeatConfig(s);
-          eyebrowRepeatEnabled = rc.enabled;
-          eyebrowTemplateSet = rc.template.trim().length > 0 && rc.template !== DEFAULT_REPEAT_TEMPLATE;
+          repeatEnabled = rc.enabled;
+          templateSet = rc.template.trim().length > 0 && rc.template !== DEFAULT_REPEAT_TEMPLATE;
         }
       } catch { /* ignore */ }
     }
@@ -2581,7 +2514,7 @@ app.get("/admin/onboarding-status", async (c) => {
           const menu: any[] = JSON.parse(menuRaw);
           const active = Array.isArray(menu) ? menu.filter((m: any) => m.active !== false) : [];
           menuCount = active.length;
-          menuEyebrowCount = active.filter((m: any) => (m.verticalAttributes?.styleType ?? m.eyebrow?.styleType)).length;
+          menuEyebrowCount = active.filter((m: any) => m.verticalAttributes?.styleType).length;
         }
       } catch { /* ignore */ }
     }
@@ -2590,8 +2523,8 @@ app.get("/admin/onboarding-status", async (c) => {
     // Phase 4: vertical 固有チェックは registry 経由で注入
     const verticalChecks = getVerticalPlugin(vertical).getOnboardingChecks({
       menuVerticalCount: menuEyebrowCount,
-      repeatEnabled: eyebrowRepeatEnabled,
-      templateSet: eyebrowTemplateSet,
+      repeatEnabled,
+      templateSet,
     });
     for (const item of verticalChecks) items.push(item);
 
@@ -2728,7 +2661,7 @@ app.get("/admin/repeat-targets", async (c) => {
          r.line_user_id,
          r.slot_start as lastReservationAt,
          r.staff_id,
-         COALESCE(json_extract(r.meta, '$.verticalData.styleType'), json_extract(r.meta, '$.eyebrowDesign.styleType')) as metaStyleType
+         json_extract(r.meta, '$.verticalData.styleType') as metaStyleType
        FROM reservations r
        INNER JOIN (
          SELECT json_extract(meta, '$.customerKey') as ck, MAX(slot_start) as maxSlot
@@ -2753,7 +2686,6 @@ app.get("/admin/repeat-targets", async (c) => {
         lineUserId = r.line_user_id;
       }
 
-      // styleType: verticalData.styleType または eyebrowDesign.styleType (SQL COALESCE 済み)
       const styleType: string | null = r.metaStyleType || null;
 
       // P4: buildRepeatMessage via eyebrow plugin
@@ -3671,15 +3603,10 @@ async function upsertCustomer(
       .catch((e: any) => console.error("[RESERVE_CUSTOMER_LINK] error:", String(e?.message ?? e)));
   }
 
-  // customerKey + body.meta マージ — best-effort (eyebrowDesign.styleType 等を保持)
+  // customerKey + body.meta マージ
   const email = body.email ? String(body.email).trim().toLowerCase() : null;
   const customerKey = buildCustomerKey({ lineUserId, phone, email });
   const bodyMeta: Record<string, any> = (body.meta && typeof body.meta === 'object' && !Array.isArray(body.meta)) ? body.meta : {};
-  // Phase 6: verticalData のみ write（eyebrowDesign legacy write 停止）
-  // legacy client が eyebrowDesign を送ってきた場合は verticalData に変換
-  if (bodyMeta.eyebrowDesign && !bodyMeta.verticalData) {
-    bodyMeta.verticalData = { ...bodyMeta.eyebrowDesign };
-  }
   const finalMeta = { ...bodyMeta, ...(customerKey ? { customerKey } : {}) };
   if (Object.keys(finalMeta).length > 0) {
     await env.DB.prepare("UPDATE reservations SET meta = ? WHERE id = ? AND tenant_id = ?")
@@ -3885,10 +3812,10 @@ app.post("/webhooks/email/inbound", async (c) => {
     await db
       .prepare(
         `INSERT INTO outreach_replies
-         (id, tenant_id, lead_id, campaign_id, message_id, reply_text, reply_source, ai_handled, ai_response_sent, created_at)
-         VALUES (?1, ?2, ?3, NULL, ?4, ?5, 'email', 0, 0, ?6)`
+         (id, tenant_id, lead_id, campaign_id, message_id, reply_text, reply_source, from_email, subject, status, ai_handled, ai_response_sent, created_at)
+         VALUES (?1, ?2, ?3, NULL, ?4, ?5, 'email', ?6, ?7, 'open', 0, 0, ?8)`
       )
-      .bind(replyId, tenantId, leadId, externalMessageId || null, replyText, ts)
+      .bind(replyId, tenantId, leadId, externalMessageId || null, replyText, fromEmail, subject, ts)
       .run();
 
     // Update lead last_replied_at (always)

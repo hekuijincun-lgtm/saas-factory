@@ -4,7 +4,7 @@
 import { useState, useEffect } from 'react';
 import { useAdminTenantId } from '@/src/lib/useAdminTenantId';
 import { CalendarDays, Building2, Clock, Link as LinkIcon, AlertCircle, RefreshCw, Save, Scissors, Plus, Trash2 } from 'lucide-react';
-import { getVerticalConfig, type EyebrowSurveyQuestion } from '@/src/types/settings';
+import { getVerticalConfig, type SurveyQuestion } from '@/src/types/settings';
 import { useVerticalPlugin } from '../_lib/useVerticalPlugin';
 import {
   fetchAdminSettings,
@@ -101,8 +101,8 @@ export default function AdminSettingsClient() {
   // NEW: 事前アンケート
   const [eyebrowSurveyEnabled, setEyebrowSurveyEnabled] = useState(false);
   const [savedEyebrowSurveyEnabled, setSavedEyebrowSurveyEnabled] = useState(false);
-  const [eyebrowSurveyQuestions, setEyebrowSurveyQuestions] = useState<EyebrowSurveyQuestion[]>([]);
-  const [savedEyebrowSurveyQuestions, setSavedEyebrowSurveyQuestions] = useState<EyebrowSurveyQuestion[]>([]);
+  const [eyebrowSurveyQuestions, setSurveyQuestions] = useState<SurveyQuestion[]>([]);
+  const [savedSurveyQuestions, setSavedSurveyQuestions] = useState<SurveyQuestion[]>([]);
 
   // --- 管理者ログイン許可 LINE userId ---
   const [allowedAdminLineUserIds, setAllowedAdminLineUserIds] = useState<string[]>([]);
@@ -281,21 +281,21 @@ export default function AdminSettingsClient() {
 
   // --- 事前アンケートヘルパー ---
   const addSurveyQuestion = () => {
-    const newQ: EyebrowSurveyQuestion = {
+    const newQ: SurveyQuestion = {
       id: `q_${Date.now()}`,
       label: '',
       type: 'text',
       enabled: true,
     };
-    setEyebrowSurveyQuestions(prev => [...prev, newQ]);
+    setSurveyQuestions(prev => [...prev, newQ]);
   };
 
-  const updateSurveyQuestion = (id: string, patch: Partial<EyebrowSurveyQuestion>) => {
-    setEyebrowSurveyQuestions(prev => prev.map(q => q.id === id ? { ...q, ...patch } : q));
+  const updateSurveyQuestion = (id: string, patch: Partial<SurveyQuestion>) => {
+    setSurveyQuestions(prev => prev.map(q => q.id === id ? { ...q, ...patch } : q));
   };
 
   const removeSurveyQuestion = (id: string) => {
-    setEyebrowSurveyQuestions(prev => prev.filter(q => q.id !== id));
+    setSurveyQuestions(prev => prev.filter(q => q.id !== id));
   };
 
   const fetchSettings = async () => {
@@ -338,8 +338,8 @@ export default function AdminSettingsClient() {
       setEyebrowBedCount(bc); setSavedEyebrowBedCount(bc);
       const se = vc.surveyEnabled ?? false;
       setEyebrowSurveyEnabled(se); setSavedEyebrowSurveyEnabled(se);
-      const sq: EyebrowSurveyQuestion[] = Array.isArray(vc.surveyQuestions) ? vc.surveyQuestions : [];
-      setEyebrowSurveyQuestions(sq); setSavedEyebrowSurveyQuestions(sq);
+      const sq: SurveyQuestion[] = Array.isArray(vc.surveyQuestions) ? vc.surveyQuestions : [];
+      setSurveyQuestions(sq); setSavedSurveyQuestions(sq);
       const al: string[] = Array.isArray(raw.allowedAdminLineUserIds) ? raw.allowedAdminLineUserIds : [];
       setAllowedAdminLineUserIds(al); setSavedAllowedAdminLineUserIds(al);
       // LINE リマインド設定
@@ -602,7 +602,7 @@ export default function AdminSettingsClient() {
       setSavedEyebrowTemplate(eyebrowTemplate);
       setSavedEyebrowBedCount(eyebrowBedCount);
       setSavedEyebrowSurveyEnabled(eyebrowSurveyEnabled);
-      setSavedEyebrowSurveyQuestions(eyebrowSurveyQuestions);
+      setSavedSurveyQuestions(eyebrowSurveyQuestions);
       setSavedAllowedAdminLineUserIds(allowedAdminLineUserIds);
       setSavedReminderEnabled(reminderEnabled);
       setSavedReminderSendAtHour(reminderSendAtHour);
@@ -657,7 +657,7 @@ export default function AdminSettingsClient() {
     setEyebrowTemplate(savedEyebrowTemplate);
     setEyebrowBedCount(savedEyebrowBedCount);
     setEyebrowSurveyEnabled(savedEyebrowSurveyEnabled);
-    setEyebrowSurveyQuestions(savedEyebrowSurveyQuestions);
+    setSurveyQuestions(savedSurveyQuestions);
     setAllowedAdminLineUserIds(savedAllowedAdminLineUserIds);
     setReminderEnabled(savedReminderEnabled);
     setReminderSendAtHour(savedReminderSendAtHour);
@@ -1501,7 +1501,7 @@ export default function AdminSettingsClient() {
                           <select
                             className="px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-pink-400"
                             value={q.type}
-                            onChange={e => updateSurveyQuestion(q.id, { type: e.target.value as EyebrowSurveyQuestion['type'] })}
+                            onChange={e => updateSurveyQuestion(q.id, { type: e.target.value as SurveyQuestion['type'] })}
                           >
                             <option value="text">テキスト（1行）</option>
                             <option value="textarea">テキスト（複数行）</option>

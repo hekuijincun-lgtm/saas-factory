@@ -4,7 +4,6 @@
  * Phase 4: vertical 依存ロジックを plugin interface + registry で管理する。
  *
  * 責務: vertical ごとの差分定義（defaultMenu / onboarding / repeat / labels / flags）
- * ※ legacy data bridge (normalize / dual-write) は vertical-bridge.ts が担当
  *
  * 使い方:
  *   import { getVerticalPlugin } from './verticals/registry';

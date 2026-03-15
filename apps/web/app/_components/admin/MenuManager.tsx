@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { getMenu, deleteMenuItem, getMenuVerticalAttrs, type MenuItem, type MenuItemEyebrow } from '@/src/lib/bookingApi';
+import { getMenu, deleteMenuItem, getMenuVerticalAttrs, type MenuItem, type MenuVerticalAttributes } from '@/src/lib/bookingApi';
 import { useAdminTenantId } from '@/src/lib/useAdminTenantId';
 import { ApiClientError } from '@/src/lib/apiClient';
 import { compressImage, MAX_UPLOAD_BYTES } from '@/src/lib/compressImage';
@@ -23,7 +23,7 @@ export default function MenuManager({ tenantId: tenantIdProp }: { tenantId?: str
   const [editingItem, setEditingItem] = useState<MenuItem | null>(null);
   const [formData, setFormData] = useState<{
     name: string; price: string; durationMin: string; active: boolean; sortOrder: number;
-    eyebrow: MenuItemEyebrow;
+    eyebrow: MenuVerticalAttributes;
     imageKey?: string;
     imageUrl?: string;
   }>({

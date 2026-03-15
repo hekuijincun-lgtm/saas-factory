@@ -1,9 +1,9 @@
 'use client';
 
-import type { EyebrowSurveyQuestion } from '@/src/types/settings';
+import type { SurveyQuestion } from '@/src/types/settings';
 
 interface Props {
-  questions: EyebrowSurveyQuestion[];
+  questions: SurveyQuestion[];
   answers: Record<string, string | boolean>;
   onAnswer: (id: string, value: string | boolean) => void;
   onNext: () => void;

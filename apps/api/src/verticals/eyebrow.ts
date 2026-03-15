@@ -20,9 +20,9 @@ export const STYLE_LABELS: Record<string, string> = {
   custom:  'カスタム',
 };
 
-/** meta オブジェクトからスタイルタイプを取得（verticalData 優先・eyebrowDesign フォールバック） */
+/** meta オブジェクトからスタイルタイプを取得 */
 export function getStyleType(meta: any): string | null {
-  return (meta?.verticalData?.styleType ?? meta?.eyebrowDesign?.styleType) || null;
+  return meta?.verticalData?.styleType || null;
 }
 
 /** スタイルタイプから日本語ラベルを返す */
@@ -39,7 +39,7 @@ export interface RepeatConfig {
 
 /**
  * 設定オブジェクトからリピート設定を取得。
- * 新形式（verticalConfig.repeat）優先、旧形式（eyebrow.repeat）フォールバック。
+ * verticalConfig.repeat から設定を取得。未設定なら汎用フォールバック。
  */
 export function getRepeatConfig(settings: any): RepeatConfig {
   // 新形式: verticalConfig.repeat
@@ -51,16 +51,7 @@ export function getRepeatConfig(settings: any): RepeatConfig {
       template: String(vc.template || DEFAULT_REPEAT_TEMPLATE),
     };
   }
-  // CLEANUP(Phase4+): legacy eyebrow.repeat fallback — 全テナント verticalConfig 移行後に削除
-  const eb = settings?.eyebrow?.repeat;
-  if (eb) {
-    return {
-      enabled: Boolean(eb.enabled),
-      intervalDays: Number(eb.intervalDays) || 42,
-      template: String(eb.template || DEFAULT_REPEAT_TEMPLATE),
-    };
-  }
-  // Phase 1a: 汎用フォールバック（eyebrow 以外のテナントに眉毛メッセージを送らない）
+  // 汎用フォールバック
   return { enabled: false, intervalDays: 42, template: GENERIC_REPEAT_TEMPLATE };
 }
 

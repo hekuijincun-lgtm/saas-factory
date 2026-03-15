@@ -9,14 +9,14 @@ import StepConfirm from './steps/StepConfirm';
 import StepSurvey from './steps/StepSurvey';
 import type { MenuItem } from '@/src/lib/bookingApi';
 import { fetchBookingSettings, getMenuVerticalAttrs } from '@/src/lib/bookingApi';
-import { getVerticalConfig, resolveVertical, type EyebrowSurveyQuestion } from '@/src/types/settings';
+import { getVerticalConfig, resolveVertical, type SurveyQuestion } from '@/src/types/settings';
 
 export interface BookingState {
   menuId: string | null;
   menuName: string | null;
   menuPrice: number | null;
   menuDurationMin: number | null;
-  menuStyleType?: string | null; // menu.eyebrow.styleType（予約時styleBreakdown用）
+  menuStyleType?: string | null;
   staffId: string | null;
   staffName: string | null;
   date: string | null;
@@ -138,7 +138,7 @@ export default function BookingFlow() {
   const [treatmentConsentText, setTreatmentConsentText] = useState<string>('');
   const [staffSelectionEnabled, setStaffSelectionEnabled] = useState(true);
   const [surveyEnabled, setSurveyEnabled] = useState(false);
-  const [surveyQuestions, setSurveyQuestions] = useState<EyebrowSurveyQuestion[]>([]);
+  const [surveyQuestions, setSurveyQuestions] = useState<SurveyQuestion[]>([]);
   const [slotConflictNotice, setSlotConflictNotice] = useState<string | null>(null);
   const [slotRefreshKey, setSlotRefreshKey] = useState(0);
 

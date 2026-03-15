@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { getStaff, createStaff, updateStaff, getStaffVerticalAttrs, type Staff, type StaffEyebrow } from '@/src/lib/bookingApi';
+import { getStaff, createStaff, updateStaff, getStaffVerticalAttrs, type Staff, type StaffVerticalAttributes } from '@/src/lib/bookingApi';
 import { useAdminTenantId } from '@/src/lib/useAdminTenantId';
 import { ApiClientError } from '@/src/lib/apiClient';
 import Card from '../ui/Card';
@@ -36,7 +36,7 @@ export default function StaffManager() {
   const [shiftEditorStaffName, setShiftEditorStaffName] = useState<string>('');
   const [formData, setFormData] = useState<{
     name: string; role: string; active: boolean; sortOrder: number;
-    eyebrow: StaffEyebrow;
+    eyebrow: StaffVerticalAttributes;
     specialtyInput: string;
   }>({
     name: '',
@@ -136,7 +136,7 @@ export default function StaffManager() {
 
     try {
       // Phase 6: verticalAttributes のみ write（eyebrow legacy write 停止）
-      const eyebrowPayload: StaffEyebrow = {};
+      const eyebrowPayload: StaffVerticalAttributes = {};
       if (formData.eyebrow.skillLevel) eyebrowPayload.skillLevel = formData.eyebrow.skillLevel;
       if (formData.eyebrow.specialties && formData.eyebrow.specialties.length > 0) {
         eyebrowPayload.specialties = formData.eyebrow.specialties;

@@ -3,7 +3,7 @@
 import { useRef, useState } from 'react';
 import { createReservation, getSlots } from '@/src/lib/bookingApi';
 import type { BookingState } from '../BookingFlow';
-import type { EyebrowSurveyQuestion } from '@/src/types/settings';
+import type { SurveyQuestion } from '@/src/types/settings';
 
 interface Props {
   booking: BookingState;
@@ -12,7 +12,7 @@ interface Props {
   consentText?: string;
   /** 施術同意文（眉毛施術設定で設定した長文テキスト）— チェックボックスの前に独立したブロックとして表示 */
   treatmentConsentText?: string;
-  surveyQuestions?: EyebrowSurveyQuestion[];
+  surveyQuestions?: SurveyQuestion[];
   tenantId?: string;
 }
 
@@ -115,7 +115,6 @@ export default function StepConfirm({ booking, onBack, onDone, consentText, trea
     setError(null);
     setIsDuplicate(false);
     try {
-      // Phase 6: verticalData のみ write（eyebrowDesign legacy write 停止）
       const metaPayload: Record<string, any> = {};
       if (booking.menuStyleType) {
         metaPayload.verticalData = { styleType: booking.menuStyleType };

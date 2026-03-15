@@ -33,7 +33,7 @@ export interface CreateReservationPayload {
   staffId?: string;
   lineUserId?: string;
   durationMin?: number;
-  meta?: Record<string, any>; // 眉毛カルテ等の拡張メタ（任意）
+  meta?: Record<string, any>;
 }
 
 export interface ReservationResponse {
@@ -63,17 +63,6 @@ export interface ReservationMeta {
     styleType?: string;       // スタイルタイプ（例: 'natural', 'bold'）
     [key: string]: unknown;   // 他業種拡張用
   };
-  // 眉毛カルテ（旧形式・後方互換）
-  /** @deprecated use verticalData instead */
-  eyebrowDesign?: {
-    styleType?: string;       // スタイルタイプ（後方互換）
-    template?: string;        // スタイルテンプレ
-    thickness?: string;       // 太さ
-    angle?: string;           // 角度
-    arch?: string;            // アーチ形状
-    memo?: string;            // カルテメモ
-    skinnessReaction?: string; // 赤み反応
-  };
   // 同意ログ
   consentLog?: {
     acceptedAt?: string;           // 同意日時（ISO）
@@ -102,7 +91,7 @@ export interface Reservation {
   durationMin?: number;
   status?: string;
   createdAt: string;
-  meta?: ReservationMeta;  // 眉毛特化拡張データ（optional）
+  meta?: ReservationMeta;
 }
 
 export interface ReservationsResponse {
@@ -118,13 +107,10 @@ export interface CancelReservationResponse {
 }
 
 // Admin API types
-// CLEANUP(Phase4+): StaffEyebrow → StaffVerticalAttributes にリネーム可能
-export interface StaffEyebrow {
+export interface StaffVerticalAttributes {
   skillLevel?: 1 | 2 | 3 | 4 | 5;     // 技術レベル（1:初級〜5:エキスパート）
   specialties?: string[];              // 得意技術タグ（例: "ナチュラル", "韓国風", etc）
 }
-/** Phase 3: vertical-agnostic alias（今後はこちらを優先して使用） */
-export type StaffVerticalAttributes = StaffEyebrow;
 
 export interface Staff {
   id: string;
@@ -132,32 +118,25 @@ export interface Staff {
   role?: string;
   active: boolean;
   sortOrder: number;
-  /** @deprecated use verticalAttributes instead */
-  eyebrow?: StaffEyebrow;  // 眉毛特化スキル（legacy）
-  /** Phase 2b: 業種共通スキル属性（verticalAttributes → eyebrow の優先順位で読む） */
+  /** 業種共通スキル属性 */
   verticalAttributes?: Record<string, unknown>;
 }
 
 /**
  * スタッフの業種属性を正規化して返す read adapter。
- * 優先順位: verticalAttributes → eyebrow legacy → undefined
- * CLEANUP(Phase4+): eyebrow フォールバック行を削除可能（全 KV データ verticalAttributes 持ち後）
  */
-export function getStaffVerticalAttrs(staff: Staff): StaffEyebrow | undefined {
+export function getStaffVerticalAttrs(staff: Staff): StaffVerticalAttributes | undefined {
   if (staff.verticalAttributes && Object.keys(staff.verticalAttributes).length > 0) {
-    return staff.verticalAttributes as unknown as StaffEyebrow;
+    return staff.verticalAttributes as unknown as StaffVerticalAttributes;
   }
-  return staff.eyebrow; // CLEANUP(Phase4+): legacy fallback
+  return undefined;
 }
 
-// CLEANUP(Phase4+): MenuItemEyebrow → MenuVerticalAttributes にリネーム可能
-export interface MenuItemEyebrow {
+export interface MenuVerticalAttributes {
   firstTimeOnly?: boolean;                             // 初回限定メニュー
   genderTarget?: 'male' | 'female' | 'both';          // 性別ターゲット
   styleType?: 'natural' | 'sharp' | 'korean' | 'custom'; // スタイル種別
 }
-/** Phase 3: vertical-agnostic alias（今後はこちらを優先して使用） */
-export type MenuVerticalAttributes = MenuItemEyebrow;
 
 export interface MenuItem {
   id: string;
@@ -166,41 +145,34 @@ export interface MenuItem {
   durationMin: number;
   active: boolean;
   sortOrder: number;
-  /** @deprecated use verticalAttributes instead */
-  eyebrow?: MenuItemEyebrow;  // 眉毛特化属性（legacy）
-  /** Phase 2a: 業種共通属性（verticalAttributes → eyebrow の優先順位で読む） */
+  /** 業種共通属性 */
   verticalAttributes?: Record<string, unknown>;
   imageKey?: string;          // R2 object key (P1)
   imageUrl?: string;          // 公開URL
 }
 
-// ── Phase 2c: ReservationMeta vertical data read helper ──────────
+// ── ReservationMeta vertical data read helper ──────────
 
 /**
  * 予約メタの業種データを正規化して返す read adapter。
- * 優先順位: verticalData → eyebrowDesign legacy → undefined
- * CLEANUP(Phase4+): eyebrowDesign フォールバック行を削除可能（全 D1 データ verticalData 持ち後）
  */
-export function getReservationVerticalData(meta?: ReservationMeta): ReservationMeta['eyebrowDesign'] | undefined {
+export function getReservationVerticalData(meta?: ReservationMeta): Record<string, unknown> | undefined {
   if (meta?.verticalData && Object.keys(meta.verticalData).length > 0) {
-    return meta.verticalData as unknown as ReservationMeta['eyebrowDesign'];
+    return meta.verticalData;
   }
-  return meta?.eyebrowDesign; // CLEANUP(Phase4+): legacy fallback
+  return undefined;
 }
 
-// ── Phase 2a: MenuItem vertical attributes read helper ───────────
+// ── MenuItem vertical attributes read helper ───────────
 
 /**
  * メニューアイテムの業種属性を正規化して返す read adapter。
- * 優先順位: verticalAttributes → eyebrow legacy → undefined
- * 呼び出し側は eyebrow 固定参照を避け、この helper 経由で読む。
- * CLEANUP(Phase4+): eyebrow フォールバック行を削除可能（全 KV データ verticalAttributes 持ち後）
  */
-export function getMenuVerticalAttrs(item: MenuItem): MenuItemEyebrow | undefined {
+export function getMenuVerticalAttrs(item: MenuItem): MenuVerticalAttributes | undefined {
   if (item.verticalAttributes && Object.keys(item.verticalAttributes).length > 0) {
-    return item.verticalAttributes as unknown as MenuItemEyebrow;
+    return item.verticalAttributes as unknown as MenuVerticalAttributes;
   }
-  return item.eyebrow; // CLEANUP(Phase4+): legacy fallback
+  return undefined;
 }
 
 export interface AdminSettings {
@@ -548,7 +520,6 @@ export async function getMenu(tenantId: string = "default"): Promise<MenuItem[]>
         tenantId: (x?.tenantId != null ? String(x.tenantId) : tenantId),
         ...(x?.imageKey            ? { imageKey: String(x.imageKey) }           : {}),
         ...(safeImageUrl           ? { imageUrl: safeImageUrl }                : {}),
-        ...(x?.eyebrow             ? { eyebrow:  x.eyebrow }                  : {}),
         ...(x?.verticalAttributes  ? { verticalAttributes: x.verticalAttributes } : {}),
       };
     }) as MenuItem[];

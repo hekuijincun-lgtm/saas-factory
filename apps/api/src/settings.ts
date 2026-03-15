@@ -108,16 +108,6 @@ export type VerticalType = 'eyebrow' | 'nail' | 'dental' | 'hair' | 'esthetic' |
 export const GENERIC_REPEAT_TEMPLATE =
   '前回のご来店からそろそろ{interval}週が経ちます。またのご来店をお待ちしております。';
 
-/** @deprecated Phase 4: use getVerticalPlugin(vertical).label instead — registry.ts に移行済み */
-export const VERTICAL_LABELS: Record<VerticalType, string> = {
-  generic: '汎用（業種を選択してください）',
-  eyebrow: 'アイブロウサロン',
-  nail: 'ネイルサロン',
-  hair: 'ヘアサロン',
-  esthetic: 'エステ・リラクゼーション',
-  dental: '歯科・クリニック',
-};
-
 /** バーティカル共通設定（業種に依存しない汎用フォーム） */
 export interface VerticalConfig {
   /** 施術同意文（施術前に顧客に表示するリスク告知テキスト） */
@@ -133,32 +123,16 @@ export interface VerticalConfig {
   /** 事前アンケート ON/OFF（Phase 1b: eyebrow.surveyEnabled から昇格） */
   surveyEnabled?: boolean;
   /** 事前アンケート質問リスト（Phase 1b: eyebrow.surveyQuestions から昇格） */
-  surveyQuestions?: EyebrowSurveyQuestion[];
+  surveyQuestions?: SurveyQuestion[];
   /** ベッド数（同時施術キャパ、Phase 1b: eyebrow.bedCount から昇格） */
   bedCount?: number;
 }
 
-// CLEANUP(Phase4+): EyebrowSurveyQuestion → SurveyQuestion にリネーム可能
-export interface EyebrowSurveyQuestion {
+export interface SurveyQuestion {
   id: string;
   label: string;
   type: 'text' | 'textarea' | 'checkbox';
   enabled: boolean;
-}
-/** Phase 3: vertical-agnostic alias（今後はこちらを優先して使用） */
-export type SurveyQuestion = EyebrowSurveyQuestion;
-
-/** @deprecated use verticalConfig instead — CLEANUP(Phase4+): 全テナント移行後に削除 */
-export interface EyebrowSettings {
-  consentText?: string;        // 眉毛施術同意文
-  repeat?: {
-    enabled?: boolean;
-    intervalDays?: number;
-    template?: string;
-  };
-  bedCount?: number;           // ベッド数（同時施術キャパ）デフォルト1
-  surveyEnabled?: boolean;     // 事前アンケート ON/OFF
-  surveyQuestions?: EyebrowSurveyQuestion[]; // 事前アンケート質問リスト
 }
 
 export type PlanId = 'starter' | 'pro' | 'enterprise';
@@ -196,8 +170,6 @@ export interface AdminSettings {
   assignment: AssignmentSettings;
   integrations: IntegrationSettings;
   onboarding?: OnboardingSettings;
-  /** @deprecated use vertical + verticalConfig instead */
-  eyebrow?: EyebrowSettings;
   /** 業種バーティカル（'eyebrow' | 'nail' | 'dental' | 'generic'） */
   vertical?: VerticalType;
   /** バーティカル詳細設定（vertical に対応する設定値） */
@@ -485,10 +457,6 @@ export function mergeSettings(defaults: AdminSettings, partial: Partial<AdminSet
           enabled: partial.onboarding?.enabled ?? defaults.onboarding?.enabled,
         }
       : undefined,
-    // Phase 6: eyebrow merge 停止 — 新規 write は verticalConfig のみ
-    // 既存 KV データの eyebrow はそのまま残る（read fallback resolveVertical で参照）
-    // partial.eyebrow が来ても mergeSettings では eyebrow を更新しない
-    eyebrow: defaults.eyebrow,  // 既存値を保持（新規 merge は行わない）
     subscription: partial.subscription ?? defaults.subscription,
     lineAccounts: partial.lineAccounts ?? defaults.lineAccounts,
     lineRouting: (partial.lineRouting || defaults.lineRouting)
@@ -528,7 +496,7 @@ export function mergeSettings(defaults: AdminSettings, partial: Partial<AdminSet
 
 /**
  * 設定から現在の業種バーティカルと設定を解決する。
- * 新形式（vertical + verticalConfig）を優先し、旧形式（eyebrow）にフォールバック。
+ * vertical + verticalConfig が存在すればそのまま返し、なければ generic デフォルトを返す。
  * GET /admin/settings レスポンスへの注入・P4 プラグイン選択に使用する。
  */
 export function resolveVertical(s: Partial<AdminSettings>): { vertical: VerticalType; verticalConfig: VerticalConfig } {
@@ -536,19 +504,6 @@ export function resolveVertical(s: Partial<AdminSettings>): { vertical: Vertical
   if (s.vertical && s.verticalConfig) {
     return { vertical: s.vertical, verticalConfig: s.verticalConfig };
   }
-  // CLEANUP(Phase4+): eyebrow legacy fallback — 全テナント vertical+verticalConfig 設定後に削除
-  if (s.eyebrow) {
-    return {
-      vertical: 'eyebrow',
-      verticalConfig: {
-        consentText: s.eyebrow.consentText,
-        repeat: s.eyebrow.repeat,
-        surveyEnabled: s.eyebrow.surveyEnabled,
-        surveyQuestions: s.eyebrow.surveyQuestions,
-        bedCount: s.eyebrow.bedCount,
-      },
-    };
-  }
-  // 3. デフォルト: generic
+  // 2. デフォルト: generic
   return { vertical: 'generic', verticalConfig: {} };
 }
