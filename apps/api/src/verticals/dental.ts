@@ -18,8 +18,7 @@
 
 import { GENERIC_REPEAT_TEMPLATE } from '../settings';
 
-export const DEFAULT_REPEAT_TEMPLATE =
-  '前回のご来院からそろそろ{interval}週が経ちます。定期検診のご予約はいかがでしょうか？';
+export const DEFAULT_REPEAT_TEMPLATE = '前回のご来院からそろそろ{interval}週が経ちます。お口の健康を保つために、定期検診・クリーニングをおすすめします。症状が出る前の予防が大切です。\n\n▼ ご予約はこちら\n{bookingUrl}';
 
 export const TREATMENT_LABELS: Record<string, string> = {
   checkup: '定期検診',

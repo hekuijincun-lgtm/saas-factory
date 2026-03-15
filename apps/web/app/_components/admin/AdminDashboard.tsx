@@ -5,6 +5,7 @@ import Card from '../ui/Card';
 import { Scissors } from 'lucide-react';
 import { useAdminTenantId } from '@/src/lib/useAdminTenantId';
 import { useVerticalPlugin } from '../../admin/_lib/useVerticalPlugin';
+import { evaluateVerticalReadiness } from '@/src/lib/verticalReadiness';
 
 interface ScheduleItem {
   time: string;
@@ -323,6 +324,58 @@ export default function AdminDashboard() {
           </div>
         )}
       </div>}
+
+      {/* Phase 12: vertical pack readiness widget */}
+      {vPlugin.key !== 'generic' && (() => {
+        const readiness = evaluateVerticalReadiness(vPlugin.key, { lpAvailable: true, validationConnected: true });
+        return (
+          <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+            <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="text-base">📋</span>
+                <h2 className="text-sm font-semibold text-gray-700">
+                  {vPlugin.label} パック完成度
+                </h2>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="text-2xl font-bold text-gray-900">{readiness.score}%</div>
+                {readiness.sellable ? (
+                  <span className="px-2 py-0.5 bg-green-100 text-green-700 text-xs font-semibold rounded-full">販売可</span>
+                ) : (
+                  <span className="px-2 py-0.5 bg-amber-100 text-amber-700 text-xs font-semibold rounded-full">準備中</span>
+                )}
+              </div>
+            </div>
+            <div className="p-5">
+              <div className="grid grid-cols-3 gap-4 mb-4">
+                {(['core', 'sales', 'ops'] as const).map(cat => {
+                  const items = readiness.items.filter(i => i.category === cat);
+                  const ok = items.filter(i => i.status === 'ok').length;
+                  const catLabel = cat === 'core' ? 'コア機能' : cat === 'sales' ? '営業・集客' : '運用';
+                  return (
+                    <div key={cat} className="text-center p-3 bg-gray-50 rounded-xl">
+                      <div className="text-lg font-bold text-gray-900">{ok}/{items.length}</div>
+                      <div className="text-xs text-gray-500 mt-0.5">{catLabel}</div>
+                    </div>
+                  );
+                })}
+              </div>
+              {readiness.items.filter(i => i.status !== 'ok').length > 0 && (
+                <div className="space-y-2">
+                  <div className="text-xs font-medium text-gray-500 mb-1">未完了項目</div>
+                  {readiness.items.filter(i => i.status !== 'ok').map(item => (
+                    <div key={item.key} className="flex items-center gap-2 text-xs">
+                      <span className={`w-2 h-2 rounded-full shrink-0 ${item.status === 'partial' ? 'bg-amber-400' : 'bg-red-400'}`} />
+                      <span className="text-gray-600">{item.label}</span>
+                      {item.note && <span className="text-gray-400">— {item.note}</span>}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* J3: リピート施策効果カード */}
       <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">

@@ -21,8 +21,7 @@
 import { GENERIC_REPEAT_TEMPLATE } from '../settings';
 
 /** デフォルトリピートテンプレート（ネイル専用） */
-export const DEFAULT_REPEAT_TEMPLATE =
-  '前回のご来店からそろそろ{interval}週が経ちます。ネイルの付け替え時期ではありませんか？';
+export const DEFAULT_REPEAT_TEMPLATE = '前回のご来店からそろそろ{interval}週が経ちます。ジェルネイルの付け替え時期ではありませんか？爪への負担を防ぐためにも、早めのオフ＆付け替えがおすすめです。\n\n▼ ご予約はこちら\n{bookingUrl}';
 
 /** デザインタイプ → 日本語ラベル */
 export const DESIGN_LABELS: Record<string, string> = {

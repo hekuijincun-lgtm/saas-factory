@@ -21,8 +21,7 @@
 import { GENERIC_REPEAT_TEMPLATE } from '../settings';
 
 /** デフォルトリピートテンプレート（ヘアサロン専用） */
-export const DEFAULT_REPEAT_TEMPLATE =
-  '前回のご来店からそろそろ{interval}週が経ちます。そろそろヘアカットはいかがでしょうか？';
+export const DEFAULT_REPEAT_TEMPLATE = '前回のご来店からそろそろ{interval}週が経ちます。カットの毛先が気になる頃ではないでしょうか？カラーをされた方は根本のリタッチもおすすめです。\n\n▼ ご予約はこちら\n{bookingUrl}';
 
 /** メニューカテゴリ → 日本語ラベル */
 export const CATEGORY_LABELS: Record<string, string> = {

@@ -19,8 +19,7 @@
 
 import { GENERIC_REPEAT_TEMPLATE } from '../settings';
 
-export const DEFAULT_REPEAT_TEMPLATE =
-  '前回のご来店からそろそろ{interval}週が経ちます。お肌のメンテナンスはいかがでしょうか？';
+export const DEFAULT_REPEAT_TEMPLATE = '前回のご来店からそろそろ{interval}週が経ちます。お肌のターンオーバーに合わせた定期ケアで、効果を持続させませんか？季節の変わり目のケアも大切です。\n\n▼ ご予約はこちら\n{bookingUrl}';
 
 export const CATEGORY_LABELS: Record<string, string> = {
   facial: 'フェイシャル',

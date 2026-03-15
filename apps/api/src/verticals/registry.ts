@@ -142,11 +142,25 @@ const eyebrowPlugin: VerticalPlugin = {
         done: repeatEnabled && templateSet,
         action: '/admin/settings',
       },
+      {
+        key: 'lineSetup',
+        label: 'LINE連携設定',
+        done: false,
+        action: '/admin/settings',
+        detail: 'Messaging APIの設定を完了してください',
+      },
+      {
+        key: 'staffSetup',
+        label: 'スタッフ登録（1名以上）',
+        done: false,
+        action: '/admin/staff',
+        detail: 'シフト設定もお忘れなく',
+      },
     ];
   },
 
   getRepeatTemplateFallback() {
-    return '前回のご来店からそろそろ{interval}週が経ちます。眉毛のリタッチはいかがでしょうか？';
+    return '前回のご来店からそろそろ{interval}週が経ちます。眉毛のラインが崩れてくる頃かもしれません。リタッチで美しい眉をキープしませんか？\n\n▼ ご予約はこちら\n{bookingUrl}';
   },
 
   labels: {
@@ -265,6 +279,20 @@ const nailPlugin: VerticalPlugin = {
         done: repeatEnabled && templateSet,
         action: '/admin/settings',
       },
+      {
+        key: 'lineSetup',
+        label: 'LINE連携設定',
+        done: false,
+        action: '/admin/settings',
+        detail: 'お客様がLINEから予約できるようにしましょう',
+      },
+      {
+        key: 'staffSetup',
+        label: 'ネイリスト登録（1名以上）',
+        done: false,
+        action: '/admin/staff',
+        detail: '指名予約を受け付けるにはスタッフ登録が必要です',
+      },
     ];
   },
 
@@ -352,6 +380,20 @@ const dentalPlugin: VerticalPlugin = {
         done: repeatEnabled && templateSet,
         action: '/admin/settings',
       },
+      {
+        key: 'surveySetup',
+        label: '事前問診票の設定',
+        done: false,
+        action: '/admin/settings',
+        detail: '問診テンプレートを確認・カスタマイズしてください',
+      },
+      {
+        key: 'staffSetup',
+        label: 'スタッフ登録（1名以上）',
+        done: false,
+        action: '/admin/staff',
+        detail: '担当医・衛生士を登録してください',
+      },
     ];
   },
 
@@ -434,6 +476,20 @@ const hairPlugin: VerticalPlugin = {
         label: 'リピート設定（有効化 + テンプレ設定）',
         done: repeatEnabled && templateSet,
         action: '/admin/settings',
+      },
+      {
+        key: 'lineSetup',
+        label: 'LINE連携設定',
+        done: false,
+        action: '/admin/settings',
+        detail: 'お客様がLINEから指名予約できるようにしましょう',
+      },
+      {
+        key: 'staffSetup',
+        label: 'スタイリスト登録（1名以上）',
+        done: false,
+        action: '/admin/staff',
+        detail: '各スタイリストのシフトも設定してください',
       },
     ];
   },
@@ -520,6 +576,20 @@ const estheticPlugin: VerticalPlugin = {
         label: 'リピート施策設定（有効化 + テンプレ設定）',
         done: repeatEnabled && templateSet,
         action: '/admin/settings',
+      },
+      {
+        key: 'surveySetup',
+        label: '事前カウンセリングシートの設定',
+        done: false,
+        action: '/admin/settings',
+        detail: 'お肌の悩み・アレルギー等の質問を設定しましょう',
+      },
+      {
+        key: 'staffSetup',
+        label: 'エステティシャン登録（1名以上）',
+        done: false,
+        action: '/admin/staff',
+        detail: '指名予約を受けるにはスタッフ登録が必要です',
       },
     ];
   },
