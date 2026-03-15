@@ -12,8 +12,14 @@ import type { AutoReplySettings, OutreachReply, ReplyIntent } from "./types";
 import { DEFAULT_AUTO_REPLY_SETTINGS, INTENT_TO_PIPELINE } from "./types";
 import type { IntentClassifyResult } from "./reply-classifier";
 import { classifyReplyIntent } from "./reply-classifier";
+import { classifyCloseIntent } from "./close-classifier";
 import { generateReply } from "./reply-generator";
+import { generateCloseResponse, getCloseSettings } from "./close-generator";
+import type { CloseSettings } from "./close-generator";
 import { logAudit } from "../lineConfig";
+
+/** Intents that should trigger close evaluation + enhanced response */
+const CLOSE_ELIGIBLE_INTENTS: ReplyIntent[] = ["interested", "pricing", "demo"];
 
 export interface DispatchContext {
   db: D1Database;
@@ -35,6 +41,9 @@ export interface DispatchResult {
   sent: boolean;
   skippedReason?: string;
   pipelineTransition?: string;
+  closeIntent?: string;
+  closeResponseType?: string;
+  dealTemperature?: string;
 }
 
 /**
@@ -128,26 +137,127 @@ export async function processReply(
 
   // 3.5. Auto-suppress on unsubscribe intent is deferred to AFTER successful send (see step 6.5)
 
-  // 4. Generate reply
+  // 4. Generate reply — use close-aware routing for interested/pricing/demo
   const lead = await db
-    .prepare("SELECT store_name FROM sales_leads WHERE id = ?1 AND tenant_id = ?2")
+    .prepare("SELECT store_name, contact_email FROM sales_leads WHERE id = ?1 AND tenant_id = ?2")
     .bind(reply.lead_id, tenantId)
-    .first<{ store_name: string }>();
+    .first<{ store_name: string; contact_email: string | null }>();
 
-  // Resolve booking URL for positive intent templates
-  const closeSettingsRaw = await kv.get(`outreach:close-settings:${tenantId}`);
-  const closeSettings = closeSettingsRaw ? JSON.parse(closeSettingsRaw) : {};
-  const bookingUrl = closeSettings.calendly_url || closeSettings.demo_booking_url || "";
+  const closeSettings = await getCloseSettings(kv, tenantId);
+  const storeName = lead?.store_name || "弊社";
 
-  const generated = await generateReply({
-    intent: classification.intent,
-    replyText: reply.reply_text,
-    storeName: lead?.store_name || "弊社",
-    openaiApiKey,
-    bookingUrl,
-  });
+  let responseText = "";
+  let closeIntentResult: string | null = null;
+  let closeConfidence: number | null = null;
+  let dealTemperature: string | null = null;
+  let closeResponseType: string | null = null;
 
-  if (!generated.response) {
+  if (CLOSE_ELIGIBLE_INTENTS.includes(classification.intent) && closeSettings.auto_close_enabled) {
+    // ── Close-aware response: evaluate close intent + generate close response ──
+    try {
+      const closeClassification = await classifyCloseIntent(reply.reply_text, openaiApiKey);
+      closeIntentResult = closeClassification.close_intent;
+      closeConfidence = closeClassification.close_confidence;
+      dealTemperature = closeClassification.deal_temperature;
+
+      // Safety: URL not configured → handoff instead of empty link
+      const hasRequiredUrl = (() => {
+        switch (closeClassification.recommended_next_step) {
+          case "send_pricing": return !!closeSettings.pricing_page_url;
+          case "send_demo_link": return !!(closeSettings.demo_booking_url || closeSettings.calendly_url);
+          case "send_booking_link": return !!(closeSettings.calendly_url || closeSettings.demo_booking_url);
+          default: return true;
+        }
+      })();
+
+      if (!hasRequiredUrl) {
+        // URL未設定 → handoff に逃がす
+        await createHandoff(db, uid(), tenantId, reply.lead_id, reply.id, "url_not_configured", "high", ts);
+        await writeReplyLog(db, uid(), tenantId, reply.lead_id, reply.id, `close:url_missing:${closeClassification.recommended_next_step}`, "", "skipped", "required URL not configured", ts);
+      } else {
+        const closeResp = await generateCloseResponse({
+          closeIntent: closeClassification.close_intent,
+          dealTemperature: closeClassification.deal_temperature,
+          recommendedNextStep: closeClassification.recommended_next_step,
+          replyText: reply.reply_text,
+          storeName,
+          settings: closeSettings,
+          openaiApiKey,
+        });
+
+        responseText = closeResp.response_text;
+        closeResponseType = closeResp.response_type;
+
+        if (closeResp.handoff_required) {
+          await createHandoff(db, uid(), tenantId, reply.lead_id, reply.id, `close:${closeClassification.close_intent}`, "high", ts);
+        }
+
+        // Update reply with close evaluation data
+        await db
+          .prepare(
+            `UPDATE outreach_replies
+             SET close_intent = ?1, close_confidence = ?2, deal_temperature = ?3,
+                 recommended_next_step = ?4, handoff_required = ?5
+             WHERE id = ?6 AND tenant_id = ?7`
+          )
+          .bind(
+            closeClassification.close_intent, closeClassification.close_confidence,
+            closeClassification.deal_temperature, closeClassification.recommended_next_step,
+            closeResp.handoff_required ? 1 : 0, reply.id, tenantId
+          )
+          .run();
+
+        // Update lead close stage
+        const CLOSE_INTENT_TO_STAGE: Record<string, string> = {
+          pricing_request: "pricing_sent", demo_request: "demo_sent",
+          schedule_request: "meeting_requested", signup_request: "qualified",
+          warm_lead: "interested", compare_request: "pricing_sent",
+        };
+        const closeStage = CLOSE_INTENT_TO_STAGE[closeClassification.close_intent];
+        if (closeStage) {
+          await db.prepare(
+            `UPDATE sales_leads SET close_stage = ?1, deal_temperature = ?2, close_evaluated_at = ?3, updated_at = ?4
+             WHERE id = ?5 AND tenant_id = ?6`
+          ).bind(closeStage, closeClassification.deal_temperature, ts, ts, reply.lead_id, tenantId).run();
+        }
+
+        // Write close log
+        try {
+          await db.prepare(
+            `INSERT INTO outreach_close_logs
+             (id, tenant_id, lead_id, reply_id, close_intent, close_confidence, deal_temperature,
+              suggested_action, ai_response, execution_status, handoff_required, created_at)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)`
+          ).bind(
+            uid(), tenantId, reply.lead_id, reply.id,
+            closeClassification.close_intent, closeClassification.close_confidence,
+            closeClassification.deal_temperature, closeClassification.recommended_next_step,
+            responseText, closeResp.handoff_required ? "escalated" : "auto_sent",
+            closeResp.handoff_required ? 1 : 0, ts
+          ).run();
+        } catch { /* close log is best-effort */ }
+      }
+    } catch (closeErr: any) {
+      console.error(`[reply-dispatcher] Close evaluation error:`, closeErr.message);
+      // Fallback to standard reply-generator
+    }
+  }
+
+  // If close-aware flow didn't produce a response, fallback to standard reply-generator
+  if (!responseText) {
+    const generated = await generateReply({
+      intent: classification.intent,
+      replyText: reply.reply_text,
+      storeName,
+      openaiApiKey,
+      bookingUrl: closeSettings.calendly_url || closeSettings.demo_booking_url || "",
+      pricingPageUrl: closeSettings.pricing_page_url || "",
+      demoBookingUrl: closeSettings.demo_booking_url || closeSettings.calendly_url || "",
+    });
+    responseText = generated.response;
+  }
+
+  if (!responseText) {
     // No response generated (unknown intent → needs human)
     await writeReplyLog(db, uid(), tenantId, reply.lead_id, reply.id, "needs_human", "", "skipped", null, ts);
     return {
@@ -161,26 +271,14 @@ export async function processReply(
     };
   }
 
-  // 4.5. Auto-create handoff for high-value or complex replies
+  // 4.5. Auto-create handoff for uncertain or complex replies
   if (
     classification.intent === "unknown" ||
     (classification.confidence < 0.7 && classification.intent !== "not_interested")
   ) {
-    try {
-      await db
-        .prepare(
-          `INSERT INTO outreach_handoffs
-           (id, tenant_id, lead_id, reply_id, reason, priority, status, created_at)
-           VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'open', ?7)`
-        )
-        .bind(
-          uid(), tenantId, reply.lead_id, reply.id,
-          classification.intent === "unknown" ? "ai_uncertain" : "complex_question",
-          classification.intent === "unknown" ? "normal" : "high",
-          ts
-        )
-        .run();
-    } catch { /* handoff creation is best-effort */ }
+    await createHandoff(db, uid(), tenantId, reply.lead_id, reply.id,
+      classification.intent === "unknown" ? "ai_uncertain" : "complex_question",
+      classification.intent === "unknown" ? "normal" : "high", ts);
   }
 
   // 5. Dispatch via send provider
@@ -211,7 +309,7 @@ export async function processReply(
         channel: reply.reply_source === "line" ? "line" : "email",
         to,
         subject: "Re: お問い合わせありがとうございます",
-        body: generated.response,
+        body: responseText,
       });
       sent = sendResult.success;
       if (!sendResult.success) errorMsg = sendResult.error || "send_failed";
@@ -230,7 +328,7 @@ export async function processReply(
        SET ai_handled = 1, ai_response = ?1, ai_response_sent = ?2, status = ?3
        WHERE id = ?4 AND tenant_id = ?5`
     )
-    .bind(generated.response, sent ? 1 : 0, sent ? "resolved" : "open", reply.id, tenantId)
+    .bind(responseText, sent ? 1 : 0, sent ? "resolved" : "open", reply.id, tenantId)
     .run();
 
   // 6.5. Auto-suppress on unsubscribe intent (AFTER successful send of confirmation)
@@ -270,8 +368,8 @@ export async function processReply(
   // 9. Write audit log
   await writeReplyLog(
     db, uid(), tenantId, reply.lead_id, reply.id,
-    `auto_reply:${classification.intent}`,
-    generated.response,
+    closeIntentResult ? `auto_close:${closeIntentResult}` : `auto_reply:${classification.intent}`,
+    responseText,
     sent ? "sent" : "failed",
     errorMsg,
     ts
@@ -281,6 +379,9 @@ export async function processReply(
     replyId: reply.id,
     leadId: reply.lead_id,
     intent: classification.intent,
+    closeIntent: closeIntentResult,
+    closeResponseType,
+    dealTemperature,
     sent,
     pipelineTransition,
   });
@@ -290,10 +391,13 @@ export async function processReply(
     intent: classification.intent,
     sentiment: classification.sentiment,
     confidence: classification.confidence,
-    aiResponse: generated.response,
+    aiResponse: responseText,
     sent,
     skippedReason: errorMsg || undefined,
     pipelineTransition,
+    closeIntent: closeIntentResult || undefined,
+    closeResponseType: closeResponseType || undefined,
+    dealTemperature: dealTemperature || undefined,
   };
 }
 
@@ -395,6 +499,28 @@ async function checkSafetyGuards(
   }
 
   return null;
+}
+
+async function createHandoff(
+  db: D1Database,
+  id: string,
+  tenantId: string,
+  leadId: string,
+  replyId: string,
+  reason: string,
+  priority: string,
+  createdAt: string
+): Promise<void> {
+  try {
+    await db
+      .prepare(
+        `INSERT INTO outreach_handoffs
+         (id, tenant_id, lead_id, reply_id, reason, priority, status, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'open', ?7)`
+      )
+      .bind(id, tenantId, leadId, replyId, reason, priority, createdAt)
+      .run();
+  } catch { /* handoff creation is best-effort */ }
 }
 
 async function writeReplyLog(

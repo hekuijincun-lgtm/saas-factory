@@ -8,12 +8,12 @@ import type { ReplyIntent } from "./types";
 /** Template map for each intent */
 const REPLY_TEMPLATES: Record<ReplyIntent, string> = {
   pricing: `ありがとうございます！
-料金は現在9,800円/月です。
-詳細はこちらをご覧ください。
-ご不明点があればお気軽にどうぞ。
+料金についてご案内いたします。
 
-▼ 10分だけお時間ください — デモ予約はこちら
-{{booking_url}}`,
+▼ 料金の詳細はこちら
+{{booking_url}}
+
+ご不明点があればお気軽にどうぞ。`,
 
   interested: `ありがとうございます！
 もしよければ10分ほどデモさせていただけます。
@@ -49,6 +49,9 @@ export interface GenerateReplyInput {
   storeName: string;
   openaiApiKey?: string;
   bookingUrl?: string;
+  /** Intent-specific URLs for close-aware templates */
+  pricingPageUrl?: string;
+  demoBookingUrl?: string;
 }
 
 export interface GenerateReplyResult {
@@ -64,7 +67,7 @@ export interface GenerateReplyResult {
 export async function generateReply(
   input: GenerateReplyInput
 ): Promise<GenerateReplyResult> {
-  const { intent, replyText, storeName, openaiApiKey, bookingUrl } = input;
+  const { intent, replyText, storeName, openaiApiKey, bookingUrl, pricingPageUrl, demoBookingUrl } = input;
 
   // Unknown intent → needs human review, no auto-reply
   if (intent === "unknown") {
@@ -73,8 +76,15 @@ export async function generateReply(
 
   let template = REPLY_TEMPLATES[intent];
 
-  // Inject booking URL (or remove placeholder if not available)
-  const url = bookingUrl || "";
+  // Resolve intent-specific URL
+  const resolveUrl = (): string => {
+    switch (intent) {
+      case "pricing": return pricingPageUrl || bookingUrl || "";
+      case "demo": return demoBookingUrl || bookingUrl || "";
+      default: return bookingUrl || "";
+    }
+  };
+  const url = resolveUrl();
   template = template.replace(/\{\{booking_url\}\}/g, url || "(予約URLは管理画面で設定してください)");
 
   // Try AI-enhanced reply for question intent (needs contextual answer)

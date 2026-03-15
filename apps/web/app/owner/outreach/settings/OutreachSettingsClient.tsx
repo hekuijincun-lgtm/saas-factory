@@ -9,8 +9,10 @@ import {
   fetchUnsubscribes,
   removeUnsubscribe,
   addUnsubscribe,
+  fetchCloseSettings,
+  saveCloseSettings,
 } from "@/app/lib/outreachApi";
-import type { OutreachSettings, SendStats, UnsubscribedLead } from "@/src/types/outreach";
+import type { OutreachSettings, SendStats, UnsubscribedLead, CloseSettings } from "@/src/types/outreach";
 
 export default function OutreachSettingsClient() {
   const { tenantId, loading: tenantLoading } = useOwnerTenantId();
@@ -21,6 +23,7 @@ export default function OutreachSettingsClient() {
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [confirmReal, setConfirmReal] = useState(false);
+  const [closeSettings, setCloseSettings] = useState<CloseSettings | null>(null);
 
   // Draft form state
   const [dailyCap, setDailyCap] = useState(50);
@@ -31,14 +34,16 @@ export default function OutreachSettingsClient() {
     if (!tenantId) return;
     setLoading(true);
     try {
-      const [s, st, u] = await Promise.all([
+      const [s, st, u, cs] = await Promise.all([
         fetchOutreachSettings(tenantId),
         fetchSendStats(tenantId),
         fetchUnsubscribes(tenantId),
+        fetchCloseSettings(tenantId).catch(() => null),
       ]);
       setSettings(s);
       setStats(st);
       setUnsubs(u);
+      if (cs) setCloseSettings(cs);
       setDailyCap(s.dailyCap);
       setHourlyCap(s.hourlyCap);
       setRequireApproval(s.requireApproval);
@@ -464,7 +469,81 @@ export default function OutreachSettingsClient() {
           </p>
         </div>
 
-        {/* 10. 配信停止リスト */}
+        {/* 10. Close URL Settings */}
+        <div className="bg-white rounded-xl border p-5 space-y-4">
+          <h2 className="font-semibold text-sm">商談化・クロージング URL</h2>
+          <p className="text-xs text-gray-400">
+            返信の意図に応じて自動送信されるURL。未設定の場合、該当するclose返信は送信されずhandoffに回ります。
+          </p>
+          <div className="space-y-3">
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">予約・商談URL (Calendly等)</label>
+              <input
+                type="url"
+                value={closeSettings?.calendly_url ?? ""}
+                onChange={(e) => setCloseSettings(cs => cs ? { ...cs, calendly_url: e.target.value } : cs)}
+                onBlur={() => closeSettings && saveCloseSettings(tenantId, { calendly_url: closeSettings.calendly_url }).then(setCloseSettings)}
+                placeholder="https://calendly.com/your-link"
+                className="w-full border rounded-lg px-3 py-2 text-sm"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">デモ予約URL</label>
+              <input
+                type="url"
+                value={closeSettings?.demo_booking_url ?? ""}
+                onChange={(e) => setCloseSettings(cs => cs ? { ...cs, demo_booking_url: e.target.value } : cs)}
+                onBlur={() => closeSettings && saveCloseSettings(tenantId, { demo_booking_url: closeSettings.demo_booking_url }).then(setCloseSettings)}
+                placeholder="https://demo.example.com/book"
+                className="w-full border rounded-lg px-3 py-2 text-sm"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">料金ページURL</label>
+              <input
+                type="url"
+                value={closeSettings?.pricing_page_url ?? ""}
+                onChange={(e) => setCloseSettings(cs => cs ? { ...cs, pricing_page_url: e.target.value } : cs)}
+                onBlur={() => closeSettings && saveCloseSettings(tenantId, { pricing_page_url: closeSettings.pricing_page_url }).then(setCloseSettings)}
+                placeholder="https://example.com/pricing"
+                className="w-full border rounded-lg px-3 py-2 text-sm"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">営業担当連絡先URL</label>
+              <input
+                type="url"
+                value={closeSettings?.sales_contact_url ?? ""}
+                onChange={(e) => setCloseSettings(cs => cs ? { ...cs, sales_contact_url: e.target.value } : cs)}
+                onBlur={() => closeSettings && saveCloseSettings(tenantId, { sales_contact_url: closeSettings.sales_contact_url }).then(setCloseSettings)}
+                placeholder="https://example.com/contact"
+                className="w-full border rounded-lg px-3 py-2 text-sm"
+              />
+            </div>
+            <div className="space-y-2 pt-2">
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input type="checkbox" checked={closeSettings?.auto_send_pricing_enabled ?? false}
+                  onChange={(e) => closeSettings && saveCloseSettings(tenantId, { auto_send_pricing_enabled: e.target.checked }).then(setCloseSettings)}
+                  className="w-4 h-4 rounded" />
+                <span className="text-sm text-gray-700">料金問い合わせに自動返信</span>
+              </label>
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input type="checkbox" checked={closeSettings?.auto_send_demo_link_enabled ?? false}
+                  onChange={(e) => closeSettings && saveCloseSettings(tenantId, { auto_send_demo_link_enabled: e.target.checked }).then(setCloseSettings)}
+                  className="w-4 h-4 rounded" />
+                <span className="text-sm text-gray-700">デモ希望に自動返信</span>
+              </label>
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input type="checkbox" checked={closeSettings?.auto_send_booking_link_enabled ?? false}
+                  onChange={(e) => closeSettings && saveCloseSettings(tenantId, { auto_send_booking_link_enabled: e.target.checked }).then(setCloseSettings)}
+                  className="w-4 h-4 rounded" />
+                <span className="text-sm text-gray-700">予約希望に自動返信</span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        {/* 11. 配信停止リスト */}
         <div className="bg-white rounded-xl border p-5 space-y-3">
           <h2 className="font-semibold text-sm">配信停止リスト ({unsubs.length}件)</h2>
           {unsubs.length === 0 ? (
