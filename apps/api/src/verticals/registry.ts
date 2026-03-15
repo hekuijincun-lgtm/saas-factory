@@ -65,6 +65,12 @@ export interface VerticalPlugin {
     kpiHeading: string;
     /** 施術設定セクション見出し（例: '眉毛施術設定'） */
     settingsHeading: string;
+    /** メニュー管理の属性セクション見出し（例: '眉毛設定'） */
+    menuSettingsHeading: string;
+    /** スタッフ管理の属性セクション見出し（例: '眉毛スキル'） */
+    staffSettingsHeading: string;
+    /** 施術設定カードの副題 */
+    settingsDescription: string;
   };
 
   /** 表示制御フラグ */
@@ -77,6 +83,10 @@ export interface VerticalPlugin {
     hasVerticalKpi: boolean;
     /** vertical 固有のスタッフ属性 UI を表示するか */
     hasStaffAttributes: boolean;
+    /** vertical 固有のメニュー属性 UI を表示するか */
+    hasMenuAttributes: boolean;
+    /** vertical 固有の設定セクションを表示するか */
+    hasVerticalSettings: boolean;
   };
 }
 
@@ -132,6 +142,9 @@ const eyebrowPlugin: VerticalPlugin = {
     menuFilterHeading: '眉毛メニュー絞り込み',
     kpiHeading: '眉毛サロン KPI',
     settingsHeading: '眉毛施術設定',
+    menuSettingsHeading: '眉毛設定',
+    staffSettingsHeading: '眉毛スキル',
+    settingsDescription: '眉毛サロン特化の同意文・リピート施策を設定します',
   },
 
   flags: {
@@ -139,6 +152,8 @@ const eyebrowPlugin: VerticalPlugin = {
     hasMenuFilter: true,
     hasVerticalKpi: true,
     hasStaffAttributes: true,
+    hasMenuAttributes: true,
+    hasVerticalSettings: true,
   },
 };
 
@@ -169,6 +184,9 @@ const genericPlugin: VerticalPlugin = {
     menuFilterHeading: 'メニュー絞り込み',
     kpiHeading: 'サロン KPI',
     settingsHeading: '施術設定',
+    menuSettingsHeading: '属性設定',
+    staffSettingsHeading: 'スキル設定',
+    settingsDescription: '業種固有の設定を管理します',
   },
 
   flags: {
@@ -176,6 +194,8 @@ const genericPlugin: VerticalPlugin = {
     hasMenuFilter: false,
     hasVerticalKpi: false,
     hasStaffAttributes: false,
+    hasMenuAttributes: false,
+    hasVerticalSettings: false,
   },
 };
 

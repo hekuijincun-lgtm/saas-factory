@@ -5,7 +5,7 @@ import { useState, useEffect } from 'react';
 import { useAdminTenantId } from '@/src/lib/useAdminTenantId';
 import { CalendarDays, Building2, Clock, Link as LinkIcon, AlertCircle, RefreshCw, Save, Scissors, Plus, Trash2 } from 'lucide-react';
 import { getVerticalConfig, type EyebrowSurveyQuestion } from '@/src/types/settings';
-import { useVertical } from '../_lib/useVertical';
+import { useVerticalPlugin } from '../_lib/useVerticalPlugin';
 import {
   fetchAdminSettings,
   saveAdminSettings,
@@ -49,8 +49,7 @@ const FALLBACK_STORE_NAME = 'マイショップ';
 
 export default function AdminSettingsClient() {
   const { tenantId, status: tenantStatus } = useAdminTenantId();
-  const { vertical } = useVertical(tenantId);
-  const isEyebrow = vertical === 'eyebrow';
+  const { plugin: vPlugin } = useVerticalPlugin(tenantId);
 
   // --- localStorageベースのテナント設定（営業日・予約窓 等） ---
   const [localTenant, setLocalTenant] = useState<LocalTenant>(INITIAL_LOCAL_TENANT);
@@ -557,7 +556,7 @@ export default function AdminSettingsClient() {
       await fetch(`/api/auth/me?tenantId=${encodeURIComponent(tenantId)}`, { credentials: 'include', cache: 'no-store' });
       // API に storeName + 営業時間設定 + 住所 + 同意文 + 業種設定を保存
       // Phase 1b: eyebrow (legacy) + verticalConfig (new) を dual-write
-      const verticalSettingsPayload = isEyebrow ? {
+      const verticalSettingsPayload = vPlugin.flags.hasVerticalSettings ? {
         consentText: eyebrowConsentText,
         repeat: {
           enabled: eyebrowRepeatEnabled,
@@ -577,9 +576,9 @@ export default function AdminSettingsClient() {
         storeAddress,
         consentText,
         // Legacy eyebrow path (backward compat — still needed until Phase 2)
-        ...(isEyebrow && verticalSettingsPayload ? { eyebrow: verticalSettingsPayload } : {}),
+        ...(vPlugin.flags.hasVerticalSettings && verticalSettingsPayload ? { eyebrow: verticalSettingsPayload } : {}),
         // New verticalConfig path (Phase 1b: dual-write for forward compat)
-        ...(isEyebrow && verticalSettingsPayload ? {
+        ...(vPlugin.flags.hasVerticalSettings && verticalSettingsPayload ? {
           vertical: 'eyebrow' as const,
           verticalConfig: verticalSettingsPayload,
         } : {}),
@@ -1367,14 +1366,14 @@ export default function AdminSettingsClient() {
         {/* ============================================================
             眉毛施術設定（眉毛サロン特化） — Phase 1a: eyebrow のみ表示
         ============================================================ */}
-        {isEyebrow && <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+        {vPlugin.flags.hasVerticalSettings && <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
           <div className="flex items-center gap-3 mb-5">
             <div className="p-2 bg-pink-100 rounded-lg shrink-0">
               <Scissors className="w-5 h-5 text-pink-600" />
             </div>
             <div>
-              <h2 className="text-base font-semibold text-gray-900">眉毛施術設定</h2>
-              <p className="text-xs text-gray-500">眉毛サロン特化の同意文・リピート施策を設定します</p>
+              <h2 className="text-base font-semibold text-gray-900">{vPlugin.labels.settingsHeading}</h2>
+              <p className="text-xs text-gray-500">{vPlugin.labels.settingsDescription}</p>
             </div>
           </div>
 

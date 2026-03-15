@@ -9,13 +9,12 @@ import Card from '../ui/Card';
 import DataTable from '../ui/DataTable';
 import Badge from '../ui/Badge';
 import { Plus, Edit2, Trash2, Scissors, ImageIcon, X } from 'lucide-react';
-import { useVertical } from '../../admin/_lib/useVertical';
+import { useVerticalPlugin } from '../../admin/_lib/useVerticalPlugin';
 
 export default function MenuManager({ tenantId: tenantIdProp }: { tenantId?: string }) {
   const { tenantId: sessionTenantId } = useAdminTenantId();
   const tenantId = tenantIdProp ?? sessionTenantId;
-  const { vertical } = useVertical(tenantId);
-  const isEyebrow = vertical === 'eyebrow';
+  const { plugin: vPlugin } = useVerticalPlugin(tenantId);
 
   const [menuList, setMenuList] = useState<MenuItem[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
@@ -182,7 +181,7 @@ export default function MenuManager({ tenantId: tenantIdProp }: { tenantId?: str
         sortOrder: formData.sortOrder,
         imageUrl: imageUrl ?? null, // null = 削除指示（Workers PATCH が !imageUrl で delete）
       };
-      if (isEyebrow) {
+      if (vPlugin.flags.hasMenuAttributes) {
         itemPayload.eyebrow = formData.eyebrow;
         itemPayload.verticalAttributes = formData.eyebrow;
       }
@@ -455,12 +454,12 @@ export default function MenuManager({ tenantId: tenantIdProp }: { tenantId?: str
               </label>
             </div>
 
-            {/* 眉毛設定セクション（eyebrow vertical のみ表示） */}
-            {isEyebrow && (
+            {/* Phase 5a: メニュー属性セクション — registry flags/labels で制御 */}
+            {vPlugin.flags.hasMenuAttributes && (
             <div className="border-t border-gray-100 pt-4">
               <div className="flex items-center gap-2 mb-3">
                 <Scissors className="w-4 h-4 text-pink-500" />
-                <span className="text-sm font-medium text-gray-700">眉毛設定</span>
+                <span className="text-sm font-medium text-gray-700">{vPlugin.labels.menuSettingsHeading}</span>
               </div>
               <div className="space-y-3">
                 <div className="flex items-center gap-2">

@@ -21,12 +21,17 @@ export interface VerticalPluginUI {
     menuFilterHeading: string;
     kpiHeading: string;
     settingsHeading: string;
+    menuSettingsHeading: string;
+    staffSettingsHeading: string;
+    settingsDescription: string;
   };
   flags: {
     hasKarte: boolean;
     hasMenuFilter: boolean;
     hasVerticalKpi: boolean;
     hasStaffAttributes: boolean;
+    hasMenuAttributes: boolean;
+    hasVerticalSettings: boolean;
   };
 }
 
@@ -40,12 +45,17 @@ const eyebrowPlugin: VerticalPluginUI = {
     menuFilterHeading: '眉毛メニュー絞り込み',
     kpiHeading: '眉毛サロン KPI',
     settingsHeading: '眉毛施術設定',
+    menuSettingsHeading: '眉毛設定',
+    staffSettingsHeading: '眉毛スキル',
+    settingsDescription: '眉毛サロン特化の同意文・リピート施策を設定します',
   },
   flags: {
     hasKarte: true,
     hasMenuFilter: true,
     hasVerticalKpi: true,
     hasStaffAttributes: true,
+    hasMenuAttributes: true,
+    hasVerticalSettings: true,
   },
 };
 
@@ -59,12 +69,17 @@ const genericPlugin: VerticalPluginUI = {
     menuFilterHeading: 'メニュー絞り込み',
     kpiHeading: 'サロン KPI',
     settingsHeading: '施術設定',
+    menuSettingsHeading: '属性設定',
+    staffSettingsHeading: 'スキル設定',
+    settingsDescription: '業種固有の設定を管理します',
   },
   flags: {
     hasKarte: false,
     hasMenuFilter: false,
     hasVerticalKpi: false,
     hasStaffAttributes: false,
+    hasMenuAttributes: false,
+    hasVerticalSettings: false,
   },
 };
 
