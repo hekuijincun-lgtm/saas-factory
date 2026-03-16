@@ -220,6 +220,7 @@ export interface RichMenuStatusResponse {
     booking: string;
     storeInfo: string;
     menu: string;
+    reservations?: string;
   };
   webhookUrl: string;
   error?: string;

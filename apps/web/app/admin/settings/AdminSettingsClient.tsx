@@ -1239,8 +1239,8 @@ export default function AdminSettingsClient() {
                 <div className="font-medium text-gray-700 mb-1">アクション URL</div>
                 <div>予約: <code className="bg-white px-1 rounded border text-gray-600">{richMenuStatus.previewUrls.booking}</code></div>
                 <div>メニュー: <code className="bg-white px-1 rounded border text-gray-600">{richMenuStatus.previewUrls.menu}</code></div>
+                <div>予約確認: <code className="bg-white px-1 rounded border text-gray-600">{richMenuStatus.previewUrls.reservations ?? '-'}</code></div>
                 <div>店舗情報: <code className="bg-white px-1 rounded border text-gray-600">{richMenuStatus.previewUrls.storeInfo}</code></div>
-                <div>相談: <span className="text-gray-600">「予約について相談したい」(メッセージ送信)</span></div>
               </div>
             )}
 
