@@ -78,6 +78,12 @@ export interface ReservationMeta {
   menuName?: string;
   customerKey?: string;
   lineUserId?: string;
+  // 料金内訳（予約時点のスナップショット）
+  pricing?: {
+    menuPrice: number;
+    nominationFee: number;
+    totalPrice: number;
+  };
 }
 
 export interface Reservation {
@@ -144,8 +150,16 @@ export interface Staff {
   role?: string;
   active: boolean;
   sortOrder: number;
+  /** 指名料（円）— 未設定は 0 */
+  nominationFee: number;
   /** 業種共通スキル属性 */
   verticalAttributes?: Record<string, unknown>;
+}
+
+/** Staff の nominationFee を安全に正規化する */
+export function normalizeNominationFee(raw: unknown): number {
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 0;
 }
 
 /**
@@ -423,7 +437,10 @@ export async function getStaff(tenantId?: string): Promise<Staff[]> {
         console.warn('getStaff: response.data is not an array, returning empty array');
         return [];
       }
-      return response.data.filter(s => s.active).sort((a, b) => a.sortOrder - b.sortOrder);
+      return response.data
+        .map(s => ({ ...s, nominationFee: normalizeNominationFee(s.nominationFee) }))
+        .filter(s => s.active)
+        .sort((a, b) => a.sortOrder - b.sortOrder);
     }
     throw new ApiClientError(response.error || 'Failed to fetch staff');
   } catch (error) {

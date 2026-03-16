@@ -125,6 +125,16 @@ export default function StepConfirm({ booking, onBack, onDone, consentText, trea
       if (booking.surveyAnswers && Object.keys(booking.surveyAnswers).length > 0) {
         metaPayload.surveyAnswers = booking.surveyAnswers;
       }
+      // 料金内訳スナップショット
+      if (booking.menuPrice != null) {
+        const menuPrice = booking.menuPrice;
+        const nominationFee = booking.nominationFee ?? 0;
+        metaPayload.pricing = {
+          menuPrice,
+          nominationFee,
+          totalPrice: menuPrice + nominationFee,
+        };
+      }
       // Pre-flight: re-check slot availability (bookableForMenu) to catch stale data
       try {
         const staffForSlots = booking.staffId && booking.staffId !== 'any' ? booking.staffId : undefined;
@@ -197,9 +207,18 @@ export default function StepConfirm({ booking, onBack, onDone, consentText, trea
       <div className="bg-brand-bg rounded-2xl p-4 divide-y divide-brand-border">
         <Row label="メニュー" value={booking.menuName ?? '-'} />
         <Row
-          label="料金"
+          label="メニュー料金"
           value={booking.menuPrice != null ? `¥${booking.menuPrice.toLocaleString()}` : '-'}
         />
+        {booking.nominationFee > 0 && (
+          <Row label="指名料" value={`+¥${booking.nominationFee.toLocaleString()}`} />
+        )}
+        {booking.menuPrice != null && (
+          <Row
+            label="合計"
+            value={`¥${((booking.menuPrice ?? 0) + (booking.nominationFee ?? 0)).toLocaleString()}`}
+          />
+        )}
         <Row
           label="所要時間"
           value={booking.menuDurationMin != null ? `${booking.menuDurationMin}分` : '-'}

@@ -36,6 +36,7 @@ export default function StaffManager() {
   const [shiftEditorStaffName, setShiftEditorStaffName] = useState<string>('');
   const [formData, setFormData] = useState<{
     name: string; role: string; active: boolean; sortOrder: number;
+    nominationFee: number;
     verticalAttrs: Record<string, unknown>;
     specialtyInput: string;
   }>({
@@ -43,6 +44,7 @@ export default function StaffManager() {
     role: '',
     active: true,
     sortOrder: 0,
+    nominationFee: 0,
     verticalAttrs: {},
     specialtyInput: '',
   });
@@ -103,7 +105,7 @@ export default function StaffManager() {
 
   const handleCreate = () => {
     setEditingStaff(null);
-    setFormData({ name: '', role: '', active: true, sortOrder: staffList.length, verticalAttrs: {}, specialtyInput: '' });
+    setFormData({ name: '', role: '', active: true, sortOrder: staffList.length, nominationFee: 0, verticalAttrs: {}, specialtyInput: '' });
     setShowModal(true);
   };
 
@@ -114,6 +116,7 @@ export default function StaffManager() {
       role: staff.role || '',
       active: staff.active,
       sortOrder: staff.sortOrder,
+      nominationFee: staff.nominationFee ?? 0,
       verticalAttrs: (staff as any).verticalAttributes ?? {},
       specialtyInput: '',
     });
@@ -137,12 +140,15 @@ export default function StaffManager() {
         verticalFields.verticalAttributes = formData.verticalAttrs;
       }
 
+      const fee = Math.max(0, Math.floor(Number(formData.nominationFee) || 0));
+
       if (editingStaff) {
         await updateStaff(editingStaff.id, {
           name: formData.name.trim(),
           role: formData.role.trim() || undefined,
           active: formData.active,
           sortOrder: formData.sortOrder,
+          nominationFee: fee,
           ...verticalFields,
         }, tenantId);
       } else {
@@ -151,6 +157,7 @@ export default function StaffManager() {
           role: formData.role.trim() || undefined,
           active: formData.active,
           sortOrder: formData.sortOrder,
+          nominationFee: fee,
           ...verticalFields,
         }, tenantId);
       }
@@ -238,10 +245,13 @@ export default function StaffManager() {
           </div>
         ) : (
           <DataTable
-            headers={['名前', '役職', '状態', '操作']}
+            headers={['名前', '役職', '指名料', '状態', '操作']}
             rows={staffList.map((staff) => [
               staff.name,
               staff.role || '-',
+              staff.nominationFee > 0
+                ? `¥${staff.nominationFee.toLocaleString()}`
+                : '¥0',
               <Badge key="status" variant={staff.active ? 'success' : 'muted'}>
                 {staff.active ? '有効' : '無効'}
               </Badge>,
@@ -305,6 +315,23 @@ export default function StaffManager() {
                 className="w-full px-4 py-3 border border-brand-border rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary"
                 placeholder="例: Top Stylist"
               />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-brand-text mb-2">指名料（円）</label>
+              <input
+                type="number"
+                min="0"
+                step="1"
+                value={formData.nominationFee}
+                onChange={(e) => {
+                  const v = e.target.value === '' ? 0 : Math.max(0, Math.floor(Number(e.target.value) || 0));
+                  setFormData({ ...formData, nominationFee: v });
+                }}
+                className="w-full px-4 py-3 border border-brand-border rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary"
+                placeholder="0"
+              />
+              <p className="mt-1 text-xs text-brand-muted">0 の場合は指名料なしとして扱われます</p>
             </div>
 
             <div className="flex items-center gap-2">

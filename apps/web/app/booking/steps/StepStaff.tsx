@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { getStaff } from '@/src/lib/bookingApi';
+import { getStaff, normalizeNominationFee } from '@/src/lib/bookingApi';
 import { STAFF } from '../../_components/constants/staff';
 import type { StaffOption } from '../BookingFlow';
 
@@ -19,10 +19,11 @@ function Spinner() {
   );
 }
 
-const ANY_STAFF: StaffOption = {
+const ANY_STAFF: StaffOption & { nominationFee: number } = {
   id: 'any',
   name: '指名なし',
   role: 'どのスタッフでも可',
+  nominationFee: 0,
 };
 
 export default function StepStaff({ tenantId: tenantIdProp, onSelect, onBack }: Props) {
@@ -31,7 +32,7 @@ export default function StepStaff({ tenantId: tenantIdProp, onSelect, onBack }: 
     || (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('tenantId'))
     || 'default';
 
-  const [list, setList] = useState<(StaffOption & { badge?: string })[]>([]);
+  const [list, setList] = useState<(StaffOption & { badge?: string; nominationFee: number })[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -46,6 +47,7 @@ export default function StepStaff({ tenantId: tenantIdProp, onSelect, onBack }: 
           id: s.id,
           name: s.name,
           role: s.role,
+          nominationFee: normalizeNominationFee(s.nominationFee),
           badge: i === 0 ? 'おすすめ' : undefined,
         }));
         setList([ANY_STAFF, ...apiStaff]);
@@ -55,6 +57,7 @@ export default function StepStaff({ tenantId: tenantIdProp, onSelect, onBack }: 
         // fallback to constants
         const fallback = STAFF.filter(s => s.id !== 'any').map((s, i) => ({
           ...s,
+          nominationFee: 0,
           badge: i === 0 ? 'おすすめ' : undefined,
         }));
         setList([ANY_STAFF, ...fallback]);
@@ -100,6 +103,12 @@ export default function StepStaff({ tenantId: tenantIdProp, onSelect, onBack }: 
               {s.role && (
                 <p className="text-sm text-brand-muted mt-0.5">{s.role}</p>
               )}
+              <p className="text-xs mt-0.5">
+                {s.nominationFee > 0
+                  ? <span className="text-brand-primary font-medium">指名料 +¥{s.nominationFee.toLocaleString()}</span>
+                  : <span className="text-brand-muted">指名料なし</span>
+                }
+              </p>
             </div>
             <span className="text-brand-muted group-hover:text-brand-primary transition-colors text-lg">
               ›

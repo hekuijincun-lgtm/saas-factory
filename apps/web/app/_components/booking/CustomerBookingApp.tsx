@@ -166,6 +166,7 @@ export default function CustomerBookingApp() {
             role: s.role,
             active: true,
             sortOrder: 0,
+            nominationFee: 0,
           })));
         }
       } catch (err) {
@@ -177,6 +178,7 @@ export default function CustomerBookingApp() {
           role: s.role,
           active: true,
           sortOrder: 0,
+          nominationFee: 0,
         })));
       }
     };

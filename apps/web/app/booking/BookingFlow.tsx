@@ -19,6 +19,8 @@ export interface BookingState {
   menuStyleType?: string | null;
   staffId: string | null;
   staffName: string | null;
+  /** 選択中スタッフの指名料（円）。指名なし / 未設定は 0 */
+  nominationFee: number;
   date: string | null;
   time: string | null;
   lineUserId?: string | null;
@@ -29,11 +31,13 @@ export interface StaffOption {
   id: string;
   name: string;
   role?: string;
+  /** 指名料（円）— 未設定は 0 */
+  nominationFee?: number;
 }
 
 const INITIAL: BookingState = {
   menuId: null, menuName: null, menuPrice: null, menuDurationMin: null, menuStyleType: null,
-  staffId: null, staffName: null, date: null, time: null,
+  staffId: null, staffName: null, nominationFee: 0, date: null, time: null,
   lineUserId: null, surveyAnswers: undefined,
 };
 
@@ -231,7 +235,7 @@ export default function BookingFlow() {
       menuStyleType: getMenuVerticalAttrs(menu)?.styleType ?? null,
     });
     if (!staffSelectionEnabled) {
-      update({ staffId: 'any', staffName: '指名なし' });
+      update({ staffId: 'any', staffName: '指名なし', nominationFee: 0 });
       setStep(3);
     } else {
       setStep(2);
@@ -239,7 +243,7 @@ export default function BookingFlow() {
   };
 
   const handleStaffSelect = (staff: StaffOption) => {
-    update({ staffId: staff.id, staffName: staff.name });
+    update({ staffId: staff.id, staffName: staff.name, nominationFee: staff.nominationFee ?? 0 });
     setStep(3);
   };
 
