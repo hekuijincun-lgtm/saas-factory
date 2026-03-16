@@ -36,7 +36,7 @@ export default function StaffManager() {
   const [shiftEditorStaffName, setShiftEditorStaffName] = useState<string>('');
   const [formData, setFormData] = useState<{
     name: string; role: string; active: boolean; sortOrder: number;
-    nominationFee: number;
+    nominationFee: string;
     verticalAttrs: Record<string, unknown>;
     specialtyInput: string;
   }>({
@@ -44,7 +44,7 @@ export default function StaffManager() {
     role: '',
     active: true,
     sortOrder: 0,
-    nominationFee: 0,
+    nominationFee: '0',
     verticalAttrs: {},
     specialtyInput: '',
   });
@@ -105,7 +105,7 @@ export default function StaffManager() {
 
   const handleCreate = () => {
     setEditingStaff(null);
-    setFormData({ name: '', role: '', active: true, sortOrder: staffList.length, nominationFee: 0, verticalAttrs: {}, specialtyInput: '' });
+    setFormData({ name: '', role: '', active: true, sortOrder: staffList.length, nominationFee: '0', verticalAttrs: {}, specialtyInput: '' });
     setShowModal(true);
   };
 
@@ -116,7 +116,7 @@ export default function StaffManager() {
       role: staff.role || '',
       active: staff.active,
       sortOrder: staff.sortOrder,
-      nominationFee: staff.nominationFee ?? 0,
+      nominationFee: String(staff.nominationFee ?? 0),
       verticalAttrs: (staff as any).verticalAttributes ?? {},
       specialtyInput: '',
     });
@@ -324,10 +324,7 @@ export default function StaffManager() {
                 min="0"
                 step="1"
                 value={formData.nominationFee}
-                onChange={(e) => {
-                  const v = e.target.value === '' ? 0 : Math.max(0, Math.floor(Number(e.target.value) || 0));
-                  setFormData({ ...formData, nominationFee: v });
-                }}
+                onChange={(e) => setFormData({ ...formData, nominationFee: e.target.value })}
                 className="w-full px-4 py-3 border border-brand-border rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary"
                 placeholder="0"
               />
