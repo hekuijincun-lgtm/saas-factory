@@ -125,12 +125,20 @@ export default function StepConfirm({ booking, onBack, onDone, consentText, trea
       if (booking.surveyAnswers && Object.keys(booking.surveyAnswers).length > 0) {
         metaPayload.surveyAnswers = booking.surveyAnswers;
       }
-      // 料金内訳スナップショット
+      // 選択オプション
+      if (booking.selectedOptions && booking.selectedOptions.length > 0) {
+        metaPayload.selectedOptions = booking.selectedOptions.map(o => ({
+          id: o.id, name: o.name, price: o.price, durationMin: o.durationMin,
+        }));
+      }
+      // 料金内訳スナップショット（menuPrice はオプション込みの合計）
       if (booking.menuPrice != null) {
         const menuPrice = booking.menuPrice;
         const nominationFee = booking.nominationFee ?? 0;
+        const optionsPrice = (booking.selectedOptions ?? []).reduce((s, o) => s + o.price, 0);
         metaPayload.pricing = {
-          menuPrice,
+          menuPrice: menuPrice - optionsPrice,
+          optionsPrice,
           nominationFee,
           totalPrice: menuPrice + nominationFee,
         };
@@ -210,6 +218,17 @@ export default function StepConfirm({ booking, onBack, onDone, consentText, trea
           label="メニュー料金"
           value={booking.menuPrice != null ? `¥${booking.menuPrice.toLocaleString()}` : '-'}
         />
+        {booking.selectedOptions && booking.selectedOptions.length > 0 && (
+          <>
+            {booking.selectedOptions.map(opt => (
+              <Row
+                key={opt.id}
+                label={`┗ ${opt.name}`}
+                value={`+¥${opt.price.toLocaleString()} / +${opt.durationMin}分`}
+              />
+            ))}
+          </>
+        )}
         {booking.nominationFee > 0 && (
           <Row label="指名料" value={`+¥${booking.nominationFee.toLocaleString()}`} />
         )}

@@ -178,6 +178,15 @@ export interface MenuVerticalAttributes {
   styleType?: 'natural' | 'sharp' | 'korean' | 'custom'; // スタイル種別
 }
 
+export interface MenuOption {
+  id: string;
+  name: string;
+  price: number;
+  durationMin: number;
+  active: boolean;
+  sortOrder: number;
+}
+
 export interface MenuItem {
   id: string;
   name: string;
@@ -189,6 +198,7 @@ export interface MenuItem {
   verticalAttributes?: Record<string, unknown>;
   imageKey?: string;          // R2 object key (P1)
   imageUrl?: string;          // 公開URL
+  options?: MenuOption[];
 }
 
 // ── ReservationMeta vertical data read helper ──────────
@@ -564,6 +574,7 @@ export async function getMenu(tenantId: string = "default"): Promise<MenuItem[]>
         ...(x?.imageKey            ? { imageKey: String(x.imageKey) }           : {}),
         ...(safeImageUrl           ? { imageUrl: safeImageUrl }                : {}),
         ...(x?.verticalAttributes  ? { verticalAttributes: x.verticalAttributes } : {}),
+        ...(Array.isArray(x?.options) && x.options.length > 0 ? { options: x.options } : {}),
       };
     }) as MenuItem[];
   } catch (error) {

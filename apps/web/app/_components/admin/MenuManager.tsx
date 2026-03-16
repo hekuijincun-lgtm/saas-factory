@@ -11,6 +11,15 @@ import Badge from '../ui/Badge';
 import { Plus, Edit2, Trash2, Scissors, ImageIcon, X } from 'lucide-react';
 import { useVerticalPlugin } from '../../admin/_lib/useVerticalPlugin';
 
+interface MenuOptionForm {
+  id: string;
+  name: string;
+  price: string;
+  durationMin: string;
+  active: boolean;
+  sortOrder: number;
+}
+
 export default function MenuManager({ tenantId: tenantIdProp }: { tenantId?: string }) {
   const { tenantId: sessionTenantId } = useAdminTenantId();
   const tenantId = tenantIdProp ?? sessionTenantId;
@@ -34,6 +43,9 @@ export default function MenuManager({ tenantId: tenantIdProp }: { tenantId?: str
     sortOrder: 0,
     verticalAttrs: {},
   });
+
+  // オプション
+  const [options, setOptions] = useState<MenuOptionForm[]>([]);
 
   // 画像アップロード用
   const [imageFile, setImageFile] = useState<File | null>(null);
@@ -90,6 +102,7 @@ export default function MenuManager({ tenantId: tenantIdProp }: { tenantId?: str
       sortOrder: menuList.length,
       verticalAttrs: {},
     });
+    setOptions([]);
     setShowModal(true);
   };
 
@@ -108,6 +121,16 @@ export default function MenuManager({ tenantId: tenantIdProp }: { tenantId?: str
       imageKey: item.imageKey,
       imageUrl: item.imageUrl,
     });
+    setOptions(
+      (item.options ?? []).map(o => ({
+        id: o.id,
+        name: o.name,
+        price: String(o.price),
+        durationMin: String(o.durationMin),
+        active: o.active,
+        sortOrder: o.sortOrder,
+      }))
+    );
     setShowModal(true);
   };
 
@@ -177,6 +200,17 @@ export default function MenuManager({ tenantId: tenantIdProp }: { tenantId?: str
       if (vPlugin.flags.hasMenuAttributes) {
         itemPayload.verticalAttributes = formData.verticalAttrs;
       }
+      // options
+      itemPayload.options = options
+        .filter(o => o.name.trim())
+        .map(o => ({
+          id: o.id,
+          name: o.name.trim(),
+          price: Number(o.price) || 0,
+          durationMin: Number(o.durationMin) || 0,
+          active: o.active,
+          sortOrder: o.sortOrder,
+        }));
 
       // tenantId を URL に含めて fetch（updateMenuItem/createMenuItem は tenantId 非対応）
       let saved: any;
@@ -444,6 +478,85 @@ export default function MenuManager({ tenantId: tenantIdProp }: { tenantId?: str
                 <ImageIcon className="w-4 h-4 text-gray-500" />
                 {imagePreviewUrl ? '画像を変更' : '画像を選択'}
               </label>
+            </div>
+
+            {/* オプション設定 */}
+            <div className="border-t border-gray-100 pt-4">
+              <div className="flex items-center gap-2 mb-1">
+                <Plus className="w-4 h-4 text-emerald-500" />
+                <span className="text-sm font-medium text-gray-700">オプション設定</span>
+              </div>
+              <p className="text-xs text-gray-400 mb-3">このメニューに追加できる任意オプションです</p>
+
+              {options.length > 0 && (
+                <div className="space-y-3 mb-3">
+                  {options.map((opt, i) => (
+                    <div key={opt.id} className="border border-gray-200 rounded-xl p-3 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-medium text-gray-500">オプション {i + 1}</span>
+                        <button
+                          type="button"
+                          onClick={() => setOptions(prev => prev.filter((_, j) => j !== i))}
+                          className="p-1 text-red-400 hover:text-red-600 transition-colors"
+                          title="削除"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                      <input
+                        type="text"
+                        value={opt.name}
+                        onChange={e => setOptions(prev => prev.map((o, j) => j === i ? { ...o, name: e.target.value } : o))}
+                        placeholder="オプション名"
+                        className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary"
+                      />
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="block text-xs text-gray-500 mb-1">追加料金（円）</label>
+                          <input
+                            type="number"
+                            value={opt.price}
+                            onChange={e => setOptions(prev => prev.map((o, j) => j === i ? { ...o, price: e.target.value } : o))}
+                            min="0"
+                            className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-gray-500 mb-1">追加時間（分）</label>
+                          <input
+                            type="number"
+                            value={opt.durationMin}
+                            onChange={e => setOptions(prev => prev.map((o, j) => j === i ? { ...o, durationMin: e.target.value } : o))}
+                            min="0"
+                            className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <button
+                type="button"
+                onClick={() =>
+                  setOptions(prev => [
+                    ...prev,
+                    {
+                      id: `opt_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+                      name: '',
+                      price: '0',
+                      durationMin: '0',
+                      active: true,
+                      sortOrder: prev.length,
+                    },
+                  ])
+                }
+                className="inline-flex items-center gap-1.5 px-3 py-2 text-sm text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-lg hover:bg-emerald-100 transition-colors"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                オプション追加
+              </button>
             </div>
 
             {/* Phase 11: vertical-dynamic メニュー属性セクション */}

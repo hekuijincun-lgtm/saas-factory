@@ -7,7 +7,7 @@ import StepStaff from './steps/StepStaff';
 import StepDatetime from './steps/StepDatetime';
 import StepConfirm from './steps/StepConfirm';
 import StepSurvey from './steps/StepSurvey';
-import type { MenuItem } from '@/src/lib/bookingApi';
+import type { MenuItem, MenuOption } from '@/src/lib/bookingApi';
 import { fetchBookingSettings, getMenuVerticalAttrs } from '@/src/lib/bookingApi';
 import { getVerticalConfig, resolveVertical, type SurveyQuestion } from '@/src/types/settings';
 
@@ -25,6 +25,9 @@ export interface BookingState {
   time: string | null;
   lineUserId?: string | null;
   surveyAnswers?: Record<string, string | boolean>;
+  selectedOptions?: MenuOption[];
+  /** メニューに紐づく全 active オプション（確認画面表示用） */
+  menuOptions?: MenuOption[];
 }
 
 export interface StaffOption {
@@ -38,7 +41,7 @@ export interface StaffOption {
 const INITIAL: BookingState = {
   menuId: null, menuName: null, menuPrice: null, menuDurationMin: null, menuStyleType: null,
   staffId: null, staffName: null, nominationFee: 0, date: null, time: null,
-  lineUserId: null, surveyAnswers: undefined,
+  lineUserId: null, surveyAnswers: undefined, selectedOptions: undefined, menuOptions: undefined,
 };
 
 const DEFAULT_CONSENT = '予約内容を確認し、同意の上で予約を確定します';
@@ -226,13 +229,18 @@ export default function BookingFlow() {
     setStep(1);
   };
 
-  const handleMenuSelect = (menu: MenuItem) => {
+  const handleMenuSelect = (menu: MenuItem, selectedOpts?: MenuOption[]) => {
+    const activeOpts = (menu.options ?? []).filter(o => o.active);
+    const optionsPrice = (selectedOpts ?? []).reduce((s, o) => s + o.price, 0);
+    const optionsDuration = (selectedOpts ?? []).reduce((s, o) => s + o.durationMin, 0);
     update({
       menuId: menu.id,
       menuName: menu.name,
-      menuPrice: menu.price,
-      menuDurationMin: menu.durationMin,
+      menuPrice: menu.price + optionsPrice,
+      menuDurationMin: menu.durationMin + optionsDuration,
       menuStyleType: getMenuVerticalAttrs(menu)?.styleType ?? null,
+      selectedOptions: selectedOpts && selectedOpts.length > 0 ? selectedOpts : undefined,
+      menuOptions: activeOpts.length > 0 ? activeOpts : undefined,
     });
     if (!staffSelectionEnabled) {
       update({ staffId: 'any', staffName: '指名なし', nominationFee: 0 });

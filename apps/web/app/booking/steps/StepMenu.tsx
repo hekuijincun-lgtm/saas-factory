@@ -1,14 +1,14 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { getMenu, getMenuVerticalAttrs, type MenuItem } from '@/src/lib/bookingApi';
+import { getMenu, getMenuVerticalAttrs, type MenuItem, type MenuOption } from '@/src/lib/bookingApi';
 import { getVerticalPluginUI } from '@/src/lib/verticalPlugins';
 import { fetchBookingSettings } from '@/src/lib/bookingApi';
 import { resolveVertical } from '@/src/types/settings';
 
 interface Props {
   tenantId: string;
-  onSelect: (menu: MenuItem) => void;
+  onSelect: (menu: MenuItem, selectedOptions?: MenuOption[]) => void;
 }
 
 function Spinner() {
@@ -32,6 +32,10 @@ export default function StepMenu({ tenantId, onSelect }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [vertical, setVertical] = useState<string>('generic');
+
+  // オプション選択
+  const [selectedMenu, setSelectedMenu] = useState<MenuItem | null>(null);
+  const [selectedOptIds, setSelectedOptIds] = useState<Set<string>>(new Set());
 
   // フィルタ状態
   const [isFirstTime, setIsFirstTime] = useState<boolean | null>(null);
@@ -181,10 +185,20 @@ export default function StepMenu({ tenantId, onSelect }: Props) {
         </p>
       ) : (
         <div className="space-y-3">
-          {filtered.map(item => (
+          {filtered.map(item => {
+            const activeOpts = (item.options ?? []).filter(o => o.active);
+            const hasOptions = activeOpts.length > 0;
+            return (
             <button
               key={item.id}
-              onClick={() => onSelect(item)}
+              onClick={() => {
+                if (hasOptions) {
+                  setSelectedMenu(item);
+                  setSelectedOptIds(new Set());
+                } else {
+                  onSelect(item);
+                }
+              }}
               className="w-full text-left p-4 bg-white border border-brand-border rounded-2xl hover:border-brand-primary hover:shadow-md transition-all group"
             >
               {item.imageUrl && (
@@ -230,9 +244,93 @@ export default function StepMenu({ tenantId, onSelect }: Props) {
                 </span>
               </div>
             </button>
-          ))}
+            );
+          })}
         </div>
       )}
+
+      {/* オプション選択パネル */}
+      {selectedMenu && (() => {
+        const activeOpts = (selectedMenu.options ?? []).filter(o => o.active);
+        const optionsPrice = activeOpts.filter(o => selectedOptIds.has(o.id)).reduce((s, o) => s + o.price, 0);
+        const optionsDuration = activeOpts.filter(o => selectedOptIds.has(o.id)).reduce((s, o) => s + o.durationMin, 0);
+        return (
+          <div className="mt-4 bg-white border border-brand-primary rounded-2xl p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-brand-text">追加オプション</h3>
+              <button
+                onClick={() => setSelectedMenu(null)}
+                className="text-xs text-brand-muted hover:text-brand-text"
+              >
+                戻る
+              </button>
+            </div>
+            <p className="text-xs text-brand-muted">{selectedMenu.name} のオプションを選択してください（任意）</p>
+
+            <div className="space-y-2">
+              {activeOpts.map(opt => (
+                <label
+                  key={opt.id}
+                  className={`flex items-center gap-3 p-3 border rounded-xl cursor-pointer transition-all ${
+                    selectedOptIds.has(opt.id)
+                      ? 'border-brand-primary bg-brand-primary/5'
+                      : 'border-gray-200 hover:border-brand-primary/50'
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectedOptIds.has(opt.id)}
+                    onChange={() => {
+                      setSelectedOptIds(prev => {
+                        const next = new Set(prev);
+                        if (next.has(opt.id)) next.delete(opt.id);
+                        else next.add(opt.id);
+                        return next;
+                      });
+                    }}
+                    className="w-4 h-4 text-brand-primary border-brand-border rounded focus:ring-brand-primary"
+                  />
+                  <div className="flex-1">
+                    <span className="text-sm font-medium text-brand-text">{opt.name}</span>
+                    <span className="text-xs text-brand-muted ml-2">
+                      {opt.durationMin > 0 && `+${opt.durationMin}分`}
+                    </span>
+                  </div>
+                  <span className="text-sm font-semibold text-brand-primary">
+                    +¥{opt.price.toLocaleString()}
+                  </span>
+                </label>
+              ))}
+            </div>
+
+            <div className="border-t border-gray-100 pt-3 space-y-1">
+              <div className="flex justify-between text-sm">
+                <span className="text-brand-muted">合計金額</span>
+                <span className="font-semibold text-brand-text">
+                  ¥{(selectedMenu.price + optionsPrice).toLocaleString()}
+                </span>
+              </div>
+              <div className="flex justify-between text-sm">
+                <span className="text-brand-muted">合計時間</span>
+                <span className="font-semibold text-brand-text">
+                  {selectedMenu.durationMin + optionsDuration}分
+                </span>
+              </div>
+            </div>
+
+            <button
+              onClick={() => {
+                const selected = activeOpts.filter(o => selectedOptIds.has(o.id));
+                onSelect(selectedMenu, selected.length > 0 ? selected : undefined);
+                setSelectedMenu(null);
+              }}
+              className="w-full py-3 bg-brand-primary text-white rounded-xl font-medium hover:shadow-md transition-all"
+            >
+              このメニューで予約する
+            </button>
+          </div>
+        );
+      })()}
     </div>
   );
 }
