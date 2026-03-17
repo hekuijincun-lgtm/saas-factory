@@ -1436,6 +1436,12 @@ function LpFooter() {
           >
             ログイン
           </Link>
+          <Link
+            href="/legal/tokushoho"
+            className="hover:text-white transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 rounded"
+          >
+            特定商取引法
+          </Link>
         </nav>
 
         <p className="text-xs">© 2026 LumiBook. All rights reserved.</p>

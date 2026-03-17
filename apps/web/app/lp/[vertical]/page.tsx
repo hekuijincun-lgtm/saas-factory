@@ -435,6 +435,7 @@ export default async function VerticalLandingPage({ params }: { params: Promise<
           <div className="flex items-center gap-6">
             <Link href="/login" className="hover:text-white/70 transition-colors">ログイン</Link>
             <Link href={signupUrl} className="hover:text-white/70 transition-colors">新規登録</Link>
+            <Link href="/legal/tokushoho" className="hover:text-white/70 transition-colors">特定商取引法</Link>
           </div>
           <p>&copy; {new Date().getFullYear()} LumiBook</p>
         </div>
