@@ -124,7 +124,7 @@ export const THEMES: Record<ThemeKey, ThemeColors> = {
 // ── Vertical → Theme mapping ────────────────────────────────────────
 const VERTICAL_THEME: Record<string, ThemeKey> = {
   nail: 'rose', hair: 'indigo', dental: 'sky', esthetic: 'violet',
-  cleaning: 'emerald', handyman: 'amber',
+  cleaning: 'emerald', handyman: 'amber', pet: 'orange',
 };
 
 export function getTheme(vertical: string): ThemeColors {

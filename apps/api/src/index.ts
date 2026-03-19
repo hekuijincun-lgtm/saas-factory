@@ -4965,7 +4965,7 @@ app.post('/auth/email/start', async (c) => {
       ? body.planId : undefined;
 
     // Phase 1a: persist vertical selection from signup form
-    const VALID_VERTICALS = new Set(['eyebrow', 'nail', 'dental', 'hair', 'esthetic', 'cleaning', 'handyman', 'generic']);
+    const VALID_VERTICALS = new Set(['eyebrow', 'nail', 'dental', 'hair', 'esthetic', 'cleaning', 'handyman', 'pet', 'generic']);
     const signupVertical: string | undefined = (typeof body.vertical === 'string' && VALID_VERTICALS.has(body.vertical))
       ? body.vertical : undefined;
 

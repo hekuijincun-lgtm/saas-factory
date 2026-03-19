@@ -6,7 +6,7 @@ import type { AICore } from "../ai";
 
 // ── Agent Identifiers ────────────────────────────────────────────────────
 
-export type AgentType = "line_concierge" | "outreach_followup" | "cleaning_estimate" | "handyman_estimate";
+export type AgentType = "line_concierge" | "outreach_followup" | "cleaning_estimate" | "handyman_estimate" | "pet_estimate";
 
 export type AgentTriggerType =
   | "line_message_received"
