@@ -6,13 +6,14 @@ import type { AICore } from "../ai";
 
 // ── Agent Identifiers ────────────────────────────────────────────────────
 
-export type AgentType = "line_concierge" | "outreach_followup";
+export type AgentType = "line_concierge" | "outreach_followup" | "cleaning_estimate";
 
 export type AgentTriggerType =
   | "line_message_received"
   | "lead_created"
   | "reply_received"
-  | "scheduled_followup";
+  | "scheduled_followup"
+  | "web_inquiry";
 
 export type AgentStatus =
   | "pending"

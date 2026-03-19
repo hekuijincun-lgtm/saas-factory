@@ -8,12 +8,14 @@
 import type { AgentDefinition, AgentType } from "./types";
 import { lineConciergeDefinition } from "./agents/line-concierge";
 import { outreachFollowupDefinition } from "./agents/outreach-followup";
+import { cleaningEstimateDefinition } from "./agents/cleaning-estimate";
 
 const REGISTRY: Map<AgentType, AgentDefinition> = new Map();
 
 // Register built-in agents
 REGISTRY.set("line_concierge", lineConciergeDefinition);
 REGISTRY.set("outreach_followup", outreachFollowupDefinition);
+REGISTRY.set("cleaning_estimate", cleaningEstimateDefinition);
 
 /**
  * Get an agent definition by type.
