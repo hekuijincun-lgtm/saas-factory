@@ -10,6 +10,7 @@ import { registerOwnerLeadRoutes } from "./routes/ownerLeads";
 import { createOutreachRoutes } from "./outreach/routes";
 import { AICore } from "./ai";
 import { runAllDueAgents, readRecentAgentLogs, readAgentLogs, listAgents, triggerLineMessage } from "./agents";
+import { LineCore } from "./line";
 
 // test helper (lock reproduction)
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
@@ -7405,6 +7406,73 @@ app.get("/admin/ai/usage", async (c) => {
 });
 
 // ── Agent Core Admin Endpoints ────────────────────────────────────────────
+
+// ── LINE Core Admin Endpoints ─────────────────────────────────────────────
+
+// GET /admin/line-core/status — LINE Core health status
+app.get("/admin/line-core/status", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
+  const tenantId = getTenantId(c, null);
+  try {
+    const lc = new LineCore(c.env as any);
+    const status = await lc.getHealthStatus(tenantId);
+    const coreSettings = await lc.getCoreSettings(tenantId);
+    return c.json({ ok: true, tenantId, status, coreSettings });
+  } catch (err: any) {
+    return c.json({ ok: false, tenantId, error: err?.message ?? "status_error" }, 500);
+  }
+});
+
+// GET /admin/line-core/logs — recent LINE inbound/outbound logs
+app.get("/admin/line-core/logs", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
+  const tenantId = getTenantId(c, null);
+  const limit = Math.min(parseInt(c.req.query("limit") ?? "50", 10) || 50, 200);
+  try {
+    const lc = new LineCore(c.env as any);
+    const logs = await lc.getRecentLogs(tenantId, limit);
+    return c.json({ ok: true, tenantId, logs });
+  } catch (err: any) {
+    return c.json({ ok: false, tenantId, error: err?.message ?? "logs_error" }, 500);
+  }
+});
+
+// POST /admin/line-core/test-push — test push message (owner only)
+app.post("/admin/line-core/test-push", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
+  const tenantId = getTenantId(c, null);
+  try {
+    const body: any = await c.req.json().catch(() => ({}));
+    const userId = String(body?.userId ?? "").trim();
+    const text = String(body?.text ?? "LINE Core テスト送信").trim();
+    if (!userId) return c.json({ ok: false, error: "userId required" }, 400);
+    const lc = new LineCore(c.env as any);
+    const result = await lc.pushText(tenantId, userId, text, `test:${tenantId}:${Date.now()}`);
+    return c.json({ ok: true, tenantId, result });
+  } catch (err: any) {
+    return c.json({ ok: false, tenantId, error: err?.message ?? "test_push_error" }, 500);
+  }
+});
+
+// POST /admin/line-core/webhook-check — verify webhook signature works
+app.post("/admin/line-core/webhook-check", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
+  const tenantId = getTenantId(c, null);
+  try {
+    const lc = new LineCore(c.env as any);
+    const config = await lc.getTenantConfig(tenantId);
+    return c.json({
+      ok: true,
+      tenantId,
+      configured: !!config,
+      hasToken: !!config?.messaging?.channelAccessToken,
+      hasSecret: !!config?.messaging?.channelSecret,
+      botUserId: config?.messaging?.botUserId ?? null,
+    });
+  } catch (err: any) {
+    return c.json({ ok: false, tenantId, error: err?.message ?? "check_error" }, 500);
+  }
+});
 
 // GET /admin/agents — list registered agent types
 app.get("/admin/agents", async (c) => {

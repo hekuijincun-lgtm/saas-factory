@@ -208,6 +208,17 @@ export interface AdminSettings {
   ai?: AISettings;
   /** Agent Core 設定 */
   agents?: AgentCoreSettings;
+  /** LINE Core 設定 */
+  lineCore?: LineCoreSettingsConfig;
+}
+
+/** LINE Core 設定（settings:{tenantId}.lineCore） */
+export interface LineCoreSettingsConfig {
+  enabled?: boolean;
+  agentRoutingEnabled?: boolean;
+  loggingEnabled?: boolean;
+  defaultReplyMode?: "agent" | "legacy" | "disabled";
+  dedupWindowSec?: number;
 }
 
 /** Agent Core 設定（settings:{tenantId}.agents） */
