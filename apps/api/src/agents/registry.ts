@@ -9,6 +9,7 @@ import type { AgentDefinition, AgentType } from "./types";
 import { lineConciergeDefinition } from "./agents/line-concierge";
 import { outreachFollowupDefinition } from "./agents/outreach-followup";
 import { cleaningEstimateDefinition } from "./agents/cleaning-estimate";
+import { handymanEstimateDefinition } from "./agents/handyman-estimate";
 
 const REGISTRY: Map<AgentType, AgentDefinition> = new Map();
 
@@ -16,6 +17,7 @@ const REGISTRY: Map<AgentType, AgentDefinition> = new Map();
 REGISTRY.set("line_concierge", lineConciergeDefinition);
 REGISTRY.set("outreach_followup", outreachFollowupDefinition);
 REGISTRY.set("cleaning_estimate", cleaningEstimateDefinition);
+REGISTRY.set("handyman_estimate", handymanEstimateDefinition);
 
 /**
  * Get an agent definition by type.

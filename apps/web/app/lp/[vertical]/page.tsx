@@ -160,6 +160,40 @@ const LP: Record<string, VerticalLPConfig> = {
     metaTitle: 'クリーンプロAI | ハウスクリーニング専用 AI見積もり＆予約ツール',
     metaDesc: 'LINEで問い合わせ→AIが即時見積もり→そのまま予約。ハウスクリーニング業の問い合わせ対応を自動化し、売上を最大化。',
   },
+  handyman: {
+    label: '便利屋・なんでも屋',
+    badge: '便利屋専用 AI見積もり＆予約管理ツール',
+    headline: '便利屋の問い合わせに\nAIが30秒で見積もり回答',
+    subheadline: '現場作業中でもAIが自動で見積もり・カテゴリ分類・予約対応。\n電話に出られない間の失注をゼロにします。',
+    problems: [
+      { icon: 'phone', title: '作業中に電話に出られない', desc: '脚立の上や水回り作業中に電話が鳴っても出られず、折り返す頃にはお客様が他社に依頼済み' },
+      { icon: 'clock', title: '依頼内容のヒアリングに時間がかかる', desc: '「何でもやります」が売りだからこそ、依頼内容の確認に毎回10-15分かかる' },
+      { icon: 'calendar', title: 'スケジュール管理が紙・手帳', desc: '電話メモと手帳の二重管理。ダブルブッキングや予定忘れが月に1-2回発生' },
+      { icon: 'users', title: '見積もり作成が手間', desc: '現場下見→見積書作成→送付の流れで2-3日。その間にお客様の熱が冷める' },
+      { icon: 'chart', title: 'リピーターへのアプローチが皆無', desc: '一度きりのお客様が多く、定期的な仕事につながらない' },
+    ],
+    features: [
+      { icon: 'sparkles', title: 'AI即時見積もり', desc: 'LINEで「棚を取り付けてほしい」と送るだけ。AIが作業カテゴリを判定し、30秒で概算見積もりを自動返信。' },
+      { icon: 'message', title: 'LINE自動応答24時間', desc: '深夜・早朝・作業中でもAIが対応。「鍵を開けてほしい」「蛇口が水漏れ」等の緊急依頼も即レスポンス。' },
+      { icon: 'shield', title: 'AIカテゴリ分類', desc: '13カテゴリの作業を自動判定。家具組立・水回り・電気・庭木・害虫・鍵など、適切な料金テーブルを即座に適用。' },
+      { icon: 'calendar', title: '予約一元管理', desc: 'LINE・電話・Webからの依頼をひとつの管理画面で。日別ビューで空き状況が一目瞭然。' },
+      { icon: 'bell', title: '前日自動リマインド', desc: '作業前日にお客様へ自動通知。「作業箇所の周辺を空けておいてください」等の案内も一緒に。' },
+      { icon: 'users', title: 'リピート促進自動配信', desc: '「前回の草刈りから2ヶ月です」「エアコン清掃のシーズンです」。定期的な仕事につなげる自動配信。' },
+    ],
+    flow: [
+      { step: '01', title: 'LINE公式アカウント連携', desc: 'お手持ちのLINE公式アカウントとAPI連携。ガイドに沿って最短15分で完了します。' },
+      { step: '02', title: '料金テーブル設定', desc: '13カテゴリの基本料金・オプション料金を管理画面から設定。あなたの料金体系に合わせて自由にカスタマイズ。' },
+      { step: '03', title: 'AI見積もり開始', desc: 'LINEで友だち追加したお客様からの問い合わせに、AIが自動で見積もり回答。あなたは現場に集中するだけ。' },
+    ],
+    faqs: [
+      { q: 'AIは「何でもやります」の多様な依頼に対応できますか？', a: 'はい。家具組立・水回り・電気・庭木・害虫・鍵・清掃・引越し手伝いなど13カテゴリに対応。AIが依頼内容から最適なカテゴリを自動判定します。判定できない場合は「その他」として受け付け、あなたに通知します。' },
+      { q: '料金テーブルは自由に設定できますか？', a: 'はい。カテゴリごとの基本料金・数量単価・緊急対応・夜間対応・土日対応の追加料金をすべて個別に設定できます。エリア別の出張費も設定可能です。' },
+      { q: '個人事業主でも使えますか？', a: 'はい。Starterプランは月額¥3,980から。一人親方の便利屋さんにも多くご利用いただいています。スマホだけで管理できます。' },
+      { q: '緊急依頼の通知はリアルタイムですか？', a: 'AIが依頼の緊急度を自動判定し、「urgent（緊急）」の場合は管理者のLINEにプッシュ通知を送ります。作業中でもスマホで確認できます。' },
+    ],
+    metaTitle: 'ベンリプロAI | 便利屋専用 AI見積もり＆予約管理ツール',
+    metaDesc: 'LINEで問い合わせ→AIが30秒で見積もり回答→予約管理。便利屋・なんでも屋の問い合わせ対応を自動化。',
+  },
   esthetic: {
     label: 'エステ・リラクゼーション',
     badge: 'エステサロン専用の予約自動化ツール',
@@ -299,7 +333,7 @@ export default async function VerticalLandingPage({ params }: { params: Promise<
               <TrackingCTA href={signupUrl} vertical={vertical} cta="hero_primary" eventType="lp_signup_click" className="px-8 py-4 bg-rose-500 text-white font-bold rounded-full hover:bg-rose-600 transition-colors shadow-lg text-lg inline-flex items-center gap-2">
                 無料で始める <ArrowRight className="w-5 h-5" />
               </TrackingCTA>
-              <Link href="/booking" className="px-8 py-4 border border-white/20 text-white font-medium rounded-full hover:bg-white/10 transition-colors text-lg">
+              <Link href={['handyman', 'cleaning'].includes(vertical) ? `/demo/${vertical}` : '/booking'} className="px-8 py-4 border border-white/20 text-white font-medium rounded-full hover:bg-white/10 transition-colors text-lg">
                 デモを見る
               </Link>
             </div>
