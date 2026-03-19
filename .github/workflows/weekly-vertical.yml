@@ -1,9 +1,9 @@
 name: Weekly Vertical SaaS Generator
 
 on:
-  schedule:
-    # 毎週月曜 10:00 JST (01:00 UTC)
-    - cron: '0 1 * * 1'
+  # schedule:
+  #   # 毎週月曜 10:00 JST (01:00 UTC) — API課金が発生するため手動運用に変更
+  #   - cron: '0 1 * * 1'
   workflow_dispatch:
     inputs:
       skip_deploy:
