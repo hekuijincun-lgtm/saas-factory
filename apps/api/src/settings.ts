@@ -147,12 +147,34 @@ export interface SubscriptionInfo {
   createdAt: number;
 }
 
+/** AI Provider 識別子 */
+export type AIProviderType = "openai" | "gemini";
+
+/** AI Core 統合設定（provider routing / fallback / feature toggles） */
+export interface AICoreConfig {
+  enabled: boolean;
+  defaultProvider: AIProviderType;
+  defaultModel: string;
+  fallbackProvider?: AIProviderType;
+  fallbackModel?: string;
+  temperature: number;
+  maxOutputTokens: number;
+  features: {
+    bookingReply: boolean;
+    salesGeneration: boolean;
+    replyClassifier: boolean;
+  };
+  routing: Record<string, { provider: AIProviderType; model: string }>;
+}
+
 /** AI接客コア設定 */
 export interface AISettings {
   enabled: boolean;
   voice: string;
   answerLength: string;
   character: string;
+  /** AI Core 統合設定（provider routing etc.） */
+  core?: AICoreConfig;
 }
 
 export interface AdminSettings {
@@ -472,6 +494,26 @@ export function mergeSettings(defaults: AdminSettings, partial: Partial<AdminSet
           voice: partial.ai?.voice ?? defaults.ai?.voice ?? "friendly",
           answerLength: partial.ai?.answerLength ?? defaults.ai?.answerLength ?? "normal",
           character: partial.ai?.character ?? defaults.ai?.character ?? "",
+          core: (partial.ai?.core || defaults.ai?.core)
+            ? {
+                enabled: partial.ai?.core?.enabled ?? defaults.ai?.core?.enabled ?? true,
+                defaultProvider: partial.ai?.core?.defaultProvider ?? defaults.ai?.core?.defaultProvider ?? "openai",
+                defaultModel: partial.ai?.core?.defaultModel ?? defaults.ai?.core?.defaultModel ?? "gpt-4o-mini",
+                fallbackProvider: partial.ai?.core?.fallbackProvider ?? defaults.ai?.core?.fallbackProvider,
+                fallbackModel: partial.ai?.core?.fallbackModel ?? defaults.ai?.core?.fallbackModel,
+                temperature: partial.ai?.core?.temperature ?? defaults.ai?.core?.temperature ?? 0.7,
+                maxOutputTokens: partial.ai?.core?.maxOutputTokens ?? defaults.ai?.core?.maxOutputTokens ?? 800,
+                features: {
+                  bookingReply: partial.ai?.core?.features?.bookingReply ?? defaults.ai?.core?.features?.bookingReply ?? true,
+                  salesGeneration: partial.ai?.core?.features?.salesGeneration ?? defaults.ai?.core?.features?.salesGeneration ?? true,
+                  replyClassifier: partial.ai?.core?.features?.replyClassifier ?? defaults.ai?.core?.features?.replyClassifier ?? true,
+                },
+                routing: {
+                  ...(defaults.ai?.core?.routing ?? {}),
+                  ...(partial.ai?.core?.routing ?? {}),
+                },
+              }
+            : undefined,
         }
       : undefined,
     vertical: partial.vertical ?? defaults.vertical,

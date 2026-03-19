@@ -6,6 +6,7 @@
 import { Hono } from "hono";
 import { computeLeadScore, computeLeadScoreV2 } from "./scoring";
 import { generateOutreachMessage } from "./ai-generator";
+import { AICore } from "../ai";
 import { DefaultWebsiteAnalyzer } from "./analyzer";
 import { generatePainHypotheses } from "./pain-hypothesis";
 import type { PainHypothesis } from "./pain-hypothesis";
@@ -746,6 +747,8 @@ export function createOutreachRoutes(getTenantId: GetTenantId) {
 
     const generated = await generateOutreachMessage(lead, input, {
       openaiApiKey: c.env.OPENAI_API_KEY,
+      aiCore: new AICore(c.env as any),
+      tenantId,
     }, features, hypotheses, learningCtx);
 
     // Save as draft
@@ -1641,7 +1644,7 @@ export function createOutreachRoutes(getTenantId: GetTenantId) {
     let classifyConfidence = 0;
     let classifyReason = "no_body";
     if (body.replyBody?.trim()) {
-      const result = await classifyReply(body.replyBody, c.env.OPENAI_API_KEY);
+      const result = await classifyReply(body.replyBody, new AICore(c.env as any), tenantId);
       classification = result.classification;
       classifyConfidence = result.confidence;
       classifyReason = result.reason;
@@ -2520,7 +2523,7 @@ export function createOutreachRoutes(getTenantId: GetTenantId) {
           cta: variant.cta_template ?? undefined,
           channel: "email",
         },
-        { openaiApiKey: c.env.OPENAI_API_KEY },
+        { openaiApiKey: c.env.OPENAI_API_KEY, aiCore: new AICore(c.env as any), tenantId },
         features,
         hypotheses.length > 0 ? hypotheses : null
       );
@@ -4107,12 +4110,12 @@ export function createOutreachRoutes(getTenantId: GetTenantId) {
         created_at: ts,
       };
       processResult = await processReply(
-        { db, kv, tenantId, openaiApiKey: c.env.OPENAI_API_KEY, resendApiKey: c.env.RESEND_API_KEY, emailFrom: c.env.EMAIL_FROM, uid, now },
+        { db, kv, tenantId, openaiApiKey: c.env.OPENAI_API_KEY, resendApiKey: c.env.RESEND_API_KEY, emailFrom: c.env.EMAIL_FROM, uid, now, aiCore: new AICore(c.env as any) },
         reply
       );
     } else {
       // Still classify for display, but don't auto-reply
-      const classification = await classifyReplyIntent(body.reply_text, c.env.OPENAI_API_KEY);
+      const classification = await classifyReplyIntent(body.reply_text, new AICore(c.env as any), tenantId);
       await db
         .prepare(
           `UPDATE outreach_replies
@@ -4215,7 +4218,7 @@ export function createOutreachRoutes(getTenantId: GetTenantId) {
     }
 
     const result = await processReply(
-      { db, kv, tenantId, openaiApiKey: c.env.OPENAI_API_KEY, resendApiKey: c.env.RESEND_API_KEY, emailFrom: c.env.EMAIL_FROM, uid, now },
+      { db, kv, tenantId, openaiApiKey: c.env.OPENAI_API_KEY, resendApiKey: c.env.RESEND_API_KEY, emailFrom: c.env.EMAIL_FROM, uid, now, aiCore: new AICore(c.env as any) },
       reply
     );
     return c.json({ ok: true, tenantId, data: result });
@@ -4294,7 +4297,7 @@ export function createOutreachRoutes(getTenantId: GetTenantId) {
     const db = c.env.DB;
     const kv = c.env.SAAS_FACTORY;
     const result = await processUnhandledReplies({
-      db, kv, tenantId, openaiApiKey: c.env.OPENAI_API_KEY, resendApiKey: c.env.RESEND_API_KEY, emailFrom: c.env.EMAIL_FROM, uid, now,
+      db, kv, tenantId, openaiApiKey: c.env.OPENAI_API_KEY, resendApiKey: c.env.RESEND_API_KEY, emailFrom: c.env.EMAIL_FROM, uid, now, aiCore: new AICore(c.env as any),
     });
     return c.json({ ok: true, tenantId, data: result });
   });

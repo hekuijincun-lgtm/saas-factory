@@ -1,18 +1,24 @@
-// Outreach OS — AI Message Generator (service layer)
+// Outreach OS — AI Message Generator (service layer + AI Core)
 // ============================================================
-// Isolates AI generation logic. Currently uses template fallback.
+// Isolates AI generation logic. Uses AI Core when available, template fallback otherwise.
 // Phase 6: accepts LearningContext for winning pattern injection.
+// AI Core: Migrated from direct OpenAI calls to AI Core unified interface.
 
 import type { OutreachLead, GeneratedMessage, GenerateMessageInput } from "./types";
 import type { ExtractedFeatures } from "./analyzer";
 import type { PainHypothesis } from "./pain-hypothesis";
 import type { LearningContext } from "./learning";
+import type { AICore } from "../ai";
 
 interface AIGeneratorConfig {
   /** OpenAI API key (optional — falls back to template if missing) */
   openaiApiKey?: string;
   /** Model to use (default: gpt-4o-mini) */
   model?: string;
+  /** AI Core instance (preferred over direct API key) */
+  aiCore?: AICore;
+  /** Tenant ID for AI Core routing */
+  tenantId?: string;
 }
 
 /** Extended input with Phase 2 analyzer data + Phase 6 learning context */
@@ -27,9 +33,7 @@ interface GeneratorContext {
 
 /**
  * Generate an outreach message for a lead.
- * Uses AI when API key is available, otherwise falls back to template.
- * Phase 2: accepts extracted features + pain hypotheses for more targeted messages.
- * Phase 6: accepts learning context for winning pattern injection.
+ * Uses AI Core when available, direct OpenAI when API key provided, otherwise template.
  */
 export async function generateOutreachMessage(
   lead: OutreachLead,
@@ -40,9 +44,25 @@ export async function generateOutreachMessage(
   learning?: LearningContext | null
 ): Promise<GeneratedMessage> {
   const ctx: GeneratorContext = { lead, input, config, features, hypotheses, learning };
-  if (config.openaiApiKey) {
-    return generateWithAI(ctx);
+
+  // Prefer AI Core path
+  if (config.aiCore) {
+    try {
+      return await generateWithAICore(ctx);
+    } catch (err) {
+      console.error("[ai-generator] AI Core failed, trying legacy:", err);
+    }
   }
+
+  // Legacy direct OpenAI path
+  if (config.openaiApiKey) {
+    try {
+      return await generateWithAILegacy(ctx);
+    } catch (err) {
+      console.error("[ai-generator] Legacy AI failed, falling back to template:", err);
+    }
+  }
+
   return generateWithTemplate(ctx);
 }
 
@@ -73,20 +93,24 @@ function formatLearningContext(learning: LearningContext | null | undefined): st
     : "";
 }
 
-// ── AI-powered generation ──────────────────────────────────────────────────
+// ── Build prompt variables ──────────────────────────────────────────────
 
-async function generateWithAI(ctx: GeneratorContext): Promise<GeneratedMessage> {
-  const { lead, input, config, features, hypotheses, learning } = ctx;
+function buildPromptVars(ctx: GeneratorContext): Record<string, string> {
+  const { lead, input, features, hypotheses, learning } = ctx;
   const tone = input.tone ?? "friendly";
   const cta = input.cta ?? "無料相談のご案内";
   const channel = input.channel ?? "email";
 
-  // Build pain points context from hypotheses
+  const toneMap: Record<string, string> = {
+    formal: "丁寧・ビジネス",
+    casual: "カジュアル・フレンドリー",
+    friendly: "親しみやすいが丁寧",
+  };
+
   const painContext = hypotheses?.length
     ? hypotheses.map((h) => `- [${h.severity}] ${h.label}: ${h.reason}`).join("\n")
     : "不明（サイト未解析）";
 
-  // Build features context
   const featureContext = features
     ? [
         `サイト到達: ${features.hasWebsite ? "OK" : "NG"}`,
@@ -98,7 +122,84 @@ async function generateWithAI(ctx: GeneratorContext): Promise<GeneratedMessage> 
       ].filter(Boolean).join("\n")
     : "（サイト未解析）";
 
-  // Phase 6: Learning context
+  return {
+    toneInstruction: toneMap[tone] ?? toneMap.friendly,
+    tone,
+    channel,
+    cta,
+    learningContext: formatLearningContext(learning),
+    storeName: lead.store_name,
+    area: lead.area ?? lead.region ?? "不明",
+    category: lead.category ?? lead.industry ?? "不明",
+    rating: String(lead.rating ?? "不明"),
+    reviewCount: String(lead.review_count ?? 0),
+    websiteUrl: lead.website_url ?? "なし",
+    instagramUrl: lead.instagram_url ? "あり" : "なし",
+    lineUrl: lead.line_url ? "あり" : "なし",
+    notes: lead.notes ?? "なし",
+    featureContext,
+    painContext,
+  };
+}
+
+// ── AI Core generation ──────────────────────────────────────────────────
+
+async function generateWithAICore(ctx: GeneratorContext): Promise<GeneratedMessage> {
+  const { config, input } = ctx;
+  const aiCore = config.aiCore!;
+  const tone = input.tone ?? "friendly";
+  const cta = input.cta ?? "無料相談のご案内";
+
+  const vars = buildPromptVars(ctx);
+
+  const result = await aiCore.generateJson<GeneratedMessage>({
+    capability: "json_generation",
+    tenantId: config.tenantId ?? "default",
+    app: "outreach",
+    feature: "first_message",
+    task: "sales_message_generation",
+    promptKey: "outreach.first_message.v1",
+    variables: vars,
+    temperature: 0.7,
+    maxOutputTokens: 1000,
+    fallbackDefault: generateWithTemplate(ctx),
+  });
+
+  const parsed = result.data;
+  return {
+    subject: parsed.subject || `${ctx.lead.store_name}様へのご提案`,
+    opener: parsed.opener || "",
+    body: parsed.body || "",
+    cta: parsed.cta || cta,
+    tone: parsed.tone || tone,
+    painPoints: Array.isArray(parsed.painPoints) ? parsed.painPoints : [],
+    reasoningSummary: parsed.reasoningSummary || "",
+  };
+}
+
+// ── Legacy AI-powered generation ────────────────────────────────────────
+
+async function generateWithAILegacy(ctx: GeneratorContext): Promise<GeneratedMessage> {
+  const { lead, input, config, features, hypotheses, learning } = ctx;
+  const tone = input.tone ?? "friendly";
+  const cta = input.cta ?? "無料相談のご案内";
+  const channel = input.channel ?? "email";
+
+  const painContext = hypotheses?.length
+    ? hypotheses.map((h) => `- [${h.severity}] ${h.label}: ${h.reason}`).join("\n")
+    : "不明（サイト未解析）";
+
+  const featureContext = features
+    ? [
+        `サイト到達: ${features.hasWebsite ? "OK" : "NG"}`,
+        `予約CTA数: ${features.bookingCtaCount}`,
+        `メニュー数推定: ${features.menuCountGuess}`,
+        `料金表示: ${features.priceInfoFound ? "あり" : "なし"}`,
+        `連絡先: ${[features.contactEmailFound ? "Email" : null, features.phoneFound ? "電話" : null].filter(Boolean).join("/") || "なし"}`,
+        features.rawSignals?.title ? `タイトル: ${features.rawSignals.title}` : null,
+      ].filter(Boolean).join("\n")
+    : "（サイト未解析）";
+
   const learningContext = formatLearningContext(learning);
 
   const systemPrompt = `あなたはB2B営業のプロフェッショナルです。
@@ -196,10 +297,8 @@ function generateWithTemplate(ctx: GeneratorContext): GeneratedMessage {
   const area = lead.area ?? lead.region ?? "";
   const category = lead.category ?? lead.industry ?? "";
 
-  // Use pain hypotheses if available, otherwise fall back to basic checks
   let painPoints: string[];
   if (hypotheses?.length) {
-    // Phase 6: prioritize winning hypothesis if available
     const winningCode = learning?.topHypothesis?.key;
     const sorted = winningCode
       ? [...hypotheses].sort((a, b) => (a.code === winningCode ? -1 : b.code === winningCode ? 1 : 0))

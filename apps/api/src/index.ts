@@ -8,6 +8,7 @@ import { getVerticalPlugin } from "./verticals/registry";
 import { registerOwnerRoutes, getOwnerIds, bootstrapOwnerIfEmpty, isPrincipalAllowed, normalizePrincipal } from "./routes/owner";
 import { registerOwnerLeadRoutes } from "./routes/ownerLeads";
 import { createOutreachRoutes } from "./outreach/routes";
+import { AICore } from "./ai";
 
 // test helper (lock reproduction)
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
@@ -7386,6 +7387,22 @@ app.post("/sales-ai/chat", async (c) => {
 });
 
 // GET /ai/enabled — lightweight AI enabled check (no auth, single KV read)
+// GET /admin/ai/usage — AI Core usage log (recent entries)
+app.get("/admin/ai/usage", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
+  const tenantId = getTenantId(c, null);
+  const limit = Math.min(parseInt(c.req.query("limit") ?? "50", 10) || 50, 200);
+  const kv = (c.env as any)?.SAAS_FACTORY;
+  if (!kv) return c.json({ ok: true, tenantId, usage: [] });
+  try {
+    const { readRecentUsageLogs } = await import("./ai/usage-log");
+    const logs = await readRecentUsageLogs(kv, tenantId, limit);
+    return c.json({ ok: true, tenantId, usage: logs });
+  } catch (err: any) {
+    return c.json({ ok: false, tenantId, error: err?.message ?? "usage_log_error" }, 500);
+  }
+});
+
 app.get("/ai/enabled", async (c) => {
   const tenantId = getTenantId(c, null);
   const kv = (c.env as any)?.SAAS_FACTORY;
@@ -7635,117 +7652,162 @@ app.post("/ai/chat", async (c) => {
       systemPromptLen: systemContent.length,
     }));
 
-    // 6. OpenAI Responses API 呼び出し
-    // - background は送らない（reasoning モデルの incomplete 回避）
-    // - temperature は送らない（reasoning モデル非対応）
-    // - max_output_tokens: 1600（推論トークン消費分の余裕を確保）
-    const openaiPayload = {
-      model,
-      store: false,
-      max_output_tokens: 1600,
-      input: [
-        { role: "system", content: systemContent },
-        { role: "user", content: message },
-      ],
-    };
+    // 6. AI Core 経由での呼び出し（fallback: 従来の直接 OpenAI Responses API）
+    let answer = "";
+    let aiCoreUsed = false;
 
-    let openaiRes: any = null;
-    let openaiStatus = 0;
+    // 6a. AI Core path — unified provider routing with fallback
     try {
-      const r = await fetch("https://api.openai.com/v1/responses", {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(openaiPayload),
-      });
-      openaiStatus = r.status;
-      openaiRes = await r.json().catch(() => null);
-    } catch (fetchErr: any) {
-      return c.json({ ok: false, stamp: STAMP, tenantId, error: "upstream_error", detail: String(fetchErr?.message ?? fetchErr) });
-    }
+      const aiCore = new AICore(env as any);
+      if (aiCore.hasProvider("openai") || aiCore.hasProvider("gemini")) {
+        const aiCoreVars: Record<string, string> = {
+          characterLine: [
+            storeSettings?.storeName
+              ? `あなたは「${storeSettings.storeName}」のAIアシスタントです。`
+              : "あなたはお店のAIアシスタントです。",
+            aiSettings.character ? `キャラクター設定: ${aiSettings.character}` : "",
+          ].filter(Boolean).join("\n"),
+          voiceInstruction,
+          lengthInstruction,
+          verticalAiHint,
+          storeBlock,
+          faqBlock,
+          hardRulesBlock,
+          prohibitedBlock,
+          verticalSafetyNotes,
+          verticalBookingEmphasis,
+          message,
+        };
 
-    if (!openaiRes || openaiStatus !== 200) {
-      const detail = openaiRes?.error?.message ?? openaiRes?.error ?? `HTTP ${openaiStatus}`;
-      return c.json({ ok: false, stamp: STAMP, tenantId, error: "upstream_error", detail: String(detail) });
-    }
+        const result = await aiCore.generateText({
+          capability: "text_generation",
+          tenantId,
+          app: "booking",
+          feature: "concierge",
+          task: "booking_reply",
+          promptKey: "booking.concierge.reply.v1",
+          variables: aiCoreVars,
+          maxOutputTokens: 1600,
+          fallbackEnabled: true,
+          channel: "line",
+        });
 
-    // 7. retrieve ポーリング（incomplete / in_progress / queued のとき最大 3 回待つ）
-    // incomplete: トークン上限で切れた可能性。retrieve で完了確認を試みる。
-    // in_progress/queued: 非同期処理中。retrieve で completed になるまで待つ。
-    const statusHistory: string[] = [String(openaiRes?.status ?? "unknown")];
-    const RETRY_DELAYS_MS = [250, 400, 650] as const;
-    const responseId: string | undefined = openaiRes?.id;
-    const needsPoll = (s: string) => s === "incomplete" || s === "in_progress" || s === "queued";
-
-    if (responseId && needsPoll(openaiRes?.status)) {
-      for (let i = 0; i < RETRY_DELAYS_MS.length; i++) {
-        await sleep(RETRY_DELAYS_MS[i]);
-        try {
-          const rr = await fetch(`https://api.openai.com/v1/responses/${responseId}`, {
-            method: "GET",
-            headers: { "Authorization": `Bearer ${apiKey}` },
-          });
-          if (rr.ok) {
-            const retrieved: any = await rr.json().catch(() => null);
-            if (retrieved && typeof retrieved === "object") {
-              openaiRes = retrieved;
-              statusHistory.push(String(retrieved?.status ?? "unknown"));
-            }
-          }
-        } catch {
-          // retrieve 失敗は無視して最後の状態を使い続ける
+        if (result.meta.success && result.text) {
+          answer = result.text;
+          aiCoreUsed = true;
+          console.log(`[AI_CORE] booking_reply success provider=${result.meta.provider} model=${result.meta.model} latency=${result.meta.latencyMs}ms fallback=${result.meta.fallbackUsed}`);
         }
-        if (!needsPoll(openaiRes?.status)) break;
       }
+    } catch (aiCoreErr: any) {
+      console.error(`[AI_CORE] booking_reply failed, falling back to legacy:`, aiCoreErr?.message ?? aiCoreErr);
     }
 
-    // 8. polling 後も incomplete なら incomplete エラー（500 にしない）
-    if (openaiRes?.status === "incomplete") {
-      const rawHint = isDebug ? {
-        statusHistory,
-        outputTypes: Array.isArray(openaiRes?.output)
-          ? openaiRes.output.map((x: any) => x?.type ?? null)
-          : null,
-        incompleteDetails: openaiRes?.incomplete_details ?? null,
-      } : undefined;
-      return c.json({
-        ok: false, stamp: STAMP, tenantId,
-        error: "incomplete",
-        detail: "OpenAI response did not complete (token limit exceeded)",
-        ...(rawHint !== undefined ? { rawHint } : {}),
-      });
-    }
-
-    // 9. テキスト抽出（モジュールレベルの extractResponseText を使用）
-    let answer = extractResponseText(openaiRes);
+    // 6b. Legacy direct OpenAI Responses API (fallback if AI Core didn't produce answer)
     if (!answer) {
-      const rawHint = isDebug ? {
-        statusHistory,
-        keys: Object.keys(openaiRes),
-        responseStatus: openaiRes?.status,
-        outputLength: Array.isArray(openaiRes?.output) ? openaiRes.output.length : null,
-        outputTypes: Array.isArray(openaiRes?.output)
-          ? openaiRes.output.map((x: any) => x?.type ?? null)
-          : null,
-        hasOutputText: typeof openaiRes?.output_text === "string",
-        outputTextLen: typeof openaiRes?.output_text === "string" ? openaiRes.output_text.length : 0,
-        firstContentInfo: Array.isArray(openaiRes?.output) && openaiRes.output.length > 0
-          && Array.isArray(openaiRes.output[0]?.content)
-          ? openaiRes.output[0].content.map((x: any) => ({
-              type: x?.type ?? null,
-              hasText: typeof x?.text === "string",
-              textLen: typeof x?.text === "string" ? x.text.length : 0,
-            }))
-          : null,
-      } : undefined;
-      return c.json({
-        ok: false, stamp: STAMP, tenantId,
-        error: "empty_response",
-        detail: isDebug ? "No text extracted (debug)" : "No text extracted",
-        ...(rawHint !== undefined ? { rawHint } : {}),
-      });
+      const openaiPayload = {
+        model,
+        store: false,
+        max_output_tokens: 1600,
+        input: [
+          { role: "system", content: systemContent },
+          { role: "user", content: message },
+        ],
+      };
+
+      let openaiRes: any = null;
+      let openaiStatus = 0;
+      try {
+        const r = await fetch("https://api.openai.com/v1/responses", {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${apiKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(openaiPayload),
+        });
+        openaiStatus = r.status;
+        openaiRes = await r.json().catch(() => null);
+      } catch (fetchErr: any) {
+        return c.json({ ok: false, stamp: STAMP, tenantId, error: "upstream_error", detail: String(fetchErr?.message ?? fetchErr) });
+      }
+
+      if (!openaiRes || openaiStatus !== 200) {
+        const detail = openaiRes?.error?.message ?? openaiRes?.error ?? `HTTP ${openaiStatus}`;
+        return c.json({ ok: false, stamp: STAMP, tenantId, error: "upstream_error", detail: String(detail) });
+      }
+
+      // retrieve ポーリング（incomplete / in_progress / queued のとき最大 3 回待つ）
+      const statusHistory: string[] = [String(openaiRes?.status ?? "unknown")];
+      const RETRY_DELAYS_MS = [250, 400, 650] as const;
+      const responseId: string | undefined = openaiRes?.id;
+      const needsPoll = (s: string) => s === "incomplete" || s === "in_progress" || s === "queued";
+
+      if (responseId && needsPoll(openaiRes?.status)) {
+        for (let i = 0; i < RETRY_DELAYS_MS.length; i++) {
+          await sleep(RETRY_DELAYS_MS[i]);
+          try {
+            const rr = await fetch(`https://api.openai.com/v1/responses/${responseId}`, {
+              method: "GET",
+              headers: { "Authorization": `Bearer ${apiKey}` },
+            });
+            if (rr.ok) {
+              const retrieved: any = await rr.json().catch(() => null);
+              if (retrieved && typeof retrieved === "object") {
+                openaiRes = retrieved;
+                statusHistory.push(String(retrieved?.status ?? "unknown"));
+              }
+            }
+          } catch {
+            // retrieve 失敗は無視して最後の状態を使い続ける
+          }
+          if (!needsPoll(openaiRes?.status)) break;
+        }
+      }
+
+      if (openaiRes?.status === "incomplete") {
+        const rawHint = isDebug ? {
+          statusHistory,
+          outputTypes: Array.isArray(openaiRes?.output)
+            ? openaiRes.output.map((x: any) => x?.type ?? null)
+            : null,
+          incompleteDetails: openaiRes?.incomplete_details ?? null,
+        } : undefined;
+        return c.json({
+          ok: false, stamp: STAMP, tenantId,
+          error: "incomplete",
+          detail: "OpenAI response did not complete (token limit exceeded)",
+          ...(rawHint !== undefined ? { rawHint } : {}),
+        });
+      }
+
+      answer = extractResponseText(openaiRes);
+      if (!answer) {
+        const rawHint = isDebug ? {
+          statusHistory,
+          keys: Object.keys(openaiRes),
+          responseStatus: openaiRes?.status,
+          outputLength: Array.isArray(openaiRes?.output) ? openaiRes.output.length : null,
+          outputTypes: Array.isArray(openaiRes?.output)
+            ? openaiRes.output.map((x: any) => x?.type ?? null)
+            : null,
+          hasOutputText: typeof openaiRes?.output_text === "string",
+          outputTextLen: typeof openaiRes?.output_text === "string" ? openaiRes.output_text.length : 0,
+          firstContentInfo: Array.isArray(openaiRes?.output) && openaiRes.output.length > 0
+            && Array.isArray(openaiRes.output[0]?.content)
+            ? openaiRes.output[0].content.map((x: any) => ({
+                type: x?.type ?? null,
+                hasText: typeof x?.text === "string",
+                textLen: typeof x?.text === "string" ? x.text.length : 0,
+              }))
+            : null,
+        } : undefined;
+        return c.json({
+          ok: false, stamp: STAMP, tenantId,
+          error: "empty_response",
+          detail: isDebug ? "No text extracted (debug)" : "No text extracted",
+          ...(rawHint !== undefined ? { rawHint } : {}),
+        });
+      }
     }
 
     // 10. Intent分類 + suggestedActions + CTA挿入

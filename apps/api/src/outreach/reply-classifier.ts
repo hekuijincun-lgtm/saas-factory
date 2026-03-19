@@ -1,9 +1,11 @@
-// Outreach OS — Reply Classifier (Phase 4 + Phase 14)
+// Outreach OS — Reply Classifier (Phase 4 + Phase 14 + AI Core)
 // ============================================================
-// Classifies reply text using OpenAI. Falls back to keyword matching.
+// Classifies reply text using AI Core. Falls back to keyword matching.
 // Phase 14: Added classifyReplyIntent() with expanded intent categories.
+// AI Core: Migrated from direct OpenAI calls to AI Core unified interface.
 
 import type { ReplyClassification, ReplyIntent } from "./types";
+import type { AICore } from "../ai";
 
 interface ClassifyResult {
   classification: ReplyClassification;
@@ -12,19 +14,32 @@ interface ClassifyResult {
 }
 
 /**
- * Classify a reply using OpenAI (with keyword fallback).
+ * Classify a reply using AI Core (with keyword fallback).
+ * Accepts either an AICore instance or a legacy openaiApiKey for backward compat.
  */
 export async function classifyReply(
   replyText: string,
-  openaiApiKey?: string
+  openaiApiKeyOrAiCore?: string | AICore,
+  tenantId: string = "default",
 ): Promise<ClassifyResult> {
   if (!replyText.trim()) {
     return { classification: "other", confidence: 0, reason: "empty_reply" };
   }
 
-  if (openaiApiKey) {
+  // AI Core path
+  if (openaiApiKeyOrAiCore && typeof openaiApiKeyOrAiCore !== "string") {
     try {
-      return await classifyWithAI(replyText, openaiApiKey);
+      return await classifyWithAICore(replyText, openaiApiKeyOrAiCore, tenantId);
+    } catch (err) {
+      console.error("[reply-classifier] AI Core failed, using keyword fallback:", err);
+    }
+    return classifyWithKeywords(replyText);
+  }
+
+  // Legacy path (direct OpenAI key)
+  if (openaiApiKeyOrAiCore && typeof openaiApiKeyOrAiCore === "string") {
+    try {
+      return await classifyWithAICoreLegacy(replyText, openaiApiKeyOrAiCore);
     } catch (err) {
       console.error("[reply-classifier] AI failed, using keyword fallback:", err);
     }
@@ -33,11 +48,39 @@ export async function classifyReply(
   return classifyWithKeywords(replyText);
 }
 
-// ── AI classification ─────────────────────────────────────────────────────
+// ── AI Core classification ──────────────────────────────────────────────
 
-async function classifyWithAI(
+async function classifyWithAICore(
   replyText: string,
-  apiKey: string
+  aiCore: AICore,
+  tenantId: string,
+): Promise<ClassifyResult> {
+  const result = await aiCore.classify<ReplyClassification>({
+    capability: "classification",
+    tenantId,
+    app: "outreach",
+    feature: "reply_classifier",
+    task: "reply_classifier",
+    promptKey: "outreach.reply_classifier.v1",
+    variables: { replyText },
+    validLabels: ["interested", "not_interested", "later", "spam", "other"],
+    defaultLabel: "other",
+    temperature: 0.1,
+    maxOutputTokens: 200,
+  });
+
+  return {
+    classification: result.label,
+    confidence: result.confidence,
+    reason: result.reason,
+  };
+}
+
+// ── Legacy fallback (direct OpenAI — kept for backward compat) ──────────
+
+async function classifyWithAICoreLegacy(
+  replyText: string,
+  apiKey: string,
 ): Promise<ClassifyResult> {
   const res = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
@@ -125,19 +168,31 @@ export interface IntentClassifyResult {
 
 /**
  * Classify reply intent with expanded categories for auto-reply.
- * Uses OpenAI with keyword fallback.
+ * Uses AI Core with keyword fallback.
  */
 export async function classifyReplyIntent(
   replyText: string,
-  openaiApiKey?: string
+  openaiApiKeyOrAiCore?: string | AICore,
+  tenantId: string = "default",
 ): Promise<IntentClassifyResult> {
   if (!replyText.trim()) {
     return { intent: "unknown", sentiment: "neutral", confidence: 0, reason: "empty_reply" };
   }
 
-  if (openaiApiKey) {
+  // AI Core path
+  if (openaiApiKeyOrAiCore && typeof openaiApiKeyOrAiCore !== "string") {
     try {
-      return await classifyIntentWithAI(replyText, openaiApiKey);
+      return await classifyIntentWithAICore(replyText, openaiApiKeyOrAiCore, tenantId);
+    } catch (err) {
+      console.error("[reply-classifier] Intent AI Core failed, using keyword fallback:", err);
+    }
+    return classifyIntentWithKeywords(replyText);
+  }
+
+  // Legacy path
+  if (openaiApiKeyOrAiCore && typeof openaiApiKeyOrAiCore === "string") {
+    try {
+      return await classifyIntentWithAILegacy(replyText, openaiApiKeyOrAiCore);
     } catch (err) {
       console.error("[reply-classifier] Intent AI failed, using keyword fallback:", err);
     }
@@ -146,9 +201,62 @@ export async function classifyReplyIntent(
   return classifyIntentWithKeywords(replyText);
 }
 
-async function classifyIntentWithAI(
+// ── AI Core intent classification ───────────────────────────────────────
+
+async function classifyIntentWithAICore(
   replyText: string,
-  apiKey: string
+  aiCore: AICore,
+  tenantId: string,
+): Promise<IntentClassifyResult> {
+  const result = await aiCore.classify<string>({
+    capability: "classification",
+    tenantId,
+    app: "outreach",
+    feature: "reply_intent_classifier",
+    task: "reply_intent_classifier",
+    promptKey: "outreach.reply_intent_classifier.v1",
+    variables: { replyText },
+    validLabels: ["question", "interested", "not_interested", "later", "pricing", "demo", "unsubscribe", "unknown"],
+    defaultLabel: "unknown",
+    temperature: 0.1,
+    maxOutputTokens: 200,
+  });
+
+  // The classify response extracts the raw parsed JSON internally,
+  // but we also need sentiment. Re-parse from the AI Core's raw response
+  // is not available here, so we use a secondary extraction:
+  // The prompt asks for sentiment, and the classify method parses "intent" field.
+  // For sentiment, we rely on the reason field or default to neutral.
+  const validIntents: ReplyIntent[] = ["question", "interested", "not_interested", "later", "pricing", "demo", "unsubscribe", "unknown"];
+  const intent: ReplyIntent = validIntents.includes(result.label as ReplyIntent)
+    ? (result.label as ReplyIntent)
+    : "unknown";
+
+  // Infer sentiment from intent as a heuristic (AI Core classify doesn't expose raw JSON)
+  const sentimentMap: Record<string, "positive" | "neutral" | "negative"> = {
+    interested: "positive",
+    question: "neutral",
+    pricing: "positive",
+    demo: "positive",
+    not_interested: "negative",
+    unsubscribe: "negative",
+    later: "neutral",
+    unknown: "neutral",
+  };
+
+  return {
+    intent,
+    sentiment: sentimentMap[intent] ?? "neutral",
+    confidence: result.confidence,
+    reason: result.reason,
+  };
+}
+
+// ── Legacy intent AI ────────────────────────────────────────────────────
+
+async function classifyIntentWithAILegacy(
+  replyText: string,
+  apiKey: string,
 ): Promise<IntentClassifyResult> {
   const res = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",

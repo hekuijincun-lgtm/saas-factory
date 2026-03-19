@@ -17,6 +17,7 @@ import { generateReply } from "./reply-generator";
 import { generateCloseResponse, getCloseSettings } from "./close-generator";
 import type { CloseSettings } from "./close-generator";
 import { logAudit } from "../lineConfig";
+import type { AICore } from "../ai";
 
 /** Intents that should trigger close evaluation + enhanced response */
 const CLOSE_ELIGIBLE_INTENTS: ReplyIntent[] = ["interested", "pricing", "demo"];
@@ -30,6 +31,8 @@ export interface DispatchContext {
   emailFrom?: string;
   uid: () => string;
   now: () => string;
+  /** AI Core instance (preferred over direct openaiApiKey) */
+  aiCore?: AICore;
 }
 
 export interface DispatchResult {
@@ -87,8 +90,8 @@ export async function processReply(
   const { db, kv, tenantId, openaiApiKey, uid, now } = ctx;
   const ts = now();
 
-  // 1. Classify intent
-  const classification = await classifyReplyIntent(reply.reply_text, openaiApiKey);
+  // 1. Classify intent (prefer AI Core if available)
+  const classification = await classifyReplyIntent(reply.reply_text, ctx.aiCore ?? openaiApiKey, tenantId);
 
   // Update reply record with classification
   await db

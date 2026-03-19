@@ -143,12 +143,34 @@ export interface SubscriptionInfo {
   createdAt: number;
 }
 
+/** AI Provider 識別子 */
+export type AIProviderType = "openai" | "gemini";
+
+/** AI Core 統合設定（provider routing / fallback / feature toggles） */
+export interface AICoreConfig {
+  enabled: boolean;
+  defaultProvider: AIProviderType;
+  defaultModel: string;
+  fallbackProvider?: AIProviderType;
+  fallbackModel?: string;
+  temperature: number;
+  maxOutputTokens: number;
+  features: {
+    bookingReply: boolean;
+    salesGeneration: boolean;
+    replyClassifier: boolean;
+  };
+  routing: Record<string, { provider: AIProviderType; model: string }>;
+}
+
 /** AI接客コア設定 */
 export interface AISettings {
   enabled: boolean;
   voice: string;
   answerLength: string;
   character: string;
+  /** AI Core 統合設定（provider routing etc.） */
+  core?: AICoreConfig;
 }
 
 export interface AdminSettings {
