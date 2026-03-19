@@ -1,6 +1,8 @@
 import type { Metadata } from 'next';
 import Image from 'next/image';
 import Link from 'next/link';
+import { SiteFooter } from '../../_components/site/SiteFooter';
+import { LEGAL } from '../../../src/lib/legal';
 import {
   CheckCircle2,
   MessageCircle,
@@ -166,7 +168,8 @@ export default async function EyebrowLandingPage() {
         <div aria-hidden="true" className="h-24 sm:h-32 bg-gradient-to-b from-white via-[#e8e0f0] to-slate-950" />
         <FinalCtaSection />
       </main>
-      <LpFooter />
+      <ServiceInfoSection />
+      <SiteFooter />
     </div>
   );
 }
@@ -1386,66 +1389,55 @@ function FinalCtaSection() {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Footer
+// Service Info (Stripe compliance: service description, pricing, contact)
 // ──────────────────────────────────────────────────────────────────────────────
-function LpFooter() {
+function ServiceInfoSection() {
   return (
-    <footer
-      className="bg-slate-900 text-slate-400 py-10 px-5"
-      aria-label="フッター"
-    >
-      <div className="mx-auto max-w-5xl flex flex-col sm:flex-row items-center justify-between gap-4">
-        <div className="flex items-center gap-2">
-          <div className="w-6 h-6 bg-rose-500 rounded-md flex items-center justify-center">
-            <Scissors className="w-3.5 h-3.5 text-white" aria-hidden="true" />
+    <section className="bg-slate-950 text-slate-300 py-12 px-5">
+      <div className="mx-auto max-w-3xl space-y-6 text-sm leading-relaxed">
+        <h2 className="text-base font-semibold text-white">
+          {LEGAL.serviceName} について
+        </h2>
+        <p>
+          {LEGAL.serviceName}{' '}
+          はサロン・店舗向けのオンライン予約管理 SaaS です。オンライン予約受付、顧客管理、LINE
+          連携、スタッフ管理、AI 接客などの機能を提供し、店舗運営の効率化を支援します。
+        </p>
+        <dl className="grid sm:grid-cols-2 gap-x-8 gap-y-3 text-xs">
+          <div>
+            <dt className="font-semibold text-slate-400">対象</dt>
+            <dd>美容サロン・店舗オーナー</dd>
           </div>
-          <span className="text-sm font-bold text-white">LumiBook</span>
-        </div>
-
-        <nav
-          className="flex gap-5 text-xs"
-          aria-label="フッターナビゲーション"
-        >
+          <div>
+            <dt className="font-semibold text-slate-400">料金</dt>
+            <dd>Starter ¥3,980/月〜（税込）・詳細は<a href={PRICING_ANCHOR} className="text-rose-400 hover:text-rose-300 underline underline-offset-2">料金プラン</a>をご覧ください</dd>
+          </div>
+          <div>
+            <dt className="font-semibold text-slate-400">支払方法</dt>
+            <dd>{LEGAL.paymentMethodText}</dd>
+          </div>
+          <div>
+            <dt className="font-semibold text-slate-400">運営者</dt>
+            <dd>{LEGAL.businessName}</dd>
+          </div>
+        </dl>
+        <p className="text-xs text-slate-500">
+          お問い合わせ：
           <a
-            href="#features"
-            className="hover:text-white transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 rounded"
+            href={`mailto:${LEGAL.email}`}
+            className="text-rose-400 hover:text-rose-300 underline underline-offset-2"
           >
-            機能
+            {LEGAL.email}
           </a>
-          <a
-            href="#setup"
-            className="hover:text-white transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 rounded"
-          >
-            導入方法
-          </a>
-          <a
-            href={PRICING_ANCHOR}
-            className="hover:text-white transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 rounded"
-          >
-            料金
-          </a>
-          <a
-            href="#faq"
-            className="hover:text-white transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 rounded"
-          >
-            FAQ
-          </a>
-          <Link
-            href="/login"
-            className="hover:text-white transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 rounded"
-          >
-            ログイン
-          </Link>
+          {' ｜ '}
           <Link
             href="/legal/tokushoho"
-            className="hover:text-white transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 rounded"
+            className="text-rose-400 hover:text-rose-300 underline underline-offset-2"
           >
-            特定商取引法
+            特定商取引法に基づく表記
           </Link>
-        </nav>
-
-        <p className="text-xs">© 2026 LumiBook. All rights reserved.</p>
+        </p>
       </div>
-    </footer>
+    </section>
   );
 }

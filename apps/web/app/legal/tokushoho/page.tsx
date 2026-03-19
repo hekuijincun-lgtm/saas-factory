@@ -1,15 +1,15 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { Scissors, ArrowLeft } from 'lucide-react';
+import { ArrowLeft } from 'lucide-react';
+import { LEGAL } from '../../../src/lib/legal';
+import { SiteFooter } from '../../_components/site/SiteFooter';
 
 export const metadata: Metadata = {
-  title: '特定商取引法に基づく表記 | LumiBook',
-  description:
-    'LumiBook（ルミブック）の特定商取引法に基づく表記ページです。販売事業者、所在地、支払方法、返金ポリシー等を掲載しています。',
+  title: `特定商取引法に基づく表記 | ${LEGAL.serviceName}`,
+  description: `${LEGAL.serviceName} の特定商取引法に基づく表記ページです。販売事業者、所在地、支払方法、返金ポリシー等を掲載しています。`,
   openGraph: {
-    title: '特定商取引法に基づく表記 | LumiBook',
-    description:
-      'LumiBook の特定商取引法に基づく表記ページです。',
+    title: `特定商取引法に基づく表記 | ${LEGAL.serviceName}`,
+    description: `${LEGAL.serviceName} の特定商取引法に基づく表記ページです。`,
     type: 'website',
     locale: 'ja_JP',
   },
@@ -22,15 +22,15 @@ interface Entry {
 }
 
 const ENTRIES: Entry[] = [
-  { label: '販売事業者', content: '今村和葵' },
-  { label: '運営責任者', content: '今村和葵' },
+  { label: '販売事業者', content: LEGAL.businessName },
+  { label: '運営責任者', content: LEGAL.operatorName },
   {
     label: '所在地',
     content: (
       <>
-        〒330-0856
+        〒{LEGAL.postalCode}
         <br />
-        埼玉県さいたま市大宮区
+        {LEGAL.address}
       </>
     ),
   },
@@ -38,7 +38,7 @@ const ENTRIES: Entry[] = [
     label: '電話番号',
     content: (
       <>
-        <span className="font-medium text-gray-900">080-7353-0117</span>
+        <span className="font-medium text-gray-900">{LEGAL.phone}</span>
         <br />
         <span className="text-xs text-gray-500">
           ※お問い合わせはメールにてお願いいたします
@@ -50,31 +50,20 @@ const ENTRIES: Entry[] = [
     label: 'メールアドレス',
     content: (
       <a
-        href="mailto:hekuijincun@gmail.com"
+        href={`mailto:${LEGAL.email}`}
         className="font-medium text-rose-600 hover:text-rose-500 underline underline-offset-2 transition-colors"
       >
-        hekuijincun@gmail.com
+        {LEGAL.email}
       </a>
     ),
   },
-  { label: '販売価格', content: '各プランページに記載' },
-  {
-    label: '商品代金以外の必要料金',
-    content:
-      'インターネット接続に必要な通信料金等はお客様のご負担となります',
-  },
-  { label: '支払方法', content: 'クレジットカード（Stripe）' },
-  { label: '支払時期', content: 'お申し込み時に即時決済' },
-  { label: '商品の提供時期', content: '決済完了後、即時利用可能' },
-  {
-    label: 'キャンセル・返金について',
-    content:
-      'サービスの性質上、決済完了後の返金は原則として受け付けておりません',
-  },
-  {
-    label: '動作環境',
-    content: '最新のブラウザ環境にてご利用ください',
-  },
+  { label: '販売価格', content: LEGAL.salesPriceText },
+  { label: '商品代金以外の必要料金', content: LEGAL.extraFeesText },
+  { label: '支払方法', content: LEGAL.paymentMethodText },
+  { label: '支払時期', content: LEGAL.paymentTimingText },
+  { label: '商品の提供時期', content: LEGAL.deliveryTimingText },
+  { label: 'キャンセル・返金について', content: LEGAL.refundPolicyText },
+  { label: '動作環境', content: LEGAL.environmentText },
 ];
 
 export default function TokushohoPage() {
@@ -90,13 +79,6 @@ export default function TokushohoPage() {
             <ArrowLeft className="w-4 h-4" />
             トップへ戻る
           </Link>
-          <span className="text-slate-600">|</span>
-          <div className="flex items-center gap-1.5">
-            <div className="w-5 h-5 bg-rose-500 rounded flex items-center justify-center">
-              <Scissors className="w-3 h-3 text-white" />
-            </div>
-            <span className="text-sm font-bold">LumiBook</span>
-          </div>
         </div>
       </header>
 
@@ -125,18 +107,7 @@ export default function TokushohoPage() {
         </article>
       </main>
 
-      {/* ── Footer ── */}
-      <footer className="bg-slate-900 text-slate-400 py-8 px-5">
-        <div className="mx-auto max-w-3xl flex flex-col sm:flex-row items-center justify-between gap-4 text-xs">
-          <div className="flex items-center gap-2">
-            <div className="w-5 h-5 bg-rose-500 rounded flex items-center justify-center">
-              <Scissors className="w-3 h-3 text-white" />
-            </div>
-            <span className="font-bold text-white">LumiBook</span>
-          </div>
-          <p>&copy; {new Date().getFullYear()} LumiBook. All rights reserved.</p>
-        </div>
-      </footer>
+      <SiteFooter />
     </div>
   );
 }
