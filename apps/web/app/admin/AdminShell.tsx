@@ -22,7 +22,7 @@ import {
   FileText,
   Syringe,
 } from "lucide-react";
-import { adminNavItems } from "./nav.config";
+import { adminNavItems, filterNavItems } from "./nav.config";
 
 // ============================================================
 // 定数
@@ -45,6 +45,8 @@ const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   "/admin/pet":          PawPrint,
   "/admin/pet/profiles": FileText,
   "/admin/pet/vaccines": Syringe,
+  "/admin/pet/pricing":  ClipboardList,
+  "/admin/pet/ai-config": Bot,
   "/admin/support":      LifeBuoy,
   "/admin/settings":     Settings,
 };
@@ -59,13 +61,16 @@ function Sidebar({
   isOpen,
   onClose,
   tenantId,
+  vertical,
 }: {
   storeName: string;
   isOpen: boolean;
   onClose: () => void;
   tenantId: string;
+  vertical?: string;
 }) {
   const pathname = usePathname();
+  const filteredNavItems = filterNavItems([...adminNavItems], vertical);
 
   return (
     <>
@@ -115,7 +120,7 @@ function Sidebar({
 
         {/* ナビゲーション */}
         <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
-          {adminNavItems.map(({ href, label }) => {
+          {filteredNavItems.map(({ href, label }) => {
             const Icon = ICON_MAP[href] ?? Settings;
             // ダッシュボード(/admin)は完全一致のみ active（pathname はクエリを含まない）
             const isActive =
@@ -170,6 +175,7 @@ export default function AdminShell({
 }) {
   const [mounted, setMounted] = useState(false);
   const [storeName, setStoreName] = useState(FALLBACK_STORE_NAME);
+  const [vertical, setVertical] = useState<string | undefined>(undefined);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const router = useRouter();
   const pathname = usePathname();
@@ -205,6 +211,10 @@ export default function AdminShell({
         const sn = data?.data?.storeName || data?.storeName;
         if (sn) {
           setStoreName(sn);
+        }
+        const v = data?.data?.vertical || data?.vertical;
+        if (v) {
+          setVertical(v);
         }
 
         // onboardingCompleted===false (signup ユーザーのみ) → /admin/onboarding へ redirect
@@ -299,6 +309,7 @@ export default function AdminShell({
         isOpen={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
         tenantId={sessionTenantId}
+        vertical={vertical}
       />
 
       {/* メインコンテンツ */}
