@@ -38,6 +38,7 @@ export default function PetDashboardPage() {
   const [reservations, setReservations] = useState<Reservation[]>([]);
   const [isDemo, setIsDemo] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [expiringVaccineCount, setExpiringVaccineCount] = useState(0);
 
   useEffect(() => {
     if (status !== 'ready') return;
@@ -62,6 +63,15 @@ export default function PetDashboardPage() {
         setIsDemo(true);
       })
       .finally(() => setLoading(false));
+
+    // Fetch expiring vaccines count
+    fetch(`/api/proxy/admin/pets/expiring-vaccines?tenantId=${encodeURIComponent(tenantId)}&days=30`, { cache: 'no-store' })
+      .then(r => r.ok ? r.json() : null)
+      .then((json: any) => {
+        const list = json?.data ?? json?.vaccines ?? [];
+        setExpiringVaccineCount(Array.isArray(list) ? list.length : 0);
+      })
+      .catch(() => {});
   }, [tenantId, status]);
 
   const today = todayStr();
@@ -84,6 +94,8 @@ export default function PetDashboardPage() {
     .slice(0, 5);
 
   const subPages = [
+    { href: '/admin/pet/profiles', label: 'ペットカルテ', desc: '登録ペットのプロフィール・施術履歴を管理' },
+    { href: '/admin/pet/vaccines', label: 'ワクチン管理', desc: 'ワクチン期限アラート・接種記録を管理' },
     { href: '/admin/pet/inquiries', label: '履歴', desc: '問い合わせ・見積もり履歴を確認' },
     { href: '/admin/pet/pricing', label: '料金設定', desc: 'コース・オプション料金を管理' },
     { href: '/admin/pet/ai-config', label: 'AI設定', desc: 'AI自動応答の設定を管理' },
@@ -166,6 +178,26 @@ export default function PetDashboardPage() {
             </table>
           </div>
         </div>
+
+        {/* Vaccine Alert */}
+        {expiringVaccineCount > 0 && (
+          <Link
+            href={withTenant('/admin/pet/vaccines', tenantId)}
+            className="block rounded-2xl border border-red-200 bg-red-50 p-5 shadow-sm hover:border-red-300 hover:shadow-md transition-all"
+          >
+            <div className="flex items-center gap-3">
+              <span className="inline-flex items-center justify-center w-10 h-10 rounded-full bg-red-100">
+                <svg className="w-5 h-5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                </svg>
+              </span>
+              <div>
+                <p className="text-sm font-semibold text-red-700">ワクチン期限アラート</p>
+                <p className="text-xs text-red-600 mt-0.5">30日以内に期限を迎えるワクチンが <span className="font-bold">{expiringVaccineCount}件</span> あります</p>
+              </div>
+            </div>
+          </Link>
+        )}
 
         {/* Sub-page links */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">

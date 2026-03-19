@@ -19,6 +19,8 @@ import {
   CreditCard,
   LifeBuoy,
   PawPrint,
+  FileText,
+  Syringe,
 } from "lucide-react";
 import { adminNavItems } from "./nav.config";
 
@@ -41,6 +43,8 @@ const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   // "/admin/admins":       Shield,
   // "/admin/security":     KeyRound,
   "/admin/pet":          PawPrint,
+  "/admin/pet/profiles": FileText,
+  "/admin/pet/vaccines": Syringe,
   "/admin/support":      LifeBuoy,
   "/admin/settings":     Settings,
 };

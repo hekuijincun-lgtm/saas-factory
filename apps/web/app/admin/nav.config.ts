@@ -14,6 +14,8 @@ export const adminNavItems = [
   // { label: "管理者管理",     href: "/admin/admins" },
   // { label: "セキュリティ",   href: "/admin/security" },
   { label: "ペットサロン",   href: "/admin/pet" },
+  { label: "ペットカルテ",   href: "/admin/pet/profiles" },
+  { label: "ワクチン管理",   href: "/admin/pet/vaccines" },
   { label: "サポート",       href: "/admin/support" },
   { label: "管理者設定",     href: "/admin/settings" },
 ] as const;
