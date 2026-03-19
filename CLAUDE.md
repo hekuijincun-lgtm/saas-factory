@@ -34,3 +34,11 @@ powershell.exe -Command "cd C:\dev\saas-factory; git push"
 
 ## カスタムコマンド
 - `/generate-vertical` — 新しいヴァーティカルSaaSを市場調査→実装→デプロイまで自動実行
+
+## 自動量産パイプライン
+- **GitHub Actions**: `.github/workflows/weekly-vertical.yml`
+- **スケジュール**: 毎週月曜 10:00 JST 自動実行
+- **手動実行**: GitHub Actions → "Run workflow" ボタン
+- **必要なSecret**: `ANTHROPIC_API_KEY` (GitHub Settings → Secrets)
+- **フロー**: Claude CLI → generate-vertical.md → 実装 → ビルド検証 → Workers deploy → commit+push → Pages deploy(既存workflow)
+- **レポート**: 実行結果はArtifactとして30日保存
