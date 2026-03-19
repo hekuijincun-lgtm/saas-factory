@@ -187,8 +187,7 @@ export default function AdminShell({
 
   useEffect(() => {
     if (tenantStatus !== "ready") return;
-    // tenant 未解決時は API fetch しない（fail-closed: default テナントのデータを取らない）
-    if (!authenticated || sessionTenantId === "default") return;
+    if (!authenticated) return;
 
     // ── URL canonicalization ──────────────────────────────────────────
     // セッション tenantId を正として URL を正規化する。
@@ -261,7 +260,9 @@ export default function AdminShell({
   // Auth guard: session expired, invalid, or tenant unresolved → block UI
   // Skip for pages that handle their own auth (line-setup is already excluded above)
   const needsLogin = !authenticated;
-  const tenantUnresolved = authenticated && sessionTenantId === "default";
+  // Allow "default" tenant when explicitly specified in URL (for testing/demo)
+  const urlHasDefaultTenant = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("tenantId") === "default";
+  const tenantUnresolved = authenticated && sessionTenantId === "default" && !urlHasDefaultTenant;
   if (needsLogin || tenantUnresolved) {
     const loginParams = new URLSearchParams();
     const returnTo = typeof window !== "undefined"
