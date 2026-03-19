@@ -93,9 +93,14 @@ export async function middleware(req: NextRequest) {
     !pathname.startsWith("/admin/unauthorized") &&
     !pathname.startsWith("/admin/line-setup")
   ) {
+    // Allow unauthenticated access for default tenant (demo/testing)
+    const urlTenantId = req.nextUrl.searchParams.get("tenantId");
+    const isDefaultTenant = urlTenantId === "default";
+
     const secret = (process.env.LINE_SESSION_SECRET ?? "").trim();
     // No secret configured → skip auth (local development without session signing)
-    if (secret) {
+    // Default tenant → skip auth (demo access)
+    if (secret && !isDefaultTenant) {
       const cookie = req.headers.get("cookie") ?? "";
       const sessionMatch = cookie.match(/(?:^|;\s*)line_session=([^;]+)/);
       const sessionToken = sessionMatch ? sessionMatch[1] : null;
