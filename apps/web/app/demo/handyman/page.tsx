@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import Link from 'next/link';
 import { HandymanDemo } from './HandymanDemo';
 
 export const metadata: Metadata = {
@@ -16,9 +17,9 @@ export default function HandymanDemoPage() {
             <span className="font-bold text-gray-900 text-sm">ベンリプロAI</span>
             <span className="text-xs text-gray-400 ml-1">デモ</span>
           </div>
-          <a href="/lp/handyman" className="text-sm text-amber-600 hover:text-amber-700 font-medium">
+          <Link href="/lp/handyman" className="text-sm text-amber-600 hover:text-amber-700 font-medium">
             詳しく見る →
-          </a>
+          </Link>
         </div>
       </header>
       <main className="max-w-4xl mx-auto px-4 py-8">

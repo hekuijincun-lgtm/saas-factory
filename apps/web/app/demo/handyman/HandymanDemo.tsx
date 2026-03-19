@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useCallback } from 'react';
+import Link from 'next/link';
 
 // ── Price Matrix (mirrors backend) ──────────────────────────────────────
 
@@ -350,12 +351,12 @@ export function HandymanDemo() {
 
             {/* CTAs */}
             <div className="space-y-2 pt-2">
-              <a
+              <Link
                 href="/signup?vertical=handyman"
                 className="block w-full py-3 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-xl text-center transition-colors"
               >
                 無料で始める
-              </a>
+              </Link>
               <button
                 onClick={handleReset}
                 className="block w-full py-3 bg-gray-50 hover:bg-gray-100 text-gray-600 font-medium rounded-xl text-center transition-colors text-sm"
