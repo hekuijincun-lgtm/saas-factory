@@ -9,6 +9,7 @@ import { registerOwnerRoutes, getOwnerIds, bootstrapOwnerIfEmpty, isPrincipalAll
 import { registerOwnerLeadRoutes } from "./routes/ownerLeads";
 import { createOutreachRoutes } from "./outreach/routes";
 import { AICore } from "./ai";
+import { runAllDueAgents, readRecentAgentLogs, readAgentLogs, listAgents, triggerLineMessage } from "./agents";
 
 // test helper (lock reproduction)
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
@@ -7403,6 +7404,52 @@ app.get("/admin/ai/usage", async (c) => {
   }
 });
 
+// ── Agent Core Admin Endpoints ────────────────────────────────────────────
+
+// GET /admin/agents — list registered agent types
+app.get("/admin/agents", async (c) => {
+  return c.json({ ok: true, agents: listAgents() });
+});
+
+// GET /admin/agents/logs — recent agent execution logs
+app.get("/admin/agents/logs", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
+  const tenantId = getTenantId(c, null);
+  const limit = Math.min(parseInt(c.req.query("limit") ?? "50", 10) || 50, 200);
+  const agentId = c.req.query("agentId");
+  const kv = (c.env as any)?.SAAS_FACTORY;
+  if (!kv) return c.json({ ok: true, tenantId, logs: [] });
+  try {
+    const logs = agentId
+      ? await readAgentLogs(kv, tenantId, agentId, limit)
+      : await readRecentAgentLogs(kv, tenantId, limit);
+    return c.json({ ok: true, tenantId, logs });
+  } catch (err: any) {
+    return c.json({ ok: false, tenantId, error: err?.message ?? "agent_log_error" }, 500);
+  }
+});
+
+// POST /admin/agents/trigger — manually trigger an agent (for testing)
+app.post("/admin/agents/trigger", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
+  const tenantId = getTenantId(c, null);
+  try {
+    const body: any = await c.req.json().catch(() => ({}));
+    const { agentType, triggerType, payload } = body;
+    if (!agentType || !triggerType) {
+      return c.json({ ok: false, error: "agentType and triggerType required" }, 400);
+    }
+    const { runAgent } = await import("./agents/core");
+    const result = await runAgent(
+      { tenantId, agentType, triggerType, triggerPayload: payload ?? {} },
+      c.env as any,
+    );
+    return c.json({ ok: true, tenantId, result: { status: result?.state?.status, agentId: result?.state?.agentId, steps: result?.steps?.length ?? 0 } });
+  } catch (err: any) {
+    return c.json({ ok: false, tenantId, error: err?.message ?? "trigger_error" }, 500);
+  }
+});
+
 app.get("/ai/enabled", async (c) => {
   const tenantId = getTenantId(c, null);
   const kv = (c.env as any)?.SAAS_FACTORY;
@@ -8938,6 +8985,17 @@ async function scheduled(_event: any, env: Env, _ctx: any): Promise<void> {
     } catch (remErr: any) {
       console.error(`[${REM_STAMP}] error:`, String(remErr?.message ?? remErr));
     }
+  }
+
+  // ── Agent Core Scheduler ─────────────────────────────────────────────────
+  // Process all due scheduled agents across tenants
+  try {
+    const agentResult = await runAllDueAgents(env as any);
+    if (agentResult.totalProcessed > 0) {
+      console.log(`[AGENT_SCHEDULER] tenants=${agentResult.tenants} processed=${agentResult.totalProcessed}`);
+    }
+  } catch (agentErr: any) {
+    console.error("[AGENT_SCHEDULER] error:", String(agentErr?.message ?? agentErr));
   }
 }
 

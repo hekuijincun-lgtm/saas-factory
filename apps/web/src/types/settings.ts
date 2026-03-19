@@ -202,6 +202,16 @@ export interface AdminSettings {
   lineRouting?: LineRouting;
   /** AI接客コア設定（settings:{tenantId}.ai に統合） */
   ai?: AISettings;
+  /** Agent Core 設定 */
+  agents?: AgentCoreSettings;
+}
+
+/** Agent Core 設定（settings:{tenantId}.agents） */
+export interface AgentCoreSettings {
+  lineConciergeEnabled?: boolean;
+  outreachFollowupEnabled?: boolean;
+  autoSendFollowup?: boolean;
+  defaultFollowupDelayHours?: number;
 }
 
 /**

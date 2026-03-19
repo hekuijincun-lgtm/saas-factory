@@ -206,6 +206,16 @@ export interface AdminSettings {
   lineRouting?: LineRouting;
   /** AI接客コア設定（settings:{tenantId}.ai に統合） */
   ai?: AISettings;
+  /** Agent Core 設定 */
+  agents?: AgentCoreSettings;
+}
+
+/** Agent Core 設定（settings:{tenantId}.agents） */
+export interface AgentCoreSettings {
+  lineConciergeEnabled?: boolean;
+  outreachFollowupEnabled?: boolean;
+  autoSendFollowup?: boolean;
+  defaultFollowupDelayHours?: number;
 }
 
 /**
@@ -531,6 +541,14 @@ export function mergeSettings(defaults: AdminSettings, partial: Partial<AdminSet
           surveyEnabled: partial.verticalConfig?.surveyEnabled ?? defaults.verticalConfig?.surveyEnabled,
           surveyQuestions: partial.verticalConfig?.surveyQuestions ?? defaults.verticalConfig?.surveyQuestions,
           bedCount: partial.verticalConfig?.bedCount ?? defaults.verticalConfig?.bedCount,
+        }
+      : undefined,
+    agents: (partial.agents || defaults.agents)
+      ? {
+          lineConciergeEnabled: partial.agents?.lineConciergeEnabled ?? defaults.agents?.lineConciergeEnabled,
+          outreachFollowupEnabled: partial.agents?.outreachFollowupEnabled ?? defaults.agents?.outreachFollowupEnabled,
+          autoSendFollowup: partial.agents?.autoSendFollowup ?? defaults.agents?.autoSendFollowup,
+          defaultFollowupDelayHours: partial.agents?.defaultFollowupDelayHours ?? defaults.agents?.defaultFollowupDelayHours,
         }
       : undefined,
   };
