@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import Link from "next/link";
 import { CheckCircle2 } from "lucide-react";
 
 interface PlanVerification {
@@ -49,6 +50,8 @@ export default function SignupPage() {
   const [stripeSessionId, setStripeSessionId] = useState<string | null>(null);
   // Plan from URL ?plan= (fallback signup without Stripe)
   const [urlPlanId, setUrlPlanId] = useState<string | null>(null);
+  // Free trial mode from ?trial=1
+  const [isTrial, setIsTrial] = useState(false);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -58,6 +61,11 @@ export default function SignupPage() {
     const rawPlan = params.get("plan");
     if (rawPlan && VALID_PLANS.has(rawPlan)) {
       setUrlPlanId(rawPlan);
+    }
+
+    // Read ?trial=1 for free trial mode
+    if (params.get("trial") === "1") {
+      setIsTrial(true);
     }
 
     const sid = params.get("session_id");
@@ -110,6 +118,7 @@ export default function SignupPage() {
         ...(vertical !== "generic" ? { vertical } : {}),
         ...(stripeSessionId ? { stripeSessionId } : {}),
         ...(urlPlanId && !stripeSessionId ? { planId: urlPlanId } : {}),
+        ...(isTrial ? { trial: true } : {}),
         ...(isDebug ? { debug: "1" } : {}),
       }),
     }).catch(() => null);
@@ -220,9 +229,19 @@ export default function SignupPage() {
               {plan.error}
             </div>
           )}
-          {plan.status === "idle" && urlPlanId && (
+          {plan.status === "idle" && urlPlanId && !isTrial && (
             <div className="mb-5 rounded-xl bg-indigo-50 border border-indigo-200 px-4 py-3 text-sm text-indigo-700 text-center">
               <strong>{PLAN_LABELS[urlPlanId] ?? urlPlanId}</strong> プランで登録
+            </div>
+          )}
+          {isTrial && plan.status === "idle" && !stripeSessionId && (
+            <div className="mb-5 rounded-xl bg-emerald-50 border border-emerald-200 px-4 py-4 text-center">
+              <span className="inline-block bg-emerald-600 text-white text-xs font-bold px-3 py-1 rounded-full mb-2">
+                14日間無料トライアル
+              </span>
+              <p className="text-sm text-emerald-700">
+                クレジットカード不要・14日間すべての機能をお試しいただけます
+              </p>
             </div>
           )}
 
@@ -298,9 +317,9 @@ export default function SignupPage() {
 
             <p className="text-center text-xs text-slate-400 pt-2">
               すでにアカウントをお持ちの場合は{" "}
-              <a href="/login" className="text-indigo-500 hover:underline">
+              <Link href="/login" className="text-indigo-500 hover:underline">
                 ログイン
-              </a>
+              </Link>
             </p>
           </form>
         </div>

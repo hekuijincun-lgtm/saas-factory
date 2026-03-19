@@ -3,6 +3,8 @@ import { cors } from "hono/cors";
 import Stripe from "stripe";
 import { resolveVertical, DEFAULT_ADMIN_SETTINGS, mergeSettings, GENERIC_REPEAT_TEMPLATE } from "./settings";
 import type { PlanId, SubscriptionInfo } from "./settings";
+import { getPlanLimits, isTrialExpired, TRIAL_DURATION_DAYS } from "./plan-limits";
+import { getVerticalTemplate } from "./vertical-templates";
 import { getRepeatConfig, getStyleLabel, buildRepeatMessage, DEFAULT_REPEAT_TEMPLATE } from "./verticals/eyebrow";
 import { getVerticalPlugin } from "./verticals/registry";
 import { registerOwnerRoutes, getOwnerIds, bootstrapOwnerIfEmpty, isPrincipalAllowed, normalizePrincipal } from "./routes/owner";
@@ -1516,6 +1518,19 @@ app.post("/admin/menu", async (c) => {
     const seed = defaultMenu();
     const menu: any[] = value ? JSON.parse(value) : seed;
 
+    // Plan limit check: maxMenus
+    const settingsForLimit = await kv.get(`settings:${tenantId}`);
+    if (settingsForLimit) {
+      const sl = JSON.parse(settingsForLimit);
+      const sub = sl.subscription;
+      if (sub) {
+        const limits = getPlanLimits(sub.planId, isTrialExpired(sub.trialEndsAt) ? 'cancelled' : sub.status);
+        if (menu.length >= limits.maxMenus) {
+          return c.json({ ok: false, error: 'plan_limit_reached', limit: 'maxMenus', max: limits.maxMenus, current: menu.length }, 403);
+        }
+      }
+    }
+
     // Phase 6: verticalAttributes のみ write（eyebrow legacy write 停止）
     const verticalAttributes = body?.verticalAttributes && typeof body.verticalAttributes === 'object' ? body.verticalAttributes : undefined;
 
@@ -1716,6 +1731,19 @@ app.post("/admin/staff", async (c) => {
 
   const raw = await c.env.SAAS_FACTORY.get(key)
   const list = raw ? JSON.parse(raw) : []
+
+  // Plan limit check: maxStaff
+  const settingsForLimit = await c.env.SAAS_FACTORY.get(`settings:${tenantId}`);
+  if (settingsForLimit) {
+    const sl = JSON.parse(settingsForLimit);
+    const sub = sl.subscription;
+    if (sub) {
+      const limits = getPlanLimits(sub.planId, isTrialExpired(sub.trialEndsAt) ? 'cancelled' : sub.status);
+      if (list.length >= limits.maxStaff) {
+        return c.json({ ok: false, error: 'plan_limit_reached', limit: 'maxStaff', max: limits.maxStaff, current: list.length }, 403);
+      }
+    }
+  }
 
   const id = body?.id || `staff_${Date.now()}_${Math.random().toString(16).slice(2)}`
   const item: any = { ...body, id, nominationFee: normalizeNominationFee(body?.nominationFee) };
@@ -4478,6 +4506,44 @@ app.post('/admin/billing/portal-session', async (c) => {
   }
 });
 
+// ── Enterprise inquiry ──────────────────────────────────────────────────────
+app.post('/billing/enterprise-inquiry', async (c) => {
+  const env = c.env as any;
+  const kv: KVNamespace = env.SAAS_FACTORY;
+
+  let body: any = {};
+  try { body = await c.req.json(); } catch {}
+
+  const { company, name, email, phone, storeCount, vertical, message } = body;
+  if (!company || !name || !email || !storeCount || !vertical || !message) {
+    return c.json({ ok: false, error: 'missing_required_fields' }, 400);
+  }
+
+  // Store inquiry in KV with timestamp for later retrieval
+  const inquiryId = `ent_${Date.now()}_${crypto.randomUUID().slice(0, 6)}`;
+  const inquiry = {
+    id: inquiryId,
+    company, name, email, phone: phone || null,
+    storeCount, vertical, message,
+    createdAt: new Date().toISOString(),
+    status: 'new',
+  };
+
+  // Append to inquiry list
+  const listKey = 'billing:enterprise:inquiries';
+  const existing = await kv.get(listKey);
+  const list = existing ? JSON.parse(existing) : [];
+  list.unshift(inquiry);
+  await kv.put(listKey, JSON.stringify(list.slice(0, 200))); // keep last 200
+
+  // Also store individually for lookup
+  await kv.put(`billing:enterprise:${inquiryId}`, JSON.stringify(inquiry), { expirationTtl: 7776000 }); // 90 days
+
+  // TODO: Send notification email via Resend when configured
+
+  return c.json({ ok: true, inquiryId });
+});
+
 // ── Support ticket submission ───────────────────────────────────────────────
 app.post('/admin/support', async (c) => {
   const env = c.env as any;
@@ -4899,15 +4965,19 @@ app.post('/auth/email/start', async (c) => {
       ? body.planId : undefined;
 
     // Phase 1a: persist vertical selection from signup form
-    const VALID_VERTICALS = new Set(['eyebrow', 'nail', 'dental', 'hair', 'esthetic', 'generic']);
+    const VALID_VERTICALS = new Set(['eyebrow', 'nail', 'dental', 'hair', 'esthetic', 'cleaning', 'handyman', 'generic']);
     const signupVertical: string | undefined = (typeof body.vertical === 'string' && VALID_VERTICALS.has(body.vertical))
       ? body.vertical : undefined;
+
+    // Trial flag: body.trial = true → 14-day free Pro trial (no Stripe required)
+    const isTrial = (body.trial === true || body.trial === '1' || body.trial === 'true') && !stripeInfo;
 
     await kv.put(`signup:init:${tenantId}`, JSON.stringify({
       storeName, ownerEmail: rawEmail,
       ...(stripeInfo ? { stripe: stripeInfo } : {}),
       ...(fallbackPlanId ? { planId: fallbackPlanId } : {}),
       ...(signupVertical ? { vertical: signupVertical } : {}),
+      ...(isTrial ? { trial: true } : {}),
     }), { expirationTtl: 900 }); // 15 min
   } else {
     tenantId = String(body.tenantId ?? 'default');
@@ -5070,7 +5140,7 @@ app.post('/auth/email/verify', async (c) => {
   // --- Signup provisioning (signup:init written by /start when signup=1) ---
   const signupInitRaw = await kv.get(`signup:init:${tenantId}`);
   if (signupInitRaw) {
-    const si: { storeName?: string; planId?: string; stripe?: { sessionId?: string; planId: string; customerId: string; subscriptionId: string } } = JSON.parse(signupInitRaw);
+    const si: { storeName?: string; planId?: string; trial?: boolean; vertical?: string; stripe?: { sessionId?: string; planId: string; customerId: string; subscriptionId: string } } = JSON.parse(signupInitRaw);
     const storedName = si.storeName || email;
     const ownerStore: AdminMembersStore = {
       version: 1,
@@ -5107,7 +5177,7 @@ app.post('/auth/email/verify', async (c) => {
         await kv.put(`admin:members:${tenantId}`, JSON.stringify(existing));
       }
     }
-    // Determine subscription seed: Stripe-verified takes priority, then fallback planId
+    // Determine subscription seed: Stripe > trial > fallback planId
     const resolvedPlanId: PlanId | undefined = si.stripe
       ? (si.stripe.planId as PlanId)
       : (si.planId as PlanId | undefined);
@@ -5120,13 +5190,20 @@ app.post('/auth/email/verify', async (c) => {
           status: 'active' as const,
           createdAt: Date.now(),
         }
-      : resolvedPlanId
+      : si.trial
         ? {
-            planId: resolvedPlanId,
-            status: 'active' as const,
+            planId: 'pro' as PlanId,
+            status: 'trialing' as const,
+            trialEndsAt: Date.now() + TRIAL_DURATION_DAYS * 86400000,
             createdAt: Date.now(),
           }
-        : undefined;
+        : resolvedPlanId
+          ? {
+              planId: resolvedPlanId,
+              status: 'active' as const,
+              createdAt: Date.now(),
+            }
+          : undefined;
     // Phase 1a: seed vertical from signup selection
     const seedVertical = si.vertical ?? undefined;
     const seedSettings = mergeSettings(DEFAULT_ADMIN_SETTINGS, {
@@ -5146,6 +5223,50 @@ app.post('/auth/email/verify', async (c) => {
     if (!existingAdminSettings) {
       await kv.put('admin:settings:' + tenantId, JSON.stringify({ storeName: storedName }));
     }
+    // --- Vertical template auto-population ---
+    if (si.vertical && si.vertical !== 'generic') {
+      const tpl = getVerticalTemplate(si.vertical);
+      if (tpl) {
+        // Seed menus
+        const menuItems = tpl.menus.map((m, i) => ({
+          id: `menu_tpl_${Date.now()}_${i}`,
+          name: m.name,
+          price: m.price,
+          durationMin: m.duration,
+          description: m.description || '',
+          category: m.category || '',
+          active: true,
+          sortOrder: i,
+        }));
+        await kv.put(`admin:menu:list:${tenantId}`, JSON.stringify(menuItems));
+
+        // Seed staff
+        const staffItems = tpl.staff.map((s, i) => ({
+          id: `staff_tpl_${Date.now()}_${i}`,
+          name: s.name,
+          role: s.role || '',
+          active: true,
+        }));
+        await kv.put(`admin:staff:list:${tenantId}`, JSON.stringify(staffItems));
+
+        // Seed AI FAQ
+        if (tpl.faq.length > 0) {
+          const faqItems = tpl.faq.map((f, i) => ({
+            id: `faq_tpl_${i}`,
+            question: f.question,
+            answer: f.answer,
+          }));
+          await kv.put(`ai:faq:${tenantId}`, JSON.stringify(faqItems));
+        }
+
+        // Seed AI character
+        if (tpl.aiCharacter) {
+          const aiSettings = { enabled: false, voice: 'friendly', answerLength: 'normal', character: tpl.aiCharacter };
+          await kv.put(`ai:settings:${tenantId}`, JSON.stringify(aiSettings));
+        }
+      }
+    }
+
     await kv.delete(`signup:init:${tenantId}`);
     await kv.put(`member:tenant:${identityKey}`, tenantId, { expirationTtl: 7776000 });
     return c.json({ ok: true, identityKey, email, displayName, allowed: true,

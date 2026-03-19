@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { saveAdminSettings } from "../../lib/adminApi";
 import { useAdminTenantId } from "@/src/lib/useAdminTenantId";
 import { clearAdminSettingsCache } from "../_lib/useAdminSettings";
@@ -515,7 +515,13 @@ export default function LineSetupPage() {
       setInitialCreds(payload);
       // Refresh mapping status after save
       await fetchMappingStatus();
-      router.push(`/admin/menu?tenantId=${tenantId}&onboarding=1`);
+      // Redirect to returnTo (onboarding) or default to menu
+      const params = new URLSearchParams(window.location.search);
+      const returnTo = params.get('returnTo');
+      const redirectUrl = returnTo && returnTo.startsWith('/') && !returnTo.startsWith('//')
+        ? (returnTo.includes('tenantId=') ? returnTo : `${returnTo}${returnTo.includes('?') ? '&' : '?'}tenantId=${tenantId}`)
+        : `/admin/menu?tenantId=${tenantId}&onboarding=1`;
+      router.push(redirectUrl);
     } catch (e: any) {
       setMessage(`保存に失敗: ${e?.message ?? String(e)}`);
     } finally {

@@ -101,7 +101,7 @@ const PLANS: {
     highlighted: false,
     badge: null,
     cta: 'お問い合わせ',
-    href: DEMO_HREF,
+    href: '/contact/enterprise?vertical=eyebrow',
   },
 ];
 

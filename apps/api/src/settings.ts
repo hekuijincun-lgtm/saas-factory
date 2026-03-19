@@ -145,6 +145,7 @@ export interface SubscriptionInfo {
   status: 'active' | 'past_due' | 'cancelled' | 'trialing';
   currentPeriodEnd?: number;
   createdAt: number;
+  trialEndsAt?: number;
 }
 
 /** AI Provider 識別子 */

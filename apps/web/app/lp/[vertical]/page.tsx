@@ -1,28 +1,30 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { TrackingCTA } from '../_components/TrackingCTA';
-import {
-  ArrowRight, Scissors, CalendarDays, Bell, Shield, BarChart3,
-  MessageCircle, Users, ClipboardList, Zap, Star, CheckCircle2,
-  ChevronDown, Clock, SmartphoneNfc, Sparkles, HeartPulse,
-} from 'lucide-react';
+import { DESIGNS } from '../_designs';
+import type { DesignKey } from '../_designs';
+import { getTheme, SIGNUP_HREF, type VerticalLPConfig } from '../_designs/shared';
 
-// ── Vertical LP data ─────────────────────────────────────────────────
-const SIGNUP_HREF = '/signup';
+// ── Vertical → Design mapping ───────────────────────────────────────
+// Each vertical picks the design template that best fits its audience.
+const VERTICAL_DESIGN: Record<string, DesignKey> = {
+  nail:      'testimonial',     // 口コミ重視 — ネイルは写真・レビューで選ばれる
+  hair:      'split-hero',      // モダン2カラム — スタイリッシュなサロンイメージ
+  dental:    'comparison',      // 比較表 — 既存予約方法との違いを明確に
+  esthetic:  'minimal',         // ミニマル高級感 — エステの洗練された世界観
+  cleaning:  'gradient-wave',   // ポップで親しみやすい — 家庭向けサービス
+  handyman:  'card-showcase',   // Bentoグリッド — 多彩なサービスカテゴリを見せる
+};
 
-interface VerticalLPConfig {
-  label: string;
-  badge: string;
-  headline: string;
-  subheadline: string;
-  problems: { icon: string; title: string; desc: string }[];
-  features: { icon: string; title: string; desc: string }[];
-  flow: { step: string; title: string; desc: string }[];
-  faqs: { q: string; a: string }[];
-  metaTitle: string;
-  metaDesc: string;
+function getDesignKey(vertical: string): DesignKey {
+  if (VERTICAL_DESIGN[vertical]) return VERTICAL_DESIGN[vertical];
+  // Auto-assign by hash for unknown verticals
+  const keys = Object.keys(DESIGNS) as DesignKey[];
+  let hash = 0;
+  for (let i = 0; i < vertical.length; i++) hash = ((hash << 5) - hash + vertical.charCodeAt(i)) | 0;
+  return keys[Math.abs(hash) % keys.length];
 }
 
+// ── Vertical LP content data ────────────────────────────────────────
 const LP: Record<string, VerticalLPConfig> = {
   nail: {
     label: 'ネイルサロン',
@@ -230,34 +232,7 @@ const LP: Record<string, VerticalLPConfig> = {
   },
 };
 
-const PLANS = [
-  {
-    name: 'Starter', price: '¥3,980', period: '/月（税込）',
-    description: '個人・開業サロンに',
-    features: ['LINEで予約受付', '前日自動リマインド', 'スタッフ 2名まで', 'メニュー 10件まで', '予約台帳', 'メールサポート'],
-    highlighted: false, badge: null as string | null,
-  },
-  {
-    name: 'Pro', price: '¥9,800', period: '/月（税込）',
-    description: '成長中のサロンに',
-    features: ['Starter のすべて', 'スタッフ・メニュー無制限', '事前アンケート', 'リピート促進配信', 'AI 接客（自動返信）', '優先サポート'],
-    highlighted: true, badge: 'いちばん人気',
-  },
-  {
-    name: 'Enterprise', price: 'ご相談', period: '',
-    description: '複数店舗・法人向け',
-    features: ['Pro のすべて', '複数店舗一括管理', '専任サポート担当', 'カスタム機能対応', '請求書払い対応', 'SLA保証'],
-    highlighted: false, badge: null,
-  },
-];
-
-const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
-  calendar: CalendarDays, message: MessageCircle, bell: Bell, shield: Shield,
-  chart: BarChart3, users: Users, phone: SmartphoneNfc, clock: Clock,
-  sparkles: Sparkles, heart: HeartPulse,
-};
-
-// ── Metadata ─────────────────────────────────────────────────────────
+// ── Metadata ────────────────────────────────────────────────────────
 export async function generateMetadata({ params }: { params: Promise<{ vertical: string }> }): Promise<Metadata> {
   const { vertical } = await params;
   const data = LP[vertical];
@@ -273,7 +248,7 @@ export function generateStaticParams() {
   return Object.keys(LP).map(v => ({ vertical: v }));
 }
 
-// ── Page ─────────────────────────────────────────────────────────────
+// ── Page ────────────────────────────────────────────────────────────
 export default async function VerticalLandingPage({ params }: { params: Promise<{ vertical: string }> }) {
   const { vertical } = await params;
   const d = LP[vertical];
@@ -289,225 +264,10 @@ export default async function VerticalLandingPage({ params }: { params: Promise<
     );
   }
 
+  const designKey = getDesignKey(vertical);
+  const Design = DESIGNS[designKey];
+  const t = getTheme(vertical);
   const signupUrl = `${SIGNUP_HREF}?vertical=${vertical}`;
 
-  return (
-    <div className="min-h-screen bg-white font-sans antialiased text-gray-900">
-      {/* ─ Navbar ─ */}
-      <header className="sticky top-0 z-50 bg-white/90 backdrop-blur-md border-b border-gray-100 shadow-sm">
-        <div className="mx-auto max-w-6xl px-5 h-14 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-2 shrink-0">
-            <div className="w-7 h-7 bg-rose-500 rounded-lg flex items-center justify-center shadow-sm">
-              <Scissors className="w-4 h-4 text-white" />
-            </div>
-            <span className="font-bold text-gray-900 text-sm tracking-tight">LumiBook</span>
-          </div>
-          <nav className="hidden md:flex items-center gap-6 text-sm text-gray-500">
-            <a href="#features" className="hover:text-gray-900 transition-colors">機能</a>
-            <a href="#flow" className="hover:text-gray-900 transition-colors">導入方法</a>
-            <a href="#pricing" className="hover:text-gray-900 transition-colors">料金</a>
-            <a href="#faq" className="hover:text-gray-900 transition-colors">よくある質問</a>
-          </nav>
-          <div className="flex items-center gap-3">
-            <Link href="/login" className="hidden sm:inline-flex text-sm text-gray-500 hover:text-gray-900 transition-colors">ログイン</Link>
-            <Link href={signupUrl} className="group inline-flex items-center gap-1.5 px-4 py-2 bg-rose-500 text-white text-sm font-semibold rounded-full hover:bg-rose-600 transition-colors shadow-sm">
-              無料で始める <ArrowRight className="w-3.5 h-3.5 transition-transform group-hover:translate-x-0.5" />
-            </Link>
-          </div>
-        </div>
-      </header>
-
-      <main>
-        {/* ─ Hero ─ */}
-        <section className="relative overflow-hidden bg-slate-950 text-white py-24 sm:py-32">
-          <div aria-hidden="true" className="pointer-events-none absolute -top-40 -left-40 w-[700px] h-[700px] rounded-full bg-rose-600/15 blur-[140px]" />
-          <div aria-hidden="true" className="pointer-events-none absolute top-20 -right-20 w-[500px] h-[500px] rounded-full bg-indigo-600/15 blur-[120px]" />
-          <div className="relative mx-auto max-w-5xl px-5 text-center">
-            <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-1.5 text-xs font-medium text-white/70 mb-8 backdrop-blur-sm">
-              <Star className="w-3.5 h-3.5 text-amber-400 fill-amber-400" />
-              {d.badge}
-            </div>
-            <h1 className="text-4xl sm:text-5xl lg:text-6xl font-black tracking-tight leading-tight mb-6 whitespace-pre-line">{d.headline}</h1>
-            <p className="text-lg sm:text-xl text-white/70 max-w-2xl mx-auto mb-10 leading-relaxed whitespace-pre-line">{d.subheadline}</p>
-            <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-              <TrackingCTA href={signupUrl} vertical={vertical} cta="hero_primary" eventType="lp_signup_click" className="px-8 py-4 bg-rose-500 text-white font-bold rounded-full hover:bg-rose-600 transition-colors shadow-lg text-lg inline-flex items-center gap-2">
-                無料で始める <ArrowRight className="w-5 h-5" />
-              </TrackingCTA>
-              <Link href={['handyman', 'cleaning'].includes(vertical) ? `/demo/${vertical}` : '/booking'} className="px-8 py-4 border border-white/20 text-white font-medium rounded-full hover:bg-white/10 transition-colors text-lg">
-                デモを見る
-              </Link>
-            </div>
-          </div>
-        </section>
-
-        {/* ─ Problems ─ */}
-        <section className="py-20 sm:py-28 bg-white">
-          <div className="mx-auto max-w-5xl px-5">
-            <div className="text-center mb-16">
-              <h2 className="text-3xl sm:text-4xl font-bold text-gray-900 mb-4">こんな課題、ありませんか？</h2>
-              <p className="text-gray-500 text-lg">{d.label}の現場で起きている「あるある」</p>
-            </div>
-            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
-              {d.problems.map((p, i) => {
-                const Icon = ICON_MAP[p.icon] ?? ClipboardList;
-                return (
-                  <div key={i} className="relative p-6 bg-gray-50 rounded-2xl border border-gray-100 hover:border-rose-200 transition-colors">
-                    <div className="w-10 h-10 bg-rose-100 rounded-xl flex items-center justify-center mb-4">
-                      <Icon className="w-5 h-5 text-rose-500" />
-                    </div>
-                    <h3 className="text-base font-bold text-gray-900 mb-2">{p.title}</h3>
-                    <p className="text-sm text-gray-500 leading-relaxed">{p.desc}</p>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </section>
-
-        {/* ─ Solution / Features ─ */}
-        <section className="py-20 sm:py-28 bg-gray-50" id="features">
-          <div className="mx-auto max-w-5xl px-5">
-            <div className="text-center mb-16">
-              <div className="inline-flex items-center gap-2 rounded-full bg-rose-50 px-4 py-1.5 text-xs font-semibold text-rose-600 mb-4">
-                <Zap className="w-3.5 h-3.5" /> SOLUTION
-              </div>
-              <h2 className="text-3xl sm:text-4xl font-bold text-gray-900 mb-4">{d.label}に最適化された<br />6つの機能</h2>
-              <p className="text-gray-500 text-lg">業種特化だから、使いやすさが違います</p>
-            </div>
-            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
-              {d.features.map((f, i) => {
-                const Icon = ICON_MAP[f.icon] ?? CalendarDays;
-                return (
-                  <div key={i} className="bg-white rounded-2xl p-8 shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
-                    <div className="w-12 h-12 bg-rose-50 rounded-xl flex items-center justify-center mb-4">
-                      <Icon className="w-6 h-6 text-rose-500" />
-                    </div>
-                    <h3 className="text-lg font-bold text-gray-900 mb-2">{f.title}</h3>
-                    <p className="text-gray-500 leading-relaxed">{f.desc}</p>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </section>
-
-        {/* ─ Flow ─ */}
-        <section className="py-20 sm:py-28 bg-white" id="flow">
-          <div className="mx-auto max-w-4xl px-5">
-            <div className="text-center mb-16">
-              <h2 className="text-3xl sm:text-4xl font-bold text-gray-900 mb-4">かんたん3ステップで導入</h2>
-              <p className="text-gray-500 text-lg">最短30分で運用開始できます</p>
-            </div>
-            <div className="space-y-8">
-              {d.flow.map((f, i) => (
-                <div key={i} className="flex gap-6 items-start">
-                  <div className="shrink-0 w-14 h-14 bg-rose-500 rounded-2xl flex items-center justify-center text-white font-black text-xl shadow-md">
-                    {f.step}
-                  </div>
-                  <div className="pt-1">
-                    <h3 className="text-lg font-bold text-gray-900 mb-1">{f.title}</h3>
-                    <p className="text-gray-500 leading-relaxed">{f.desc}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-            <div className="text-center mt-12">
-              <TrackingCTA href={signupUrl} vertical={vertical} cta="flow_cta" eventType="lp_signup_click" className="inline-flex items-center gap-2 px-8 py-4 bg-rose-500 text-white font-bold rounded-full hover:bg-rose-600 transition-colors shadow-lg text-lg">
-                無料で始める <ArrowRight className="w-5 h-5" />
-              </TrackingCTA>
-            </div>
-          </div>
-        </section>
-
-        {/* ─ Pricing ─ */}
-        <section className="py-20 sm:py-28 bg-gray-50" id="pricing">
-          <div className="mx-auto max-w-5xl px-5">
-            <div className="text-center mb-16">
-              <h2 className="text-3xl sm:text-4xl font-bold text-gray-900 mb-4">料金プラン</h2>
-              <p className="text-gray-500 text-lg">初期費用無料。いつでもプラン変更可能です</p>
-            </div>
-            <div className="grid md:grid-cols-3 gap-8">
-              {PLANS.map((plan, i) => (
-                <div key={i} className={`relative bg-white rounded-2xl p-8 shadow-sm border ${plan.highlighted ? 'border-rose-300 ring-2 ring-rose-500 md:scale-105' : 'border-gray-200'}`}>
-                  {plan.badge && (
-                    <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-rose-500 text-white text-xs font-bold px-3 py-1 rounded-full shadow-sm">{plan.badge}</div>
-                  )}
-                  <div className="text-center mb-6">
-                    <h3 className="text-xl font-bold text-gray-900">{plan.name}</h3>
-                    <p className="text-sm text-gray-500 mt-1">{plan.description}</p>
-                    <div className="mt-4">
-                      <span className="text-4xl font-black text-gray-900">{plan.price}</span>
-                      <span className="text-sm text-gray-500">{plan.period}</span>
-                    </div>
-                  </div>
-                  <ul className="space-y-3 mb-8">
-                    {plan.features.map((f, j) => (
-                      <li key={j} className="flex items-start gap-2 text-sm text-gray-600">
-                        <CheckCircle2 className="w-4 h-4 text-rose-500 shrink-0 mt-0.5" />
-                        {f}
-                      </li>
-                    ))}
-                  </ul>
-                  <Link href={signupUrl} className={`block w-full py-3 rounded-full text-center font-semibold text-sm transition-colors ${
-                    plan.highlighted ? 'bg-rose-500 text-white hover:bg-rose-600' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                  }`}>
-                    新規登録（30秒）
-                  </Link>
-                </div>
-              ))}
-            </div>
-          </div>
-        </section>
-
-        {/* ─ FAQ ─ */}
-        <section className="py-20 sm:py-28 bg-white" id="faq">
-          <div className="mx-auto max-w-3xl px-5">
-            <div className="text-center mb-16">
-              <h2 className="text-3xl sm:text-4xl font-bold text-gray-900 mb-4">よくある質問</h2>
-            </div>
-            <div className="space-y-4">
-              {d.faqs.map((faq, i) => (
-                <details key={i} className="group bg-gray-50 rounded-2xl border border-gray-100 overflow-hidden">
-                  <summary className="flex items-center justify-between px-6 py-5 cursor-pointer text-left font-semibold text-gray-900 hover:bg-gray-100 transition-colors">
-                    {faq.q}
-                    <ChevronDown className="w-5 h-5 text-gray-400 shrink-0 ml-4 transition-transform group-open:rotate-180" />
-                  </summary>
-                  <div className="px-6 pb-5 text-sm text-gray-600 leading-relaxed">{faq.a}</div>
-                </details>
-              ))}
-            </div>
-          </div>
-        </section>
-
-        {/* ─ Final CTA ─ */}
-        <section className="py-20 sm:py-28 bg-slate-950 text-white text-center">
-          <div className="mx-auto max-w-3xl px-5">
-            <h2 className="text-3xl sm:text-4xl font-bold mb-6">{d.label}の予約管理を<br />今日から自動化しませんか？</h2>
-            <p className="text-white/60 text-lg mb-10">初期費用無料・最短30分で運用開始できます</p>
-            <TrackingCTA href={signupUrl} vertical={vertical} cta="final_cta" eventType="lp_signup_click" className="inline-flex items-center gap-2 px-10 py-5 bg-rose-500 text-white font-bold text-lg rounded-full hover:bg-rose-600 transition-colors shadow-lg">
-              無料で始める <ArrowRight className="w-5 h-5" />
-            </TrackingCTA>
-          </div>
-        </section>
-      </main>
-
-      {/* ─ Footer ─ */}
-      <footer className="bg-slate-950 border-t border-white/10 py-8">
-        <div className="mx-auto max-w-5xl px-5 flex flex-col sm:flex-row items-center justify-between gap-4 text-sm text-white/40">
-          <div className="flex items-center gap-2">
-            <div className="w-5 h-5 bg-rose-500 rounded flex items-center justify-center">
-              <Scissors className="w-3 h-3 text-white" />
-            </div>
-            <span className="font-bold text-white/60">LumiBook</span>
-          </div>
-          <div className="flex items-center gap-6">
-            <Link href="/login" className="hover:text-white/70 transition-colors">ログイン</Link>
-            <Link href={signupUrl} className="hover:text-white/70 transition-colors">新規登録</Link>
-            <Link href="/legal/tokushoho" className="hover:text-white/70 transition-colors">特定商取引法</Link>
-          </div>
-          <p>&copy; {new Date().getFullYear()} LumiBook</p>
-        </div>
-      </footer>
-    </div>
-  );
+  return <Design d={d} t={t} vertical={vertical} signupUrl={signupUrl} />;
 }

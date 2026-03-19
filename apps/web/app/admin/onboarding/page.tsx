@@ -77,10 +77,11 @@ export default function OnboardingPage() {
   const [storeName, setStoreName] = useState('');
   const [ownerEmail, setOwnerEmail] = useState('');
   const [memberMe, setMemberMe] = useState<MemberMe | null>(null);
+  const onboardingReturn = encodeURIComponent(`/admin/onboarding?tenantId=${tenantId}`);
   const [items, setItems] = useState<CheckItem[]>([
-    { id: 'line', label: 'LINE Messaging API を設定', description: 'チャンネルIDとアクセストークンを登録してください', href: '/admin/line-setup', done: false, loading: true },
-    { id: 'menu', label: 'メニュー（施術）を追加', description: '少なくとも1件のメニューを登録してください', href: '/admin/menu', done: false, loading: true },
-    { id: 'staff', label: 'スタッフを追加', description: '少なくとも1名のアクティブなスタッフを登録してください', href: '/admin/staff', done: false, loading: true },
+    { id: 'line', label: 'LINE Messaging API を設定', description: 'チャンネルIDとアクセストークンを登録してください', href: `/admin/line-setup?returnTo=${onboardingReturn}`, done: false, loading: true },
+    { id: 'menu', label: 'メニューを確認・編集', description: '業種テンプレートで自動登録済み。必要に応じて編集してください', href: '/admin/menu', done: false, loading: true },
+    { id: 'staff', label: 'スタッフを確認・編集', description: '自動登録済み。名前や担当を変更してください', href: '/admin/staff', done: false, loading: true },
     { id: 'slots', label: '予約可能な時間帯を確認', description: '本日の予約可能スロットが存在することを確認してください', href: '/admin/dashboard', done: false, loading: true },
   ]);
 

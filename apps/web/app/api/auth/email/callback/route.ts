@@ -196,15 +196,10 @@ export async function GET(req: Request) {
   // 14-day expiry (same as magic link session lifetime).
   const SESSION_MAX_AGE = 14 * 24 * 60 * 60; // 1209600 seconds
 
-  // Fresh signup: if password not yet set, redirect to setup-password first
-  // After password setup, user will be redirected to onboarding.
+  // Fresh signup: redirect to onboarding (password setup is optional, available from onboarding page)
   let effectiveReturnTo = returnTo;
   if (signedUp && tenantId && tenantId !== "default") {
-    if (!hasPassword) {
-      effectiveReturnTo = `/auth/setup-password?tenantId=${encodeURIComponent(tenantId)}&returnTo=${encodeURIComponent(`/admin/line-setup?tenantId=${tenantId}`)}`;
-    } else {
-      effectiveReturnTo = `/admin/onboarding?tenantId=${encodeURIComponent(tenantId)}`;
-    }
+    effectiveReturnTo = `/admin/onboarding?tenantId=${encodeURIComponent(tenantId)}`;
   }
 
   // Ensure tenantId is present in the redirect URL so the admin UI lands

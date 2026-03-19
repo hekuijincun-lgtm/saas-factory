@@ -289,158 +289,170 @@ export default function StaffManager() {
 
       {/* モーダル */}
       {showModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setShowModal(false)}>
-          <div className="bg-white rounded-2xl shadow-soft max-w-md w-full max-h-[90vh] overflow-y-auto p-6 space-y-4" onClick={(e) => e.stopPropagation()}>
-            <h2 className="text-xl font-semibold text-brand-text">
-              {editingStaff ? 'スタッフを編集' : 'スタッフを追加'}
-            </h2>
-
-            <div>
-              <label className="block text-sm font-medium text-brand-text mb-2">名前 *</label>
-              <input
-                type="text"
-                value={formData.name}
-                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                className="w-full px-4 py-3 border border-brand-border rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary"
-                placeholder="スタッフ名"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-brand-text mb-2">役職</label>
-              <input
-                type="text"
-                value={formData.role}
-                onChange={(e) => setFormData({ ...formData, role: e.target.value })}
-                className="w-full px-4 py-3 border border-brand-border rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary"
-                placeholder="例: Top Stylist"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-brand-text mb-2">指名料（円）</label>
-              <input
-                type="number"
-                min="0"
-                step="1"
-                value={formData.nominationFee}
-                onChange={(e) => setFormData({ ...formData, nominationFee: e.target.value })}
-                className="w-full px-4 py-3 border border-brand-border rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary"
-                placeholder="0"
-              />
-              <p className="mt-1 text-xs text-brand-muted">0 の場合は指名料なしとして扱われます</p>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                id="active"
-                checked={formData.active}
-                onChange={(e) => setFormData({ ...formData, active: e.target.checked })}
-                className="w-4 h-4 text-brand-primary border-brand-border rounded focus:ring-brand-primary"
-              />
-              <label htmlFor="active" className="text-sm text-brand-text">有効</label>
-            </div>
-
-            {/* Phase 11: vertical-dynamic スタッフ属性セクション */}
-            {vPlugin.flags.hasStaffAttributes && (<div className="border-t border-gray-100 pt-4">
-              <div className="flex items-center gap-2 mb-3">
-                <Scissors className="w-4 h-4 text-pink-500" />
-                <span className="text-sm font-medium text-gray-700">{vPlugin.labels.staffSettingsHeading}</span>
+        <div className="fixed inset-0 z-50 bg-black/50 overflow-y-auto" onClick={() => setShowModal(false)}>
+          <div className="min-h-full flex items-start justify-center p-4 sm:p-6">
+            <div
+              className="w-full max-w-md rounded-2xl bg-white shadow-soft max-h-[calc(100dvh-2rem)] overflow-hidden flex flex-col"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Header — 固定 */}
+              <div className="shrink-0 px-6 pt-6 pb-3 border-b border-brand-border">
+                <h2 className="text-xl font-semibold text-brand-text">
+                  {editingStaff ? 'スタッフを編集' : 'スタッフを追加'}
+                </h2>
               </div>
-              <div className="space-y-3">
-                {/* 技術レベル（共通） */}
+
+              {/* Body — スクロール可能 */}
+              <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4 space-y-4">
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1.5">技術レベル</label>
-                  <div className="flex gap-1.5">
-                    {([1, 2, 3, 4, 5] as const).map(lv => (
-                      <button
-                        key={lv}
-                        type="button"
-                        onClick={() => setFormData({ ...formData, verticalAttrs: { ...formData.verticalAttrs, skillLevel: formData.verticalAttrs.skillLevel === lv ? undefined : lv } })}
-                        className={`w-9 h-9 rounded-lg text-sm font-bold transition-all ${
-                          formData.verticalAttrs.skillLevel === lv
-                            ? 'bg-pink-500 text-white shadow-sm'
-                            : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-                        }`}
-                        title={['', '初級', '初中級', '中級', '上級', 'エキスパート'][lv]}
-                      >
-                        {lv}
-                      </button>
-                    ))}
-                    <span className="ml-2 text-xs text-gray-400 self-center">
-                      {typeof formData.verticalAttrs.skillLevel === 'number' ? ['', '初級', '初中級', '中級', '上級', 'エキスパート'][formData.verticalAttrs.skillLevel] : '未設定'}
-                    </span>
-                  </div>
+                  <label className="block text-sm font-medium text-brand-text mb-2">名前 *</label>
+                  <input
+                    type="text"
+                    value={formData.name}
+                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                    className="w-full px-4 py-3 border border-brand-border rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary"
+                    placeholder="スタッフ名"
+                  />
                 </div>
-                {/* 得意技術タグ（共通） */}
+
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1.5">得意技術タグ</label>
-                  <div className="flex gap-1.5 flex-wrap mb-2">
-                    {(Array.isArray(formData.verticalAttrs.specialties) ? formData.verticalAttrs.specialties as string[] : []).map(tag => (
-                      <span key={tag} className="inline-flex items-center gap-1 px-2 py-1 bg-pink-100 text-pink-700 rounded-full text-xs">
-                        {tag}
+                  <label className="block text-sm font-medium text-brand-text mb-2">役職</label>
+                  <input
+                    type="text"
+                    value={formData.role}
+                    onChange={(e) => setFormData({ ...formData, role: e.target.value })}
+                    className="w-full px-4 py-3 border border-brand-border rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary"
+                    placeholder="例: Top Stylist"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-brand-text mb-2">指名料（円）</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={formData.nominationFee}
+                    onChange={(e) => setFormData({ ...formData, nominationFee: e.target.value })}
+                    className="w-full px-4 py-3 border border-brand-border rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary"
+                    placeholder="0"
+                  />
+                  <p className="mt-1 text-xs text-brand-muted">0 の場合は指名料なしとして扱われます</p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id="active"
+                    checked={formData.active}
+                    onChange={(e) => setFormData({ ...formData, active: e.target.checked })}
+                    className="w-4 h-4 text-brand-primary border-brand-border rounded focus:ring-brand-primary"
+                  />
+                  <label htmlFor="active" className="text-sm text-brand-text">有効</label>
+                </div>
+
+                {/* Phase 11: vertical-dynamic スタッフ属性セクション */}
+                {vPlugin.flags.hasStaffAttributes && (<div className="border-t border-gray-100 pt-4">
+                  <div className="flex items-center gap-2 mb-3">
+                    <Scissors className="w-4 h-4 text-pink-500" />
+                    <span className="text-sm font-medium text-gray-700">{vPlugin.labels.staffSettingsHeading}</span>
+                  </div>
+                  <div className="space-y-3">
+                    {/* 技術レベル（共通） */}
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1.5">技術レベル</label>
+                      <div className="flex gap-1.5">
+                        {([1, 2, 3, 4, 5] as const).map(lv => (
+                          <button
+                            key={lv}
+                            type="button"
+                            onClick={() => setFormData({ ...formData, verticalAttrs: { ...formData.verticalAttrs, skillLevel: formData.verticalAttrs.skillLevel === lv ? undefined : lv } })}
+                            className={`w-9 h-9 rounded-lg text-sm font-bold transition-all ${
+                              formData.verticalAttrs.skillLevel === lv
+                                ? 'bg-pink-500 text-white shadow-sm'
+                                : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                            }`}
+                            title={['', '初級', '初中級', '中級', '上級', 'エキスパート'][lv]}
+                          >
+                            {lv}
+                          </button>
+                        ))}
+                        <span className="ml-2 text-xs text-gray-400 self-center">
+                          {typeof formData.verticalAttrs.skillLevel === 'number' ? ['', '初級', '初中級', '中級', '上級', 'エキスパート'][formData.verticalAttrs.skillLevel] : '未設定'}
+                        </span>
+                      </div>
+                    </div>
+                    {/* 得意技術タグ（共通） */}
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1.5">得意技術タグ</label>
+                      <div className="flex gap-1.5 flex-wrap mb-2">
+                        {(Array.isArray(formData.verticalAttrs.specialties) ? formData.verticalAttrs.specialties as string[] : []).map(tag => (
+                          <span key={tag} className="inline-flex items-center gap-1 px-2 py-1 bg-pink-100 text-pink-700 rounded-full text-xs">
+                            {tag}
+                            <button
+                              type="button"
+                              onClick={() => setFormData({ ...formData, verticalAttrs: { ...formData.verticalAttrs, specialties: (formData.verticalAttrs.specialties as string[]).filter((t: string) => t !== tag) } })}
+                              className="text-pink-500 hover:text-pink-700"
+                            >
+                              ×
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          placeholder={`例: ${vPlugin.key === 'dental' ? '矯正, インプラント' : vPlugin.key === 'hair' ? 'カラーリスト, 縮毛矯正' : 'ナチュラル, 韓国風'}`}
+                          value={formData.specialtyInput}
+                          onChange={e => setFormData({ ...formData, specialtyInput: e.target.value })}
+                          onKeyDown={e => {
+                            if ((e.key === 'Enter' || e.key === ',') && formData.specialtyInput.trim()) {
+                              e.preventDefault();
+                              const tag = formData.specialtyInput.trim().replace(/,$/, '');
+                              const current = Array.isArray(formData.verticalAttrs.specialties) ? formData.verticalAttrs.specialties as string[] : [];
+                              if (tag && !current.includes(tag)) {
+                                setFormData({ ...formData, specialtyInput: '', verticalAttrs: { ...formData.verticalAttrs, specialties: [...current, tag] } });
+                              }
+                            }
+                          }}
+                          className="flex-1 px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-pink-400"
+                        />
                         <button
                           type="button"
-                          onClick={() => setFormData({ ...formData, verticalAttrs: { ...formData.verticalAttrs, specialties: (formData.verticalAttrs.specialties as string[]).filter((t: string) => t !== tag) } })}
-                          className="text-pink-500 hover:text-pink-700"
+                          onClick={() => {
+                            const tag = formData.specialtyInput.trim();
+                            const current = Array.isArray(formData.verticalAttrs.specialties) ? formData.verticalAttrs.specialties as string[] : [];
+                            if (tag && !current.includes(tag)) {
+                              setFormData({ ...formData, specialtyInput: '', verticalAttrs: { ...formData.verticalAttrs, specialties: [...current, tag] } });
+                            }
+                          }}
+                          className="px-3 py-1.5 text-sm bg-pink-100 text-pink-700 rounded-lg hover:bg-pink-200 transition-all"
                         >
-                          ×
+                          追加
                         </button>
-                      </span>
-                    ))}
+                      </div>
+                      <p className="mt-1 text-xs text-gray-400">Enter またはカンマで追加</p>
+                    </div>
                   </div>
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      placeholder={`例: ${vPlugin.key === 'dental' ? '矯正, インプラント' : vPlugin.key === 'hair' ? 'カラーリスト, 縮毛矯正' : 'ナチュラル, 韓国風'}`}
-                      value={formData.specialtyInput}
-                      onChange={e => setFormData({ ...formData, specialtyInput: e.target.value })}
-                      onKeyDown={e => {
-                        if ((e.key === 'Enter' || e.key === ',') && formData.specialtyInput.trim()) {
-                          e.preventDefault();
-                          const tag = formData.specialtyInput.trim().replace(/,$/, '');
-                          const current = Array.isArray(formData.verticalAttrs.specialties) ? formData.verticalAttrs.specialties as string[] : [];
-                          if (tag && !current.includes(tag)) {
-                            setFormData({ ...formData, specialtyInput: '', verticalAttrs: { ...formData.verticalAttrs, specialties: [...current, tag] } });
-                          }
-                        }
-                      }}
-                      className="flex-1 px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-pink-400"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const tag = formData.specialtyInput.trim();
-                        const current = Array.isArray(formData.verticalAttrs.specialties) ? formData.verticalAttrs.specialties as string[] : [];
-                        if (tag && !current.includes(tag)) {
-                          setFormData({ ...formData, specialtyInput: '', verticalAttrs: { ...formData.verticalAttrs, specialties: [...current, tag] } });
-                        }
-                      }}
-                      className="px-3 py-1.5 text-sm bg-pink-100 text-pink-700 rounded-lg hover:bg-pink-200 transition-all"
-                    >
-                      追加
-                    </button>
-                  </div>
-                  <p className="mt-1 text-xs text-gray-400">Enter またはカンマで追加</p>
-                </div>
+                </div>)}
               </div>
-            </div>)}
 
-            <div className="flex gap-2 pt-4">
-              <button
-                onClick={() => setShowModal(false)}
-                className="flex-1 px-4 py-3 bg-white text-brand-text border border-brand-border rounded-xl font-medium hover:shadow-md transition-all"
-              >
-                キャンセル
-              </button>
-              <button
-                onClick={handleSubmit}
-                disabled={loading || !formData.name.trim()}
-                className="flex-1 px-4 py-3 bg-brand-primary text-white rounded-xl font-medium hover:shadow-md focus:outline-none focus:ring-2 focus:ring-brand-primary focus:ring-offset-2 disabled:bg-brand-muted disabled:cursor-not-allowed transition-all"
-              >
-                {loading ? '保存中...' : '保存'}
-              </button>
+              {/* Footer — 固定 */}
+              <div className="shrink-0 px-6 py-4 border-t border-brand-border bg-white flex gap-2">
+                <button
+                  onClick={() => setShowModal(false)}
+                  className="flex-1 px-4 py-3 bg-white text-brand-text border border-brand-border rounded-xl font-medium hover:shadow-md transition-all"
+                >
+                  キャンセル
+                </button>
+                <button
+                  onClick={handleSubmit}
+                  disabled={loading || !formData.name.trim()}
+                  className="flex-1 px-4 py-3 bg-brand-primary text-white rounded-xl font-medium hover:shadow-md focus:outline-none focus:ring-2 focus:ring-brand-primary focus:ring-offset-2 disabled:bg-brand-muted disabled:cursor-not-allowed transition-all"
+                >
+                  {loading ? '保存中...' : '保存'}
+                </button>
+              </div>
             </div>
           </div>
         </div>
