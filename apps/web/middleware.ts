@@ -82,6 +82,9 @@ export async function middleware(req: NextRequest) {
     }
   }
 
+  // Allow unauthenticated access for default tenant (demo/testing)
+  const isDefaultTenant = req.nextUrl.searchParams.get("tenantId") === "default";
+
   // ── Auth check for /admin/* (always-on) ───────────────────────────────────
   //
   // Session verification is unconditional for privileged routes.
@@ -93,9 +96,6 @@ export async function middleware(req: NextRequest) {
     !pathname.startsWith("/admin/unauthorized") &&
     !pathname.startsWith("/admin/line-setup")
   ) {
-    // Allow unauthenticated access for default tenant (demo/testing)
-    const urlTenantId = req.nextUrl.searchParams.get("tenantId");
-    const isDefaultTenant = urlTenantId === "default";
 
     const secret = (process.env.LINE_SESSION_SECRET ?? "").trim();
     // No secret configured → skip auth (local development without session signing)
@@ -245,6 +245,7 @@ export async function middleware(req: NextRequest) {
   };
   if (
     process.env.BILLING_REQUIRED === "1" &&
+    !isDefaultTenant &&
     (pathname === "/admin" || pathname.startsWith("/admin/")) &&
     !pathname.startsWith("/admin/billing") &&
     !pathname.startsWith("/admin/onboarding") &&
