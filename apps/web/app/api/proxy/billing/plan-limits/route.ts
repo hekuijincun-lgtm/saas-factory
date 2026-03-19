@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getPlanLimits, isTrialExpired, PLAN_LIMITS } from '@/src/lib/plan-limits';
 
+export const runtime = 'edge';
+
 const API_BASE = process.env.API_BASE || 'https://saas-factory-api.because-and.workers.dev';
 
 export async function GET(req: NextRequest) {

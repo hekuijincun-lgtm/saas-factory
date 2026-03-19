@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 
+export const runtime = 'edge';
+
 const API_BASE = process.env.API_BASE || 'https://saas-factory-api.because-and.workers.dev';
 
 export async function POST(req: NextRequest) {

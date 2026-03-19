@@ -4,6 +4,8 @@ import { DESIGNS } from '../_designs';
 import type { DesignKey } from '../_designs';
 import { getTheme, SIGNUP_HREF, type VerticalLPConfig } from '../_designs/shared';
 
+export const runtime = 'edge';
+
 // ── Vertical → Design mapping ───────────────────────────────────────
 // Each vertical picks the design template that best fits its audience.
 const VERTICAL_DESIGN: Record<string, DesignKey> = {
