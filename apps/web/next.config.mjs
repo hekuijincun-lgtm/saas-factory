@@ -12,6 +12,13 @@ const config = {
   turbopack: {
     root: repoRoot,
   },
+  async redirects() {
+    return [
+      { source: '/legal', destination: '/legal/tokushoho', permanent: true },
+      { source: '/terms', destination: '/legal/terms', permanent: true },
+      { source: '/privacy', destination: '/legal/privacy', permanent: true },
+    ];
+  },
 };
 
 export default config;
