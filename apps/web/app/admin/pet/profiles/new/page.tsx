@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useAdminTenantId, withTenant } from '@/src/lib/useAdminTenantId';
 import AdminTopBar from '../../../../_components/ui/AdminTopBar';
+import CustomerPicker from '../../_components/CustomerPicker';
 
 export default function NewPetProfilePage() {
   const { tenantId, status } = useAdminTenantId();
@@ -41,7 +42,7 @@ export default function NewPetProfilePage() {
         weight: form.weight ? parseFloat(form.weight) : undefined,
         tenantId,
       };
-      const res = await fetch('/api/proxy/admin/pets', {
+      const res = await fetch(`/api/proxy/admin/pets?tenantId=${encodeURIComponent(tenantId)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -209,29 +210,12 @@ export default function NewPetProfilePage() {
           </div>
 
           <div className="border-t border-gray-100 pt-6">
-            <h3 className="text-sm font-semibold text-gray-900 mb-4">飼い主情報（任意）</h3>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1">飼い主名</label>
-                <input
-                  type="text"
-                  value={form.ownerName}
-                  onChange={e => setForm(f => ({ ...f, ownerName: e.target.value }))}
-                  placeholder="田中太郎"
-                  className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1">顧客キー</label>
-                <input
-                  type="text"
-                  value={form.customerKey}
-                  onChange={e => setForm(f => ({ ...f, customerKey: e.target.value }))}
-                  placeholder="line:Uxxxx / email:xxx@..."
-                  className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300"
-                />
-              </div>
-            </div>
+            <CustomerPicker
+              tenantId={tenantId}
+              ownerName={form.ownerName}
+              customerKey={form.customerKey}
+              onChange={(ownerName, customerKey) => setForm(f => ({ ...f, ownerName, customerKey }))}
+            />
           </div>
 
           <button

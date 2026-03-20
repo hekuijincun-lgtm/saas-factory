@@ -31,7 +31,18 @@ function generateTimeSlots(open = '10:00', close = '19:00', interval = 60): stri
   return slots;
 }
 
-export default function ReservationsLedger() {
+interface ReservationsLedgerProps {
+  /** Optional extra fields rendered inside the create-reservation modal (e.g. pet picker) */
+  createFormExtra?: React.ReactNode;
+  /** Called with meta to merge into reservation on create */
+  getCreateMeta?: () => Record<string, unknown>;
+  /** Optional extra info rendered on each reservation card */
+  renderCardExtra?: (reservation: Reservation) => React.ReactNode;
+  /** Override menu list (e.g. from vertical-specific pricing). When provided, skips getMenu() fetch. */
+  overrideMenuList?: MenuItem[];
+}
+
+export default function ReservationsLedger({ createFormExtra, getCreateMeta, renderCardExtra, overrideMenuList }: ReservationsLedgerProps = {}) {
   const { tenantId, status: tenantStatus } = useAdminTenantId();
   // settings hook (失敗時は 10:00/19:00/30min fallback で継続)
   const { settings: bizSettings } = useAdminSettings(tenantId);
@@ -91,11 +102,15 @@ export default function ReservationsLedger() {
   // NOTE: 設定は useAdminSettings(tenantId) で取得済み（bizSettings）
   // 旧 getAdminSettings() のデッドfetchは削除済み
 
-  // メニュー一覧を取得（tenant 確定後のみ）
+  // メニュー一覧を取得（tenant 確定後のみ。overrideMenuList 指定時はスキップ）
   useEffect(() => {
+    if (overrideMenuList) {
+      setMenuList(overrideMenuList);
+      return;
+    }
     if (tenantStatus !== 'ready') return;
     getMenu(tenantId).then(setMenuList).catch(() => {});
-  }, [tenantId, tenantStatus]);
+  }, [tenantId, tenantStatus, overrideMenuList]);
 
   // スタッフのシフトを読み込む（localStorageから）
   useEffect(() => {
@@ -447,6 +462,7 @@ export default function ReservationsLedger() {
         name: createForm.name.trim(),
         phone: createForm.phone.trim() || undefined,
         staffId: createForm.staffId,
+        ...(getCreateMeta ? { meta: getCreateMeta() } : {}),
       });
       setCreateModalOpen(false);
       setCreateForm({ menuId: '', staffId: 'any', date: '', time: '', name: '', phone: '', note: '' });
@@ -604,10 +620,11 @@ export default function ReservationsLedger() {
                                   <div className="font-medium text-brand-text text-sm mb-1">
                                     {reservation.name}
                                   </div>
-                                  <div className="text-xs text-brand-muted mb-2">
+                                  <div className="text-xs text-brand-muted mb-1">
                                     {reservation.phone || '-'}
                                   </div>
-                                  <div className="flex items-center justify-between">
+                                  {renderCardExtra && renderCardExtra(reservation)}
+                                  <div className="flex items-center justify-between mt-1">
                                     <Badge variant="reserved">予約済み</Badge>
                                     <span className="text-xs text-brand-muted font-mono">
                                       {reservation.reservationId.slice(0, 8)}
@@ -840,6 +857,9 @@ export default function ReservationsLedger() {
                   className="w-full px-3 py-2 border border-brand-border rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary text-sm resize-none"
                 />
               </div>
+
+              {/* Vertical-specific extra fields */}
+              {createFormExtra}
             </div>
 
             <div className="flex gap-3 pt-2">

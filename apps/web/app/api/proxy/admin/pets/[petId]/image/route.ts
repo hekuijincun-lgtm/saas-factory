@@ -14,22 +14,23 @@ function getTenantId(req: Request): string {
 
 function getPetId(req: Request): string {
   const parts = new URL(req.url).pathname.split("/");
-  // URL: /api/proxy/admin/pets/{petId}/grooming
-  const groomingIdx = parts.indexOf("grooming");
-  return groomingIdx > 0 ? parts[groomingIdx - 1] : "";
+  // URL: /api/proxy/admin/pets/{petId}/image
+  const imageIdx = parts.indexOf("image");
+  return imageIdx > 0 ? parts[imageIdx - 1] : "";
 }
 
-async function forward(req: Request, method: string, pathSuffix = ""): Promise<Response> {
+async function forward(req: Request): Promise<Response> {
   const u = new URL(req.url);
   const isDebug = isDebugAllowed() && u.searchParams.get("debug") === "1";
   const tenantId = getTenantId(req);
   const petId = getPetId(req);
 
-  const upstream = new URL(`${apiBase()}/admin/pets/${petId}/grooming${pathSuffix}`);
+  const upstream = new URL(`${apiBase()}/admin/pets/${petId}/image`);
   upstream.searchParams.set("tenantId", tenantId);
 
   const tokenConfigured = !!readAdminToken();
-  const reqHeaders = new Headers({ "accept": "application/json", "x-tenant-id": tenantId });
+  const reqHeaders = new Headers({ "x-tenant-id": tenantId });
+  // Forward content-type for multipart/form-data (includes boundary)
   const ct = req.headers.get("content-type");
   if (ct) reqHeaders.set("content-type", ct);
   const tokenInjected = injectAdminToken(reqHeaders, upstream.pathname);
@@ -39,9 +40,9 @@ async function forward(req: Request, method: string, pathSuffix = ""): Promise<R
   reqHeaders.set("x-session-tenant-id", tenantId);
   if (session.userId) reqHeaders.set("x-session-user-id", session.userId);
 
-  const body = method !== "DELETE" ? await req.arrayBuffer() : undefined;
+  const body = await req.arrayBuffer();
 
-  const res = await fetch(upstream.toString(), { method, headers: reqHeaders, body });
+  const res = await fetch(upstream.toString(), { method: "POST", headers: reqHeaders, body });
   const data = await res.text();
   const out = new Response(data, {
     status: res.status,
@@ -60,10 +61,4 @@ async function forward(req: Request, method: string, pathSuffix = ""): Promise<R
   return out;
 }
 
-export async function POST(req: Request) { return forward(req, "POST"); }
-
-export async function DELETE(req: Request) {
-  const u = new URL(req.url);
-  const groomingId = u.searchParams.get("groomingId") || "";
-  return forward(req, "DELETE", `/${encodeURIComponent(groomingId)}`);
-}
+export async function POST(req: Request) { return forward(req); }

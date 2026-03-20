@@ -220,6 +220,35 @@ const estheticPlugin: VerticalPluginUI = {
   },
 };
 
+// ── pet ───────────────────────────────────────────────────────────────
+
+const petPlugin: VerticalPluginUI = {
+  key: 'pet',
+  label: 'ペットサロン',
+  labels: {
+    karteTab: 'ペットカルテ',
+    menuFilterHeading: 'メニュー絞り込み',
+    kpiHeading: 'ペットサロン KPI',
+    settingsHeading: 'ペットサロン設定',
+    menuSettingsHeading: 'メニュー設定',
+    staffSettingsHeading: 'トリマー設定',
+    settingsDescription: 'ペットサロン特化のサイズ別料金・ワクチン管理を設定します',
+  },
+  flags: {
+    hasKarte: true,
+    hasMenuFilter: true,
+    hasVerticalKpi: true,
+    hasStaffAttributes: true,
+    hasMenuAttributes: true,
+    hasVerticalSettings: true,
+  },
+  menuFilterConfig: {
+    filterKey: 'petSize',
+    options: { small: '小型犬', medium: '中型犬', large: '大型犬', cat: '猫', other: 'その他' },
+    label: 'サイズ',
+  },
+};
+
 // ── Registry ────────────────────────────────────────────────────────
 
 const REGISTRY: Record<string, VerticalPluginUI> = {
@@ -229,6 +258,7 @@ const REGISTRY: Record<string, VerticalPluginUI> = {
   dental: dentalPlugin,
   hair: hairPlugin,
   esthetic: estheticPlugin,
+  pet: petPlugin,
 };
 
 /**

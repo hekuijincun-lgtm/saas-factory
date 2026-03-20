@@ -18,7 +18,7 @@ interface Inquiry {
 }
 
 const STATUS_COLORS: Record<InquiryStatus, string> = {
-  '新規': 'bg-blue-100 text-blue-700',
+  '新規': 'bg-orange-100 text-orange-700',
   '見積済': 'bg-yellow-100 text-yellow-700',
   '成約': 'bg-green-100 text-green-700',
   '失注': 'bg-gray-100 text-gray-500',

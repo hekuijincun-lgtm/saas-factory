@@ -7,6 +7,7 @@ import StepStaff from './steps/StepStaff';
 import StepDatetime from './steps/StepDatetime';
 import StepConfirm from './steps/StepConfirm';
 import StepSurvey from './steps/StepSurvey';
+import StepPetSelect from './steps/StepPetSelect';
 import type { MenuItem, MenuOption } from '@/src/lib/bookingApi';
 import { fetchBookingSettings, getMenuVerticalAttrs } from '@/src/lib/bookingApi';
 import { getVerticalConfig, resolveVertical, type SurveyQuestion } from '@/src/types/settings';
@@ -146,6 +147,7 @@ export default function BookingFlow() {
   const [staffSelectionEnabled, setStaffSelectionEnabled] = useState(true);
   const [surveyEnabled, setSurveyEnabled] = useState(false);
   const [surveyQuestions, setSurveyQuestions] = useState<SurveyQuestion[]>([]);
+  const [verticalType, setVerticalType] = useState<string>('generic');
   const [slotConflictNotice, setSlotConflictNotice] = useState<string | null>(null);
   const [slotRefreshKey, setSlotRefreshKey] = useState(0);
 
@@ -167,6 +169,7 @@ export default function BookingFlow() {
       const raw = settings as any;
       const vc = getVerticalConfig(raw);
       const vertical = resolveVertical(raw);
+      setVerticalType(vertical);
       // Generic booking agreement checkbox text (top-level consentText)
       const ct = raw.consentText || vc.consentText;
       if (ct) setConsentText(ct);
@@ -188,23 +191,27 @@ export default function BookingFlow() {
   // With staff + no survey:      ['メニュー', 'スタッフ', '日時', '確認']
   // No staff + with survey:      ['メニュー', '日時', 'アンケート', '確認']
   // No staff + no survey:        ['メニュー', '日時', '確認']
+  const isPet = verticalType === 'pet';
+  // pet vertical: step 4 は「ペット情報」（surveyEnabled と同じ内部ステップ番号4を使用）
+  const hasSurveyStep = surveyEnabled || isPet;
+  const surveyStepLabel = isPet ? 'ペット情報' : 'アンケート';
   const stepLabels = staffSelectionEnabled
-    ? surveyEnabled
-      ? ['メニュー', 'スタッフ', '日時', 'アンケート', '確認']
+    ? hasSurveyStep
+      ? ['メニュー', 'スタッフ', '日時', surveyStepLabel, '確認']
       : ['メニュー', 'スタッフ', '日時', '確認']
-    : surveyEnabled
-      ? ['メニュー', '日時', 'アンケート', '確認']
+    : hasSurveyStep
+      ? ['メニュー', '日時', surveyStepLabel, '確認']
       : ['メニュー', '日時', '確認'];
 
   // Map internal step (1-5) to visual step index for StepIndicator
   const displayStep = (() => {
-    if (staffSelectionEnabled && surveyEnabled) {
+    if (staffSelectionEnabled && hasSurveyStep) {
       // internal 1,2,3,4,5 → visual 1,2,3,4,5
       return step;
-    } else if (staffSelectionEnabled && !surveyEnabled) {
+    } else if (staffSelectionEnabled && !hasSurveyStep) {
       // internal 1,2,3,5 → visual 1,2,3,4
       return step === 5 ? 4 : step;
-    } else if (!staffSelectionEnabled && surveyEnabled) {
+    } else if (!staffSelectionEnabled && hasSurveyStep) {
       // internal 1,3,4,5 → visual 1,2,3,4
       if (step === 1) return 1;
       if (step === 3) return 2;
@@ -258,7 +265,7 @@ export default function BookingFlow() {
   const handleDatetimeSelect = (date: string, time: string) => {
     update({ date, time });
     setSlotConflictNotice(null);
-    setStep(surveyEnabled ? 4 : 5);
+    setStep(hasSurveyStep ? 4 : 5);
   };
 
   const handleBackFromDatetime = () => {
@@ -303,14 +310,24 @@ export default function BookingFlow() {
           />
         </>
       )}
-      {step === 4 && surveyEnabled && (
-        <StepSurvey
-          questions={enabledSurveyQuestions}
-          answers={state.surveyAnswers ?? {}}
-          onAnswer={(id, value) => update({ surveyAnswers: { ...state.surveyAnswers, [id]: value } })}
-          onNext={() => setStep(5)}
-          onBack={handleBackFromSurvey}
-        />
+      {step === 4 && hasSurveyStep && (
+        isPet ? (
+          <StepPetSelect
+            tenantId={tenantId}
+            onComplete={(answers) => {
+              update({ surveyAnswers: { ...state.surveyAnswers, ...answers } });
+              setStep(5);
+            }}
+          />
+        ) : (
+          <StepSurvey
+            questions={enabledSurveyQuestions}
+            answers={state.surveyAnswers ?? {}}
+            onAnswer={(id, value) => update({ surveyAnswers: { ...state.surveyAnswers, [id]: value } })}
+            onNext={() => setStep(5)}
+            onBack={handleBackFromSurvey}
+          />
+        )
       )}
       {step === 5 && (
         <StepConfirm

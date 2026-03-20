@@ -3,9 +3,18 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import AdminTopBar from '../../_components/ui/AdminTopBar';
-import { useAdminTenantId } from '@/src/lib/useAdminTenantId';
+import Link from 'next/link';
+import { useAdminTenantId, withTenant } from '@/src/lib/useAdminTenantId';
 import ReservationDetailPanel from '../../_components/admin/ReservationDetailPanel';
 import type { Reservation, Staff } from '@/src/lib/bookingApi';
+
+interface LinkedPet {
+  id: string;
+  name: string;
+  breed?: string;
+  species?: string;
+  photoUrl?: string;
+}
 
 interface Customer {
   id: string;
@@ -46,6 +55,22 @@ function CustomerDetailModal({ customer, tenantId, staffList, mounted, onClose }
   const [error, setError] = useState<string | null>(null);
   const [selectedReservation, setSelectedReservation] = useState<Reservation | null>(null);
   const [cancellingId, setCancellingId] = useState<string | null>(null);
+  const [linkedPets, setLinkedPets] = useState<LinkedPet[]>([]);
+
+  // Fetch linked pets by customerKey
+  useEffect(() => {
+    if (!customer.customerKey) return;
+    fetch(
+      `/api/proxy/admin/pets?tenantId=${encodeURIComponent(tenantId)}&customerKey=${encodeURIComponent(customer.customerKey)}`,
+      { cache: 'no-store' }
+    )
+      .then(r => r.ok ? r.json() : null)
+      .then((json: any) => {
+        const list = json?.data ?? json?.pets ?? [];
+        setLinkedPets(Array.isArray(list) ? list : []);
+      })
+      .catch(() => {});
+  }, [customer.customerKey, tenantId]);
 
   const fetchReservations = useCallback(async () => {
     setLoading(true);
@@ -117,6 +142,36 @@ function CustomerDetailModal({ customer, tenantId, staffList, mounted, onClose }
               </svg>
             </button>
           </div>
+
+          {/* Linked pets */}
+          {linkedPets.length > 0 && (
+            <div>
+              <h3 className="text-sm font-semibold text-gray-700 mb-2">登録ペット</h3>
+              <div className="flex flex-wrap gap-3">
+                {linkedPets.map(p => (
+                  <Link
+                    key={p.id}
+                    href={withTenant(`/admin/pet/profiles/${p.id}`, tenantId)}
+                    className="flex items-center gap-3 px-4 py-2.5 bg-orange-50 hover:bg-orange-100 border border-orange-200 rounded-xl transition-colors"
+                  >
+                    {p.photoUrl ? (
+                      <img src={p.photoUrl} alt={p.name} className="w-10 h-10 rounded-lg object-cover" />
+                    ) : (
+                      <div className="w-10 h-10 rounded-lg bg-orange-100 flex items-center justify-center">
+                        <svg className="w-5 h-5 text-orange-400" fill="currentColor" viewBox="0 0 24 24">
+                          <path d="M4.5 11.5c-1 0-2-.5-2-2s1.5-3 2.5-3 1.5 1 1.5 2.5-1 2.5-2 2.5zm15 0c-1 0-2-1-2-2.5s.5-2.5 1.5-2.5 2.5 1.5 2.5 3-1 2-2 2zm-12.5 1c-1 0-2-1-2-2.5S5.5 7 6.5 7 9 8.5 9 10s-1 2.5-2 2.5zm10 0c-1 0-2-1-2-2.5S15.5 7 16.5 7s2 1.5 2 3-1 2.5-2 2.5zM12 22c-3.5 0-6-2-7-4 0-2 4.5-3 7-3s7 1 7 3c-1 2-3.5 4-7 4z" />
+                        </svg>
+                      </div>
+                    )}
+                    <div>
+                      <p className="text-sm font-medium text-gray-900">{p.name}</p>
+                      {p.breed && <p className="text-xs text-gray-500">{p.breed}</p>}
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Reservation history */}
           <div>

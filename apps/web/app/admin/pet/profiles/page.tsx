@@ -40,10 +40,17 @@ function sizeBadgeLabel(size: string): string {
 function sizeBadgeColor(size: string): string {
   switch (size) {
     case 'small': return 'bg-green-100 text-green-700';
-    case 'medium': return 'bg-blue-100 text-blue-700';
-    case 'large': return 'bg-purple-100 text-purple-700';
+    case 'medium': return 'bg-orange-100 text-orange-700';
+    case 'large': return 'bg-amber-100 text-amber-700';
     default: return 'bg-gray-100 text-gray-700';
   }
+}
+
+function isDueForGrooming(lastGroomingDate?: string): boolean {
+  if (!lastGroomingDate) return false;
+  const now = Date.now();
+  const thirtyDays = 30 * 24 * 60 * 60 * 1000;
+  return now - new Date(lastGroomingDate).getTime() > thirtyDays;
 }
 
 function hasExpiringVaccine(vaccines?: VaccineRecord[]): boolean {
@@ -184,6 +191,11 @@ export default function PetProfileListPage() {
                       {hasExpiringVaccine(pet.vaccines) && (
                         <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700">
                           要更新
+                        </span>
+                      )}
+                      {isDueForGrooming(pet.lastGroomingDate) && (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-700">
+                          要連絡
                         </span>
                       )}
                     </div>

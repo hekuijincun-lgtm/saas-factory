@@ -21,6 +21,8 @@ import {
   PawPrint,
   FileText,
   Syringe,
+  ChevronsLeft,
+  ChevronsRight,
 } from "lucide-react";
 import { adminNavItems, filterNavItems } from "./nav.config";
 
@@ -43,10 +45,13 @@ const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   // "/admin/admins":       Shield,
   // "/admin/security":     KeyRound,
   "/admin/pet":          PawPrint,
+  "/admin/pet/reservations": Calendar,
   "/admin/pet/profiles": FileText,
   "/admin/pet/vaccines": Syringe,
+  "/admin/pet/staff":    Users,
   "/admin/pet/pricing":  ClipboardList,
   "/admin/pet/ai-config": Bot,
+  "/admin/pet/settings": Settings,
   "/admin/support":      LifeBuoy,
   "/admin/settings":     Settings,
 };
@@ -59,17 +64,22 @@ const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
 function Sidebar({
   storeName,
   isOpen,
+  collapsed,
   onClose,
+  onToggleCollapse,
   tenantId,
   vertical,
 }: {
   storeName: string;
   isOpen: boolean;
+  collapsed: boolean;
   onClose: () => void;
+  onToggleCollapse: () => void;
   tenantId: string;
   vertical?: string;
 }) {
   const pathname = usePathname();
+  const isPet = vertical === "pet";
   const filteredNavItems = filterNavItems([...adminNavItems], vertical);
 
   return (
@@ -87,31 +97,48 @@ function Sidebar({
       <aside
         className={[
           "fixed lg:static inset-y-0 left-0 z-50",
-          "w-64 bg-gray-900 text-white flex flex-col shrink-0",
-          "border-r border-gray-800 transition-transform duration-300 ease-in-out",
+          "text-white flex flex-col shrink-0",
+          "transition-all duration-300 ease-in-out",
+          collapsed ? "lg:w-16 w-64" : "w-64",
+          "bg-gray-900 border-r border-gray-800",
           isOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0",
         ].join(" ")}
       >
         {/* ヘッダ */}
-        <div className="p-5 border-b border-gray-800 flex items-center justify-between gap-2">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2 mb-0.5">
-              <Store className="w-4 h-4 text-indigo-400 shrink-0" />
-              <span
-                className="font-bold text-base text-white truncate"
-                title={storeName}
-              >
-                {storeName}
+        <div className={`${collapsed ? "p-3 justify-center" : "p-5"} border-b border-gray-800 flex items-center justify-between gap-2`}>
+          {!collapsed && (
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 mb-0.5">
+                {isPet ? (
+                  <PawPrint className="w-4 h-4 text-orange-400 shrink-0" />
+                ) : (
+                  <Store className="w-4 h-4 text-indigo-400 shrink-0" />
+                )}
+                <span
+                  className="font-bold text-base text-white truncate"
+                  title={storeName}
+                >
+                  {storeName}
+                </span>
+              </div>
+              <span className={`text-[10px] uppercase tracking-wider ${isPet ? "text-orange-400/80" : "text-gray-400"}`}>
+                {isPet ? "ペットサロン管理" : "管理パネル"}
               </span>
             </div>
-            <span className="text-[10px] text-gray-400 uppercase tracking-wider">
-              管理パネル
-            </span>
-          </div>
+          )}
+          {collapsed && (
+            <div className="flex items-center justify-center">
+              {isPet ? (
+                <PawPrint className="w-5 h-5 text-orange-400" />
+              ) : (
+                <Store className="w-5 h-5 text-indigo-400" />
+              )}
+            </div>
+          )}
           {/* モバイル閉じるボタン */}
           <button
             onClick={onClose}
-            className="lg:hidden p-1.5 hover:bg-gray-800 rounded-lg transition-colors shrink-0"
+            className={`lg:hidden p-1.5 rounded-lg transition-colors shrink-0 ${"hover:bg-gray-800"}`}
             aria-label="メニューを閉じる"
           >
             <X className="w-4 h-4" />
@@ -122,42 +149,59 @@ function Sidebar({
         <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
           {filteredNavItems.map(({ href, label }) => {
             const Icon = ICON_MAP[href] ?? Settings;
-            // ダッシュボード(/admin)は完全一致のみ active（pathname はクエリを含まない）
+            // ダッシュボード: pet は /admin/pet を完全一致、それ以外は /admin を完全一致
+            const dashHref = isPet ? "/admin/pet" : "/admin";
             const isActive =
-              href === "/admin"
-                ? pathname === "/admin"
+              href === dashHref
+                ? pathname === href
                 : pathname === href || pathname?.startsWith(href + "/");
             return (
               <Link
                 key={href}
                 href={withTenant(href, tenantId)}
                 onClick={onClose}
+                title={collapsed ? label : undefined}
                 className={[
-                  "relative flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium transition-all duration-150",
+                  "relative flex items-center rounded-lg text-sm font-medium transition-all duration-150",
+                  collapsed ? "justify-center px-2 py-2.5" : "gap-3 px-4 py-2.5",
                   isActive
-                    ? "bg-indigo-600 text-white shadow-lg shadow-indigo-900/30"
-                    : "text-gray-400 hover:bg-gray-800 hover:text-white",
+                    ? isPet
+                      ? "bg-orange-600 text-white shadow-lg shadow-orange-900/30"
+                      : "bg-indigo-600 text-white shadow-lg shadow-indigo-900/30"
+                    : isPet
+                      ? "text-orange-400 hover:bg-gray-800 hover:text-orange-200"
+                      : "text-gray-400 hover:bg-gray-800 hover:text-white",
                 ].join(" ")}
               >
-                {isActive && (
+                {isActive && !collapsed && (
                   <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-7 bg-white rounded-r-full" />
                 )}
-                <Icon className="w-4 h-4 shrink-0" />
-                <span className="truncate">{label}</span>
+                <Icon className={collapsed ? "w-5 h-5" : "w-4 h-4 shrink-0"} />
+                {!collapsed && <span className="truncate">{label}</span>}
               </Link>
             );
           })}
         </nav>
 
         {/* フッタ */}
-        <div className="p-3 border-t border-gray-800 space-y-1">
+        <div className={`p-3 border-t border-gray-800 space-y-1`}>
           <a
             href={`/api/auth/logout${tenantId && tenantId !== "default" ? `?tenantId=${encodeURIComponent(tenantId)}` : ""}`}
-            className="flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium text-gray-400 hover:bg-gray-800 hover:text-white transition-all duration-150"
+            title={collapsed ? "ログアウト" : undefined}
+            className={`flex items-center rounded-lg text-sm font-medium transition-all duration-150 ${collapsed ? "justify-center px-2 py-2.5" : "gap-3 px-4 py-2.5"} ${isPet ? "text-orange-400 hover:bg-gray-800 hover:text-orange-200" : "text-gray-400 hover:bg-gray-800 hover:text-white"}`}
           >
-            <LogOut className="w-4 h-4 shrink-0" />
-            <span className="truncate">ログアウト</span>
+            <LogOut className={collapsed ? "w-5 h-5" : "w-4 h-4 shrink-0"} />
+            {!collapsed && <span className="truncate">ログアウト</span>}
           </a>
+          {/* デスクトップ折りたたみトグル */}
+          <button
+            onClick={onToggleCollapse}
+            className={`hidden lg:flex items-center w-full rounded-lg text-sm font-medium transition-all duration-150 ${collapsed ? "justify-center px-2 py-2.5" : "gap-3 px-4 py-2.5"} ${isPet ? "text-orange-400 hover:bg-gray-800 hover:text-orange-200" : "text-gray-400 hover:bg-gray-800 hover:text-white"}`}
+            title={collapsed ? "サイドバーを開く" : "サイドバーを閉じる"}
+          >
+            {collapsed ? <ChevronsRight className="w-5 h-5" /> : <ChevronsLeft className="w-4 h-4 shrink-0" />}
+            {!collapsed && <span className="truncate">閉じる</span>}
+          </button>
         </div>
       </aside>
     </>
@@ -177,6 +221,7 @@ export default function AdminShell({
   const [storeName, setStoreName] = useState(FALLBACK_STORE_NAME);
   const [vertical, setVertical] = useState<string | undefined>(undefined);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const router = useRouter();
   const pathname = usePathname();
   const { status: tenantStatus, tenantId: sessionTenantId, authenticated } = useAdminTenantId();
@@ -214,6 +259,10 @@ export default function AdminShell({
         const v = data?.data?.vertical || data?.vertical;
         if (v) {
           setVertical(v);
+          // pet vertical: /admin にアクセスした場合 /admin/pet にリダイレクト
+          if (v === "pet" && pathname === "/admin") {
+            router.replace(`/admin/pet?tenantId=${encodeURIComponent(sessionTenantId)}`);
+          }
         }
 
         // onboardingCompleted===false (signup ユーザーのみ) → /admin/onboarding へ redirect
@@ -308,7 +357,9 @@ export default function AdminShell({
       <Sidebar
         storeName={storeName}
         isOpen={sidebarOpen}
+        collapsed={sidebarCollapsed}
         onClose={() => setSidebarOpen(false)}
+        onToggleCollapse={() => setSidebarCollapsed(prev => !prev)}
         tenantId={sessionTenantId}
         vertical={vertical}
       />

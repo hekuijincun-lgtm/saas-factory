@@ -15,6 +15,7 @@ interface StepPetSelectProps {
   tenantId: string;
   customerKey?: string;
   onComplete: (answers: Record<string, string | boolean>) => void;
+  onBack?: () => void;
 }
 
 const SPECIES_OPTIONS = [
@@ -42,7 +43,7 @@ function PawIcon() {
   );
 }
 
-export default function StepPetSelect({ tenantId, customerKey, onComplete }: StepPetSelectProps) {
+export default function StepPetSelect({ tenantId, customerKey, onComplete, onBack }: StepPetSelectProps) {
   const [registeredPets, setRegisteredPets] = useState<Pet[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -129,7 +130,12 @@ export default function StepPetSelect({ tenantId, customerKey, onComplete }: Ste
   if (showNewForm && registeredPets.length === 0) {
     return (
       <div className="space-y-5">
-        <h2 className="text-lg font-semibold text-brand-text">ペット情報の入力</h2>
+        <div className="flex items-center gap-2">
+          {onBack && (
+            <button onClick={onBack} className="p-1 text-brand-muted hover:text-brand-text transition-colors" aria-label="戻る">←</button>
+          )}
+          <h2 className="text-lg font-semibold text-brand-text">ペット情報の入力</h2>
+        </div>
         <p className="text-sm text-brand-muted">予約するペットの情報を入力してください</p>
 
         <div className="space-y-4">
@@ -223,7 +229,12 @@ export default function StepPetSelect({ tenantId, customerKey, onComplete }: Ste
   // Has registered pets — show selection grid
   return (
     <div className="space-y-5">
-      <h2 className="text-lg font-semibold text-brand-text">ペットを選択</h2>
+      <div className="flex items-center gap-2">
+          {onBack && (
+            <button onClick={onBack} className="p-1 text-brand-muted hover:text-brand-text transition-colors" aria-label="戻る">←</button>
+          )}
+          <h2 className="text-lg font-semibold text-brand-text">ペットを選択</h2>
+        </div>
       <p className="text-sm text-brand-muted">予約するペットを選択してください（複数選択可）</p>
 
       <div className="grid grid-cols-2 gap-3">

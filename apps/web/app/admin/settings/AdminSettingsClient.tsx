@@ -556,7 +556,8 @@ export default function AdminSettingsClient() {
       await fetch(`/api/auth/me?tenantId=${encodeURIComponent(tenantId)}`, { credentials: 'include', cache: 'no-store' });
       // API に storeName + 営業時間設定 + 住所 + 同意文 + 業種設定を保存
       // Phase 6: verticalConfig のみ write（eyebrow legacy write 停止）
-      const verticalSettingsPayload = vPlugin.flags.hasVerticalSettings ? {
+      const showVerticalSettings = vPlugin.flags.hasVerticalSettings && vPlugin.key !== 'pet';
+      const verticalSettingsPayload = showVerticalSettings ? {
         consentText: eyebrowConsentText,
         repeat: {
           enabled: eyebrowRepeatEnabled,
@@ -576,8 +577,8 @@ export default function AdminSettingsClient() {
         storeAddress,
         consentText,
         // Phase 6: verticalConfig のみ（eyebrow legacy path 送信停止）
-        ...(vPlugin.flags.hasVerticalSettings && verticalSettingsPayload ? {
-          vertical: 'eyebrow' as const,
+        ...(showVerticalSettings && verticalSettingsPayload ? {
+          vertical: vPlugin.key,
           verticalConfig: verticalSettingsPayload,
         } : {}),
         allowedAdminLineUserIds,
@@ -1364,7 +1365,7 @@ export default function AdminSettingsClient() {
         {/* ============================================================
             眉毛施術設定（眉毛サロン特化） — Phase 1a: eyebrow のみ表示
         ============================================================ */}
-        {vPlugin.flags.hasVerticalSettings && <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+        {vPlugin.flags.hasVerticalSettings && vPlugin.key !== 'pet' && <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
           <div className="flex items-center gap-3 mb-5">
             <div className="p-2 bg-pink-100 rounded-lg shrink-0">
               <Scissors className="w-5 h-5 text-pink-600" />

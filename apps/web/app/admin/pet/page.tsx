@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useAdminTenantId, withTenant } from '@/src/lib/useAdminTenantId';
+import { getMenu, type MenuItem } from '@/src/lib/bookingApi';
 import AdminTopBar from '../../_components/ui/AdminTopBar';
 
 interface Reservation {
@@ -12,6 +13,20 @@ interface Reservation {
   customerName: string;
   menuName: string;
   staffName?: string;
+}
+
+/** Match a reservation's menuName against menu items and return the price. */
+function estimatePrice(menuName: string, menuItems: MenuItem[]): number {
+  for (const item of menuItems) {
+    if (menuName.includes(item.name)) {
+      return item.price;
+    }
+  }
+  return 0;
+}
+
+function estimateRevenue(reservations: Reservation[], menuItems: MenuItem[]): number {
+  return reservations.reduce((sum, r) => sum + estimatePrice(r.menuName, menuItems), 0);
 }
 
 const DEMO_RESERVATIONS: Reservation[] = [
@@ -39,6 +54,8 @@ export default function PetDashboardPage() {
   const [isDemo, setIsDemo] = useState(false);
   const [loading, setLoading] = useState(true);
   const [expiringVaccineCount, setExpiringVaccineCount] = useState(0);
+  const [groomingDueCount, setGroomingDueCount] = useState(0);
+  const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
 
   useEffect(() => {
     if (status !== 'ready') return;
@@ -68,9 +85,34 @@ export default function PetDashboardPage() {
     fetch(`/api/proxy/admin/pets/expiring-vaccines?tenantId=${encodeURIComponent(tenantId)}&days=30`, { cache: 'no-store' })
       .then(r => r.ok ? r.json() : null)
       .then((json: any) => {
-        const list = json?.data ?? json?.vaccines ?? [];
-        setExpiringVaccineCount(Array.isArray(list) ? list.length : 0);
+        const raw = json?.data ?? json?.alerts ?? json?.vaccines ?? [];
+        setExpiringVaccineCount(Array.isArray(raw) ? raw.length : 0);
       })
+      .catch(() => {});
+
+    // Fetch pets to count grooming reminders
+    fetch(`/api/proxy/admin/pets?tenantId=${encodeURIComponent(tenantId)}`, { cache: 'no-store' })
+      .then(r => r.ok ? r.json() : null)
+      .then((json: any) => {
+        const pets: { lastGroomingDate?: string; createdAt?: string }[] = json?.data ?? json?.pets ?? [];
+        const now = Date.now();
+        const thirtyDays = 30 * 24 * 60 * 60 * 1000;
+        const dueCount = pets.filter(p => {
+          if (p.lastGroomingDate) {
+            return now - new Date(p.lastGroomingDate).getTime() > thirtyDays;
+          }
+          if (p.createdAt) {
+            return now - new Date(p.createdAt).getTime() > thirtyDays;
+          }
+          return false;
+        }).length;
+        setGroomingDueCount(dueCount);
+      })
+      .catch(() => {});
+
+    // Fetch menu items for revenue estimation
+    getMenu(tenantId)
+      .then(items => setMenuItems(Array.isArray(items) ? items.filter(i => i.active) : []))
       .catch(() => {});
   }, [tenantId, status]);
 
@@ -85,6 +127,12 @@ export default function PetDashboardPage() {
     const name = r.menuName || '不明';
     courseCount[name] = (courseCount[name] || 0) + 1;
   }
+  // Revenue estimates
+  const todayReservations = reservations.filter(r => r.date === today);
+  const weekReservations = reservations.filter(r => r.date >= today && r.date <= weekEndDate);
+  const todayRevenue = menuItems.length > 0 ? estimateRevenue(todayReservations, menuItems) : null;
+  const weekRevenue = menuItems.length > 0 ? estimateRevenue(weekReservations, menuItems) : null;
+
   const top3 = Object.entries(courseCount)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 3);
@@ -92,14 +140,6 @@ export default function PetDashboardPage() {
   const recent5 = [...reservations]
     .sort((a, b) => `${b.date}${b.time}`.localeCompare(`${a.date}${a.time}`))
     .slice(0, 5);
-
-  const subPages = [
-    { href: '/admin/pet/profiles', label: 'ペットカルテ', desc: '登録ペットのプロフィール・施術履歴を管理' },
-    { href: '/admin/pet/vaccines', label: 'ワクチン管理', desc: 'ワクチン期限アラート・接種記録を管理' },
-    { href: '/admin/pet/inquiries', label: '履歴', desc: '問い合わせ・見積もり履歴を確認' },
-    { href: '/admin/pet/pricing', label: '料金設定', desc: 'コース・オプション料金を管理' },
-    { href: '/admin/pet/ai-config', label: 'AI設定', desc: 'AI自動応答の設定を管理' },
-  ];
 
   if (status === 'loading' || loading) {
     return (
@@ -145,6 +185,24 @@ export default function PetDashboardPage() {
                 </li>
               ))}
             </ul>
+          </div>
+          <div className="rounded-2xl border border-orange-200 bg-white p-5 shadow-sm">
+            <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">今日の売上見込み</p>
+            <p className="mt-2 text-3xl font-bold text-orange-600">
+              {todayRevenue !== null ? `¥${todayRevenue.toLocaleString()}` : '—'}
+            </p>
+            {todayRevenue !== null && (
+              <p className="mt-1 text-xs text-gray-400">メニュー料金で概算</p>
+            )}
+          </div>
+          <div className="rounded-2xl border border-orange-200 bg-white p-5 shadow-sm">
+            <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">今週の売上見込み</p>
+            <p className="mt-2 text-3xl font-bold text-orange-600">
+              {weekRevenue !== null ? `¥${weekRevenue.toLocaleString()}` : '—'}
+            </p>
+            {weekRevenue !== null && (
+              <p className="mt-1 text-xs text-gray-400">メニュー料金で概算</p>
+            )}
           </div>
         </div>
 
@@ -199,19 +257,26 @@ export default function PetDashboardPage() {
           </Link>
         )}
 
-        {/* Sub-page links */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          {subPages.map(({ href, label, desc }) => (
-            <Link
-              key={href}
-              href={withTenant(href, tenantId)}
-              className="group rounded-2xl border border-gray-200 bg-white p-5 shadow-sm hover:border-orange-300 hover:shadow-md transition-all"
-            >
-              <p className="font-semibold text-gray-900 group-hover:text-orange-600 transition-colors">{label}</p>
-              <p className="mt-1 text-xs text-gray-500">{desc}</p>
-            </Link>
-          ))}
-        </div>
+        {/* Grooming Reminder Alert */}
+        {groomingDueCount > 0 && (
+          <Link
+            href={withTenant('/admin/pet/profiles', tenantId)}
+            className="block rounded-2xl border border-amber-200 bg-amber-50 p-5 shadow-sm hover:border-amber-300 hover:shadow-md transition-all"
+          >
+            <div className="flex items-center gap-3">
+              <span className="inline-flex items-center justify-center w-10 h-10 rounded-full bg-amber-100">
+                <svg className="w-5 h-5 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                </svg>
+              </span>
+              <div>
+                <p className="text-sm font-semibold text-amber-700">リピート促進アラート</p>
+                <p className="text-xs text-amber-600 mt-0.5">前回の施術から30日以上経過したペットが <span className="font-bold">{groomingDueCount}件</span> あります</p>
+              </div>
+            </div>
+          </Link>
+        )}
+
       </div>
     </>
   );

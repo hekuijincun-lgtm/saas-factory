@@ -7,6 +7,8 @@ import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { useAdminTenantId, withTenant } from '@/src/lib/useAdminTenantId';
 import AdminTopBar from '../../../../_components/ui/AdminTopBar';
+import CustomerPicker from '../../_components/CustomerPicker';
+import { compressImage } from '@/src/lib/compressImage';
 
 interface VaccineRecord {
   id?: string;
@@ -73,12 +75,14 @@ export default function PetProfileDetailPage() {
   const [form, setForm] = useState({
     name: '', species: '', breed: '', size: '', age: '', weight: '',
     color: '', gender: '', allergies: '', notes: '', photoUrl: '',
+    ownerName: '', customerKey: '',
   });
 
   // Grooming add form
   const [showGroomingForm, setShowGroomingForm] = useState(false);
   const [groomingForm, setGroomingForm] = useState({
     date: '', course: '', staffName: '', cutStyle: '', weight: '', notes: '',
+    beforePhotoUrl: '', afterPhotoUrl: '',
   });
   const [groomingSaving, setGroomingSaving] = useState(false);
 
@@ -89,10 +93,61 @@ export default function PetProfileDetailPage() {
   });
   const [vaccineSaving, setVaccineSaving] = useState(false);
 
+  const [photoUploading, setPhotoUploading] = useState(false);
+  const [groomingPhotoUploading, setGroomingPhotoUploading] = useState<'before' | 'after' | null>(null);
+
   const showToast = useCallback((msg: string) => {
     setToast(msg);
     setTimeout(() => setToast(''), 3000);
   }, []);
+
+  const handlePhotoUpload = async (file: File) => {
+    if (!pet) return;
+    setPhotoUploading(true);
+    try {
+      const compressed = await compressImage(file);
+      const fd = new FormData();
+      fd.append('file', compressed);
+      const res = await fetch(
+        `/api/proxy/admin/pets/${encodeURIComponent(pet.id)}/image?tenantId=${encodeURIComponent(tenantId)}`,
+        { method: 'POST', body: fd }
+      );
+      if (!res.ok) throw new Error('upload failed');
+      const json = await res.json() as any;
+      if (!json.ok) throw new Error(json.error || 'upload failed');
+      setForm(f => ({ ...f, photoUrl: json.imageUrl }));
+      setPet(prev => prev ? { ...prev, photoUrl: json.imageUrl } : prev);
+      showToast('写真をアップロードしました');
+    } catch {
+      showToast('写真のアップロードに失敗しました');
+    } finally {
+      setPhotoUploading(false);
+    }
+  };
+
+  const handleGroomingPhotoUpload = async (kind: 'before' | 'after', file: File) => {
+    if (!pet) return;
+    setGroomingPhotoUploading(kind);
+    try {
+      const compressed = await compressImage(file);
+      const fd = new FormData();
+      fd.append('file', compressed);
+      const res = await fetch(
+        `/api/proxy/admin/pets/${encodeURIComponent(pet.id)}/image?tenantId=${encodeURIComponent(tenantId)}`,
+        { method: 'POST', body: fd }
+      );
+      if (!res.ok) throw new Error('upload failed');
+      const json = await res.json() as any;
+      if (!json.ok) throw new Error(json.error || 'upload failed');
+      const urlKey = kind === 'before' ? 'beforePhotoUrl' : 'afterPhotoUrl';
+      setGroomingForm(f => ({ ...f, [urlKey]: json.imageUrl }));
+      showToast(`${kind === 'before' ? 'Before' : 'After'}写真をアップロードしました`);
+    } catch {
+      showToast('写真のアップロードに失敗しました');
+    } finally {
+      setGroomingPhotoUploading(null);
+    }
+  };
 
   // Fetch pet
   useEffect(() => {
@@ -111,6 +166,7 @@ export default function PetProfileDetailPage() {
           size: p.size || '', age: p.age?.toString() || '', weight: p.weight?.toString() || '',
           color: p.color || '', gender: p.gender || '', allergies: p.allergies || '',
           notes: p.notes || '', photoUrl: p.photoUrl || '',
+          ownerName: p.ownerName || '', customerKey: p.customerKey || '',
         });
       })
       .catch(() => setPet(null))
@@ -128,7 +184,7 @@ export default function PetProfileDetailPage() {
         weight: form.weight ? parseFloat(form.weight) : undefined,
         tenantId,
       };
-      const res = await fetch(`/api/proxy/admin/pets/${encodeURIComponent(pet.id)}`, {
+      const res = await fetch(`/api/proxy/admin/pets/${encodeURIComponent(pet.id)}?tenantId=${encodeURIComponent(tenantId)}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -147,24 +203,27 @@ export default function PetProfileDetailPage() {
     if (!pet) return;
     setGroomingSaving(true);
     try {
+      const { beforePhotoUrl, afterPhotoUrl, ...groomingRest } = groomingForm;
       const body = {
-        ...groomingForm,
+        ...groomingRest,
         weight: groomingForm.weight ? parseFloat(groomingForm.weight) : undefined,
+        beforeUrl: beforePhotoUrl || undefined,
+        afterUrl: afterPhotoUrl || undefined,
         tenantId,
       };
-      const res = await fetch(`/api/proxy/admin/pets/${encodeURIComponent(pet.id)}/grooming`, {
+      const res = await fetch(`/api/proxy/admin/pets/${encodeURIComponent(pet.id)}/grooming?tenantId=${encodeURIComponent(tenantId)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
       if (!res.ok) throw new Error('save failed');
       const json = await res.json() as any;
-      const newRecord: GroomingRecord = json?.data ?? json;
+      const newRecord: GroomingRecord = json?.data ?? json?.note ?? json;
       setPet(prev => prev ? {
         ...prev,
         groomingHistory: [newRecord, ...(prev.groomingHistory || [])],
       } : prev);
-      setGroomingForm({ date: '', course: '', staffName: '', cutStyle: '', weight: '', notes: '' });
+      setGroomingForm({ date: '', course: '', staffName: '', cutStyle: '', weight: '', notes: '', beforePhotoUrl: '', afterPhotoUrl: '' });
       setShowGroomingForm(false);
       showToast('施術記録を追加しました');
     } catch {
@@ -174,13 +233,53 @@ export default function PetProfileDetailPage() {
     }
   };
 
+  // Delete grooming record
+  const handleDeleteGrooming = async (groomingId: string) => {
+    if (!pet || !groomingId) return;
+    if (!confirm('この施術記録を削除しますか？')) return;
+    try {
+      const res = await fetch(
+        `/api/proxy/admin/pets/${encodeURIComponent(pet.id)}/grooming?tenantId=${encodeURIComponent(tenantId)}&groomingId=${encodeURIComponent(groomingId)}`,
+        { method: 'DELETE' }
+      );
+      if (!res.ok) throw new Error('delete failed');
+      setPet(prev => prev ? {
+        ...prev,
+        groomingHistory: (prev.groomingHistory || []).filter(g => g.id !== groomingId),
+      } : prev);
+      showToast('施術記録を削除しました');
+    } catch {
+      showToast('削除に失敗しました');
+    }
+  };
+
+  // Delete vaccine record
+  const handleDeleteVaccine = async (vaccineId: string) => {
+    if (!pet || !vaccineId) return;
+    if (!confirm('このワクチン記録を削除しますか？')) return;
+    try {
+      const res = await fetch(
+        `/api/proxy/admin/pets/${encodeURIComponent(pet.id)}/vaccine?tenantId=${encodeURIComponent(tenantId)}&vaccineId=${encodeURIComponent(vaccineId)}`,
+        { method: 'DELETE' }
+      );
+      if (!res.ok) throw new Error('delete failed');
+      setPet(prev => prev ? {
+        ...prev,
+        vaccines: (prev.vaccines || []).filter(v => v.id !== vaccineId),
+      } : prev);
+      showToast('ワクチン記録を削除しました');
+    } catch {
+      showToast('削除に失敗しました');
+    }
+  };
+
   // Add vaccine record
   const handleAddVaccine = async () => {
     if (!pet) return;
     setVaccineSaving(true);
     try {
       const body = { ...vaccineForm, tenantId };
-      const res = await fetch(`/api/proxy/admin/pets/${encodeURIComponent(pet.id)}/vaccine`, {
+      const res = await fetch(`/api/proxy/admin/pets/${encodeURIComponent(pet.id)}/vaccine?tenantId=${encodeURIComponent(tenantId)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -242,12 +341,30 @@ export default function PetProfileDetailPage() {
         title={pet.name}
         subtitle="ペットカルテ詳細"
         right={
-          <Link
-            href={withTenant('/admin/pet/profiles', tenantId)}
-            className="text-sm text-orange-600 hover:text-orange-700 font-medium"
-          >
-            一覧に戻る
-          </Link>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => {
+                const shareUrl = `${window.location.origin}/pet/history/${petId}?tenantId=${encodeURIComponent(tenantId)}`;
+                navigator.clipboard.writeText(shareUrl).then(() => {
+                  showToast('リンクをコピーしました');
+                }).catch(() => {
+                  showToast('コピーに失敗しました');
+                });
+              }}
+              className="inline-flex items-center gap-1 text-sm text-orange-600 hover:text-orange-700 font-medium"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
+              </svg>
+              共有リンク
+            </button>
+            <Link
+              href={withTenant('/admin/pet/profiles', tenantId)}
+              className="text-sm text-orange-600 hover:text-orange-700 font-medium"
+            >
+              一覧に戻る
+            </Link>
+          </div>
         }
       />
 
@@ -290,26 +407,49 @@ export default function PetProfileDetailPage() {
                   </svg>
                 </div>
               )}
-              <div className="flex-1">
-                <label className="block text-xs font-medium text-gray-500 mb-1">写真URL</label>
-                <input
-                  type="text"
-                  value={form.photoUrl}
-                  onChange={e => setForm(f => ({ ...f, photoUrl: e.target.value }))}
-                  placeholder="https://..."
-                  className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300"
-                />
+              <div className="flex-1 space-y-2">
+                <label className="block text-xs font-medium text-gray-500">写真</label>
+                <label
+                  className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium cursor-pointer transition-colors ${
+                    photoUploading
+                      ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                      : 'bg-orange-50 text-orange-600 hover:bg-orange-100'
+                  }`}
+                >
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    disabled={photoUploading}
+                    onChange={e => {
+                      const f = e.target.files?.[0];
+                      if (f) handlePhotoUpload(f);
+                      e.target.value = '';
+                    }}
+                  />
+                  {photoUploading ? '送信中...' : '写真を選択'}
+                </label>
+                {form.photoUrl && (
+                  <button
+                    type="button"
+                    onClick={() => setForm(f => ({ ...f, photoUrl: '' }))}
+                    className="ml-2 text-xs text-gray-400 hover:text-red-500"
+                  >
+                    削除
+                  </button>
+                )}
               </div>
             </div>
 
-            {/* Owner info (read-only) */}
-            {(pet.ownerName || pet.customerKey) && (
-              <div className="rounded-xl bg-orange-50 p-4">
-                <p className="text-xs font-medium text-orange-600 mb-1">飼い主情報</p>
-                {pet.ownerName && <p className="text-sm text-gray-700">{pet.ownerName}</p>}
-                {pet.customerKey && <p className="text-xs text-gray-400 mt-0.5">顧客キー: {pet.customerKey}</p>}
-              </div>
-            )}
+            {/* Owner info */}
+            <div className="border-t border-gray-100 pt-4">
+              <CustomerPicker
+                tenantId={tenantId}
+                ownerName={form.ownerName}
+                customerKey={form.customerKey}
+                onChange={(ownerName, customerKey) => setForm(f => ({ ...f, ownerName, customerKey }))}
+              />
+            </div>
 
             {/* Fields */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -506,6 +646,82 @@ export default function PetProfileDetailPage() {
                     className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300 resize-none"
                   />
                 </div>
+                {/* Before / After photo uploads */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500 mb-1">Before写真</label>
+                    {groomingForm.beforePhotoUrl ? (
+                      <div className="relative inline-block">
+                        <img src={groomingForm.beforePhotoUrl} alt="before" className="w-24 h-24 rounded-lg object-cover" />
+                        <button
+                          type="button"
+                          onClick={() => setGroomingForm(f => ({ ...f, beforePhotoUrl: '' }))}
+                          className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-gray-900 text-white text-xs flex items-center justify-center hover:bg-red-500 transition-colors"
+                        >
+                          &times;
+                        </button>
+                      </div>
+                    ) : (
+                      <label
+                        className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium cursor-pointer transition-colors ${
+                          groomingPhotoUploading === 'before'
+                            ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                            : 'bg-orange-50 text-orange-600 hover:bg-orange-100'
+                        }`}
+                      >
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          disabled={groomingPhotoUploading !== null}
+                          onChange={e => {
+                            const f = e.target.files?.[0];
+                            if (f) handleGroomingPhotoUpload('before', f);
+                            e.target.value = '';
+                          }}
+                        />
+                        {groomingPhotoUploading === 'before' ? '送信中...' : '写真を選択'}
+                      </label>
+                    )}
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500 mb-1">After写真</label>
+                    {groomingForm.afterPhotoUrl ? (
+                      <div className="relative inline-block">
+                        <img src={groomingForm.afterPhotoUrl} alt="after" className="w-24 h-24 rounded-lg object-cover" />
+                        <button
+                          type="button"
+                          onClick={() => setGroomingForm(f => ({ ...f, afterPhotoUrl: '' }))}
+                          className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-gray-900 text-white text-xs flex items-center justify-center hover:bg-red-500 transition-colors"
+                        >
+                          &times;
+                        </button>
+                      </div>
+                    ) : (
+                      <label
+                        className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium cursor-pointer transition-colors ${
+                          groomingPhotoUploading === 'after'
+                            ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                            : 'bg-orange-50 text-orange-600 hover:bg-orange-100'
+                        }`}
+                      >
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          disabled={groomingPhotoUploading !== null}
+                          onChange={e => {
+                            const f = e.target.files?.[0];
+                            if (f) handleGroomingPhotoUpload('after', f);
+                            e.target.value = '';
+                          }}
+                        />
+                        {groomingPhotoUploading === 'after' ? '送信中...' : '写真を選択'}
+                      </label>
+                    )}
+                  </div>
+                </div>
+
                 <button
                   onClick={handleAddGrooming}
                   disabled={groomingSaving || !groomingForm.date || !groomingForm.course}
@@ -529,11 +745,24 @@ export default function PetProfileDetailPage() {
                         <p className="text-sm font-semibold text-gray-900">{g.course}</p>
                         <p className="text-xs text-gray-500 mt-0.5">{g.date}{g.staffName ? ` / 担当: ${g.staffName}` : ''}</p>
                       </div>
-                      {g.cutStyle && (
-                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-700">
-                          {g.cutStyle}
-                        </span>
-                      )}
+                      <div className="flex items-center gap-2">
+                        {g.cutStyle && (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-700">
+                            {g.cutStyle}
+                          </span>
+                        )}
+                        {g.id && (
+                          <button
+                            onClick={() => handleDeleteGrooming(g.id!)}
+                            className="p-1 text-gray-400 hover:text-red-500 transition-colors"
+                            title="削除"
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                          </button>
+                        )}
+                      </div>
                     </div>
                     {g.weight && <p className="text-xs text-gray-500 mt-2">体重: {g.weight}kg</p>}
                     {g.notes && <p className="text-sm text-gray-600 mt-2">{g.notes}</p>}
@@ -640,6 +869,7 @@ export default function PetProfileDetailPage() {
                         <th className="px-5 py-3">有効期限</th>
                         <th className="px-5 py-3">動物病院</th>
                         <th className="px-5 py-3">ステータス</th>
+                        <th className="px-5 py-3"></th>
                       </tr>
                     </thead>
                     <tbody>
@@ -665,6 +895,19 @@ export default function PetProfileDetailPage() {
                               )}
                               {st === 'ok' && (
                                 <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">有効</span>
+                              )}
+                            </td>
+                            <td className="px-5 py-3">
+                              {v.id && (
+                                <button
+                                  onClick={() => handleDeleteVaccine(v.id!)}
+                                  className="p-1 text-gray-400 hover:text-red-500 transition-colors"
+                                  title="削除"
+                                >
+                                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                  </svg>
+                                </button>
                               )}
                             </td>
                           </tr>

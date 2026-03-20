@@ -19,13 +19,13 @@ function getPetId(req: Request): string {
   return vaccineIdx > 0 ? parts[vaccineIdx - 1] : "";
 }
 
-async function forward(req: Request): Promise<Response> {
+async function forward(req: Request, method: string, pathSuffix = ""): Promise<Response> {
   const u = new URL(req.url);
   const isDebug = isDebugAllowed() && u.searchParams.get("debug") === "1";
   const tenantId = getTenantId(req);
   const petId = getPetId(req);
 
-  const upstream = new URL(`${apiBase()}/admin/pets/${petId}/vaccine`);
+  const upstream = new URL(`${apiBase()}/admin/pets/${petId}/vaccine${pathSuffix}`);
   upstream.searchParams.set("tenantId", tenantId);
 
   const tokenConfigured = !!readAdminToken();
@@ -39,9 +39,9 @@ async function forward(req: Request): Promise<Response> {
   reqHeaders.set("x-session-tenant-id", tenantId);
   if (session.userId) reqHeaders.set("x-session-user-id", session.userId);
 
-  const body = await req.arrayBuffer();
+  const body = method !== "DELETE" ? await req.arrayBuffer() : undefined;
 
-  const res = await fetch(upstream.toString(), { method: "POST", headers: reqHeaders, body });
+  const res = await fetch(upstream.toString(), { method, headers: reqHeaders, body });
   const data = await res.text();
   const out = new Response(data, {
     status: res.status,
@@ -60,4 +60,11 @@ async function forward(req: Request): Promise<Response> {
   return out;
 }
 
-export async function POST(req: Request) { return forward(req); }
+export async function POST(req: Request) { return forward(req, "POST"); }
+
+export async function DELETE(req: Request) {
+  // vaccineId is passed as query param since Next.js route doesn't have it as a segment
+  const u = new URL(req.url);
+  const vaccineId = u.searchParams.get("vaccineId") || "";
+  return forward(req, "DELETE", `/${encodeURIComponent(vaccineId)}`);
+}

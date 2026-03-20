@@ -1425,6 +1425,88 @@ app.get("/media/reservations/*", async (c) => {
 });
 
 /** =========================
+ * POST /admin/pets/:petId/image?tenantId=
+ * multipart/form-data field: file (image/*)
+ * 3MB 制限。R2 にアップロードして KV の pet profile photoUrl を更新する。
+ * imageKey: pet-photos/{tenantId}/{petId}/{ts}-{rand}.{ext}
+ * ========================= */
+app.post("/admin/pets/:petId/image", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
+  const rbac = await requireRole(c, 'admin'); if (rbac) return rbac;
+  try {
+    const tenantId = getTenantId(c);
+    const petId = c.req.param("petId").replace(/[^a-zA-Z0-9_\-]/g, "_");
+    const r2 = (c.env as any).MENU_IMAGES;
+    if (!r2) return c.json({ ok: false, error: "R2_not_bound" }, 500);
+
+    const formData = await c.req.formData().catch(() => null);
+    if (!formData) return c.json({ ok: false, error: "invalid_form_data" }, 400);
+
+    const file = formData.get("file") as File | null;
+    if (!file) return c.json({ ok: false, error: "missing_file_field" }, 400);
+
+    if (file.size > 3 * 1024 * 1024) {
+      return c.json({ ok: false, error: "file_too_large", maxBytes: 3145728 }, 413);
+    }
+
+    const contentType = file.type || "application/octet-stream";
+    if (!contentType.startsWith("image/")) {
+      return c.json({ ok: false, error: "invalid_file_type", got: contentType }, 400);
+    }
+
+    const ext = (file.name.split(".").pop() ?? "jpg").toLowerCase().replace(/[^a-z0-9]/g, "") || "jpg";
+    const rand = Math.random().toString(36).slice(2, 9);
+    const imageKey = `pet-photos/${tenantId}/${petId}/${Date.now()}-${rand}.${ext}`;
+
+    const buf = await file.arrayBuffer();
+    await r2.put(imageKey, buf, { httpMetadata: { contentType } });
+
+    const reqUrl = new URL(c.req.url);
+    const apiBase = `${reqUrl.protocol}//${reqUrl.host}`;
+    const imageUrl = `${apiBase}/media/pets/${imageKey}`;
+
+    // Update pet profile photoUrl in KV
+    const kv = c.env.SAAS_FACTORY;
+    const key = `pet:profiles:${tenantId}`;
+    const raw = await kv.get(key);
+    const pets: any[] = raw ? JSON.parse(raw) : [];
+    const idx = pets.findIndex((p: any) => p.id === petId);
+    if (idx >= 0) {
+      pets[idx].photoUrl = imageUrl;
+      await kv.put(key, JSON.stringify(pets));
+    }
+
+    return c.json({ ok: true, tenantId, petId, imageKey, imageUrl });
+  } catch (err: any) {
+    return c.json({ ok: false, error: "upload_failed", message: String(err?.message ?? err) }, 500);
+  }
+});
+
+/** GET /media/pets/* — R2 からペット画像を公開配信 */
+app.get("/media/pets/*", async (c) => {
+  try {
+    const r2 = (c.env as any).MENU_IMAGES;
+    if (!r2) return new Response("R2 not configured", { status: 503 });
+
+    const url = new URL(c.req.url);
+    const imageKey = decodeURIComponent(url.pathname.replace(/^\/media\/pets\//, ""));
+    if (!imageKey) return new Response("Not Found", { status: 404 });
+
+    const obj = await r2.get(imageKey);
+    if (!obj) return new Response("Not Found", { status: 404 });
+
+    const headers = new Headers();
+    headers.set("Content-Type", obj.httpMetadata?.contentType ?? "image/jpeg");
+    headers.set("Cache-Control", "public, max-age=31536000, immutable");
+    if (obj.etag) headers.set("ETag", `"${obj.etag}"`);
+    headers.set("Access-Control-Allow-Origin", "*");
+    return new Response(obj.body, { status: 200, headers });
+  } catch (err: any) {
+    return new Response("Server Error", { status: 500 });
+  }
+});
+
+/** =========================
  * POST /admin/reservations/:id/image?tenantId=&kind=before|after
  * multipart/form-data  field: file (image/*)
  * 3MB 制限。R2 にアップロードして D1 meta の beforeUrl/afterUrl を更新する。
@@ -1816,6 +1898,16 @@ app.get("/admin/settings", async (c) => {
     // ✅ 常に完全形を返す（DEFAULT_SETTINGS ← settings:default ← settings:tenant）
     let merged = deepMerge(safeClone(DEFAULT_SETTINGS), defaultObj);
     merged = deepMerge(merged, tenantObj);
+
+    // subscription が未設定の既存テナントにはデフォルト（starter/active）を補填
+    if (!(merged as any).subscription?.status) {
+      (merged as any).subscription = {
+        planId: 'starter',
+        status: 'active',
+        createdAt: Date.now(),
+        ...(merged as any).subscription,
+      };
+    }
 
     return c.json({ ok: true, tenantId, data: merged });
   } catch (error) {
@@ -3797,6 +3889,38 @@ async function upsertCustomer(
       .catch((e: any) => console.error("[RESERVE_META] error:", String(e?.message ?? e)));
   }
 
+  // ── Auto-create pet profile from survey answers (pet vertical) ──
+  // If surveyAnswers contain pet_name and no pet_ids (= new pet, not selected from existing),
+  // auto-register the pet profile in KV so it appears in admin karte.
+  try {
+    const survey = bodyMeta?.surveyAnswers as Record<string, string> | undefined;
+    if (survey?.pet_name && !survey?.pet_ids) {
+      const petKey = `pet:profiles:${tenantId}`;
+      const rawPets = await env.SAAS_FACTORY.get(petKey);
+      const pets: any[] = rawPets ? JSON.parse(rawPets) : [];
+      const now = new Date().toISOString();
+      const newPet = {
+        id: `pet_${Date.now()}_${Math.random().toString(16).slice(2)}`,
+        customerKey: customerKey || "",
+        ownerName: customerName || "",
+        name: survey.pet_name,
+        species: survey.pet_species || "dog",
+        breed: survey.pet_breed || "",
+        size: survey.pet_size || "",
+        age: survey.pet_age || "",
+        allergies: survey.pet_allergy || "",
+        vaccinations: [],
+        groomingHistory: [{ date: startAt.slice(0, 10), reservationId: rid, note: "予約時自動登録" }],
+        createdAt: now,
+        updatedAt: now,
+      };
+      pets.push(newPet);
+      await env.SAAS_FACTORY.put(petKey, JSON.stringify(pets));
+    }
+  } catch (e: any) {
+    console.error("[RESERVE_PET_AUTO] error:", String(e?.message ?? e));
+  }
+
   return c.json({ ok:true, id: rid, tenantId, staffId, startAt, endAt, ...(customerKey ? { customerKey } : {}) })
   } finally {
     // best-effort unlock
@@ -4340,6 +4464,22 @@ app.get("/admin/pets/expiring-vaccines", async (c) => {
   return c.json({ ok: true, tenantId, alerts });
 });
 
+// GET /pet/profile/:petId?tenantId= — public pet grooming history (shared with owners)
+app.get("/pet/profile/:petId", async (c) => {
+  const tenantId = (c.req.query("tenantId") || "default").trim();
+  const petId = c.req.param("petId");
+  const kv = c.env.SAAS_FACTORY;
+  const key = `pet:profiles:${tenantId}`;
+  const raw = await kv.get(key);
+  const pets: PetProfile[] = raw ? JSON.parse(raw) : [];
+  const pet = pets.find((p) => p.id === petId);
+  if (!pet) return c.json({ ok: false, error: "not_found" }, 404);
+
+  // Return only safe fields (no internal keys)
+  const { customerKey, ...safePet } = pet;
+  return c.json({ ok: true, tenantId, data: safePet });
+});
+
 app.get("/admin/pets", async (c) => {
   const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
   const rbac = await requireRole(c, 'admin'); if (rbac) return rbac;
@@ -4567,6 +4707,33 @@ app.post("/admin/pets/:petId/grooming", async (c) => {
   await c.env.SAAS_FACTORY.put(key, JSON.stringify(pets));
 
   return c.json({ ok: true, tenantId, note });
+});
+
+// DELETE /admin/pets/:petId/grooming/:groomingId - remove grooming record
+app.delete("/admin/pets/:petId/grooming/:groomingId", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
+  const rbac = await requireRole(c, 'admin'); if (rbac) return rbac;
+  const tenantId = getTenantId(c);
+  const petId = c.req.param("petId");
+  const groomingId = c.req.param("groomingId");
+
+  const key = `pet:profiles:${tenantId}`;
+  const raw = await c.env.SAAS_FACTORY.get(key);
+  const pets: PetProfile[] = raw ? JSON.parse(raw) : [];
+
+  const idx = pets.findIndex((p) => p.id === petId);
+  if (idx < 0) return c.json({ ok: false, error: "pet_not_found" }, 404);
+
+  const before = pets[idx].groomingHistory?.length || 0;
+  pets[idx].groomingHistory = (pets[idx].groomingHistory || []).filter((g) => g.id !== groomingId);
+  if (pets[idx].groomingHistory.length === before) {
+    return c.json({ ok: false, error: "grooming_not_found" }, 404);
+  }
+
+  pets[idx].updatedAt = new Date().toISOString();
+  await c.env.SAAS_FACTORY.put(key, JSON.stringify(pets));
+
+  return c.json({ ok: true, tenantId });
 });
 
 // =============================================================================
@@ -5501,20 +5668,18 @@ app.post('/auth/email/verify', async (c) => {
             trialEndsAt: Date.now() + TRIAL_DURATION_DAYS * 86400000,
             createdAt: Date.now(),
           }
-        : resolvedPlanId
-          ? {
-              planId: resolvedPlanId,
+        : {
+              planId: resolvedPlanId ?? ('starter' as PlanId),
               status: 'active' as const,
               createdAt: Date.now(),
-            }
-          : undefined;
+            };
     // Phase 1a: seed vertical from signup selection
     const seedVertical = si.vertical ?? undefined;
     const seedSettings = mergeSettings(DEFAULT_ADMIN_SETTINGS, {
       storeName: storedName,
       tenant: { name: storedName, email },
       onboarding: { onboardingCompleted: false },
-      ...(subscriptionSeed ? { subscription: subscriptionSeed as SubscriptionInfo } : {}),
+      subscription: subscriptionSeed as SubscriptionInfo,
       ...(seedVertical ? { vertical: seedVertical } : {}),
     });
     await kv.put('settings:' + tenantId, JSON.stringify(seedSettings));

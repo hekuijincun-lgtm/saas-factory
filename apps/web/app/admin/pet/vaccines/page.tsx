@@ -53,7 +53,26 @@ export default function VaccineAlertPage() {
         return r.json();
       })
       .then((json: any) => {
-        setVaccines(json?.data ?? json?.vaccines ?? []);
+        const raw = json?.data ?? json?.alerts ?? json?.vaccines ?? [];
+        // Backend may return nested { pet, vaccine } objects — flatten to ExpiringVaccine
+        const mapped: ExpiringVaccine[] = raw.map((item: any) => {
+          if (item.pet && item.vaccine) {
+            const now = Date.now();
+            const exp = new Date(item.vaccine.expiresAt).getTime();
+            const daysRemaining = Math.ceil((exp - now) / (24 * 60 * 60 * 1000));
+            return {
+              petId: item.pet.id,
+              petName: item.pet.name,
+              ownerName: item.pet.ownerName,
+              vaccineName: item.vaccine.name,
+              date: item.vaccine.date,
+              expiresAt: item.vaccine.expiresAt,
+              daysRemaining,
+            };
+          }
+          return item;
+        });
+        setVaccines(mapped);
       })
       .catch(() => {
         setVaccines([]);
