@@ -1,4 +1,4 @@
-import { DesignProps, getIcon, PLANS } from './shared';
+import { DesignProps, getIcon, LEGAL, PLANS } from './shared';
 import { TrackingCTA } from '../_components/TrackingCTA';
 import Link from 'next/link';
 import { ArrowRight, Scissors, Star, CheckCircle2, ChevronDown, Zap } from 'lucide-react';
@@ -353,10 +353,16 @@ export function Storytelling({ d, t, vertical, signupUrl }: DesignProps) {
 
       {/* ── Footer (dark, minimal) ─────────────────────────── */}
       <footer className="bg-gray-950 text-gray-500 py-12 px-6">
-        <div className="max-w-5xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
+        <div className="max-w-5xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-6">
           <Link href="/" className={`text-sm font-semibold ${t.primaryText}`}>
             {d.label}
           </Link>
+          <div className="flex flex-wrap items-center gap-4 text-xs">
+            <Link href="/legal/tokushoho" className="hover:text-white transition-colors">特商法表記</Link>
+            <Link href="/legal/terms" className="hover:text-white transition-colors">利用規約</Link>
+            <Link href="/legal/privacy" className="hover:text-white transition-colors">プライバシー</Link>
+            <a href={`mailto:${LEGAL.email}`} className="hover:text-white transition-colors">お問い合わせ</a>
+          </div>
           <p className="text-xs">
             &copy; {new Date().getFullYear()} {d.label}. All rights reserved.
           </p>

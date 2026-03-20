@@ -4,6 +4,8 @@ import {
   SmartphoneNfc, Sparkles, HeartPulse,
 } from 'lucide-react';
 
+export { LEGAL } from '../../../src/lib/legal';
+
 // ── Theme System ────────────────────────────────────────────────────
 export type ThemeKey = 'rose' | 'indigo' | 'emerald' | 'amber' | 'sky' | 'violet' | 'teal' | 'orange' | 'fuchsia' | 'cyan';
 

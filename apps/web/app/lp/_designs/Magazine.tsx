@@ -1,4 +1,4 @@
-import { DesignProps, getIcon, PLANS } from './shared';
+import { DesignProps, getIcon, LEGAL, PLANS } from './shared';
 import { TrackingCTA } from '../_components/TrackingCTA';
 import Link from 'next/link';
 import { ArrowRight, Scissors, Star, CheckCircle2, ChevronDown, Zap } from 'lucide-react';
@@ -316,11 +316,19 @@ export function Magazine({ d, t, vertical, signupUrl }: DesignProps) {
       </section>
 
       {/* ── Footer ────────────────────────────────────────────── */}
-      <footer className="px-8 sm:px-12 py-10 border-t border-gray-100 flex items-center justify-between">
-        <span className="font-serif text-sm text-gray-400">{d.label}</span>
-        <span className="text-xs text-gray-300">
-          &copy; {new Date().getFullYear()} All rights reserved.
-        </span>
+      <footer className="px-8 sm:px-12 py-10 border-t border-gray-100">
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+          <span className="font-serif text-sm text-gray-400">{d.label}</span>
+          <div className="flex flex-wrap items-center gap-4 text-xs text-gray-400">
+            <Link href="/legal/tokushoho" className="hover:text-gray-700 transition-colors">特商法表記</Link>
+            <Link href="/legal/terms" className="hover:text-gray-700 transition-colors">利用規約</Link>
+            <Link href="/legal/privacy" className="hover:text-gray-700 transition-colors">プライバシー</Link>
+            <a href={`mailto:${LEGAL.email}`} className="hover:text-gray-700 transition-colors">お問い合わせ</a>
+          </div>
+          <span className="text-xs text-gray-300">
+            &copy; {new Date().getFullYear()} All rights reserved.
+          </span>
+        </div>
       </footer>
     </div>
   );

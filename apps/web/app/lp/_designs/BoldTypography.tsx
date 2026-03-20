@@ -1,4 +1,4 @@
-import { DesignProps, getIcon, PLANS } from './shared';
+import { DesignProps, getIcon, LEGAL, PLANS } from './shared';
 import { TrackingCTA } from '../_components/TrackingCTA';
 import Link from 'next/link';
 import { ArrowRight, Scissors, Star, CheckCircle2, ChevronDown, Zap } from 'lucide-react';
@@ -237,10 +237,18 @@ export function BoldTypography({ d, t, vertical, signupUrl }: DesignProps) {
       </section>
 
       {/* ── Footer — single line ──────────────────────────────── */}
-      <footer className="px-6 sm:px-10 py-8 text-center">
-        <span className="text-xs text-gray-300">
-          &copy; {new Date().getFullYear()} {d.label}. All rights reserved.
-        </span>
+      <footer className="px-6 sm:px-10 py-8">
+        <div className="max-w-5xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
+          <span className="text-xs text-gray-300">
+            &copy; {new Date().getFullYear()} {d.label}. All rights reserved.
+          </span>
+          <div className="flex flex-wrap items-center gap-4 text-xs text-gray-400">
+            <Link href="/legal/tokushoho" className="hover:text-gray-700 transition-colors">特商法表記</Link>
+            <Link href="/legal/terms" className="hover:text-gray-700 transition-colors">利用規約</Link>
+            <Link href="/legal/privacy" className="hover:text-gray-700 transition-colors">プライバシー</Link>
+            <a href={`mailto:${LEGAL.email}`} className="hover:text-gray-700 transition-colors">お問い合わせ</a>
+          </div>
+        </div>
       </footer>
     </div>
   );

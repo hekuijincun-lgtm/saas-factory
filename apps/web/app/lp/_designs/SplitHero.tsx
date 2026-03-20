@@ -1,4 +1,4 @@
-import { DesignProps, getIcon, PLANS } from './shared';
+import { DesignProps, getIcon, LEGAL, PLANS } from './shared';
 import { TrackingCTA } from '../_components/TrackingCTA';
 import Link from 'next/link';
 import { ArrowRight, Scissors, Star, CheckCircle2, ChevronDown, Zap } from 'lucide-react';
@@ -298,10 +298,11 @@ export function SplitHero({ d, t, vertical, signupUrl }: DesignProps) {
             <span className="font-semibold text-gray-700">{d.label}</span>
             <span>&copy; {new Date().getFullYear()}</span>
           </div>
-          <div className="flex items-center gap-6">
-            <Link href="/terms" className="hover:text-gray-900 transition-colors">利用規約</Link>
-            <Link href="/privacy" className="hover:text-gray-900 transition-colors">プライバシー</Link>
-            <Link href="/legal" className="hover:text-gray-900 transition-colors">特商法表記</Link>
+          <div className="flex flex-wrap items-center gap-6">
+            <Link href="/legal/tokushoho" className="hover:text-gray-900 transition-colors">特商法表記</Link>
+            <Link href="/legal/terms" className="hover:text-gray-900 transition-colors">利用規約</Link>
+            <Link href="/legal/privacy" className="hover:text-gray-900 transition-colors">プライバシー</Link>
+            <a href={`mailto:${LEGAL.email}`} className="hover:text-gray-900 transition-colors">お問い合わせ</a>
           </div>
         </div>
       </footer>

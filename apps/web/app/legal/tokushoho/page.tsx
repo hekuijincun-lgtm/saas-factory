@@ -57,13 +57,29 @@ const ENTRIES: Entry[] = [
       </a>
     ),
   },
+  {
+    label: 'サイトURL',
+    content: (
+      <a
+        href={LEGAL.siteUrl}
+        className="font-medium text-rose-600 hover:text-rose-500 underline underline-offset-2 transition-colors"
+        target="_blank"
+        rel="noopener noreferrer"
+      >
+        {LEGAL.siteUrl}
+      </a>
+    ),
+  },
   { label: '販売価格', content: LEGAL.salesPriceText },
   { label: '商品代金以外の必要料金', content: LEGAL.extraFeesText },
   { label: '支払方法', content: LEGAL.paymentMethodText },
   { label: '支払時期', content: LEGAL.paymentTimingText },
   { label: '商品の提供時期', content: LEGAL.deliveryTimingText },
+  { label: '商品・サービスの内容', content: LEGAL.serviceDescription },
   { label: 'キャンセル・返金について', content: LEGAL.refundPolicyText },
+  { label: '中途解約について', content: LEGAL.cancellationText },
   { label: '動作環境', content: LEGAL.environmentText },
+  { label: '注意書き', content: LEGAL.disclaimerText },
 ];
 
 export default function TokushohoPage() {

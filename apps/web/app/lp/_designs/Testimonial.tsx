@@ -1,4 +1,4 @@
-import { DesignProps, getIcon, PLANS } from './shared';
+import { DesignProps, getIcon, LEGAL, PLANS } from './shared';
 import { TrackingCTA } from '../_components/TrackingCTA';
 import Link from 'next/link';
 import { ArrowRight, Scissors, Star, CheckCircle2, ChevronDown, Zap, Quote } from 'lucide-react';
@@ -446,9 +446,10 @@ export function Testimonial({ d, t, vertical, signupUrl }: DesignProps) {
             <div>
               <h4 className="text-white font-semibold text-sm mb-3">法的情報</h4>
               <ul className="space-y-2 text-sm">
-                <li><Link href="/terms" className="hover:text-white transition-colors">利用規約</Link></li>
-                <li><Link href="/privacy" className="hover:text-white transition-colors">プライバシーポリシー</Link></li>
-                <li><Link href="/legal" className="hover:text-white transition-colors">特定商取引法に基づく表記</Link></li>
+                <li><Link href="/legal/tokushoho" className="hover:text-white transition-colors">特商法表記</Link></li>
+                <li><Link href="/legal/terms" className="hover:text-white transition-colors">利用規約</Link></li>
+                <li><Link href="/legal/privacy" className="hover:text-white transition-colors">プライバシーポリシー</Link></li>
+                <li><a href={`mailto:${LEGAL.email}`} className="hover:text-white transition-colors">お問い合わせ</a></li>
               </ul>
             </div>
           </div>

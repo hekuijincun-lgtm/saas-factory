@@ -1,4 +1,4 @@
-import { DesignProps, getIcon, PLANS } from './shared';
+import { DesignProps, getIcon, LEGAL, PLANS } from './shared';
 import { TrackingCTA } from '../_components/TrackingCTA';
 import Link from 'next/link';
 import { ArrowRight, Scissors, Star, CheckCircle2, ChevronDown, Zap, X } from 'lucide-react';
@@ -320,10 +320,11 @@ export function CardShowcase({ d, t, vertical, signupUrl }: DesignProps) {
             </p>
           </div>
           <div className="flex flex-col md:items-end gap-4">
-            <div className="flex gap-6 text-sm text-gray-400">
-              <Link href="/terms" className="hover:text-white transition-colors">利用規約</Link>
-              <Link href="/privacy" className="hover:text-white transition-colors">プライバシーポリシー</Link>
-              <Link href="/contact" className="hover:text-white transition-colors">お問い合わせ</Link>
+            <div className="flex flex-wrap gap-6 text-sm text-gray-400">
+              <Link href="/legal/tokushoho" className="hover:text-white transition-colors">特商法表記</Link>
+              <Link href="/legal/terms" className="hover:text-white transition-colors">利用規約</Link>
+              <Link href="/legal/privacy" className="hover:text-white transition-colors">プライバシーポリシー</Link>
+              <a href={`mailto:${LEGAL.email}`} className="hover:text-white transition-colors">お問い合わせ</a>
             </div>
             <p className="text-gray-500 text-xs">&copy; {new Date().getFullYear()} LumiBook. All rights reserved.</p>
           </div>
