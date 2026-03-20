@@ -28,6 +28,13 @@ export const adminNavItems: NavItem[] = [
   { label: "メニュー管理",   href: "/admin/pet/pricing",   verticals: ["pet"] },
   { label: "AI応答設定",     href: "/admin/pet/ai-config", verticals: ["pet"] },
   { label: "管理者設定",     href: "/admin/pet/settings",  verticals: ["pet"] },
+  // ── 業務特化機能（specialFeatures ベースで表示制御） ──
+  { label: "施術メモ",       href: "/admin/visit-summary",   verticals: ["eyebrow", "nail", "hair"] },
+  { label: "カラーレシピ",   href: "/admin/color-formula",   verticals: ["nail", "hair"] },
+  { label: "アレルギー記録", href: "/admin/allergy-record",  verticals: ["dental", "esthetic"] },
+  { label: "ビフォーアフター", href: "/admin/before-after",  verticals: ["eyebrow", "nail", "hair", "esthetic", "cleaning", "handyman", "pet"] },
+  { label: "ワクチン記録",   href: "/admin/vaccine-record",  verticals: ["pet"] },
+  { label: "機器チェック",   href: "/admin/equipment-check", verticals: ["cleaning", "handyman"] },
   // ── 共通 ──
   { label: "サポート",       href: "/admin/support" },
   { label: "管理者設定",     href: "/admin/settings",      hideFor: ["pet"] },

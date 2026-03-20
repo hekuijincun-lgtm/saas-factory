@@ -144,7 +144,7 @@ export function evaluateAllVerticals(hints?: {
   lpAvailable?: Record<string, boolean>;
   validationConnected?: boolean;
 }): ReadinessReport[] {
-  const verticals = ['eyebrow', 'nail', 'hair', 'dental', 'esthetic', 'generic'];
+  const verticals = ['eyebrow', 'nail', 'hair', 'dental', 'esthetic', 'cleaning', 'handyman', 'pet', 'generic'];
   return verticals.map(v => evaluateVerticalReadiness(v, {
     lpAvailable: hints?.lpAvailable?.[v] ?? (v === 'eyebrow'),
     validationConnected: hints?.validationConnected ?? true,

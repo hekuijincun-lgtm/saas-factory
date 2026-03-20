@@ -38,6 +38,13 @@ export interface VerticalPluginFlags {
   hasVerticalSettings: boolean;
 }
 
+/** 業務特化機能の識別子 — API registry.ts の SpecialFeatureKey と一致させること */
+export type SpecialFeatureKey =
+  | 'vaccineRecord' | 'progressRecord' | 'shootingManagement'
+  | 'treatmentBodyMap' | 'colorFormula' | 'equipmentCheck'
+  | 'beforeAfterPhoto' | 'courseCurriculum' | 'petProfile'
+  | 'allergyRecord' | 'visitSummary';
+
 export interface VerticalPluginUI {
   key: VerticalType;
   label: string;
@@ -49,6 +56,8 @@ export interface VerticalPluginUI {
     options: Record<string, string>;
     label: string;
   };
+  /** 業務特化機能（業種固有の拡張機能キー一覧） */
+  specialFeatures?: SpecialFeatureKey[];
 }
 
 // ── eyebrow ─────────────────────────────────────────────────────────
@@ -78,6 +87,7 @@ const eyebrowPlugin: VerticalPluginUI = {
     options: { natural: 'ナチュラル', sharp: 'シャープ', korean: '韓国風', custom: 'カスタム' },
     label: 'スタイル',
   },
+  specialFeatures: ['beforeAfterPhoto', 'visitSummary'],
 };
 
 // ── nail ─────────────────────────────────────────────────────────────
@@ -107,6 +117,7 @@ const nailPlugin: VerticalPluginUI = {
     options: { simple: 'シンプル', art: 'アート', gel: 'ジェル', care: 'ケア', off: 'オフ' },
     label: 'デザイン',
   },
+  specialFeatures: ['colorFormula', 'beforeAfterPhoto', 'visitSummary'],
 };
 
 // ── hair ─────────────────────────────────────────────────────────────
@@ -136,6 +147,7 @@ const hairPlugin: VerticalPluginUI = {
     options: { cut: 'カット', color: 'カラー', perm: 'パーマ', treatment: 'トリートメント', set: 'セット', spa: 'ヘッドスパ' },
     label: 'カテゴリ',
   },
+  specialFeatures: ['colorFormula', 'beforeAfterPhoto', 'visitSummary'],
 };
 
 // ── generic ─────────────────────────────────────────────────────────
@@ -189,6 +201,7 @@ const dentalPlugin: VerticalPluginUI = {
     options: { checkup: '定期検診', cleaning: 'クリーニング', whitening: 'ホワイトニング', filling: '虫歯治療', consultation: '初診相談' },
     label: '診療種別',
   },
+  specialFeatures: ['treatmentBodyMap', 'allergyRecord', 'visitSummary'],
 };
 
 // ── esthetic ────────────────────────────────────────────────────────
@@ -218,6 +231,7 @@ const estheticPlugin: VerticalPluginUI = {
     options: { facial: 'フェイシャル', body: 'ボディ', pore: '毛穴ケア', relaxation: 'リラクゼーション', slimming: '痩身' },
     label: '施術カテゴリ',
   },
+  specialFeatures: ['beforeAfterPhoto', 'treatmentBodyMap', 'allergyRecord'],
 };
 
 // ── pet ───────────────────────────────────────────────────────────────
@@ -247,6 +261,67 @@ const petPlugin: VerticalPluginUI = {
     options: { small: '小型犬', medium: '中型犬', large: '大型犬', cat: '猫', other: 'その他' },
     label: 'サイズ',
   },
+  specialFeatures: ['vaccineRecord', 'petProfile', 'beforeAfterPhoto'],
+};
+
+// ── cleaning ────────────────────────────────────────────────────────
+
+const cleaningPlugin: VerticalPluginUI = {
+  key: 'cleaning',
+  label: 'ハウスクリーニング',
+  labels: {
+    karteTab: '作業履歴',
+    menuFilterHeading: '清掃メニュー絞り込み',
+    kpiHeading: 'クリーニング KPI',
+    settingsHeading: 'クリーニング設定',
+    menuSettingsHeading: '清掃メニュー設定',
+    staffSettingsHeading: 'スタッフ設定',
+    settingsDescription: 'ハウスクリーニング特化のアンケート・リピート施策を設定します',
+  },
+  flags: {
+    hasKarte: false,
+    hasMenuFilter: true,
+    hasVerticalKpi: true,
+    hasStaffAttributes: true,
+    hasMenuAttributes: true,
+    hasVerticalSettings: true,
+  },
+  menuFilterConfig: {
+    filterKey: 'serviceCategory',
+    options: { general: '通常清掃', aircon: 'エアコン', moveout: '退去時', water: '水回り', kitchen: 'キッチン', floor: 'フロア' },
+    label: 'カテゴリ',
+  },
+  specialFeatures: ['equipmentCheck', 'beforeAfterPhoto'],
+};
+
+// ── handyman ────────────────────────────────────────────────────────
+
+const handymanPlugin: VerticalPluginUI = {
+  key: 'handyman',
+  label: '便利屋',
+  labels: {
+    karteTab: '作業履歴',
+    menuFilterHeading: '作業メニュー絞り込み',
+    kpiHeading: '便利屋 KPI',
+    settingsHeading: '便利屋設定',
+    menuSettingsHeading: '作業メニュー設定',
+    staffSettingsHeading: 'スタッフスキル',
+    settingsDescription: '便利屋特化のアンケート・リピート施策を設定します',
+  },
+  flags: {
+    hasKarte: false,
+    hasMenuFilter: true,
+    hasVerticalKpi: true,
+    hasStaffAttributes: true,
+    hasMenuAttributes: true,
+    hasVerticalSettings: true,
+  },
+  menuFilterConfig: {
+    filterKey: 'taskCategory',
+    options: { assembly: '組立', repair: '修理', electrical: '電気', garden: '庭', disposal: '回収', moving: '引越し' },
+    label: 'カテゴリ',
+  },
+  specialFeatures: ['equipmentCheck', 'beforeAfterPhoto'],
 };
 
 // ── Registry ────────────────────────────────────────────────────────
@@ -258,6 +333,8 @@ const REGISTRY: Record<string, VerticalPluginUI> = {
   dental: dentalPlugin,
   hair: hairPlugin,
   esthetic: estheticPlugin,
+  cleaning: cleaningPlugin,
+  handyman: handymanPlugin,
   pet: petPlugin,
 };
 

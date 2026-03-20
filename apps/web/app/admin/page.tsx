@@ -5,7 +5,9 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import AdminTopBar from '../_components/ui/AdminTopBar';
 import AdminDashboard from '../_components/admin/AdminDashboard';
+import SpecialFeaturesSection from '@/src/components/SpecialFeaturesSection';
 import { useAdminTenantId, withTenant } from '@/src/lib/useAdminTenantId';
+import { useVerticalPlugin } from './_lib/useVerticalPlugin';
 
 function OnboardingBanner() {
   const { tenantId, status: tenantStatus } = useAdminTenantId();
@@ -45,11 +47,17 @@ function OnboardingBanner() {
 }
 
 export default function Page() {
+  const { tenantId, status } = useAdminTenantId();
+  const { plugin } = useVerticalPlugin(tenantId);
+
   return (
     <>
       <AdminTopBar title="ダッシュボード" subtitle="今日の店舗状況のサマリーです。" />
       <OnboardingBanner />
       <AdminDashboard />
+      {status === 'ready' && (
+        <SpecialFeaturesSection vertical={plugin.key} tenantId={tenantId} />
+      )}
     </>
   );
 }
