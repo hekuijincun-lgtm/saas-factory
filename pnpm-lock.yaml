@@ -67,6 +67,9 @@ importers:
 
   apps/web:
     dependencies:
+      framer-motion:
+        specifier: ^12.23.26
+        version: 12.23.26(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
       next:
         specifier: 15.5.2
         version: 15.5.2(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
@@ -6522,6 +6525,15 @@ snapshots:
       signal-exit: 4.1.0
 
   fraction.js@5.3.4: {}
+
+  framer-motion@12.23.26(react-dom@18.3.1(react@18.3.1))(react@18.3.1):
+    dependencies:
+      motion-dom: 12.23.23
+      motion-utils: 12.23.6
+      tslib: 2.8.1
+    optionalDependencies:
+      react: 18.3.1
+      react-dom: 18.3.1(react@18.3.1)
 
   framer-motion@12.23.26(react-dom@19.2.4(react@19.2.4))(react@19.2.4):
     dependencies:

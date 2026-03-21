@@ -2,6 +2,7 @@ import { DesignProps, getIcon, LEGAL, PLANS } from './shared';
 import { TrackingCTA } from '../_components/TrackingCTA';
 import Link from 'next/link';
 import { ArrowRight, Scissors, Star, CheckCircle2, ChevronDown, Zap } from 'lucide-react';
+import { FadeInUp, FadeInLeft, FadeInRight, ScaleIn, StaggerContainer, StaggerItem } from '../_components/animations';
 
 export function Magazine({ d, t, vertical, signupUrl }: DesignProps) {
   return (
@@ -41,12 +42,17 @@ export function Magazine({ d, t, vertical, signupUrl }: DesignProps) {
             <span className={`inline-block text-xs tracking-[0.2em] uppercase ${t.primaryText} mb-6`}>
               {d.badge}
             </span>
+            <FadeInUp>
             <h1 className="font-serif text-5xl sm:text-6xl lg:text-7xl leading-[1.08] tracking-tight text-gray-900 mb-8">
               {d.headline}
             </h1>
+            </FadeInUp>
+            <FadeInUp delay={0.15}>
             <p className="text-lg text-gray-500 font-light leading-relaxed max-w-lg mb-10">
               {d.subheadline}
             </p>
+            </FadeInUp>
+            <ScaleIn delay={0.3}>
             <TrackingCTA
               href={signupUrl}
               vertical={vertical}
@@ -56,6 +62,7 @@ export function Magazine({ d, t, vertical, signupUrl }: DesignProps) {
               無料で始める
               <ArrowRight className="w-4 h-4" />
             </TrackingCTA>
+            </ScaleIn>
           </div>
 
           {/* Right 40% — tall colored panel with feature highlights */}
@@ -90,11 +97,11 @@ export function Magazine({ d, t, vertical, signupUrl }: DesignProps) {
           </div>
 
           {/* Right column — problem items */}
-          <div className="lg:col-span-3">
+          <StaggerContainer className="lg:col-span-3">
             {d.problems.map((p, i) => {
               const Icon = getIcon(p.icon);
               return (
-                <div key={i} className={`py-8 ${i > 0 ? 'border-t border-gray-100' : ''}`}>
+                <StaggerItem key={i} className={`py-8 ${i > 0 ? 'border-t border-gray-100' : ''}`}>
                   <div className="flex items-start gap-4">
                     <Icon className={`w-5 h-5 ${t.iconColor} mt-0.5 shrink-0`} />
                     <div>
@@ -102,10 +109,10 @@ export function Magazine({ d, t, vertical, signupUrl }: DesignProps) {
                       <p className="text-sm text-gray-500 font-light leading-relaxed">{p.desc}</p>
                     </div>
                   </div>
-                </div>
+                </StaggerItem>
               );
             })}
-          </div>
+          </StaggerContainer>
         </div>
       </section>
 
@@ -120,26 +127,27 @@ export function Magazine({ d, t, vertical, signupUrl }: DesignProps) {
           </h2>
 
           {/* Row 1: first 2 features in 2-col */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
+          <StaggerContainer stagger={0.1} className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
             {d.features.slice(0, 2).map((f, i) => {
               const Icon = getIcon(f.icon);
               return (
-                <div key={i} className="bg-white p-8 border border-gray-100">
+                <StaggerItem key={i} className="bg-white p-8 border border-gray-100">
                   <div className="flex items-center gap-3 mb-4">
                     <Icon className={`w-5 h-5 ${t.iconColor}`} />
                     <h3 className="font-serif text-lg font-medium text-gray-900">{f.title}</h3>
                   </div>
                   <p className="text-sm text-gray-500 font-light leading-relaxed">{f.desc}</p>
-                </div>
+                </StaggerItem>
               );
             })}
-          </div>
+          </StaggerContainer>
 
           {/* Row 2: 1 feature as full-width "feature article" */}
           {d.features[2] && (() => {
             const f = d.features[2];
             const Icon = getIcon(f.icon);
             return (
+              <FadeInUp>
               <div className="bg-white p-10 sm:p-14 border border-gray-100 mb-8">
                 <div className="max-w-3xl">
                   <Icon className={`w-8 h-8 ${t.iconColor} mb-6`} />
@@ -147,25 +155,26 @@ export function Magazine({ d, t, vertical, signupUrl }: DesignProps) {
                   <p className="text-base text-gray-500 font-light leading-relaxed">{f.desc}</p>
                 </div>
               </div>
+              </FadeInUp>
             );
           })()}
 
           {/* Row 3: remaining features in 3-col */}
           {d.features.length > 3 && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8">
+            <StaggerContainer stagger={0.1} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8">
               {d.features.slice(3).map((f, i) => {
                 const Icon = getIcon(f.icon);
                 return (
-                  <div key={i} className="bg-white p-8 border border-gray-100">
+                  <StaggerItem key={i} className="bg-white p-8 border border-gray-100">
                     <div className="flex items-center gap-3 mb-4">
                       <Icon className={`w-5 h-5 ${t.iconColor}`} />
                       <h3 className="font-serif text-base font-medium text-gray-900">{f.title}</h3>
                     </div>
                     <p className="text-sm text-gray-500 font-light leading-relaxed">{f.desc}</p>
-                  </div>
+                  </StaggerItem>
                 );
               })}
-            </div>
+            </StaggerContainer>
           )}
         </div>
       </section>
@@ -182,7 +191,8 @@ export function Magazine({ d, t, vertical, signupUrl }: DesignProps) {
 
           <div className="space-y-20">
             {d.flow.map((step, i) => (
-              <div key={i} className="flex items-start gap-8 sm:gap-12">
+              <FadeInLeft key={i} delay={i * 0.15}>
+              <div className="flex items-start gap-8 sm:gap-12">
                 <div className="shrink-0">
                   <span className={`font-serif text-5xl sm:text-6xl font-light ${t.primaryText} leading-none`}>
                     {String(i + 1).padStart(2, '0')}
@@ -193,6 +203,7 @@ export function Magazine({ d, t, vertical, signupUrl }: DesignProps) {
                   <p className="text-sm text-gray-500 font-light leading-relaxed max-w-lg">{step.desc}</p>
                 </div>
               </div>
+              </FadeInLeft>
             ))}
           </div>
 
@@ -222,7 +233,8 @@ export function Magazine({ d, t, vertical, signupUrl }: DesignProps) {
 
           <div className="divide-y divide-gray-200">
             {PLANS.map((plan, i) => (
-              <div key={i} className="py-10 grid grid-cols-1 sm:grid-cols-4 gap-6 items-start">
+              <ScaleIn key={i} delay={i * 0.1}>
+              <div className="py-10 grid grid-cols-1 sm:grid-cols-4 gap-6 items-start">
                 <div className="sm:col-span-1">
                   <h3 className="font-serif text-xl text-gray-900">{plan.name}</h3>
                   {plan.badge && (
@@ -263,6 +275,7 @@ export function Magazine({ d, t, vertical, signupUrl }: DesignProps) {
                   </TrackingCTA>
                 </div>
               </div>
+              </ScaleIn>
             ))}
           </div>
         </div>
@@ -280,7 +293,8 @@ export function Magazine({ d, t, vertical, signupUrl }: DesignProps) {
 
           <div className="space-y-12">
             {d.faqs.map((faq, i) => (
-              <div key={i}>
+              <FadeInUp key={i} delay={i * 0.08}>
+              <div>
                 <h3 className="flex items-baseline gap-3 mb-3">
                   <span className={`font-serif italic text-2xl ${t.primaryText}`}>Q.</span>
                   <span className="text-base font-medium text-gray-900">{faq.q}</span>
@@ -289,6 +303,7 @@ export function Magazine({ d, t, vertical, signupUrl }: DesignProps) {
                   {faq.a}
                 </p>
               </div>
+              </FadeInUp>
             ))}
           </div>
         </div>
@@ -296,6 +311,7 @@ export function Magazine({ d, t, vertical, signupUrl }: DesignProps) {
 
       {/* ── Final CTA — elegant bordered box ─────────────────── */}
       <section className="px-8 sm:px-12 py-24">
+        <ScaleIn>
         <div className={`max-w-2xl mx-auto border ${t.primaryBorder} p-12 sm:p-16 text-center`}>
           <h2 className="font-serif text-2xl sm:text-3xl text-gray-900 mb-4">
             予約管理を、もっとシンプルに。
@@ -313,6 +329,7 @@ export function Magazine({ d, t, vertical, signupUrl }: DesignProps) {
             <ArrowRight className="w-4 h-4" />
           </TrackingCTA>
         </div>
+        </ScaleIn>
       </section>
 
       {/* ── Footer ────────────────────────────────────────────── */}

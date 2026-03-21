@@ -2,6 +2,7 @@ import { DesignProps, getIcon, LEGAL, PLANS } from './shared';
 import { TrackingCTA } from '../_components/TrackingCTA';
 import Link from 'next/link';
 import { ArrowRight, Scissors, Star, CheckCircle2, ChevronDown, Zap, Quote } from 'lucide-react';
+import { FadeInUp, FadeInLeft, FadeInRight, ScaleIn, StaggerContainer, StaggerItem } from '../_components/animations';
 
 /* ── Wave dividers ─────────────────────────────────────────────────── */
 
@@ -93,12 +94,17 @@ export function GradientWave({ d, t, vertical, signupUrl }: DesignProps) {
             <span className="inline-block bg-white/20 backdrop-blur text-white text-xs font-semibold px-4 py-1.5 rounded-full mb-6">
               {d.badge}
             </span>
+            <FadeInUp>
             <h1 className="text-4xl sm:text-5xl lg:text-6xl font-extrabold tracking-tight leading-tight mb-6">
               {d.headline}
             </h1>
+            </FadeInUp>
+            <FadeInUp delay={0.15}>
             <p className="text-lg sm:text-xl text-white/80 max-w-2xl mx-auto mb-10">
               {d.subheadline}
             </p>
+            </FadeInUp>
+            <ScaleIn delay={0.3}>
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
               <TrackingCTA
                 href={signupUrl}
@@ -117,6 +123,7 @@ export function GradientWave({ d, t, vertical, signupUrl }: DesignProps) {
                 機能を見る
               </TrackingCTA>
             </div>
+            </ScaleIn>
           </div>
         </div>
       </section>
@@ -131,12 +138,12 @@ export function GradientWave({ d, t, vertical, signupUrl }: DesignProps) {
             <h2 className="text-3xl sm:text-4xl font-bold mb-4">こんなお悩みありませんか？</h2>
             <p className="text-gray-500 text-lg">多くのサロンが抱える共通の課題</p>
           </div>
-          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
+          <StaggerContainer className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
             {d.problems.map((p, i) => {
               const Icon = getIcon(p.icon);
               return (
+                <StaggerItem key={i}>
                 <div
-                  key={i}
                   className={`bg-white border-l-4 ${t.primaryBorder} rounded-3xl p-6 shadow-sm hover:shadow-md transition-shadow`}
                 >
                   <div className={`w-12 h-12 ${t.iconBg} rounded-xl flex items-center justify-center mb-4`}>
@@ -145,9 +152,10 @@ export function GradientWave({ d, t, vertical, signupUrl }: DesignProps) {
                   <h3 className="text-lg font-bold mb-2">{p.title}</h3>
                   <p className="text-gray-500 text-sm leading-relaxed">{p.desc}</p>
                 </div>
+                </StaggerItem>
               );
             })}
-          </div>
+          </StaggerContainer>
         </div>
       </section>
 
@@ -164,12 +172,12 @@ export function GradientWave({ d, t, vertical, signupUrl }: DesignProps) {
             <h2 className="text-3xl sm:text-4xl font-bold mb-4">すべてを解決する機能</h2>
             <p className="text-gray-500 text-lg">シンプルなのに、必要な機能はすべて揃っています</p>
           </div>
-          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+          <StaggerContainer stagger={0.1} className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
             {d.features.map((f, i) => {
               const Icon = getIcon(f.icon);
               return (
+                <StaggerItem key={i}>
                 <div
-                  key={i}
                   className="bg-white rounded-3xl p-6 shadow-lg hover:shadow-xl transition-shadow"
                 >
                   <div className={`w-14 h-14 ${t.iconBg} rounded-full flex items-center justify-center mb-4`}>
@@ -178,9 +186,10 @@ export function GradientWave({ d, t, vertical, signupUrl }: DesignProps) {
                   <h3 className="text-lg font-bold mb-2">{f.title}</h3>
                   <p className="text-gray-500 text-sm leading-relaxed">{f.desc}</p>
                 </div>
+                </StaggerItem>
               );
             })}
-          </div>
+          </StaggerContainer>
         </div>
       </section>
 
@@ -196,7 +205,8 @@ export function GradientWave({ d, t, vertical, signupUrl }: DesignProps) {
           </div>
           <div className="flex flex-col md:flex-row items-stretch gap-0">
             {d.flow.map((s, i) => (
-              <div key={i} className="flex-1 flex flex-col md:flex-row items-center">
+              <FadeInLeft key={i} delay={i * 0.15}>
+              <div className="flex-1 flex flex-col md:flex-row items-center">
                 <div className={`bg-white rounded-3xl p-6 shadow-md border border-gray-100 text-center flex-1`}>
                   <div className={`w-12 h-12 ${t.primary} text-white rounded-full flex items-center justify-center font-bold text-lg mx-auto mb-4`}>
                     {i + 1}
@@ -214,6 +224,7 @@ export function GradientWave({ d, t, vertical, signupUrl }: DesignProps) {
                   </div>
                 )}
               </div>
+              </FadeInLeft>
             ))}
           </div>
           <div className="text-center mt-12">
@@ -241,8 +252,8 @@ export function GradientWave({ d, t, vertical, signupUrl }: DesignProps) {
           </div>
           <div className="grid md:grid-cols-3 gap-6 max-w-5xl mx-auto">
             {PLANS.map((plan, i) => (
+              <ScaleIn key={i} delay={i * 0.1}>
               <div
-                key={i}
                 className={`relative bg-white rounded-3xl p-8 ${
                   plan.highlighted
                     ? `ring-2 ${t.planRing} scale-105 shadow-xl`
@@ -281,6 +292,7 @@ export function GradientWave({ d, t, vertical, signupUrl }: DesignProps) {
                   {plan.price === 'ご相談' ? 'お問い合わせ' : '無料トライアル'}
                 </TrackingCTA>
               </div>
+              </ScaleIn>
             ))}
           </div>
         </div>
@@ -297,7 +309,8 @@ export function GradientWave({ d, t, vertical, signupUrl }: DesignProps) {
           </div>
           <div className="space-y-4">
             {d.faqs.map((faq, i) => (
-              <details key={i} className="group bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
+              <FadeInUp key={i} delay={i * 0.08}>
+              <details className="group bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
                 <summary className="flex items-center justify-between gap-4 px-6 py-5 cursor-pointer font-medium hover:bg-gray-50 transition-colors list-none [&::-webkit-details-marker]:hidden">
                   {faq.q}
                   <ChevronDown className="w-5 h-5 text-gray-400 group-open:rotate-180 transition-transform flex-shrink-0" />
@@ -306,6 +319,7 @@ export function GradientWave({ d, t, vertical, signupUrl }: DesignProps) {
                   {faq.a}
                 </div>
               </details>
+              </FadeInUp>
             ))}
           </div>
         </div>
@@ -326,6 +340,7 @@ export function GradientWave({ d, t, vertical, signupUrl }: DesignProps) {
 
       {/* ── Final CTA (gradient) ─────────────────────────────────────── */}
       <section className={`bg-gradient-to-br ${t.heroGradient} text-white py-20 sm:py-28 -mt-px`}>
+        <ScaleIn>
         <div className="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8 text-center">
           <Zap className="w-12 h-12 mx-auto mb-6 text-white/60" />
           <h2 className="text-3xl sm:text-4xl font-bold mb-4">今すぐ始めましょう</h2>
@@ -341,6 +356,7 @@ export function GradientWave({ d, t, vertical, signupUrl }: DesignProps) {
             無料トライアルを始める <ArrowRight className="w-5 h-5" />
           </TrackingCTA>
         </div>
+        </ScaleIn>
       </section>
 
       {/* ── Footer (gradient, rounded top) ────────────────────────────── */}

@@ -2,6 +2,7 @@ import { DesignProps, getIcon, LEGAL, PLANS } from './shared';
 import { TrackingCTA } from '../_components/TrackingCTA';
 import Link from 'next/link';
 import { ArrowRight, Scissors, Star, CheckCircle2, ChevronDown, Zap } from 'lucide-react';
+import { FadeInUp, FadeInLeft, FadeInRight, ScaleIn, StaggerContainer, StaggerItem } from '../_components/animations';
 
 export function Minimal({ d, t, vertical, signupUrl }: DesignProps) {
   return (
@@ -18,12 +19,17 @@ export function Minimal({ d, t, vertical, signupUrl }: DesignProps) {
         <span className={`inline-block text-xs tracking-[0.2em] uppercase ${t.primaryText} mb-8`}>
           {d.badge}
         </span>
+        <FadeInUp>
         <h1 className="text-6xl sm:text-7xl lg:text-8xl font-extralight tracking-tight leading-[1.05] max-w-5xl">
           {d.headline}
         </h1>
+        </FadeInUp>
+        <FadeInUp delay={0.15}>
         <p className="mt-8 text-lg text-gray-400 font-light max-w-xl">
           {d.subheadline}
         </p>
+        </FadeInUp>
+        <ScaleIn delay={0.3}>
         <TrackingCTA
           href={signupUrl}
           vertical={vertical}
@@ -33,6 +39,7 @@ export function Minimal({ d, t, vertical, signupUrl }: DesignProps) {
           無料で始める
           <ArrowRight className="w-4 h-4" />
         </TrackingCTA>
+        </ScaleIn>
       </section>
 
       {/* ── Problems ───────────────────────────────────────────── */}
@@ -46,14 +53,17 @@ export function Minimal({ d, t, vertical, signupUrl }: DesignProps) {
         <div className="divide-y divide-gray-100">
           {d.problems.map((p, i) => {
             const Icon = getIcon(p.icon);
+            const Anim = i % 2 === 0 ? FadeInLeft : FadeInRight;
             return (
-              <div key={i} className="py-8 flex items-start gap-5">
+              <Anim key={i}>
+              <div className="py-8 flex items-start gap-5">
                 <Icon className={`w-5 h-5 ${t.iconColor} mt-0.5 shrink-0`} />
                 <div>
                   <h3 className="text-base font-medium text-gray-900">{p.title}</h3>
                   <p className="mt-1 text-sm text-gray-400 font-light leading-relaxed">{p.desc}</p>
                 </div>
               </div>
+              </Anim>
             );
           })}
         </div>
@@ -63,9 +73,10 @@ export function Minimal({ d, t, vertical, signupUrl }: DesignProps) {
       {d.features.map((f, i) => {
         const Icon = getIcon(f.icon);
         const num = String(i + 1).padStart(2, '0');
+        const Anim = i % 2 === 0 ? FadeInRight : FadeInLeft;
         return (
+          <Anim key={i}>
           <section
-            key={i}
             className={`min-h-[80vh] flex items-center ${i % 2 === 1 ? 'bg-gray-50/60' : 'bg-white'}`}
           >
             <div className="max-w-6xl mx-auto w-full px-6 py-24 grid grid-cols-1 lg:grid-cols-2 gap-16 items-center">
@@ -83,6 +94,7 @@ export function Minimal({ d, t, vertical, signupUrl }: DesignProps) {
               </div>
             </div>
           </section>
+          </Anim>
         );
       })}
 
@@ -97,7 +109,8 @@ export function Minimal({ d, t, vertical, signupUrl }: DesignProps) {
           </h2>
           <div className="flex flex-col sm:flex-row items-center justify-center gap-8 sm:gap-0">
             {d.flow.map((step, i) => (
-              <div key={i} className="flex items-center">
+              <FadeInLeft key={i} delay={i * 0.15}>
+              <div className="flex items-center">
                 <div className="flex flex-col items-center text-center">
                   <div className={`w-20 h-20 rounded-full border-2 ${t.primaryBorder} flex items-center justify-center`}>
                     <span className={`text-2xl font-extralight ${t.primaryText}`}>{i + 1}</span>
@@ -109,6 +122,7 @@ export function Minimal({ d, t, vertical, signupUrl }: DesignProps) {
                   <div className={`hidden sm:block w-24 h-px ${t.primaryLight} mx-4`} style={{ marginTop: '-2.5rem' }} />
                 )}
               </div>
+              </FadeInLeft>
             ))}
           </div>
         </div>
@@ -125,7 +139,8 @@ export function Minimal({ d, t, vertical, signupUrl }: DesignProps) {
           </h2>
           <div className="grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-gray-200">
             {PLANS.map((plan, i) => (
-              <div key={i} className="px-8 py-10 text-center">
+              <ScaleIn key={i} delay={i * 0.1}>
+              <div className="px-8 py-10 text-center">
                 {plan.badge && (
                   <span className={`inline-block text-[10px] tracking-[0.15em] uppercase ${t.primary} text-white px-3 py-1 rounded-full mb-4`}>
                     {plan.badge}
@@ -160,6 +175,7 @@ export function Minimal({ d, t, vertical, signupUrl }: DesignProps) {
                   {plan.price === 'ご相談' ? 'お問い合わせ' : 'このプランで始める'}
                 </TrackingCTA>
               </div>
+              </ScaleIn>
             ))}
           </div>
         </div>
@@ -176,10 +192,12 @@ export function Minimal({ d, t, vertical, signupUrl }: DesignProps) {
           </h2>
           <div className="divide-y divide-gray-100">
             {d.faqs.map((faq, i) => (
-              <div key={i} className="py-8">
+              <FadeInUp key={i} delay={i * 0.08}>
+              <div className="py-8">
                 <h3 className="text-base font-medium text-gray-900 mb-3">{faq.q}</h3>
                 <p className="text-sm text-gray-400 font-light leading-relaxed">{faq.a}</p>
               </div>
+              </FadeInUp>
             ))}
           </div>
         </div>
@@ -187,6 +205,7 @@ export function Minimal({ d, t, vertical, signupUrl }: DesignProps) {
 
       {/* ── Final CTA ──────────────────────────────────────────── */}
       <section className="py-32 px-6 text-center">
+        <ScaleIn>
         <p className="text-xl font-extralight text-gray-600 mb-10 max-w-lg mx-auto">
           今すぐ始めて、予約管理をもっとシンプルに。
         </p>
@@ -199,6 +218,7 @@ export function Minimal({ d, t, vertical, signupUrl }: DesignProps) {
           無料トライアルを始める
           <ArrowRight className="w-4 h-4" />
         </TrackingCTA>
+        </ScaleIn>
       </section>
 
       {/* ── Footer ─────────────────────────────────────────────── */}

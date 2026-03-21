@@ -2,6 +2,7 @@ import { DesignProps, getIcon, LEGAL, PLANS } from './shared';
 import { TrackingCTA } from '../_components/TrackingCTA';
 import Link from 'next/link';
 import { ArrowRight, Scissors, Star, CheckCircle2, ChevronDown, Zap } from 'lucide-react';
+import { FadeInUp, FadeInLeft, FadeInRight, ScaleIn, StaggerContainer, StaggerItem } from '../_components/animations';
 
 export function SplitHero({ d, t, vertical, signupUrl }: DesignProps) {
   return (
@@ -39,12 +40,17 @@ export function SplitHero({ d, t, vertical, signupUrl }: DesignProps) {
               <span className={`inline-block ${t.primaryLight} ${t.primaryText} text-xs font-semibold px-3 py-1 rounded-full mb-6`}>
                 {d.badge}
               </span>
+              <FadeInUp>
               <h1 className="text-4xl sm:text-5xl lg:text-6xl font-extrabold tracking-tight leading-tight mb-6">
                 {d.headline}
               </h1>
+              </FadeInUp>
+              <FadeInUp delay={0.15}>
               <p className="text-lg text-gray-500 mb-10 max-w-lg">
                 {d.subheadline}
               </p>
+              </FadeInUp>
+              <ScaleIn delay={0.3}>
               <div className="flex flex-col sm:flex-row gap-4">
                 <TrackingCTA
                   href={signupUrl}
@@ -63,6 +69,7 @@ export function SplitHero({ d, t, vertical, signupUrl }: DesignProps) {
                   詳しく見る
                 </TrackingCTA>
               </div>
+              </ScaleIn>
             </div>
 
             {/* Right: floating feature cards */}
@@ -101,12 +108,12 @@ export function SplitHero({ d, t, vertical, signupUrl }: DesignProps) {
             <p className="text-gray-400 text-lg">よくある悩みを、まとめて解決します</p>
           </div>
           {/* Horizontal scroll on mobile, grid on desktop */}
-          <div className="flex gap-5 overflow-x-auto pb-4 snap-x snap-mandatory lg:grid lg:grid-cols-3 lg:overflow-visible lg:pb-0">
+          <StaggerContainer className="flex gap-5 overflow-x-auto pb-4 snap-x snap-mandatory lg:grid lg:grid-cols-3 lg:overflow-visible lg:pb-0">
             {d.problems.map((p, i) => {
               const Icon = getIcon(p.icon);
               return (
+                <StaggerItem key={i}>
                 <div
-                  key={i}
                   className="flex-shrink-0 w-72 lg:w-auto snap-center bg-white/5 border border-white/10 rounded-2xl p-6 backdrop-blur"
                 >
                   <div className={`w-12 h-12 ${t.iconBg} rounded-xl flex items-center justify-center mb-4`}>
@@ -115,9 +122,10 @@ export function SplitHero({ d, t, vertical, signupUrl }: DesignProps) {
                   <h3 className="text-lg font-bold mb-2">{p.title}</h3>
                   <p className="text-gray-400 text-sm leading-relaxed">{p.desc}</p>
                 </div>
+                </StaggerItem>
               );
             })}
-          </div>
+          </StaggerContainer>
         </div>
       </section>
 
@@ -130,13 +138,13 @@ export function SplitHero({ d, t, vertical, signupUrl }: DesignProps) {
             </span>
             <h2 className="text-3xl sm:text-4xl font-bold">必要な機能をすべて搭載</h2>
           </div>
-          <div className="space-y-20">
+          <StaggerContainer stagger={0.1} className="space-y-20">
             {d.features.map((f, i) => {
               const Icon = getIcon(f.icon);
               const isEven = i % 2 === 0;
               return (
+                <StaggerItem key={i}>
                 <div
-                  key={i}
                   className={`flex flex-col ${isEven ? 'lg:flex-row' : 'lg:flex-row-reverse'} items-center gap-10 lg:gap-16`}
                 >
                   {/* Text side */}
@@ -156,9 +164,10 @@ export function SplitHero({ d, t, vertical, signupUrl }: DesignProps) {
                     </div>
                   </div>
                 </div>
+                </StaggerItem>
               );
             })}
-          </div>
+          </StaggerContainer>
         </div>
       </section>
 
@@ -174,13 +183,15 @@ export function SplitHero({ d, t, vertical, signupUrl }: DesignProps) {
             <div className={`hidden md:block absolute top-8 left-[calc(16.67%)] right-[calc(16.67%)] h-0.5 ${t.primary} opacity-20`} />
             <div className="grid md:grid-cols-3 gap-10">
               {d.flow.map((s, i) => (
-                <div key={i} className="text-center">
+                <FadeInLeft key={i} delay={i * 0.15}>
+                <div className="text-center">
                   <div className={`relative z-10 w-16 h-16 mx-auto ${t.primary} text-white rounded-full flex items-center justify-center text-2xl font-bold mb-5 shadow-lg`}>
                     {i + 1}
                   </div>
                   <h3 className="text-lg font-bold mb-2">{s.title}</h3>
                   <p className="text-gray-500 text-sm leading-relaxed">{s.desc}</p>
                 </div>
+                </FadeInLeft>
               ))}
             </div>
           </div>
@@ -206,8 +217,8 @@ export function SplitHero({ d, t, vertical, signupUrl }: DesignProps) {
           </div>
           <div className="grid md:grid-cols-3 gap-6 max-w-5xl mx-auto">
             {PLANS.map((plan, i) => (
+              <ScaleIn key={i} delay={i * 0.1}>
               <div
-                key={i}
                 className={`relative rounded-3xl p-8 ${
                   plan.highlighted
                     ? `ring-2 ${t.planRing} ${t.primaryLight} shadow-xl scale-105`
@@ -246,6 +257,7 @@ export function SplitHero({ d, t, vertical, signupUrl }: DesignProps) {
                   {plan.price === 'ご相談' ? 'お問い合わせ' : '無料トライアル'}
                 </TrackingCTA>
               </div>
+              </ScaleIn>
             ))}
           </div>
         </div>
@@ -259,13 +271,15 @@ export function SplitHero({ d, t, vertical, signupUrl }: DesignProps) {
           </div>
           <div className="grid md:grid-cols-2 gap-6">
             {d.faqs.map((faq, i) => (
-              <div key={i} className="bg-white rounded-2xl p-6 shadow-sm">
+              <FadeInUp key={i} delay={i * 0.08}>
+              <div className="bg-white rounded-2xl p-6 shadow-sm">
                 <h3 className="font-bold mb-2 flex items-start gap-2">
                   <span className={`${t.primaryText} font-extrabold text-lg leading-none mt-0.5`}>Q.</span>
                   {faq.q}
                 </h3>
                 <p className="text-gray-500 text-sm leading-relaxed pl-6">{faq.a}</p>
               </div>
+              </FadeInUp>
             ))}
           </div>
         </div>
@@ -273,6 +287,7 @@ export function SplitHero({ d, t, vertical, signupUrl }: DesignProps) {
 
       {/* ── Final CTA (gradient) ───────────────────────────────────────── */}
       <section className={`bg-gradient-to-r ${t.heroGradient} text-white py-20 sm:py-28`}>
+        <ScaleIn>
         <div className="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8 text-center">
           <Zap className="w-12 h-12 mx-auto mb-6 text-white/80" />
           <h2 className="text-3xl sm:text-4xl font-bold mb-4">さあ、はじめましょう</h2>
@@ -288,6 +303,7 @@ export function SplitHero({ d, t, vertical, signupUrl }: DesignProps) {
             無料トライアルを始める <ArrowRight className="w-5 h-5" />
           </TrackingCTA>
         </div>
+        </ScaleIn>
       </section>
 
       {/* ── Footer (minimal) ───────────────────────────────────────────── */}

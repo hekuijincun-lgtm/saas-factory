@@ -2,6 +2,7 @@ import { DesignProps, getIcon, LEGAL, PLANS } from './shared';
 import { TrackingCTA } from '../_components/TrackingCTA';
 import Link from 'next/link';
 import { ArrowRight, Scissors, Star, CheckCircle2, ChevronDown, Zap } from 'lucide-react';
+import { FadeInUp, FadeInLeft, FadeInRight, ScaleIn, StaggerContainer, StaggerItem } from '../_components/animations';
 
 export function BoldTypography({ d, t, vertical, signupUrl }: DesignProps) {
   return (
@@ -27,12 +28,17 @@ export function BoldTypography({ d, t, vertical, signupUrl }: DesignProps) {
           <span className={`block text-sm font-bold tracking-[0.15em] uppercase ${t.primaryText} mb-8`}>
             {d.badge}
           </span>
+          <FadeInUp>
           <h1 className="text-7xl sm:text-8xl lg:text-9xl font-black tracking-tighter leading-[0.9] text-gray-900 mb-10">
             {d.headline}
           </h1>
+          </FadeInUp>
+          <FadeInUp delay={0.15}>
           <p className="text-xl sm:text-2xl font-light text-gray-400 max-w-2xl mb-14">
             {d.subheadline}
           </p>
+          </FadeInUp>
+          <ScaleIn delay={0.3}>
           <TrackingCTA
             href={signupUrl}
             vertical={vertical}
@@ -42,6 +48,7 @@ export function BoldTypography({ d, t, vertical, signupUrl }: DesignProps) {
             無料で始める
             <ArrowRight className="w-4 h-4" />
           </TrackingCTA>
+          </ScaleIn>
         </div>
       </section>
 
@@ -51,9 +58,9 @@ export function BoldTypography({ d, t, vertical, signupUrl }: DesignProps) {
           <span className={`block text-sm font-bold tracking-[0.15em] uppercase ${t.primaryText} mb-16`}>
             課題
           </span>
-          <div className="space-y-16">
+          <StaggerContainer className="space-y-16">
             {d.problems.map((p, i) => (
-              <div key={i}>
+              <StaggerItem key={i}>
                 <div className={`w-12 h-1 ${t.primary} mb-6`} />
                 <h3 className="text-3xl sm:text-4xl font-bold tracking-tight text-gray-900 mb-4">
                   {p.title}
@@ -61,9 +68,9 @@ export function BoldTypography({ d, t, vertical, signupUrl }: DesignProps) {
                 <p className="text-lg text-gray-400 font-light max-w-2xl">
                   {p.desc}
                 </p>
-              </div>
+              </StaggerItem>
             ))}
-          </div>
+          </StaggerContainer>
         </div>
       </section>
 
@@ -73,12 +80,12 @@ export function BoldTypography({ d, t, vertical, signupUrl }: DesignProps) {
           <span className={`block text-sm font-bold tracking-[0.15em] uppercase ${t.primaryText} mb-20`}>
             特長
           </span>
-          <div className="space-y-24 sm:space-y-32">
+          <StaggerContainer stagger={0.1} className="space-y-24 sm:space-y-32">
             {d.features.map((f, i) => {
               const num = String(i + 1).padStart(2, '0');
               const isEven = i % 2 === 0;
               return (
-                <div key={i} className="relative">
+                <StaggerItem key={i} className="relative">
                   {/* Background number */}
                   <span
                     className="absolute -top-8 sm:-top-12 text-[8rem] sm:text-[12rem] font-black text-gray-50 leading-none select-none pointer-events-none"
@@ -96,10 +103,10 @@ export function BoldTypography({ d, t, vertical, signupUrl }: DesignProps) {
                       {f.desc}
                     </p>
                   </div>
-                </div>
+                </StaggerItem>
               );
             })}
-          </div>
+          </StaggerContainer>
         </div>
       </section>
 
@@ -111,7 +118,8 @@ export function BoldTypography({ d, t, vertical, signupUrl }: DesignProps) {
           </span>
           <div className="space-y-20">
             {d.flow.map((step, i) => (
-              <div key={i}>
+              <FadeInLeft key={i} delay={i * 0.15}>
+              <div>
                 <h3 className="text-5xl sm:text-6xl font-black tracking-tighter text-gray-900 leading-none mb-4">
                   <span className="text-gray-300">{String(i + 1).padStart(2, '0')}</span>
                   {' '}
@@ -123,6 +131,7 @@ export function BoldTypography({ d, t, vertical, signupUrl }: DesignProps) {
                   {step.desc}
                 </p>
               </div>
+              </FadeInLeft>
             ))}
           </div>
 
@@ -148,7 +157,8 @@ export function BoldTypography({ d, t, vertical, signupUrl }: DesignProps) {
           </span>
 
           {PLANS.map((plan, i) => (
-            <div key={i}>
+            <ScaleIn key={i} delay={i * 0.1}>
+            <div>
               {i > 0 && <div className="h-1 bg-gray-900 my-12" />}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-8 items-start">
                 <div>
@@ -193,6 +203,7 @@ export function BoldTypography({ d, t, vertical, signupUrl }: DesignProps) {
                 </ul>
               </div>
             </div>
+            </ScaleIn>
           ))}
         </div>
       </section>
@@ -205,7 +216,8 @@ export function BoldTypography({ d, t, vertical, signupUrl }: DesignProps) {
           </span>
           <div className="space-y-14">
             {d.faqs.map((faq, i) => (
-              <div key={i}>
+              <FadeInUp key={i} delay={i * 0.08}>
+              <div>
                 <h3 className="text-2xl font-bold tracking-tight text-gray-900 mb-3">
                   {faq.q}
                 </h3>
@@ -213,6 +225,7 @@ export function BoldTypography({ d, t, vertical, signupUrl }: DesignProps) {
                   {faq.a}
                 </p>
               </div>
+              </FadeInUp>
             ))}
           </div>
         </div>
@@ -220,6 +233,7 @@ export function BoldTypography({ d, t, vertical, signupUrl }: DesignProps) {
 
       {/* ── Final CTA — huge question ────────────────────────── */}
       <section className={`px-6 sm:px-10 py-32 sm:py-40 ${t.sectionBg}`}>
+        <ScaleIn>
         <div className="max-w-5xl mx-auto text-center">
           <h2 className="text-6xl sm:text-7xl lg:text-8xl font-black tracking-tighter text-gray-900 mb-12">
             始めませんか？
@@ -234,6 +248,7 @@ export function BoldTypography({ d, t, vertical, signupUrl }: DesignProps) {
             <ArrowRight className="w-5 h-5" />
           </TrackingCTA>
         </div>
+        </ScaleIn>
       </section>
 
       {/* ── Footer — single line ──────────────────────────────── */}

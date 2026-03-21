@@ -2,6 +2,7 @@ import { DesignProps, getIcon, LEGAL, PLANS } from './shared';
 import { TrackingCTA } from '../_components/TrackingCTA';
 import Link from 'next/link';
 import { ArrowRight, Scissors, Star, CheckCircle2, ChevronDown, Zap, X } from 'lucide-react';
+import { FadeInUp, FadeInLeft, FadeInRight, ScaleIn, StaggerContainer, StaggerItem } from '../_components/animations';
 
 const COMPARE_ROWS = [
   { label: 'LINE予約',      lumi: true,  phone: false, other: false },
@@ -49,12 +50,17 @@ export function Comparison({ d, t, vertical, signupUrl }: DesignProps) {
             <span className={`inline-block ${t.primaryLight} ${t.primaryText} text-xs font-bold px-3 py-1 rounded-full mb-6`}>
               {d.badge}
             </span>
+            <FadeInUp>
             <h1 className="text-4xl md:text-5xl font-extrabold text-gray-900 leading-tight mb-6">
               {d.headline}
             </h1>
+            </FadeInUp>
+            <FadeInUp delay={0.15}>
             <p className="text-lg text-gray-600 mb-8 max-w-lg">
               {d.subheadline}
             </p>
+            </FadeInUp>
+            <ScaleIn delay={0.3}>
             <div className="flex flex-col sm:flex-row gap-4">
               <TrackingCTA
                 href={signupUrl}
@@ -73,6 +79,7 @@ export function Comparison({ d, t, vertical, signupUrl }: DesignProps) {
                 他社と比較する
               </TrackingCTA>
             </div>
+            </ScaleIn>
           </div>
           {/* Right — Mini comparison preview */}
           <div className="hidden md:block">
@@ -218,11 +225,11 @@ export function Comparison({ d, t, vertical, signupUrl }: DesignProps) {
               こんなお悩みありませんか？
             </h2>
           </div>
-          <div className="space-y-4">
+          <StaggerContainer className="space-y-4">
             {d.problems.map((p, i) => {
               const Icon = getIcon(p.icon);
               return (
-                <div
+                <StaggerItem
                   key={i}
                   className="flex items-start gap-5 bg-gray-50 rounded-xl border border-gray-200 p-6 hover:border-gray-300 transition-colors"
                 >
@@ -241,10 +248,10 @@ export function Comparison({ d, t, vertical, signupUrl }: DesignProps) {
                   <div className="flex-shrink-0 hidden sm:flex w-10 h-10 bg-gray-100 rounded-lg items-center justify-center">
                     <Icon className="w-5 h-5 text-gray-400" />
                   </div>
-                </div>
+                </StaggerItem>
               );
             })}
-          </div>
+          </StaggerContainer>
         </div>
       </section>
 
@@ -259,11 +266,11 @@ export function Comparison({ d, t, vertical, signupUrl }: DesignProps) {
               LumiBookで実現できること
             </h2>
           </div>
-          <div className="grid md:grid-cols-2 gap-6">
+          <StaggerContainer stagger={0.1} className="grid md:grid-cols-2 gap-6">
             {d.features.map((f, i) => {
               const Icon = getIcon(f.icon);
               return (
-                <div
+                <StaggerItem
                   key={i}
                   className={`bg-white rounded-xl border border-gray-200 ${t.cardHover} p-7 transition-all hover:shadow-lg`}
                 >
@@ -279,10 +286,10 @@ export function Comparison({ d, t, vertical, signupUrl }: DesignProps) {
                   </div>
                   <h3 className="text-lg font-bold text-gray-900 mb-2">{f.title}</h3>
                   <p className="text-gray-600 text-sm leading-relaxed">{f.desc}</p>
-                </div>
+                </StaggerItem>
               );
             })}
-          </div>
+          </StaggerContainer>
         </div>
       </section>
 
@@ -302,13 +309,13 @@ export function Comparison({ d, t, vertical, signupUrl }: DesignProps) {
             <div className="hidden md:block absolute top-8 left-0 right-0 h-0.5 bg-gray-200" />
             <div className="grid md:grid-cols-3 gap-8 md:gap-12 relative">
               {d.flow.map((s, i) => (
-                <div key={i} className="text-center">
+                <FadeInLeft key={i} delay={i * 0.15} className="text-center">
                   <div className={`relative mx-auto w-16 h-16 ${t.primary} rounded-full flex items-center justify-center text-white font-extrabold text-xl mb-6 shadow-lg z-10`}>
                     {s.step}
                   </div>
                   <h3 className="text-lg font-bold text-gray-900 mb-2">{s.title}</h3>
                   <p className="text-gray-600 text-sm leading-relaxed">{s.desc}</p>
-                </div>
+                </FadeInLeft>
               ))}
             </div>
           </div>
@@ -341,8 +348,8 @@ export function Comparison({ d, t, vertical, signupUrl }: DesignProps) {
           </div>
           <div className="grid md:grid-cols-3 gap-6">
             {PLANS.map((plan, i) => (
+              <ScaleIn key={i} delay={i * 0.1}>
               <div
-                key={i}
                 className={`bg-white rounded-xl border ${plan.highlighted ? `${t.planBorder} ring-2 ${t.planRing}` : 'border-gray-200'} p-8 transition-all hover:shadow-lg relative`}
               >
                 {plan.badge && (
@@ -376,6 +383,7 @@ export function Comparison({ d, t, vertical, signupUrl }: DesignProps) {
                   {plan.price === 'ご相談' ? 'お問い合わせ' : '無料トライアル'}
                 </TrackingCTA>
               </div>
+              </ScaleIn>
             ))}
           </div>
         </div>
@@ -394,7 +402,8 @@ export function Comparison({ d, t, vertical, signupUrl }: DesignProps) {
           </div>
           <div className="space-y-4">
             {d.faqs.map((faq, i) => (
-              <details key={i} className="group border border-gray-200 rounded-xl overflow-hidden hover:border-gray-300 transition-colors">
+              <FadeInUp key={i} delay={i * 0.08}>
+              <details className="group border border-gray-200 rounded-xl overflow-hidden hover:border-gray-300 transition-colors">
                 <summary className="flex items-center justify-between p-5 cursor-pointer select-none">
                   <span className="text-base font-semibold text-gray-900 pr-4">{faq.q}</span>
                   <span className={`flex-shrink-0 w-7 h-7 rounded-full border-2 ${t.primaryBorder} flex items-center justify-center transition-transform`}>
@@ -406,6 +415,7 @@ export function Comparison({ d, t, vertical, signupUrl }: DesignProps) {
                   {faq.a}
                 </div>
               </details>
+              </FadeInUp>
             ))}
           </div>
         </div>
@@ -414,6 +424,7 @@ export function Comparison({ d, t, vertical, signupUrl }: DesignProps) {
       {/* ── Final CTA ──────────────────────────────────────────────── */}
       <section className="py-20 md:py-28 bg-white">
         <div className="mx-auto max-w-3xl px-6">
+          <ScaleIn>
           <div className={`border-2 ${t.primaryBorder} rounded-2xl p-10 md:p-14 text-center`}>
             <h2 className="text-3xl md:text-4xl font-extrabold text-gray-900 mb-4">
               まずは無料で試してみませんか？
@@ -440,6 +451,7 @@ export function Comparison({ d, t, vertical, signupUrl }: DesignProps) {
               </TrackingCTA>
             </div>
           </div>
+          </ScaleIn>
         </div>
       </section>
 

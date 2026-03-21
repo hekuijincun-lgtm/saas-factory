@@ -2,6 +2,7 @@ import { DesignProps, getIcon, LEGAL, PLANS } from './shared';
 import { TrackingCTA } from '../_components/TrackingCTA';
 import Link from 'next/link';
 import { ArrowRight, Scissors, Star, CheckCircle2, ChevronDown, Zap, X } from 'lucide-react';
+import { FadeInUp, FadeInLeft, FadeInRight, ScaleIn, StaggerContainer, StaggerItem } from '../_components/animations';
 
 export function CardShowcase({ d, t, vertical, signupUrl }: DesignProps) {
   return (
@@ -39,12 +40,17 @@ export function CardShowcase({ d, t, vertical, signupUrl }: DesignProps) {
             <span className="inline-block bg-white/20 text-white text-xs font-semibold px-3 py-1 rounded-full mb-6 backdrop-blur-sm">
               {d.badge}
             </span>
+            <FadeInUp>
             <h1 className="text-4xl md:text-5xl lg:text-6xl font-extrabold text-white leading-tight mb-6">
               {d.headline}
             </h1>
+            </FadeInUp>
+            <FadeInUp delay={0.15}>
             <p className="text-lg text-white/80 mb-8 max-w-lg">
               {d.subheadline}
             </p>
+            </FadeInUp>
+            <ScaleIn delay={0.3}>
             <div className="flex flex-col sm:flex-row gap-4">
               <TrackingCTA
                 href={signupUrl}
@@ -63,6 +69,7 @@ export function CardShowcase({ d, t, vertical, signupUrl }: DesignProps) {
                 機能を見る
               </TrackingCTA>
             </div>
+            </ScaleIn>
           </div>
           {/* Right — Bento preview cards */}
           <div className="hidden md:grid grid-cols-2 gap-4">
@@ -103,12 +110,12 @@ export function CardShowcase({ d, t, vertical, signupUrl }: DesignProps) {
               {d.label}の現場で起きている課題
             </h2>
           </div>
-          <div className="grid md:grid-cols-4 gap-5">
+          <StaggerContainer className="grid md:grid-cols-4 gap-5">
             {d.problems.map((p, i) => {
               const Icon = getIcon(p.icon);
               const isWide = i === 2 || i === 5;
               return (
-                <div
+                <StaggerItem
                   key={i}
                   className={`${isWide ? 'md:col-span-2' : 'md:col-span-1'} group relative rounded-2xl border border-gray-200 ${t.cardHover} p-6 transition-all hover:shadow-lg ${i % 2 === 0 ? '' : `border-l-4 ${t.primaryBorder}`}`}
                 >
@@ -117,10 +124,10 @@ export function CardShowcase({ d, t, vertical, signupUrl }: DesignProps) {
                   </div>
                   <h3 className="text-lg font-bold text-gray-900 mb-2">{p.title}</h3>
                   <p className="text-gray-600 text-sm leading-relaxed">{p.desc}</p>
-                </div>
+                </StaggerItem>
               );
             })}
-          </div>
+          </StaggerContainer>
         </div>
       </section>
 
@@ -135,12 +142,12 @@ export function CardShowcase({ d, t, vertical, signupUrl }: DesignProps) {
               すべてを解決する機能
             </h2>
           </div>
-          <div className="grid md:grid-cols-3 gap-5">
+          <StaggerContainer stagger={0.1} className="grid md:grid-cols-3 gap-5">
             {d.features.map((f, i) => {
               const Icon = getIcon(f.icon);
               const isHero = i === 0;
               return (
-                <div
+                <StaggerItem
                   key={i}
                   className={`${isHero ? 'md:col-span-2 md:row-span-2' : ''} bg-white rounded-2xl border border-gray-200 ${t.cardHover} p-8 transition-all hover:shadow-lg`}
                 >
@@ -159,10 +166,10 @@ export function CardShowcase({ d, t, vertical, signupUrl }: DesignProps) {
                       詳しく見る <ArrowRight className="w-4 h-4" />
                     </TrackingCTA>
                   )}
-                </div>
+                </StaggerItem>
               );
             })}
-          </div>
+          </StaggerContainer>
         </div>
       </section>
 
@@ -179,7 +186,7 @@ export function CardShowcase({ d, t, vertical, signupUrl }: DesignProps) {
           </div>
           <div className="flex flex-col md:flex-row items-stretch gap-4">
             {d.flow.map((s, i) => (
-              <div key={i} className="flex items-center gap-4 flex-1">
+              <FadeInLeft key={i} delay={i * 0.15} className="flex items-center gap-4 flex-1">
                 <div className={`flex-1 bg-gray-50 rounded-2xl p-6 border border-gray-200 ${t.cardHover} transition-all hover:shadow-lg`}>
                   <div className={`w-10 h-10 ${t.primary} rounded-xl flex items-center justify-center text-white font-bold text-sm mb-4`}>
                     {s.step}
@@ -190,7 +197,7 @@ export function CardShowcase({ d, t, vertical, signupUrl }: DesignProps) {
                 {i < d.flow.length - 1 && (
                   <ArrowRight className={`hidden md:block w-6 h-6 ${t.iconColor} flex-shrink-0`} />
                 )}
-              </div>
+              </FadeInLeft>
             ))}
           </div>
           <div className="text-center mt-12">
@@ -219,8 +226,8 @@ export function CardShowcase({ d, t, vertical, signupUrl }: DesignProps) {
           </div>
           <div className="grid md:grid-cols-3 gap-6">
             {PLANS.map((plan, i) => (
+              <ScaleIn key={i} delay={i * 0.1}>
               <div
-                key={i}
                 className={`bg-white rounded-2xl overflow-hidden border ${plan.highlighted ? `${t.planBorder} ring-2 ${t.planRing}` : 'border-gray-200'} transition-all hover:shadow-lg`}
               >
                 {/* Top color strip */}
@@ -255,6 +262,7 @@ export function CardShowcase({ d, t, vertical, signupUrl }: DesignProps) {
                   </TrackingCTA>
                 </div>
               </div>
+              </ScaleIn>
             ))}
           </div>
         </div>
@@ -273,13 +281,15 @@ export function CardShowcase({ d, t, vertical, signupUrl }: DesignProps) {
           </div>
           <div className="grid md:grid-cols-2 gap-5">
             {d.faqs.map((faq, i) => (
-              <div key={i} className={`bg-gray-50 rounded-2xl p-6 border border-gray-200 ${t.cardHover} transition-all hover:shadow-md`}>
+              <FadeInUp key={i} delay={i * 0.08}>
+              <div className={`bg-gray-50 rounded-2xl p-6 border border-gray-200 ${t.cardHover} transition-all hover:shadow-md`}>
                 <h3 className="flex items-start gap-3 text-base font-bold text-gray-900 mb-3">
                   <span className={`flex-shrink-0 w-7 h-7 ${t.primary} text-white rounded-lg flex items-center justify-center text-xs font-bold`}>Q</span>
                   {faq.q}
                 </h3>
                 <p className="text-gray-600 text-sm leading-relaxed pl-10">{faq.a}</p>
               </div>
+              </FadeInUp>
             ))}
           </div>
         </div>
@@ -287,6 +297,7 @@ export function CardShowcase({ d, t, vertical, signupUrl }: DesignProps) {
 
       {/* ── Final CTA ──────────────────────────────────────────────── */}
       <section className={`bg-gradient-to-br ${t.heroGradient} py-20 md:py-28`}>
+        <ScaleIn>
         <div className="mx-auto max-w-3xl px-6 text-center">
           <h2 className="text-3xl md:text-4xl font-extrabold text-white mb-6">
             今すぐ{d.label}の予約管理を変えよう
@@ -303,6 +314,7 @@ export function CardShowcase({ d, t, vertical, signupUrl }: DesignProps) {
             無料で始める <ArrowRight className="w-5 h-5" />
           </TrackingCTA>
         </div>
+        </ScaleIn>
       </section>
 
       {/* ── Footer ─────────────────────────────────────────────────── */}

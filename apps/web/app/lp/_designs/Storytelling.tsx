@@ -2,6 +2,7 @@ import { DesignProps, getIcon, LEGAL, PLANS } from './shared';
 import { TrackingCTA } from '../_components/TrackingCTA';
 import Link from 'next/link';
 import { ArrowRight, Scissors, Star, CheckCircle2, ChevronDown, Zap } from 'lucide-react';
+import { FadeInUp, FadeInLeft, FadeInRight, ScaleIn, StaggerContainer, StaggerItem } from '../_components/animations';
 
 /* ── Timeline building blocks ────────────────────────────────────── */
 
@@ -61,12 +62,17 @@ export function Storytelling({ d, t, vertical, signupUrl }: DesignProps) {
           <span className="inline-block text-xs tracking-[0.25em] uppercase text-white/60 mb-6">
             {d.badge}
           </span>
+          <FadeInUp>
           <h1 className="text-4xl sm:text-5xl lg:text-6xl font-serif font-light text-white leading-tight max-w-3xl">
             {d.headline}
           </h1>
+          </FadeInUp>
+          <FadeInUp delay={0.15}>
           <p className="mt-6 text-base sm:text-lg text-white/70 font-light max-w-xl mx-auto leading-relaxed">
             {d.subheadline}
           </p>
+          </FadeInUp>
+          <ScaleIn delay={0.3}>
           <div className="mt-12 flex flex-col sm:flex-row items-center justify-center gap-4">
             <TrackingCTA
               href={signupUrl}
@@ -86,6 +92,7 @@ export function Storytelling({ d, t, vertical, signupUrl }: DesignProps) {
               デモを見る
             </TrackingCTA>
           </div>
+          </ScaleIn>
           {/* Scroll hint */}
           <div className="mt-20 animate-bounce">
             <ChevronDown className="w-5 h-5 text-white/40 mx-auto" />
@@ -119,8 +126,10 @@ export function Storytelling({ d, t, vertical, signupUrl }: DesignProps) {
               {d.problems.map((p, i) => {
                 const Icon = getIcon(p.icon);
                 const side = i % 2 === 0 ? 'left' : 'right';
+                const Anim = i % 2 === 0 ? FadeInLeft : FadeInRight;
                 return (
-                  <div key={i} className="relative">
+                  <Anim key={i}>
+                  <div className="relative">
                     {/* Dot on timeline */}
                     <div className="hidden md:block">
                       <TimelineDot t={t} />
@@ -140,6 +149,7 @@ export function Storytelling({ d, t, vertical, signupUrl }: DesignProps) {
                       </div>
                     </TimelineCard>
                   </div>
+                  </Anim>
                 );
               })}
             </div>
@@ -159,8 +169,10 @@ export function Storytelling({ d, t, vertical, signupUrl }: DesignProps) {
               {d.features.map((f, i) => {
                 const Icon = getIcon(f.icon);
                 const side = i % 2 === 0 ? 'right' : 'left';
+                const Anim = i % 2 === 0 ? FadeInRight : FadeInLeft;
                 return (
-                  <div key={i} className="relative">
+                  <Anim key={i}>
+                  <div className="relative">
                     <div className="hidden md:block">
                       <TimelineDot t={t} />
                     </div>
@@ -174,6 +186,7 @@ export function Storytelling({ d, t, vertical, signupUrl }: DesignProps) {
                       </div>
                     </TimelineCard>
                   </div>
+                  </Anim>
                 );
               })}
             </div>
@@ -193,7 +206,8 @@ export function Storytelling({ d, t, vertical, signupUrl }: DesignProps) {
               {d.flow.map((step, i) => {
                 const side = i % 2 === 0 ? 'left' : 'right';
                 return (
-                  <div key={i} className="relative">
+                  <FadeInLeft key={i} delay={i * 0.15}>
+                  <div className="relative">
                     {/* Large step circle on timeline */}
                     <div className="hidden md:flex absolute left-1/2 -translate-x-1/2 z-10 w-14 h-14 rounded-full bg-white border-2 items-center justify-center"
                       style={{ borderColor: 'inherit' }}
@@ -215,6 +229,7 @@ export function Storytelling({ d, t, vertical, signupUrl }: DesignProps) {
                       </div>
                     </TimelineCard>
                   </div>
+                  </FadeInLeft>
                 );
               })}
             </div>
@@ -245,7 +260,8 @@ export function Storytelling({ d, t, vertical, signupUrl }: DesignProps) {
               {d.faqs.map((faq, i) => {
                 const side = i % 2 === 0 ? 'left' : 'right';
                 return (
-                  <div key={i} className="relative">
+                  <FadeInUp key={i} delay={i * 0.08}>
+                  <div className="relative">
                     <div className="hidden md:block">
                       <TimelineDot t={t} />
                     </div>
@@ -259,6 +275,7 @@ export function Storytelling({ d, t, vertical, signupUrl }: DesignProps) {
                       </div>
                     </TimelineCard>
                   </div>
+                  </FadeInUp>
                 );
               })}
             </div>
@@ -282,8 +299,8 @@ export function Storytelling({ d, t, vertical, signupUrl }: DesignProps) {
           </p>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             {PLANS.map((plan, i) => (
+              <ScaleIn key={i} delay={i * 0.1}>
               <div
-                key={i}
                 className={`relative rounded-2xl p-8 transition-transform hover:-translate-y-1 ${
                   plan.highlighted
                     ? `ring-2 ${t.planRing} bg-gray-900`
@@ -324,6 +341,7 @@ export function Storytelling({ d, t, vertical, signupUrl }: DesignProps) {
                   {plan.price === 'ご相談' ? 'お問い合わせ' : 'このプランで始める'}
                 </TrackingCTA>
               </div>
+              </ScaleIn>
             ))}
           </div>
         </div>
@@ -331,6 +349,7 @@ export function Storytelling({ d, t, vertical, signupUrl }: DesignProps) {
 
       {/* ── Final CTA ──────────────────────────────────────── */}
       <section className="py-32 px-6 text-center relative">
+        <ScaleIn>
         <div className="max-w-lg mx-auto">
           <Zap className={`w-8 h-8 ${t.iconColor} mx-auto mb-6`} />
           <h2 className="text-3xl font-serif font-light mb-4">
@@ -349,6 +368,7 @@ export function Storytelling({ d, t, vertical, signupUrl }: DesignProps) {
             <ArrowRight className="w-4 h-4" />
           </TrackingCTA>
         </div>
+        </ScaleIn>
       </section>
 
       {/* ── Footer (dark, minimal) ─────────────────────────── */}

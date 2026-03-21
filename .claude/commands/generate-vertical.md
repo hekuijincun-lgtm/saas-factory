@@ -131,26 +131,68 @@
 - 既存のペット管理画面（admin/pet/）の nav.config パターンを参考にする
 
 ## 5. LP実装
-### 5a. LP辞書追加
-- apps/web/app/lp/[vertical]/page.tsx の LP辞書に新しいヴァーティカルを追加
-  - label, badge, headline, subheadline
-  - problems (5個), features (6個), flow (3ステップ), faqs (4個)
-  - metaTitle, metaDesc
-  - **features に選定した特化機能を1つ以上含める**（例: 「カラーレシピ自動保存」「ビフォーアフター写真管理」）
 
-### 5b. デザインマッピング追加
+### 5a. 競合LP調査（必須）
+web_search で以下を調査する:
+- 「{業種名} 予約システム サービス LP」で検索
+- 「{業種名} SaaS 料金 機能」で検索
+- 上位3〜5サイトのLP構成を分析する
+
+以下の要素を抽出・参考にする:
+- ヒーローセクションのコピー構成
+- 課題提起の切り口（何に悩んでいるか）
+- 機能訴求の見せ方
+- 料金表示の有無・方法
+- CTAの文言
+- 使われているビジュアルの傾向
+- 社会的証明（導入事例・口コミ）の見せ方
+
+競合との差別化ポイントも明確にした上で、以降の LP辞書を作成する。
+
+### 5b. LP辞書追加（競合調査を反映）
+- apps/web/app/lp/[vertical]/page.tsx の LP辞書に新しいヴァーティカルを追加
+  - label, badge, headline（競合と差別化した訴求コピー）, subheadline
+  - problems (5個): 実際のユーザーの痛みに基づく課題提起（競合調査で把握した切り口を反映）
+  - features (6個): 競合にない強みを含める + **選定した特化機能を1つ以上含める**
+  - flow (3ステップ), faqs (4個: 競合LPでよく見られる質問を参考に)
+  - metaTitle, metaDesc
+
+### 5c. デザインマッピング追加
 - apps/web/app/lp/[vertical]/page.tsx の VERTICAL_DESIGN に追加
   - 業種に最適なデザインを10種類から選択:
     - dark-hero, split-hero, minimal, storytelling, card-showcase,
       comparison, testimonial, gradient-wave, magazine, bold-typography
 
-### 5c. テーマカラー追加（必須）
+### 5d. テーマカラー追加（必須）
 - apps/web/src/lib/verticalTheme.ts に新業種のテーマトークンを追加
   - VerticalThemeTokens 型に従い、primary/light/text/border/sidebar等のTailwindクラスを定義
   - VERTICAL_THEMES レコードに追加
   - lpThemeKey で LP用テーマキー（shared.ts の THEMES から選択）を指定
   - 既存カラー: eyebrow→rose, nail→pink, hair→violet, dental→sky, esthetic→purple, cleaning→emerald, handyman→amber, pet→orange, seitai→teal
   - LP側の shared.ts は verticalTheme.ts の lpThemeKey を自動参照するため追加不要
+
+### 5e. アニメーション確認（自動適用）
+全10種のデザインテンプレートに framer-motion アニメーションが組み込み済み。
+新業種のLPは選択したデザインテンプレートを通じて自動的にアニメーションが適用される。
+
+**適用済みアニメーション一覧:**
+- ヒーロー: タイトル→FadeInUp、サブタイトル→FadeInUp(delay:0.15)、CTA→ScaleIn(delay:0.3)
+- 課題セクション: StaggerContainer + StaggerItem（順番にフェードイン）
+- 機能セクション: StaggerContainer(stagger:0.1) + StaggerItem
+- フローセクション: FadeInLeft(delay:step×0.15) で左からスライドイン
+- 料金セクション: ScaleIn(delay:plan×0.1) でスケールアップ
+- FAQセクション: FadeInUp(delay:item×0.08) で順番にフェードイン
+- 最終CTAセクション: ScaleIn
+
+**共通アニメーションコンポーネント:** apps/web/app/lp/_components/animations.tsx
+- FadeInUp / FadeInLeft / FadeInRight / ScaleIn — スクロールトリガー、whileInView使用
+- StaggerContainer + StaggerItem — 子要素を順番にアニメーション
+- prefers-reduced-motion 対応済み
+- SSG 維持: 'use client' コンポーネントとして分離済み（Server Component のデザインファイル内で使用可能）
+
+確認事項:
+- 選択したデザインテンプレートが animations.tsx を import しているか
+- ビルド後に LP ページが SSG として出力されているか（generateStaticParams に含まれること）
 
 ## 6. デモUI実装（必須）
 - apps/web/app/demo/{vertical名}/page.tsx — Server Component (metadata + layout)
@@ -219,14 +261,129 @@
 - 管理画面のダッシュボード → **特化機能ページ**への内部リンク
 - [vertical]/page.tsx 内で handyman/cleaning 同様に demo リンクを設定
 
-## 9. 検証（必須・省略禁止）
-以下をすべて実行し、エラーがあれば修正してから次に進む:
+## 9. 検証 — ビルド + E2Eテスト（必須・省略禁止）
+
+### 9a. ビルド確認
 1. pnpm -C apps/web run build — Webビルド。**新ルートが出力に含まれるか grep で確認**
 2. 新しい API route には `export const runtime = 'edge'` が必須（Cloudflare Pages要件）
 3. 内部リンクは必ず next/link の `<Link>` を使う（`<a href="/...">` は ESLint がビルドを止める）
 4. echo "v{N}-{vertical名}-$(date +%Y%m%d)" > apps/web/.force-pages-rebuild.txt
 5. ビルドが通るまでデプロイしない
 6. **特化機能ページのルートがビルド出力に含まれるか確認**
+
+### 9b. 顧客向け導線テスト
+ビルド成功後、以下をコードレビューで検証する:
+
+1. **/lp/{新業種}**
+   - LP辞書に業種データが存在し、generateStaticParams に含まれるか
+   - VERTICAL_DESIGN にマッピングがあり、テーマカラーが verticalTheme.ts に定義されているか
+   - CTAリンクが `/signup/{新業種}` を指しているか（signupUrl の生成ロジック確認）
+   - headline / subheadline / problems / features / flow / faqs が業種に適切か
+
+2. **/demo/{新業種}**
+   - page.tsx (Server Component) と Demo.tsx (Client Component) が存在するか
+   - AI見積もりロジック: 分類パターン（正規表現）が業種のサービスを網羅しているか
+   - 価格マトリクス: カテゴリ×サイズ/オプションの料金が妥当か
+   - CTAリンクが `/signup/{新業種}` を指しているか
+
+3. **/signup/{新業種}**
+   - VALID_VERTICALS に新業種が含まれるか（signup/[vertical]/page.tsx の generateStaticParams）
+   - SignupForm の VERTICALS 配列に label が正しく設定されているか
+   - verticalTheme.ts のテーマが適用されるか（getVerticalTheme が正しいトークンを返すか）
+
+### 9c. 管理画面テスト
+新業種テナントとしてログインした場合の動作をコードレビューで検証する:
+
+4. **ダッシュボード** (`/admin/{新業種}/page.tsx`)
+   - KPIカードのデータ取得: fetch URL が正しいか（tenantId パラメータ付き）
+   - 特化機能サマリーカード: specialFeatures に基づくカードが表示されるか
+   - デモデータフォールバック: API エラー時にデモデータが表示されるか
+   - テーマカラー: layout.tsx の CSS override が業種テーマカラーで正しいか
+
+5. **予約管理** (`/admin/{新業種}/reservations/page.tsx`)
+   - ReservationsLedger コンポーネントが正しくインポートされているか
+   - メニューデータ取得の fetch URL が正しいか
+
+6. **メニュー管理** (`/admin/{新業種}/pricing/page.tsx`)
+   - MenuManager コンポーネントに tenantId が渡されているか
+   - テンプレートメニュー（vertical-templates.ts の menus 6件）が初期表示されるか
+
+7. **スタッフ管理** (`/admin/{新業種}/staff/page.tsx`)
+   - StaffManager コンポーネントが正しくインポートされているか
+
+8. **特化機能ページ**（specialFeatures に含まれるもの全て）
+   - 各ページファイルが `apps/web/app/admin/{新業種}/` 配下に存在するか
+   - 'use client' ディレクティブがあるか
+   - useAdminTenantId() でテナントID を取得しているか
+   - データ取得/保存の fetch URL が正しいか（tenantId パラメータ付き）
+   - ローディング状態・空状態の表示があるか
+   - 対応する API エンドポイント（proxy route）が存在するか
+   - API レスポンスのフィールド名を正しく読み取っているか（`json?.data ?? json?.{field}` パターン）
+
+9. **AI応答設定** (`/admin/{新業種}/ai-config/page.tsx`)
+   - verticalConfig.{新業種}.aiConfig に保存/読取しているか
+   - トーン選択（3種）が動作するか
+
+10. **管理者設定** (`/admin/{新業種}/settings/page.tsx`)
+    - AdminSettingsClient が正しくインポートされているか
+
+### 9d. ナビゲーション・テーマ整合性テスト
+11. **nav.config.ts**
+    - 新業種の nav 項目が正しく追加されているか（verticals: ["{新業種}"]）
+    - 汎用項目に hideFor: ["{新業種}"] が追加されているか（重複防止）
+    - 特化機能ページへのナビリンクが含まれているか
+
+12. **layout.tsx テーマ**
+    - `[data-{新業種}-theme]` CSS override が定義されているか
+    - blue/indigo 系のクラスが業種テーマカラーにマッピングされているか
+    - primary, hover, light, border, text, focus 全バリアントが網羅されているか
+
+### 9e. 予約フロー（顧客向け）テスト
+13. **BookingFlow の業種対応**
+    - verticalTheme.ts の `BOOKING_HEX` に新業種のカラーが定義されているか
+    - 業種固有の予約ステップが必要な場合、BookingFlow.tsx に条件分岐があるか
+    - surveyQuestions（vertical-templates.ts で定義）が予約フローに反映されるか
+
+### 9f. API レスポンス整合性テスト
+以下のパターンでフロントエンドとAPIのレスポンス形式が一致しているか確認:
+
+14. **GET エンドポイントのレスポンスキー**
+    - 一覧取得: フロントが `json?.data ?? json?.{複数形}` で読み取れるか
+    - 単体取得: フロントが `json?.data ?? json?.{単数形}` で読み取れるか
+    - POST 作成後: レスポンスの ID が正しく読み取れるか（`json?.data?.id ?? json?.{単数形}?.id`）
+
+15. **Proxy route の存在確認**
+    - 管理画面の全 fetch URL に対応する `apps/web/app/api/proxy/` ルートが存在するか
+    - DELETE 操作: query param → URL path 変換が正しいか
+
+### 9g. バグ修正ループ
+テストで問題が見つかった場合:
+- 即修正する
+- 修正後に該当機能を再テスト
+- pnpm -C apps/web run build を再実行して通過を確認
+- **全項目グリーンになるまで繰り返す**
+
+### 9h. テスト結果レポート
+以下の形式で記録（Step 12 のレポートに含める）:
+
+| # | 機能 | 結果 | 問題 | 修正内容 |
+|---|---|---|---|---|
+| 1 | LP表示 | ✅/❌ | - | - |
+| 2 | デモ動作 | ✅/❌ | - | - |
+| 3 | サインアップ | ✅/❌ | - | - |
+| 4 | ダッシュボード | ✅/❌ | - | - |
+| 5 | 予約管理 | ✅/❌ | - | - |
+| 6 | メニュー管理 | ✅/❌ | - | - |
+| 7 | スタッフ管理 | ✅/❌ | - | - |
+| 8 | 特化機能: {名前} | ✅/❌ | - | - |
+| 9 | AI応答設定 | ✅/❌ | - | - |
+| 10 | ナビゲーション | ✅/❌ | - | - |
+| 11 | テーマ整合性 | ✅/❌ | - | - |
+| 12 | 予約フロー | ✅/❌ | - | - |
+| 13 | APIレスポンス整合性 | ✅/❌ | - | - |
+| 14 | Proxyルート存在 | ✅/❌ | - | - |
+
+合格基準: **全項目 ✅**（サロンオーナーが説明なしで使えるレベル）
 
 ## 10. デプロイ
 - cd apps/api && node_modules/.bin/wrangler deploy --env production
@@ -254,3 +411,8 @@
 - デプロイ結果（Workers version + Pages deploy status）
 - 公開URL（LP + デモ + 管理画面）
 - 想定MRR（3ヶ月/6ヶ月/12ヶ月）
+- **E2Eテスト結果**
+  - テスト結果テーブル（9h の形式）
+  - 合格数 / 全機能数
+  - 修正したバグ一覧
+  - 本番リリース可否の判定
