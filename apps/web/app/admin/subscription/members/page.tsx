@@ -106,7 +106,7 @@ export default function MemberListPage() {
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: formName.trim(), planId: formPlanId }),
+          body: JSON.stringify({ customer_id: formName.trim(), plan_id: formPlanId, start_date: new Date().toISOString().slice(0, 10) }),
         },
       );
       if (!res.ok) throw new Error('create failed');

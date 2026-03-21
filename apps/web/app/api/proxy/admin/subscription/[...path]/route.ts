@@ -63,4 +63,5 @@ async function forward(req: Request): Promise<Response> {
 export async function GET(req: Request) { return forward(req); }
 export async function POST(req: Request) { return forward(req); }
 export async function PUT(req: Request) { return forward(req); }
+export async function PATCH(req: Request) { return forward(req); }
 export async function DELETE(req: Request) { return forward(req); }

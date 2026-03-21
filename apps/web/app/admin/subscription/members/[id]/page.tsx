@@ -108,11 +108,9 @@ export default function MemberDetailPage() {
     setActionLoading(true);
     try {
       const res = await fetch(
-        `/api/proxy/admin/subscription/members/${id}?tenantId=${encodeURIComponent(tenantId)}`,
+        `/api/proxy/admin/subscription/members/${id}/${action}?tenantId=${encodeURIComponent(tenantId)}`,
         {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action }),
+          method: 'PUT',
         },
       );
       if (!res.ok) throw new Error('action failed');
@@ -141,7 +139,7 @@ export default function MemberDetailPage() {
       );
       if (!res.ok) throw new Error('qr failed');
       const json: any = await res.json();
-      const token = json?.data?.token ?? json?.token ?? '';
+      const token = json?.qr?.token ?? json?.data?.token ?? json?.token ?? '';
       if (token && member) {
         setMember({ ...member, qrToken: token });
       }

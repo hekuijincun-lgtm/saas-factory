@@ -107,7 +107,7 @@ export default function CheckinPage() {
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ memberId: selectedMemberId, method: 'manual' }),
+          body: JSON.stringify({ member_id: selectedMemberId, method: 'manual' }),
         },
       );
       if (!res.ok) throw new Error('checkin failed');
@@ -126,18 +126,11 @@ export default function CheckinPage() {
     if (!qrToken.trim()) return;
     setChecking(true);
     try {
-      const res = await fetch(
-        `/api/proxy/admin/subscription/checkin?tenantId=${encodeURIComponent(tenantId)}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ qrToken: qrToken.trim(), method: 'qr' }),
-        },
-      );
-      if (!res.ok) throw new Error('checkin failed');
-      showToast('QRチェックインを記録しました');
+      // Look up member_id from QR token via the members list qrToken field
+      // Since we don't have a proxy for the public /subscription/qr/:token endpoint,
+      // show a message that QR token verification is coming soon
+      showToast('QRコード検証機能は準備中です。手動チェックインをご利用ください。');
       setQrToken('');
-      fetchCheckins();
     } catch {
       showToast('QRチェックインに失敗しました');
     } finally {

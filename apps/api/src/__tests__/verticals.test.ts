@@ -25,7 +25,7 @@ describe('Vertical Plugin Registry', () => {
   it('each plugin has required fields', () => {
     for (const plugin of getAllVerticalPlugins()) {
       expect(plugin.key).toBeTruthy();
-      expect(plugin.coreType).toMatch(/^(reservation|project)$/);
+      expect(plugin.coreType).toMatch(/^(reservation|project|subscription)$/);
       expect(plugin.label).toBeTruthy();
       expect(plugin.labels).toBeDefined();
       expect(plugin.flags).toBeDefined();

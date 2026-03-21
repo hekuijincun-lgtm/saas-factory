@@ -48,6 +48,8 @@ const VERTICAL_DESCRIPTIONS: Record<string, string> = {
   handyman: '多岐にわたるサービスの見積もり自動化・顧客管理に対応しています',
   pet: 'ペットカルテ・ワクチン管理・トリミング予約に対応しています',
   seitai: '施術部位マッピング・カルテ管理・リピート促進に対応しています',
+  gym: 'QR会員証・チェックイン管理・月謝管理を自動化',
+  school: '月謝管理・出席記録・進捗管理を自動化',
 };
 
 interface SignupFormProps {
