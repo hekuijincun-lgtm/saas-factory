@@ -339,7 +339,7 @@ export default async function VerticalLandingPage({ params }: { params: Promise<
   const designKey = getDesignKey(vertical);
   const Design = DESIGNS[designKey];
   const t = getTheme(vertical);
-  const signupUrl = `${SIGNUP_HREF}?vertical=${vertical}`;
+  const signupUrl = `${SIGNUP_HREF}/${vertical}`;
 
   return <Design d={d} t={t} vertical={vertical} signupUrl={signupUrl} />;
 }

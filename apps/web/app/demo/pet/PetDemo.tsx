@@ -492,7 +492,7 @@ export function PetDemo() {
             {/* CTAs */}
             <div className="space-y-2 pt-2">
               <Link
-                href="/signup?vertical=pet"
+                href="/signup/pet"
                 className="block w-full py-3 bg-orange-500 hover:bg-orange-600 text-white font-bold rounded-xl text-center transition-colors"
               >
                 無料で始める

@@ -105,7 +105,7 @@ export default function SeitaiDemo() {
             </div>
 
             <Link
-              href="/signup?vertical=seitai"
+              href="/signup/seitai"
               className="block w-full rounded-xl bg-teal-600 py-3 text-center text-sm font-semibold text-white hover:bg-teal-700 transition-colors"
             >
               無料で始める

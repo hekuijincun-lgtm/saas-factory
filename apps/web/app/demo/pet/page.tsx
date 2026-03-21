@@ -17,7 +17,7 @@ export default function PetDemoPage() {
             <span className="font-bold text-gray-900 text-sm">PetBook</span>
             <span className="text-xs text-gray-400 ml-1">デモ</span>
           </div>
-          <Link href="/signup?vertical=pet" className="text-sm text-orange-600 hover:text-orange-700 font-medium">
+          <Link href="/signup/pet" className="text-sm text-orange-600 hover:text-orange-700 font-medium">
             無料で始める →
           </Link>
         </div>

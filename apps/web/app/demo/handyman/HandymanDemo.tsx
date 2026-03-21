@@ -352,7 +352,7 @@ export function HandymanDemo() {
             {/* CTAs */}
             <div className="space-y-2 pt-2">
               <Link
-                href="/signup?vertical=handyman"
+                href="/signup/handyman"
                 className="block w-full py-3 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-xl text-center transition-colors"
               >
                 無料で始める
