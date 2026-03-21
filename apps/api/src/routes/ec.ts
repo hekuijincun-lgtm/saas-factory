@@ -363,11 +363,13 @@ app.post("/store/:tenantId/cart", async (c) => {
   // Upsert cart item
   const existing = await db.prepare("SELECT id, quantity FROM cart_items WHERE tenant_id = ? AND session_id = ? AND product_id = ?").bind(tenantId, body.session_id, body.product_id).first() as any;
   if (existing) {
-    await db.prepare("UPDATE cart_items SET quantity = ? WHERE id = ?").bind((existing.quantity || 0) + (body.quantity || 1), existing.id).run();
-  } else {
-    await db.prepare("INSERT INTO cart_items (id, tenant_id, session_id, product_id, quantity, created_at) VALUES (?, ?, ?, ?, ?, ?)").bind(uid("ci"), tenantId, body.session_id, body.product_id, body.quantity || 1, nowISO()).run();
+    const newQty = (existing.quantity || 0) + (body.quantity || 1);
+    await db.prepare("UPDATE cart_items SET quantity = ? WHERE id = ?").bind(newQty, existing.id).run();
+    return c.json({ ok: true, item: { id: existing.id, quantity: newQty } });
   }
-  return c.json({ ok: true });
+  const id = uid("ci");
+  await db.prepare("INSERT INTO cart_items (id, tenant_id, session_id, product_id, quantity, created_at) VALUES (?, ?, ?, ?, ?, ?)").bind(id, tenantId, body.session_id, body.product_id, body.quantity || 1, nowISO()).run();
+  return c.json({ ok: true, item: { id, quantity: body.quantity || 1 } });
 });
 
 app.get("/store/:tenantId/cart", async (c) => {
