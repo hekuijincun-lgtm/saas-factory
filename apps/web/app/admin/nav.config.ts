@@ -33,7 +33,7 @@ export const adminNavItems: NavItem[] = [
   { label: "カラーレシピ",   href: "/admin/color-formula",   verticals: ["nail", "hair"] },
   { label: "アレルギー記録", href: "/admin/allergy-record",  verticals: ["dental", "esthetic"] },
   { label: "ビフォーアフター", href: "/admin/before-after",  verticals: ["eyebrow", "nail", "hair", "esthetic", "cleaning", "handyman", "pet", "seitai"] },
-  { label: "ワクチン記録",   href: "/admin/vaccine-record",  verticals: ["pet"] },
+  // ワクチン記録（共有ページ）は pet では非表示 — pet は /admin/pet/vaccines を使用
   { label: "施術部位マップ", href: "/admin/treatment-body-map", verticals: ["dental", "esthetic", "seitai"] },
   { label: "機器チェック",   href: "/admin/equipment-check", verticals: ["cleaning", "handyman"] },
   // ── 共通 ──

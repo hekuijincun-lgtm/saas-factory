@@ -49,7 +49,7 @@ export default function NewPetProfilePage() {
       });
       if (!res.ok) throw new Error('save failed');
       const json = await res.json() as any;
-      const newId = json?.data?.id ?? json?.id;
+      const newId = json?.data?.id ?? json?.pet?.id ?? json?.id;
       if (newId) {
         router.push(withTenant(`/admin/pet/profiles/${newId}`, tenantId));
       } else {

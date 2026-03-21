@@ -75,7 +75,7 @@ app.get("/admin/pets/expiring-vaccines", async (c) => {
   const alerts: { pet: PetProfile; vaccine: VaccineRecord }[] = [];
   for (const pet of pets) {
     for (const v of pet.vaccinations || []) {
-      if (v.expiresAt && v.expiresAt >= nowStr && v.expiresAt <= cutoffStr) {
+      if (v.expiresAt && v.expiresAt <= cutoffStr) {
         alerts.push({ pet, vaccine: v });
       }
     }
@@ -114,7 +114,14 @@ app.get("/admin/pets", async (c) => {
     pets = pets.filter((p) => p.customerKey === customerKey);
   }
 
-  return c.json({ ok: true, tenantId, pets });
+  // Compute lastGroomingDate from groomingHistory for each pet
+  const enriched = pets.map((p) => {
+    const dates = (p.groomingHistory || []).map((g) => g.date).filter(Boolean).sort();
+    const lastGroomingDate = dates.length > 0 ? dates[dates.length - 1] : undefined;
+    return { ...p, lastGroomingDate };
+  });
+
+  return c.json({ ok: true, tenantId, pets: enriched });
 });
 
 // GET /admin/pets/:petId - get single pet

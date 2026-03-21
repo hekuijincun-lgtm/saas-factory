@@ -159,7 +159,7 @@ export default function PetProfileDetailPage() {
         return r.json();
       })
       .then((json: any) => {
-        const p: PetProfile = json?.data ?? json;
+        const p: PetProfile = json?.data ?? json?.pet ?? json;
         setPet(p);
         setForm({
           name: p.name || '', species: p.species || '', breed: p.breed || '',
@@ -286,7 +286,7 @@ export default function PetProfileDetailPage() {
       });
       if (!res.ok) throw new Error('save failed');
       const json = await res.json() as any;
-      const newRecord: VaccineRecord = json?.data ?? json;
+      const newRecord: VaccineRecord = json?.data ?? json?.vaccine ?? json;
       setPet(prev => prev ? {
         ...prev,
         vaccines: [...(prev.vaccines || []), newRecord],

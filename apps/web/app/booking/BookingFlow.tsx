@@ -322,6 +322,7 @@ export default function BookingFlow() {
         isPet ? (
           <StepPetSelect
             tenantId={tenantId}
+            customerKey={state.lineUserId || undefined}
             onComplete={(answers) => {
               update({ surveyAnswers: { ...state.surveyAnswers, ...answers } });
               setStep(5);
