@@ -137,6 +137,34 @@ const slate: VerticalThemeTokens = {
   lpThemeKey: 'indigo',
 };
 
+/**
+ * Hex color values for CSS custom properties (booking page).
+ * Keys match the variable names: primary, primaryHover, header.
+ */
+export interface VerticalHexColors {
+  primary: string;
+  primaryHover: string;
+  header: string;
+}
+
+export const VERTICAL_HEX: Record<string, VerticalHexColors> = {
+  eyebrow:  { primary: '#f43f5e', primaryHover: '#e11d48', header: '#9f1239' },
+  nail:     { primary: '#ec4899', primaryHover: '#db2777', header: '#9d174d' },
+  hair:     { primary: '#8b5cf6', primaryHover: '#7c3aed', header: '#5b21b6' },
+  dental:   { primary: '#0ea5e9', primaryHover: '#0284c7', header: '#075985' },
+  esthetic: { primary: '#a855f7', primaryHover: '#9333ea', header: '#6b21a8' },
+  cleaning: { primary: '#10b981', primaryHover: '#059669', header: '#065f46' },
+  handyman: { primary: '#f59e0b', primaryHover: '#d97706', header: '#92400e' },
+  pet:      { primary: '#f97316', primaryHover: '#ea580c', header: '#9a3412' },
+  seitai:   { primary: '#14b8a6', primaryHover: '#0d9488', header: '#115e59' },
+  generic:  { primary: '#2563eb', primaryHover: '#1d4ed8', header: '#475569' },
+};
+
+export function getVerticalHex(vertical: string | undefined | null): VerticalHexColors {
+  if (!vertical) return VERTICAL_HEX.generic;
+  return VERTICAL_HEX[vertical] ?? VERTICAL_HEX.generic;
+}
+
 /** Vertical → Theme tokens mapping */
 export const VERTICAL_THEMES: Record<string, VerticalThemeTokens> = {
   eyebrow:  rose,

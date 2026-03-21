@@ -11,6 +11,7 @@ import StepPetSelect from './steps/StepPetSelect';
 import type { MenuItem, MenuOption } from '@/src/lib/bookingApi';
 import { fetchBookingSettings, getMenuVerticalAttrs } from '@/src/lib/bookingApi';
 import { getVerticalConfig, resolveVertical, type SurveyQuestion } from '@/src/types/settings';
+import { getVerticalHex } from '@/src/lib/verticalTheme';
 
 export interface BookingState {
   menuId: string | null;
@@ -284,8 +285,15 @@ export default function BookingFlow() {
 
   const enabledSurveyQuestions = surveyQuestions.filter(q => q.enabled);
 
+  const hex = getVerticalHex(verticalType);
+  const cssVars = {
+    '--brand-primary': hex.primary,
+    '--brand-primary-hover': hex.primaryHover,
+    '--brand-header': hex.header,
+  } as React.CSSProperties;
+
   return (
-    <div>
+    <div style={cssVars}>
       <StepIndicator labels={stepLabels} current={displayStep} />
 
       {step === 1 && (
