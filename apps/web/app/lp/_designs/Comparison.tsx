@@ -475,6 +475,7 @@ export function Comparison({ d, t, vertical, signupUrl }: DesignProps) {
               <li><Link href="#features" className="hover:text-white transition-colors">機能紹介</Link></li>
               <li><Link href="#pricing" className="hover:text-white transition-colors">料金プラン</Link></li>
               <li><Link href="#compare" className="hover:text-white transition-colors">他社比較</Link></li>
+              <li><Link href={`/lp/${vertical}/line-setup`} className="hover:text-white transition-colors">LINE連携ガイド</Link></li>
             </ul>
           </div>
           <div>

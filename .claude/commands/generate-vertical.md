@@ -194,6 +194,16 @@ web_search で以下を調査する:
 - 選択したデザインテンプレートが animations.tsx を import しているか
 - ビルド後に LP ページが SSG として出力されているか（generateStaticParams に含まれること）
 
+### 5f. LINE連携ガイドページ（自動生成）
+- apps/web/app/lp/[vertical]/line-setup/page.tsx が全業種分を SSG で静的生成済み
+- 新業種を追加する場合、line-setup/page.tsx 内の VERTICALS レコードに新業種を追加:
+  - `{vertical}: { label: '{業種名}', benefit: '{予約・○○を自動化}' }`
+- LP フッターに「LINE連携ガイド」リンクが全デザインテンプレートに組み込み済み
+  - デザインテンプレートの footer で `/lp/${vertical}/line-setup` へのリンクが自動生成される
+- 確認事項:
+  - line-setup/page.tsx の VERTICALS に新業種が追加されているか
+  - benefit 文言が業種に適切か
+
 ## 6. デモUI実装（必須）
 - apps/web/app/demo/{vertical名}/page.tsx — Server Component (metadata + layout)
 - apps/web/app/demo/{vertical名}/{ComponentName}Demo.tsx — Client Component ('use client')

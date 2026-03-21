@@ -230,6 +230,7 @@ export function Minimal({ d, t, vertical, signupUrl }: DesignProps) {
             <Link href="/legal/terms" className="hover:text-gray-700 transition-colors">利用規約</Link>
             <Link href="/legal/privacy" className="hover:text-gray-700 transition-colors">プライバシー</Link>
             <a href={`mailto:${LEGAL.email}`} className="hover:text-gray-700 transition-colors">お問い合わせ</a>
+            <Link href={`/lp/${vertical}/line-setup`} className="hover:text-gray-700 transition-colors">LINE連携ガイド</Link>
           </div>
         </div>
       </footer>

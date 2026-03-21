@@ -455,6 +455,7 @@ export function Testimonial({ d, t, vertical, signupUrl }: DesignProps) {
                 <li><Link href="#features" className="hover:text-white transition-colors">機能</Link></li>
                 <li><Link href="#pricing" className="hover:text-white transition-colors">料金</Link></li>
                 <li><Link href="#faq" className="hover:text-white transition-colors">FAQ</Link></li>
+                <li><Link href={`/lp/${vertical}/line-setup`} className="hover:text-white transition-colors">LINE連携ガイド</Link></li>
               </ul>
             </div>
             <div>

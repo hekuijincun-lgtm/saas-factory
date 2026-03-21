@@ -382,6 +382,7 @@ export function Storytelling({ d, t, vertical, signupUrl }: DesignProps) {
             <Link href="/legal/terms" className="hover:text-white transition-colors">利用規約</Link>
             <Link href="/legal/privacy" className="hover:text-white transition-colors">プライバシー</Link>
             <a href={`mailto:${LEGAL.email}`} className="hover:text-white transition-colors">お問い合わせ</a>
+            <Link href={`/lp/${vertical}/line-setup`} className="hover:text-white transition-colors">LINE連携ガイド</Link>
           </div>
           <p className="text-xs">
             &copy; {new Date().getFullYear()} {d.label}. All rights reserved.
