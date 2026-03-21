@@ -352,6 +352,66 @@ const seitaiPlugin: VerticalPluginUI = {
   specialFeatures: ['treatmentBodyMap', 'beforeAfterPhoto', 'visitSummary'],
 };
 
+// ── gym ──────────────────────────────────────────────────────────────
+
+const gymPlugin: VerticalPluginUI = {
+  key: 'gym',
+  label: 'ジム・フィットネス',
+  labels: {
+    karteTab: 'トレーニング記録',
+    menuFilterHeading: 'プラン絞り込み',
+    kpiHeading: 'ジム KPI',
+    settingsHeading: 'ジム設定',
+    menuSettingsHeading: 'プラン設定',
+    staffSettingsHeading: 'トレーナー設定',
+    settingsDescription: 'ジム・フィットネス特化の会員管理・トレーニング設定を管理します',
+  },
+  flags: {
+    hasKarte: true,
+    hasMenuFilter: true,
+    hasVerticalKpi: true,
+    hasStaffAttributes: true,
+    hasMenuAttributes: true,
+    hasVerticalSettings: true,
+  },
+  menuFilterConfig: {
+    filterKey: 'planType',
+    options: { monthly: '月額', pass: '回数券', trial: '体験', personal: 'パーソナル', group: 'グループ', stretch: 'ストレッチ' },
+    label: 'プラン種別',
+  },
+  specialFeatures: ['equipmentCheck', 'visitSummary'],
+};
+
+// ── school ───────────────────────────────────────────────────────────
+
+const schoolPlugin: VerticalPluginUI = {
+  key: 'school',
+  label: '習い事・スクール',
+  labels: {
+    karteTab: '学習記録',
+    menuFilterHeading: 'コース絞り込み',
+    kpiHeading: 'スクール KPI',
+    settingsHeading: 'スクール設定',
+    menuSettingsHeading: 'コース設定',
+    staffSettingsHeading: '講師設定',
+    settingsDescription: '習い事・スクール特化のカリキュラム・進捗管理を設定します',
+  },
+  flags: {
+    hasKarte: true,
+    hasMenuFilter: true,
+    hasVerticalKpi: true,
+    hasStaffAttributes: true,
+    hasMenuAttributes: true,
+    hasVerticalSettings: true,
+  },
+  menuFilterConfig: {
+    filterKey: 'courseType',
+    options: { monthly: '月謝制', pass: '回数券', trial: '体験', intensive: '集中', material: '教材', event: 'イベント' },
+    label: 'コース種別',
+  },
+  specialFeatures: ['progressRecord', 'courseCurriculum', 'visitSummary'],
+};
+
 // ── Registry ────────────────────────────────────────────────────────
 
 const REGISTRY: Record<string, VerticalPluginUI> = {
@@ -365,6 +425,8 @@ const REGISTRY: Record<string, VerticalPluginUI> = {
   handyman: handymanPlugin,
   pet: petPlugin,
   seitai: seitaiPlugin,
+  gym: gymPlugin,
+  school: schoolPlugin,
 };
 
 /**

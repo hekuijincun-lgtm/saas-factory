@@ -127,6 +127,26 @@ const teal: VerticalThemeTokens = {
   lpThemeKey: 'teal',
 };
 
+const blue: VerticalThemeTokens = {
+  primary: 'bg-blue-500', primaryHover: 'hover:bg-blue-600',
+  light: 'bg-blue-50', text: 'text-blue-600', textSubtle: 'text-blue-500',
+  border: 'border-blue-200', borderStrong: 'border-blue-300',
+  focusRing: 'focus:ring-blue-100',
+  sidebarActive: 'bg-blue-600', sidebarShadow: 'shadow-blue-900/30',
+  sidebarText: 'text-blue-400', sidebarHover: 'hover:text-blue-200',
+  lpThemeKey: 'indigo',
+};
+
+const indigoTheme: VerticalThemeTokens = {
+  primary: 'bg-indigo-500', primaryHover: 'hover:bg-indigo-600',
+  light: 'bg-indigo-50', text: 'text-indigo-600', textSubtle: 'text-indigo-500',
+  border: 'border-indigo-200', borderStrong: 'border-indigo-300',
+  focusRing: 'focus:ring-indigo-100',
+  sidebarActive: 'bg-indigo-600', sidebarShadow: 'shadow-indigo-900/30',
+  sidebarText: 'text-indigo-400', sidebarHover: 'hover:text-indigo-200',
+  lpThemeKey: 'indigo',
+};
+
 const slate: VerticalThemeTokens = {
   primary: 'bg-slate-500', primaryHover: 'hover:bg-slate-600',
   light: 'bg-slate-50', text: 'text-slate-600', textSubtle: 'text-slate-500',
@@ -157,6 +177,8 @@ export const VERTICAL_HEX: Record<string, VerticalHexColors> = {
   handyman: { primary: '#f59e0b', primaryHover: '#d97706', header: '#92400e' },
   pet:      { primary: '#f97316', primaryHover: '#ea580c', header: '#9a3412' },
   seitai:   { primary: '#14b8a6', primaryHover: '#0d9488', header: '#115e59' },
+  gym:      { primary: '#3b82f6', primaryHover: '#2563eb', header: '#1e40af' },
+  school:   { primary: '#6366f1', primaryHover: '#4f46e5', header: '#3730a3' },
   generic:  { primary: '#2563eb', primaryHover: '#1d4ed8', header: '#475569' },
 };
 
@@ -176,6 +198,8 @@ export const VERTICAL_THEMES: Record<string, VerticalThemeTokens> = {
   handyman: amber,
   pet:      orange,
   seitai:   teal,
+  gym:      blue,
+  school:   indigoTheme,
   generic:  slate,
 };
 

@@ -30,6 +30,8 @@ const VERTICAL_OPTIONS = [
   { value: "handyman", label: "便利屋・なんでも屋" },
   { value: "pet", label: "ペットサロン" },
   { value: "seitai", label: "整体院" },
+  { value: "gym", label: "ジム・フィットネス" },
+  { value: "school", label: "習い事・スクール" },
 ] as const;
 
 const VERTICAL_LABELS: Record<string, string> = Object.fromEntries(

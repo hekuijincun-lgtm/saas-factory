@@ -1319,6 +1319,237 @@ const seitaiPlugin: VerticalPlugin = {
   specialFeatures: ['treatmentBodyMap', 'beforeAfterPhoto', 'visitSummary'],
 };
 
+// ── gym plugin ───────────────────────────────────────────────────────
+
+const gymPlugin: VerticalPlugin = {
+  key: 'gym',
+  coreType: 'subscription',
+  label: 'ジム・フィットネス',
+
+  defaultMenu() {
+    return [
+      { id: 'gym-monthly', name: '月額会員', price: 8800, durationMin: 0, active: true, sortOrder: 1 },
+      { id: 'gym-10pass', name: '10回券', price: 15000, durationMin: 0, active: true, sortOrder: 2 },
+      { id: 'gym-trial', name: '体験', price: 1500, durationMin: 60, active: true, sortOrder: 3 },
+      { id: 'gym-personal', name: 'パーソナルトレーニング', price: 6000, durationMin: 60, active: true, sortOrder: 4 },
+      { id: 'gym-group', name: 'グループレッスン', price: 2000, durationMin: 60, active: true, sortOrder: 5 },
+      { id: 'gym-stretch', name: 'ストレッチ', price: 3500, durationMin: 30, active: true, sortOrder: 6 },
+    ];
+  },
+
+  getDefaultSettingsPatch() {
+    return {
+      vertical: 'gym',
+      verticalConfig: {
+        surveyEnabled: true,
+        bedCount: 1,
+        surveyQuestions: [
+          { id: 'q_gym_1', label: 'フィットネスの目標を教えてください', type: 'text' as const, enabled: true },
+          { id: 'q_gym_2', label: '運動経験・頻度を教えてください', type: 'text' as const, enabled: true },
+        ],
+      },
+    };
+  },
+
+  getOnboardingChecks({ menuVerticalCount, repeatEnabled, templateSet }) {
+    return [
+      {
+        key: 'menuGym',
+        label: 'プラン・メニュー登録（1件以上）',
+        done: menuVerticalCount > 0,
+        action: '/admin/menu',
+        detail: menuVerticalCount > 0 ? `${menuVerticalCount}件` : undefined,
+      },
+      {
+        key: 'repeatConfig',
+        label: 'リマインド設定（有効化 + テンプレ設定）',
+        done: repeatEnabled && templateSet,
+        action: '/admin/settings',
+      },
+      {
+        key: 'lineSetup',
+        label: 'LINE連携設定',
+        done: false,
+        action: '/admin/settings',
+        detail: '会員がLINEから予約・問い合わせできるようにしましょう',
+      },
+      {
+        key: 'staffSetup',
+        label: 'トレーナー登録（1名以上）',
+        done: false,
+        action: '/admin/staff',
+        detail: 'パーソナルトレーニングの指名にはスタッフ登録が必要です',
+      },
+    ];
+  },
+
+  getRepeatTemplateFallback() {
+    return GENERIC_REPEAT_TEMPLATE;
+  },
+
+  labels: {
+    karteTab: 'トレーニング記録',
+    menuFilterHeading: 'プラン絞り込み',
+    kpiHeading: 'ジム KPI',
+    settingsHeading: 'ジム設定',
+    menuSettingsHeading: 'プラン設定',
+    staffSettingsHeading: 'トレーナー設定',
+    settingsDescription: 'ジム・フィットネス特化の会員管理・トレーニング設定を管理します',
+  },
+
+  flags: {
+    hasKarte: true,
+    hasMenuFilter: true,
+    hasVerticalKpi: true,
+    hasStaffAttributes: true,
+    hasMenuAttributes: true,
+    hasVerticalSettings: true,
+  },
+
+  menuFilterConfig: {
+    filterKey: 'planType',
+    options: { monthly: '月額', pass: '回数券', trial: '体験', personal: 'パーソナル', group: 'グループ', stretch: 'ストレッチ' },
+    label: 'プラン種別',
+  },
+
+  validateMenuAttrs(attrs) {
+    const valid = ['monthly', 'pass', 'trial', 'personal', 'group', 'stretch'];
+    if (attrs.planType && typeof attrs.planType === 'string' && !valid.includes(attrs.planType)) {
+      return { valid: false, error: `Invalid planType: ${attrs.planType}` };
+    }
+    return { valid: true };
+  },
+
+  repeatCadence: {
+    defaultIntervalDays: 0,
+    dormantThresholdDays: 30,
+    firstVisitFollowupDays: 1,
+  },
+
+  aiConfig: {
+    systemPromptHint: 'この施設はジム・フィットネスクラブです。月額会員・回数券・パーソナルトレーニング・グループレッスンなどを提供しています。',
+    recommendedVoice: 'friendly',
+    bookingEmphasis: 'まずは体験レッスンからお気軽にお越しください。トレーナーがしっかりサポートします。',
+  },
+  specialFeatures: ['equipmentCheck', 'visitSummary'],
+};
+
+// ── school plugin ────────────────────────────────────────────────────
+
+const schoolPlugin: VerticalPlugin = {
+  key: 'school',
+  coreType: 'subscription',
+  label: '習い事・スクール',
+
+  defaultMenu() {
+    return [
+      { id: 'school-monthly', name: '月謝', price: 12000, durationMin: 0, active: true, sortOrder: 1 },
+      { id: 'school-4pass', name: '4回券', price: 10000, durationMin: 0, active: true, sortOrder: 2 },
+      { id: 'school-trial', name: '体験レッスン', price: 1000, durationMin: 60, active: true, sortOrder: 3 },
+      { id: 'school-intensive', name: '集中コース', price: 25000, durationMin: 120, active: true, sortOrder: 4 },
+      { id: 'school-material', name: '教材費', price: 3000, durationMin: 0, active: true, sortOrder: 5 },
+      { id: 'school-recital', name: '発表会参加費', price: 5000, durationMin: 0, active: true, sortOrder: 6 },
+    ];
+  },
+
+  getDefaultSettingsPatch() {
+    return {
+      vertical: 'school',
+      verticalConfig: {
+        surveyEnabled: true,
+        bedCount: 1,
+        surveyQuestions: [
+          { id: 'q_school_1', label: '学習の目標を教えてください', type: 'text' as const, enabled: true },
+          { id: 'q_school_2', label: '経験レベルを教えてください（初心者・経験者など）', type: 'text' as const, enabled: true },
+          { id: 'q_school_3', label: 'ご希望の曜日・時間帯はありますか？', type: 'text' as const, enabled: true },
+        ],
+      },
+    };
+  },
+
+  getOnboardingChecks({ menuVerticalCount, repeatEnabled, templateSet }) {
+    return [
+      {
+        key: 'menuSchool',
+        label: 'コース・レッスン登録（1件以上）',
+        done: menuVerticalCount > 0,
+        action: '/admin/menu',
+        detail: menuVerticalCount > 0 ? `${menuVerticalCount}件` : undefined,
+      },
+      {
+        key: 'repeatConfig',
+        label: 'リマインド設定（有効化 + テンプレ設定）',
+        done: repeatEnabled && templateSet,
+        action: '/admin/settings',
+      },
+      {
+        key: 'lineSetup',
+        label: 'LINE連携設定',
+        done: false,
+        action: '/admin/settings',
+        detail: '生徒・保護者がLINEから問い合わせできるようにしましょう',
+      },
+      {
+        key: 'staffSetup',
+        label: '講師登録（1名以上）',
+        done: false,
+        action: '/admin/staff',
+        detail: 'レッスン担当の講師を登録してください',
+      },
+    ];
+  },
+
+  getRepeatTemplateFallback() {
+    return GENERIC_REPEAT_TEMPLATE;
+  },
+
+  labels: {
+    karteTab: '学習記録',
+    menuFilterHeading: 'コース絞り込み',
+    kpiHeading: 'スクール KPI',
+    settingsHeading: 'スクール設定',
+    menuSettingsHeading: 'コース設定',
+    staffSettingsHeading: '講師設定',
+    settingsDescription: '習い事・スクール特化のカリキュラム・進捗管理を設定します',
+  },
+
+  flags: {
+    hasKarte: true,
+    hasMenuFilter: true,
+    hasVerticalKpi: true,
+    hasStaffAttributes: true,
+    hasMenuAttributes: true,
+    hasVerticalSettings: true,
+  },
+
+  menuFilterConfig: {
+    filterKey: 'courseType',
+    options: { monthly: '月謝制', pass: '回数券', trial: '体験', intensive: '集中', material: '教材', event: 'イベント' },
+    label: 'コース種別',
+  },
+
+  validateMenuAttrs(attrs) {
+    const valid = ['monthly', 'pass', 'trial', 'intensive', 'material', 'event'];
+    if (attrs.courseType && typeof attrs.courseType === 'string' && !valid.includes(attrs.courseType)) {
+      return { valid: false, error: `Invalid courseType: ${attrs.courseType}` };
+    }
+    return { valid: true };
+  },
+
+  repeatCadence: {
+    defaultIntervalDays: 0,
+    dormantThresholdDays: 30,
+    firstVisitFollowupDays: 1,
+  },
+
+  aiConfig: {
+    systemPromptHint: 'このスクールは習い事・レッスン教室です。月謝制・回数券・体験レッスン・集中コースなどを提供しています。',
+    recommendedVoice: 'professional',
+    bookingEmphasis: 'まずは体験レッスンで教室の雰囲気をご体感ください。お気軽にお問い合わせください。',
+  },
+  specialFeatures: ['progressRecord', 'courseCurriculum', 'visitSummary'],
+};
+
 // ── Registry ────────────────────────────────────────────────────────
 
 const REGISTRY: Record<string, VerticalPlugin> = {
@@ -1332,6 +1563,8 @@ const REGISTRY: Record<string, VerticalPlugin> = {
   handyman: handymanPlugin,
   pet: petPlugin,
   seitai: seitaiPlugin,
+  gym: gymPlugin,
+  school: schoolPlugin,
 };
 
 /**
