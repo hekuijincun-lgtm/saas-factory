@@ -105,7 +105,7 @@ export interface OnboardingSettings {
 export type VerticalCoreType = 'reservation' | 'project' | 'subscription' | 'ec';
 
 /** 業種バーティカル識別子 */
-export type VerticalType = 'eyebrow' | 'nail' | 'dental' | 'hair' | 'esthetic' | 'cleaning' | 'handyman' | 'pet' | 'seitai' | 'gym' | 'school' | 'shop' | 'food' | 'handmade' | 'generic';
+export type VerticalType = 'eyebrow' | 'nail' | 'dental' | 'hair' | 'esthetic' | 'cleaning' | 'handyman' | 'pet' | 'seitai' | 'gym' | 'school' | 'shop' | 'food' | 'handmade' | 'construction' | 'reform' | 'equipment' | 'generic';
 
 /** 汎用リピート促進テンプレート（eyebrow 以外のフォールバック） */
 export const GENERIC_REPEAT_TEMPLATE =

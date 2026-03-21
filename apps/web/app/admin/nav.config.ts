@@ -11,14 +11,14 @@ export interface NavItem {
 }
 
 export const adminNavItems: NavItem[] = [
-  { label: "ダッシュボード", href: "/admin",               hideFor: ["pet", "gym", "school", "shop", "food", "handmade"] },
-  { label: "メニュー管理",   href: "/admin/menu",          hideFor: ["pet", "gym", "school", "shop", "food", "handmade"] },
-  { label: "スタッフ管理",   href: "/admin/staff",         hideFor: ["pet", "gym", "school", "shop", "food", "handmade"] },
-  { label: "予約管理",       href: "/admin/reservations",  hideFor: ["pet", "gym", "school", "shop", "food", "handmade"] },
-  { label: "顧客管理",       href: "/admin/customers",     hideFor: ["pet", "gym", "school", "shop", "food", "handmade"] },
-  { label: "AI接客設定",     href: "/admin/ai",            hideFor: ["pet", "gym", "school", "shop", "food", "handmade"] },
-  { label: "LINE Core",      href: "/admin/line-core",     hideFor: ["pet", "gym", "school", "shop", "food", "handmade"] },
-  { label: "請求管理",       href: "/admin/billing",       hideFor: ["pet", "gym", "school", "shop", "food", "handmade"] },
+  { label: "ダッシュボード", href: "/admin",               hideFor: ["pet", "gym", "school", "shop", "food", "handmade", "construction", "reform", "equipment"] },
+  { label: "メニュー管理",   href: "/admin/menu",          hideFor: ["pet", "gym", "school", "shop", "food", "handmade", "construction", "reform", "equipment"] },
+  { label: "スタッフ管理",   href: "/admin/staff",         hideFor: ["pet", "gym", "school", "shop", "food", "handmade", "construction", "reform", "equipment"] },
+  { label: "予約管理",       href: "/admin/reservations",  hideFor: ["pet", "gym", "school", "shop", "food", "handmade", "construction", "reform", "equipment"] },
+  { label: "顧客管理",       href: "/admin/customers",     hideFor: ["pet", "gym", "school", "shop", "food", "handmade", "construction", "reform", "equipment"] },
+  { label: "AI接客設定",     href: "/admin/ai",            hideFor: ["pet", "gym", "school", "shop", "food", "handmade", "construction", "reform", "equipment"] },
+  { label: "LINE Core",      href: "/admin/line-core",     hideFor: ["pet", "gym", "school", "shop", "food", "handmade", "construction", "reform", "equipment"] },
+  { label: "請求管理",       href: "/admin/billing",       hideFor: ["pet", "gym", "school", "shop", "food", "handmade", "construction", "reform", "equipment"] },
   // ── ペットサロン専用 ──
   { label: "ダッシュボード", href: "/admin/pet",           verticals: ["pet"] },
   { label: "予約管理",       href: "/admin/pet/reservations", verticals: ["pet"] },
@@ -33,6 +33,11 @@ export const adminNavItems: NavItem[] = [
   { label: "会員管理",       href: "/admin/subscription/members",   verticals: ["gym", "school"] },
   { label: "プラン管理",     href: "/admin/subscription/plans",     verticals: ["gym", "school"] },
   { label: "チェックイン",   href: "/admin/subscription/checkin",   verticals: ["gym", "school"] },
+  // ── プロジェクト系（construction / reform / equipment）──
+  { label: "ダッシュボード", href: "/admin/project",              verticals: ["construction", "reform", "equipment"] },
+  { label: "案件管理",       href: "/admin/project/projects",     verticals: ["construction", "reform", "equipment"] },
+  { label: "見積・請求",     href: "/admin/project/estimates",    verticals: ["construction", "reform", "equipment"] },
+  { label: "協力業者",       href: "/admin/project/partners",     verticals: ["construction", "reform", "equipment"] },
   // ── EC系（shop / food / handmade）──
   { label: "ダッシュボード", href: "/admin/ec",              verticals: ["shop", "food", "handmade"] },
   { label: "商品管理",       href: "/admin/ec/products",     verticals: ["shop", "food", "handmade"] },
@@ -48,7 +53,7 @@ export const adminNavItems: NavItem[] = [
   { label: "機器チェック",   href: "/admin/equipment-check", verticals: ["cleaning", "handyman", "gym"] },
   // ── 共通 ──
   { label: "サポート",       href: "/admin/support" },
-  { label: "管理者設定",     href: "/admin/settings",      hideFor: ["pet", "gym", "school", "shop", "food", "handmade"] },
+  { label: "管理者設定",     href: "/admin/settings",      hideFor: ["pet", "gym", "school", "shop", "food", "handmade", "construction", "reform", "equipment"] },
 ];
 
 /**

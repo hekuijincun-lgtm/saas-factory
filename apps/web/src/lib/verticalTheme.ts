@@ -202,6 +202,9 @@ export const VERTICAL_HEX: Record<string, VerticalHexColors> = {
   shop:     { primary: '#ef4444', primaryHover: '#dc2626', header: '#991b1b' },
   food:     { primary: '#eab308', primaryHover: '#ca8a04', header: '#854d0e' },
   handmade: { primary: '#ec4899', primaryHover: '#db2777', header: '#9d174d' },
+  construction: { primary: '#f59e0b', primaryHover: '#d97706', header: '#92400e' },
+  reform: { primary: '#14b8a6', primaryHover: '#0d9488', header: '#115e59' },
+  equipment: { primary: '#f97316', primaryHover: '#ea580c', header: '#9a3412' },
   generic:  { primary: '#2563eb', primaryHover: '#1d4ed8', header: '#475569' },
 };
 
@@ -226,6 +229,9 @@ export const VERTICAL_THEMES: Record<string, VerticalThemeTokens> = {
   shop:     red,
   food:     yellow,
   handmade: pink,
+  construction: amber,
+  reform: teal,
+  equipment: orange,
   generic:  slate,
 };
 

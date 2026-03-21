@@ -4,7 +4,7 @@ import SignupForm from "../_components/SignupForm";
 const VALID_VERTICALS = [
   "eyebrow", "nail", "dental", "hair", "esthetic",
   "cleaning", "handyman", "pet", "seitai", "gym", "school",
-  "shop", "food", "handmade",
+  "shop", "food", "handmade", "construction", "reform", "equipment",
 ] as const;
 
 export const dynamicParams = false;
@@ -23,6 +23,7 @@ export async function generateMetadata({ params }: { params: Promise<{ vertical:
     gym: "ジム・フィットネス", school: "習い事・スクール",
     shop: "ネットショップ", food: "食品・お取り寄せ",
     handmade: "ハンドメイド・クリエイター",
+    construction: "工務店・建設", reform: "リフォーム", equipment: "設備工事",
   };
   const label = LABELS[vertical] ?? vertical;
   return {

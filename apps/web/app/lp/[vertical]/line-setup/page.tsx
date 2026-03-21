@@ -20,6 +20,9 @@ const VERTICALS: Record<string, { label: string; benefit: string }> = {
   shop:     { label: 'ネットショップ',         benefit: '商品管理・注文対応・リピート促進を自動化' },
   food:     { label: '食品・お取り寄せ',       benefit: '注文管理・配送連絡・リピート促進を自動化' },
   handmade: { label: 'ハンドメイド・クリエイター', benefit: '作品管理・オーダー対応・ファン育成を自動化' },
+  construction: { label: '工務店・建設', benefit: '案件管理・見積作成・請求書発行を一元化' },
+  reform: { label: 'リフォーム', benefit: '見積・工程管理・ビフォーアフター写真を一元化' },
+  equipment: { label: '設備工事', benefit: '案件管理・施工チェック・請求書発行を自動化' },
 };
 
 export async function generateMetadata({ params }: { params: Promise<{ vertical: string }> }): Promise<Metadata> {

@@ -1883,6 +1883,330 @@ const handmadePlugin: VerticalPlugin = {
   specialFeatures: ['beforeAfterPhoto', 'visitSummary'],
 };
 
+// ── construction plugin ─────────────────────────────────────────────
+
+const constructionPlugin: VerticalPlugin = {
+  key: 'construction',
+  coreType: 'project',
+  label: '工務店・建設',
+
+  defaultMenu() {
+    return [
+      { id: 'construction-new', name: '新築工事', price: 3000000, durationMin: 0, active: true, sortOrder: 1 },
+      { id: 'construction-reform', name: 'リフォーム', price: 1500000, durationMin: 0, active: true, sortOrder: 2 },
+      { id: 'construction-exterior', name: '外壁塗装', price: 800000, durationMin: 0, active: true, sortOrder: 3 },
+      { id: 'construction-roof', name: '屋根工事', price: 600000, durationMin: 0, active: true, sortOrder: 4 },
+      { id: 'construction-interior', name: '内装工事', price: 500000, durationMin: 0, active: true, sortOrder: 5 },
+      { id: 'construction-equipment', name: '設備工事', price: 400000, durationMin: 0, active: true, sortOrder: 6 },
+    ];
+  },
+
+  getDefaultSettingsPatch() {
+    return {
+      vertical: 'construction',
+      verticalConfig: {
+        surveyEnabled: false,
+        bedCount: 1,
+      },
+    };
+  },
+
+  getOnboardingChecks() {
+    return [
+      {
+        key: 'projectSetup',
+        label: '案件登録（1件以上）',
+        done: false,
+        action: '/admin/project/projects',
+      },
+      {
+        key: 'estimateTemplate',
+        label: '見積テンプレート設定',
+        done: false,
+        action: '/admin/project/estimates',
+      },
+      {
+        key: 'lineSetup',
+        label: 'LINE連携設定',
+        done: false,
+        action: '/admin/settings',
+      },
+      {
+        key: 'staffSetup',
+        label: 'スタッフ登録（1名以上）',
+        done: false,
+        action: '/admin/staff',
+      },
+    ];
+  },
+
+  getRepeatTemplateFallback() {
+    return GENERIC_REPEAT_TEMPLATE;
+  },
+
+  labels: {
+    karteTab: '工事履歴',
+    menuFilterHeading: '工事種別',
+    kpiHeading: '建設 KPI',
+    settingsHeading: '工務店設定',
+    menuSettingsHeading: '工事メニュー設定',
+    staffSettingsHeading: 'スタッフ設定',
+    settingsDescription: '工務店特化の案件管理・見積・請求を設定します',
+  },
+
+  flags: {
+    hasKarte: false,
+    hasMenuFilter: true,
+    hasVerticalKpi: true,
+    hasStaffAttributes: false,
+    hasMenuAttributes: true,
+    hasVerticalSettings: true,
+  },
+
+  menuFilterConfig: {
+    filterKey: 'constructionType',
+    options: { new: '新築', reform: 'リフォーム', exterior: '外装', interior: '内装', equipment: '設備', other: 'その他' },
+    label: '工事種別',
+  },
+
+  validateMenuAttrs(attrs) {
+    const valid = ['new', 'reform', 'exterior', 'interior', 'equipment', 'other'];
+    if (attrs.constructionType && typeof attrs.constructionType === 'string' && !valid.includes(attrs.constructionType)) {
+      return { valid: false, error: `Invalid constructionType: ${attrs.constructionType}` };
+    }
+    return { valid: true };
+  },
+
+  repeatCadence: {
+    defaultIntervalDays: 0,
+    dormantThresholdDays: 365,
+    firstVisitFollowupDays: 3,
+  },
+
+  aiConfig: {
+    systemPromptHint: 'この会社は工務店・建設会社です。新築・リフォーム・外壁塗装・内装工事・設備工事を行っています。',
+    recommendedVoice: 'professional',
+    bookingEmphasis: 'まずは無料現地調査からお気軽にご相談ください。お見積もりは無料です。',
+  },
+  specialFeatures: ['beforeAfterPhoto', 'equipmentCheck', 'visitSummary'],
+};
+
+// ── reform plugin ───────────────────────────────────────────────────
+
+const reformPlugin: VerticalPlugin = {
+  key: 'reform',
+  coreType: 'project',
+  label: 'リフォーム',
+
+  defaultMenu() {
+    return [
+      { id: 'reform-kitchen', name: 'キッチンリフォーム', price: 2000000, durationMin: 0, active: true, sortOrder: 1 },
+      { id: 'reform-bathroom', name: '浴室リフォーム', price: 1500000, durationMin: 0, active: true, sortOrder: 2 },
+      { id: 'reform-toilet', name: 'トイレリフォーム', price: 500000, durationMin: 0, active: true, sortOrder: 3 },
+      { id: 'reform-layout', name: '間取り変更', price: 3000000, durationMin: 0, active: true, sortOrder: 4 },
+      { id: 'reform-exterior', name: '外壁リフォーム', price: 1000000, durationMin: 0, active: true, sortOrder: 5 },
+      { id: 'reform-barrier-free', name: 'バリアフリー工事', price: 800000, durationMin: 0, active: true, sortOrder: 6 },
+    ];
+  },
+
+  getDefaultSettingsPatch() {
+    return {
+      vertical: 'reform',
+      verticalConfig: {
+        surveyEnabled: false,
+        bedCount: 1,
+      },
+    };
+  },
+
+  getOnboardingChecks() {
+    return [
+      {
+        key: 'projectSetup',
+        label: '案件登録（1件以上）',
+        done: false,
+        action: '/admin/project/projects',
+      },
+      {
+        key: 'estimateTemplate',
+        label: '見積テンプレート設定',
+        done: false,
+        action: '/admin/project/estimates',
+      },
+      {
+        key: 'lineSetup',
+        label: 'LINE連携設定',
+        done: false,
+        action: '/admin/settings',
+      },
+      {
+        key: 'staffSetup',
+        label: 'スタッフ登録（1名以上）',
+        done: false,
+        action: '/admin/staff',
+      },
+    ];
+  },
+
+  getRepeatTemplateFallback() {
+    return GENERIC_REPEAT_TEMPLATE;
+  },
+
+  labels: {
+    karteTab: '工事履歴',
+    menuFilterHeading: 'リフォーム種別',
+    kpiHeading: 'リフォーム KPI',
+    settingsHeading: 'リフォーム設定',
+    menuSettingsHeading: 'リフォームメニュー設定',
+    staffSettingsHeading: 'スタッフ設定',
+    settingsDescription: 'リフォーム特化の案件管理・見積・請求を設定します',
+  },
+
+  flags: {
+    hasKarte: false,
+    hasMenuFilter: true,
+    hasVerticalKpi: true,
+    hasStaffAttributes: false,
+    hasMenuAttributes: true,
+    hasVerticalSettings: true,
+  },
+
+  menuFilterConfig: {
+    filterKey: 'reformType',
+    options: { kitchen: 'キッチン', bathroom: '浴室', toilet: 'トイレ', layout: '間取り', exterior: '外壁', barrier_free: 'バリアフリー' },
+    label: 'リフォーム種別',
+  },
+
+  validateMenuAttrs(attrs) {
+    const valid = ['kitchen', 'bathroom', 'toilet', 'layout', 'exterior', 'barrier_free'];
+    if (attrs.reformType && typeof attrs.reformType === 'string' && !valid.includes(attrs.reformType)) {
+      return { valid: false, error: `Invalid reformType: ${attrs.reformType}` };
+    }
+    return { valid: true };
+  },
+
+  repeatCadence: {
+    defaultIntervalDays: 0,
+    dormantThresholdDays: 365,
+    firstVisitFollowupDays: 3,
+  },
+
+  aiConfig: {
+    systemPromptHint: 'この会社はリフォーム専門業者です。キッチン・浴室・トイレ・間取り変更・外壁・バリアフリー工事を行っています。',
+    recommendedVoice: 'professional',
+    bookingEmphasis: 'まずは無料現地調査からお気軽にご相談ください。お見積もりは無料です。',
+  },
+  specialFeatures: ['beforeAfterPhoto', 'visitSummary'],
+};
+
+// ── equipment plugin ────────────────────────────────────────────────
+
+const equipmentPlugin: VerticalPlugin = {
+  key: 'equipment',
+  coreType: 'project',
+  label: '設備工事',
+
+  defaultMenu() {
+    return [
+      { id: 'equipment-aircon', name: 'エアコン取付', price: 150000, durationMin: 0, active: true, sortOrder: 1 },
+      { id: 'equipment-water-heater', name: '給湯器交換', price: 250000, durationMin: 0, active: true, sortOrder: 2 },
+      { id: 'equipment-electrical', name: '電気配線工事', price: 200000, durationMin: 0, active: true, sortOrder: 3 },
+      { id: 'equipment-plumbing', name: '水道管工事', price: 180000, durationMin: 0, active: true, sortOrder: 4 },
+      { id: 'equipment-gas', name: 'ガス工事', price: 300000, durationMin: 0, active: true, sortOrder: 5 },
+      { id: 'equipment-solar', name: '太陽光発電設置', price: 2000000, durationMin: 0, active: true, sortOrder: 6 },
+    ];
+  },
+
+  getDefaultSettingsPatch() {
+    return {
+      vertical: 'equipment',
+      verticalConfig: {
+        surveyEnabled: false,
+        bedCount: 1,
+      },
+    };
+  },
+
+  getOnboardingChecks() {
+    return [
+      {
+        key: 'projectSetup',
+        label: '案件登録（1件以上）',
+        done: false,
+        action: '/admin/project/projects',
+      },
+      {
+        key: 'estimateTemplate',
+        label: '見積テンプレート設定',
+        done: false,
+        action: '/admin/project/estimates',
+      },
+      {
+        key: 'lineSetup',
+        label: 'LINE連携設定',
+        done: false,
+        action: '/admin/settings',
+      },
+      {
+        key: 'staffSetup',
+        label: 'スタッフ登録（1名以上）',
+        done: false,
+        action: '/admin/staff',
+      },
+    ];
+  },
+
+  getRepeatTemplateFallback() {
+    return GENERIC_REPEAT_TEMPLATE;
+  },
+
+  labels: {
+    karteTab: '工事履歴',
+    menuFilterHeading: '設備種別',
+    kpiHeading: '設備工事 KPI',
+    settingsHeading: '設備工事設定',
+    menuSettingsHeading: '設備工事メニュー設定',
+    staffSettingsHeading: 'スタッフ設定',
+    settingsDescription: '設備工事特化の案件管理・見積・請求を設定します',
+  },
+
+  flags: {
+    hasKarte: false,
+    hasMenuFilter: true,
+    hasVerticalKpi: true,
+    hasStaffAttributes: false,
+    hasMenuAttributes: true,
+    hasVerticalSettings: true,
+  },
+
+  menuFilterConfig: {
+    filterKey: 'equipmentType',
+    options: { aircon: 'エアコン', water_heater: '給湯器', electrical: '電気配線', plumbing: '水道管', gas: 'ガス', solar: '太陽光' },
+    label: '設備種別',
+  },
+
+  validateMenuAttrs(attrs) {
+    const valid = ['aircon', 'water_heater', 'electrical', 'plumbing', 'gas', 'solar'];
+    if (attrs.equipmentType && typeof attrs.equipmentType === 'string' && !valid.includes(attrs.equipmentType)) {
+      return { valid: false, error: `Invalid equipmentType: ${attrs.equipmentType}` };
+    }
+    return { valid: true };
+  },
+
+  repeatCadence: {
+    defaultIntervalDays: 0,
+    dormantThresholdDays: 365,
+    firstVisitFollowupDays: 3,
+  },
+
+  aiConfig: {
+    systemPromptHint: 'この会社は設備工事専門業者です。エアコン取付・給湯器交換・電気配線・水道管・ガス工事・太陽光発電設置を行っています。',
+    recommendedVoice: 'professional',
+    bookingEmphasis: 'まずは無料現地調査からお気軽にご相談ください。お見積もりは無料です。',
+  },
+  specialFeatures: ['equipmentCheck', 'beforeAfterPhoto', 'visitSummary'],
+};
+
 // ── Registry ────────────────────────────────────────────────────────
 
 const REGISTRY: Record<string, VerticalPlugin> = {
@@ -1901,6 +2225,9 @@ const REGISTRY: Record<string, VerticalPlugin> = {
   shop: shopPlugin,
   food: foodPlugin,
   handmade: handmadePlugin,
+  construction: constructionPlugin,
+  reform: reformPlugin,
+  equipment: equipmentPlugin,
 };
 
 /**
