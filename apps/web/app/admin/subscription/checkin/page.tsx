@@ -126,10 +126,25 @@ export default function CheckinPage() {
     if (!qrToken.trim()) return;
     setChecking(true);
     try {
-      // Look up member_id from QR token via the members list qrToken field
-      // Since we don't have a proxy for the public /subscription/qr/:token endpoint,
-      // show a message that QR token verification is coming soon
-      showToast('QRコード検証機能は準備中です。手動チェックインをご利用ください。');
+      // Verify QR token and get member_id
+      const qrRes = await fetch(`/api/proxy/subscription/qr/${encodeURIComponent(qrToken.trim())}`);
+      if (!qrRes.ok) throw new Error('invalid_token');
+      const qrJson = await qrRes.json() as any;
+      if (!qrJson.ok || !qrJson.member_id) throw new Error('invalid_token');
+      if (qrJson.status !== 'active') {
+        showToast('この会員は現在利用できません（ステータス: ' + qrJson.status + '）');
+        setQrToken('');
+        return;
+      }
+      // Check in using member_id
+      const ciRes = await fetch(`/api/proxy/admin/subscription/checkin?tenantId=${encodeURIComponent(tenantId)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ member_id: qrJson.member_id }),
+      });
+      if (!ciRes.ok) throw new Error('checkin_failed');
+      const ciJson = await ciRes.json() as any;
+      showToast(ciJson.remaining_count !== null ? `チェックイン完了（残り${ciJson.remaining_count}回）` : 'チェックイン完了');
       setQrToken('');
     } catch {
       showToast('QRチェックインに失敗しました');
