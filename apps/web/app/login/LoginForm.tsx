@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 
 interface Props {
   tenantId: string;
@@ -341,9 +342,9 @@ export default function LoginForm({ tenantId, returnTo, reason, isDebug }: Props
               >
                 パスワードを忘れた場合
               </a>
-              <a href="/signup" className="text-indigo-500 hover:underline">
+              <Link href="/signup" className="text-indigo-500 hover:underline">
                 新規登録
-              </a>
+              </Link>
             </div>
 
             <div className="pt-4 border-t border-slate-100 space-y-2">
