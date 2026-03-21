@@ -412,6 +412,96 @@ const schoolPlugin: VerticalPluginUI = {
   specialFeatures: ['progressRecord', 'courseCurriculum', 'visitSummary'],
 };
 
+// ── shop (EC) ────────────────────────────────────────────────────────
+
+const shopPlugin: VerticalPluginUI = {
+  key: 'shop',
+  label: 'ネットショップ',
+  labels: {
+    karteTab: '購入履歴',
+    menuFilterHeading: '商品絞り込み',
+    kpiHeading: 'ショップ KPI',
+    settingsHeading: 'ショップ設定',
+    menuSettingsHeading: '商品設定',
+    staffSettingsHeading: 'スタッフ設定',
+    settingsDescription: 'ネットショップ特化の商品管理・リピート施策を設定します',
+  },
+  flags: {
+    hasKarte: false,
+    hasMenuFilter: true,
+    hasVerticalKpi: true,
+    hasStaffAttributes: false,
+    hasMenuAttributes: true,
+    hasVerticalSettings: true,
+  },
+  menuFilterConfig: {
+    filterKey: 'productCategory',
+    options: { regular: '定番', limited: '限定', gift: 'ギフト', trial: 'お試し', set: 'セット', other: 'その他' },
+    label: 'カテゴリ',
+  },
+  specialFeatures: ['beforeAfterPhoto', 'visitSummary'],
+};
+
+// ── food (EC) ────────────────────────────────────────────────────────
+
+const foodPlugin: VerticalPluginUI = {
+  key: 'food',
+  label: '食品・お取り寄せ',
+  labels: {
+    karteTab: '注文履歴',
+    menuFilterHeading: '商品絞り込み',
+    kpiHeading: '食品EC KPI',
+    settingsHeading: '食品ショップ設定',
+    menuSettingsHeading: '商品設定',
+    staffSettingsHeading: 'スタッフ設定',
+    settingsDescription: '食品・お取り寄せ特化の商品管理・リピート施策を設定します',
+  },
+  flags: {
+    hasKarte: false,
+    hasMenuFilter: true,
+    hasVerticalKpi: true,
+    hasStaffAttributes: false,
+    hasMenuAttributes: true,
+    hasVerticalSettings: true,
+  },
+  menuFilterConfig: {
+    filterKey: 'foodCategory',
+    options: { vegetable: '野菜', meat: '肉', sweets: 'スイーツ', drink: '飲料', set: 'セット', gift: 'ギフト' },
+    label: 'カテゴリ',
+  },
+  specialFeatures: ['visitSummary'],
+};
+
+// ── handmade (EC) ────────────────────────────────────────────────────
+
+const handmadePlugin: VerticalPluginUI = {
+  key: 'handmade',
+  label: 'ハンドメイド・クリエイター',
+  labels: {
+    karteTab: '購入履歴',
+    menuFilterHeading: '作品絞り込み',
+    kpiHeading: 'クリエイター KPI',
+    settingsHeading: 'クリエイター設定',
+    menuSettingsHeading: '作品設定',
+    staffSettingsHeading: 'スタッフ設定',
+    settingsDescription: 'ハンドメイド・クリエイター特化の作品管理・リピート施策を設定します',
+  },
+  flags: {
+    hasKarte: false,
+    hasMenuFilter: true,
+    hasVerticalKpi: true,
+    hasStaffAttributes: false,
+    hasMenuAttributes: true,
+    hasVerticalSettings: true,
+  },
+  menuFilterConfig: {
+    filterKey: 'craftCategory',
+    options: { accessory: 'アクセサリー', leather: 'レザー', ceramic: '陶器', flower: 'フラワー', custom: 'オーダーメイド', other: 'その他' },
+    label: 'カテゴリ',
+  },
+  specialFeatures: ['beforeAfterPhoto', 'visitSummary'],
+};
+
 // ── Registry ────────────────────────────────────────────────────────
 
 const REGISTRY: Record<string, VerticalPluginUI> = {
@@ -427,6 +517,9 @@ const REGISTRY: Record<string, VerticalPluginUI> = {
   seitai: seitaiPlugin,
   gym: gymPlugin,
   school: schoolPlugin,
+  shop: shopPlugin,
+  food: foodPlugin,
+  handmade: handmadePlugin,
 };
 
 /**

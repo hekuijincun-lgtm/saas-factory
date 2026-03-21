@@ -530,6 +530,157 @@ export const VERTICAL_TEMPLATES: Record<string, VerticalTemplate> = {
     },
   },
 
+  // ────────────────────────────────────────────────────────────────────
+  // ネットショップ (EC)
+  // ────────────────────────────────────────────────────────────────────
+  shop: {
+    menus: [
+      { name: 'Sample Product A', duration: 0, price: 3000, description: '定番の人気商品A', category: '定番' },
+      { name: 'Sample Product B', duration: 0, price: 5000, description: '高品質な商品B', category: '定番' },
+      { name: 'Sample Product C', duration: 0, price: 1500, description: 'お手頃価格の商品C', category: '定番' },
+      { name: 'Gift Set', duration: 0, price: 8000, description: 'ギフトに最適なセット商品', category: 'ギフト' },
+      { name: 'Limited Edition', duration: 0, price: 12000, description: '数量限定の特別商品', category: '限定' },
+      { name: 'Trial Set', duration: 0, price: 2000, description: '初めての方におすすめのお試しセット', category: 'お試し' },
+    ],
+    staff: [
+      { name: 'オーナー', role: 'オーナー' },
+      { name: 'スタッフA', role: 'スタッフ' },
+    ],
+    faq: [
+      {
+        question: '送料はいくらですか？',
+        answer: '全国一律550円（税込）です。5,000円以上のお買い上げで送料無料となります。離島・一部地域は追加送料がかかる場合がございます。',
+      },
+      {
+        question: '届くまでどのくらいかかりますか？',
+        answer: 'ご注文確定後、通常2〜3営業日以内に発送いたします。発送後は配送業者の追跡番号をLINEでお知らせいたします。',
+      },
+      {
+        question: '返品・交換はできますか？',
+        answer: '商品到着後7日以内であれば、未使用・未開封に限り返品・交換を承ります。お客様都合の返品の場合、送料はお客様負担となります。不良品の場合は当店が送料を負担いたします。',
+      },
+      {
+        question: 'ギフトラッピングはできますか？',
+        answer: 'はい、無料でギフトラッピングを承っております。メッセージカードの同封も可能です。ご注文時にお申し付けください。',
+      },
+      {
+        question: '支払い方法は何がありますか？',
+        answer: 'クレジットカード（VISA/Master/JCB/AMEX）、銀行振込、コンビニ払い、PayPayに対応しております。',
+      },
+    ],
+    aiCharacter: 'あなたはネットショップの丁寧でフレンドリーな接客AIです。商品の特徴やおすすめポイントを分かりやすくご案内し、お客様の用途やご予算に合わせた商品提案を行ってください。配送・返品等のご質問にも迅速に対応してください。',
+    businessHours: { openTime: '10:00', closeTime: '18:00' },
+    closedWeekdays: [0],
+    verticalConfig: {
+      surveyEnabled: true,
+      surveyQuestions: [
+        { id: 'shop_purpose', label: '商品の用途を教えてください（自分用・ギフト等）', type: 'text', enabled: true },
+        { id: 'shop_request', label: 'ご要望やご質問がありましたらご記入ください', type: 'textarea', enabled: true },
+      ],
+    },
+  },
+
+  // ────────────────────────────────────────────────────────────────────
+  // 食品・お取り寄せ (EC)
+  // ────────────────────────────────────────────────────────────────────
+  food: {
+    menus: [
+      { name: '季節の野菜セット', duration: 0, price: 3500, description: '旬の野菜を厳選した詰め合わせ', category: '野菜' },
+      { name: '特選和牛', duration: 0, price: 8000, description: '厳選A5ランク和牛', category: '肉' },
+      { name: '手作りスイーツ詰合せ', duration: 0, price: 4000, description: 'パティシエ手作りの焼き菓子セット', category: 'スイーツ' },
+      { name: 'クラフトジュースセット', duration: 0, price: 3000, description: '国産果実100%のクラフトジュース3本セット', category: '飲料' },
+      { name: 'おまかせセット', duration: 0, price: 5000, description: 'スタッフ厳選のおすすめ詰め合わせ', category: 'セット' },
+      { name: 'ギフトボックス', duration: 0, price: 6000, description: '贈り物に最適なギフトパッケージ', category: 'ギフト' },
+    ],
+    staff: [
+      { name: 'オーナー', role: 'オーナー' },
+      { name: 'スタッフA', role: 'スタッフ' },
+    ],
+    faq: [
+      {
+        question: '賞味期限はどのくらいですか？',
+        answer: '商品により異なりますが、野菜セットは到着後3〜5日、スイーツ詰合せは約2週間、ジュースは約3ヶ月です。各商品に賞味期限を記載しておりますのでご確認ください。',
+      },
+      {
+        question: 'アレルギー対応の商品はありますか？',
+        answer: '各商品ページにアレルギー情報（特定原材料7品目+21品目）を表示しております。個別のご相談にも対応いたしますので、お気軽にお問い合わせください。',
+      },
+      {
+        question: '冷蔵・冷凍で届きますか？',
+        answer: '商品に応じて最適な温度帯でお届けします。野菜・スイーツは冷蔵便、和牛は冷凍便でお届けいたします。常温商品は通常配送です。',
+      },
+      {
+        question: 'お届け日の指定はできますか？',
+        answer: 'はい、ご注文時にお届け希望日をご指定いただけます。最短で注文日の3営業日後からご指定可能です。時間帯指定も承ります。',
+      },
+      {
+        question: 'のし・メッセージカードは付けられますか？',
+        answer: 'ギフトボックスにはのし・メッセージカードを無料でお付けできます。ご注文時に内容をお知らせください。法人ギフトにも対応しております。',
+      },
+    ],
+    aiCharacter: 'あなたは食品・お取り寄せ専門店の温かく親しみやすい接客AIです。旬の食材の魅力や産地のこだわりを伝え、お客様の好みやシーンに合った商品をご提案してください。アレルギーや配送に関するご質問にも丁寧にお答えしてください。',
+    businessHours: { openTime: '09:00', closeTime: '17:00' },
+    closedWeekdays: [0, 6],
+    verticalConfig: {
+      surveyEnabled: true,
+      surveyQuestions: [
+        { id: 'food_allergy', label: 'アレルギーをお持ちの食材はありますか？', type: 'textarea', enabled: true },
+        { id: 'food_purpose', label: '用途を教えてください（自宅用・ギフト・法人等）', type: 'text', enabled: true },
+      ],
+    },
+  },
+
+  // ────────────────────────────────────────────────────────────────────
+  // ハンドメイド・クリエイター (EC)
+  // ────────────────────────────────────────────────────────────────────
+  handmade: {
+    menus: [
+      { name: 'オリジナルピアス', duration: 0, price: 2500, description: '一点ものの手作りピアス', category: 'アクセサリー' },
+      { name: 'レザーキーホルダー', duration: 0, price: 3000, description: '本革を使ったハンドメイドキーホルダー', category: 'レザー' },
+      { name: '陶器マグカップ', duration: 0, price: 4000, description: '手びねりで作った温かみのあるマグカップ', category: '陶器' },
+      { name: 'ドライフラワーリース', duration: 0, price: 5500, description: 'ナチュラルなドライフラワーのリース', category: 'フラワー' },
+      { name: 'オーダーメイドリング', duration: 0, price: 8000, description: 'お好みのデザインで作るオーダーリング', category: 'オーダーメイド' },
+      { name: 'ギフトラッピング', duration: 0, price: 500, description: 'プレゼント用の特別ラッピング', category: 'その他' },
+    ],
+    staff: [
+      { name: 'クリエイター', role: 'クリエイター' },
+      { name: 'アシスタント', role: 'アシスタント' },
+    ],
+    faq: [
+      {
+        question: 'オーダーメイドの納期はどのくらいですか？',
+        answer: 'オーダーメイド作品は、デザイン確定後2〜3週間が目安です。素材の仕入れ状況や繁忙期により変動する場合がございますので、お急ぎの方は事前にご相談ください。',
+      },
+      {
+        question: 'サイズ変更やお直しはできますか？',
+        answer: 'リングのサイズ変更、アクセサリーの長さ調整など、作品によりお直し可能です。到着後1週間以内にご連絡いただければ対応いたします。（素材により対応できない場合もございます）',
+      },
+      {
+        question: '素材やパーツの変更はできますか？',
+        answer: 'はい、金属アレルギー対応のパーツ変更や、色・素材の変更が可能な作品もございます。ご注文前にお気軽にご相談ください。追加料金が発生する場合は事前にお見積もりいたします。',
+      },
+      {
+        question: 'ワークショップは開催していますか？',
+        answer: '不定期でワークショップを開催しております。LINEで最新の開催情報をお届けしていますので、ぜひ友だち追加してお待ちください。出張ワークショップのご依頼も承ります。',
+      },
+      {
+        question: 'ラッピングやメッセージカードは付けられますか？',
+        answer: 'はい、ギフトラッピング（500円）をご用意しております。メッセージカードは無料でお付けできます。大切な方へのプレゼントにぜひご利用ください。',
+      },
+    ],
+    aiCharacter: 'あなたはハンドメイド・クリエイターショップの温かくクリエイティブな接客AIです。一点もの作品の魅力やこだわりを伝え、お客様のイメージに合った作品提案やオーダーメイドの相談に丁寧に対応してください。ものづくりの楽しさも伝えてください。',
+    businessHours: { openTime: '10:00', closeTime: '19:00' },
+    closedWeekdays: [2],
+    verticalConfig: {
+      surveyEnabled: true,
+      surveyQuestions: [
+        { id: 'handmade_purpose', label: '用途を教えてください（自分用・プレゼント等）', type: 'text', enabled: true },
+        { id: 'handmade_request', label: 'デザインや素材のご希望がありましたらご記入ください', type: 'textarea', enabled: true },
+        { id: 'handmade_allergy', label: '金属アレルギーはありますか？', type: 'checkbox', enabled: true },
+      ],
+    },
+  },
+
   // 整体院
   // ────────────────────────────────────────────────────────────────────
   seitai: {

@@ -32,6 +32,9 @@ const VERTICAL_OPTIONS = [
   { value: "seitai", label: "整体院" },
   { value: "gym", label: "ジム・フィットネス" },
   { value: "school", label: "習い事・スクール" },
+  { value: "shop", label: "ネットショップ" },
+  { value: "food", label: "食品・お取り寄せ" },
+  { value: "handmade", label: "ハンドメイド・クリエイター" },
 ] as const;
 
 const VERTICAL_LABELS: Record<string, string> = Object.fromEntries(
@@ -50,6 +53,9 @@ const VERTICAL_DESCRIPTIONS: Record<string, string> = {
   seitai: '施術部位マッピング・カルテ管理・リピート促進に対応しています',
   gym: 'QR会員証・チェックイン管理・月謝管理を自動化',
   school: '月謝管理・出席記録・進捗管理を自動化',
+  shop: '商品管理・注文対応・リピート促進をLINEで自動化',
+  food: '食品販売・注文管理・配送連絡をLINEで自動化',
+  handmade: '作品管理・オーダー対応・ファン育成をLINEで自動化',
 };
 
 interface SignupFormProps {

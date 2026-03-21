@@ -71,7 +71,7 @@ export interface IntegrationSettings {
 
 // ── Multi-LINE Account Management ───────────────────────────────────────────
 export type LineAccountPurpose = 'booking' | 'sales' | 'support' | 'broadcast' | 'internal';
-export type LineAccountIndustry = 'hair' | 'nail' | 'eyebrow' | 'esthetic' | 'dental' | 'cleaning' | 'handyman' | 'pet' | 'seitai' | 'gym' | 'school' | 'shared';
+export type LineAccountIndustry = 'hair' | 'nail' | 'eyebrow' | 'esthetic' | 'dental' | 'cleaning' | 'handyman' | 'pet' | 'seitai' | 'gym' | 'school' | 'shop' | 'food' | 'handmade' | 'shared';
 
 export interface LineAccount {
   id: string;
@@ -102,10 +102,10 @@ export interface OnboardingSettings {
 }
 
 /** 業種コアタイプ（予約系 / 案件系） */
-export type VerticalCoreType = 'reservation' | 'project' | 'subscription';
+export type VerticalCoreType = 'reservation' | 'project' | 'subscription' | 'ec';
 
 /** 業種バーティカル識別子 */
-export type VerticalType = 'eyebrow' | 'nail' | 'dental' | 'hair' | 'esthetic' | 'cleaning' | 'handyman' | 'pet' | 'seitai' | 'gym' | 'school' | 'generic';
+export type VerticalType = 'eyebrow' | 'nail' | 'dental' | 'hair' | 'esthetic' | 'cleaning' | 'handyman' | 'pet' | 'seitai' | 'gym' | 'school' | 'shop' | 'food' | 'handmade' | 'generic';
 
 /** バーティカル共通設定（業種に依存しない汎用フォーム） */
 export interface VerticalConfig {

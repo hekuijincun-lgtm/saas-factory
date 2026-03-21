@@ -17,6 +17,9 @@ const VERTICALS: Record<string, { label: string; benefit: string }> = {
   seitai:   { label: '整体院',                 benefit: '予約・症状ヒアリング・リピート促進を自動化' },
   gym:      { label: 'ジム・フィットネス',     benefit: '会員管理・チェックイン・リテンションを自動化' },
   school:   { label: '習い事・スクール',       benefit: '月謝管理・出席記録・進捗管理を自動化' },
+  shop:     { label: 'ネットショップ',         benefit: '商品管理・注文対応・リピート促進を自動化' },
+  food:     { label: '食品・お取り寄せ',       benefit: '注文管理・配送連絡・リピート促進を自動化' },
+  handmade: { label: 'ハンドメイド・クリエイター', benefit: '作品管理・オーダー対応・ファン育成を自動化' },
 };
 
 export async function generateMetadata({ params }: { params: Promise<{ vertical: string }> }): Promise<Metadata> {

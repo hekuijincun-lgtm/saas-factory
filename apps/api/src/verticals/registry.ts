@@ -1550,6 +1550,339 @@ const schoolPlugin: VerticalPlugin = {
   specialFeatures: ['progressRecord', 'courseCurriculum', 'visitSummary'],
 };
 
+// ── shop plugin (EC) ─────────────────────────────────────────────────
+
+const shopPlugin: VerticalPlugin = {
+  key: 'shop',
+  coreType: 'ec',
+  label: 'ネットショップ',
+
+  defaultMenu() {
+    return [
+      { id: 'shop-product-a', name: 'Sample Product A', price: 3000, durationMin: 0, active: true, sortOrder: 1 },
+      { id: 'shop-product-b', name: 'Sample Product B', price: 5000, durationMin: 0, active: true, sortOrder: 2 },
+      { id: 'shop-product-c', name: 'Sample Product C', price: 1500, durationMin: 0, active: true, sortOrder: 3 },
+      { id: 'shop-gift-set', name: 'Gift Set', price: 8000, durationMin: 0, active: true, sortOrder: 4 },
+      { id: 'shop-limited', name: 'Limited Edition', price: 12000, durationMin: 0, active: true, sortOrder: 5 },
+      { id: 'shop-trial-set', name: 'Trial Set', price: 2000, durationMin: 0, active: true, sortOrder: 6 },
+    ];
+  },
+
+  getDefaultSettingsPatch() {
+    return {
+      vertical: 'shop',
+      verticalConfig: {
+        surveyEnabled: false,
+        bedCount: 1,
+      },
+    };
+  },
+
+  getOnboardingChecks({ menuVerticalCount, repeatEnabled, templateSet }) {
+    return [
+      {
+        key: 'menuShop',
+        label: '商品登録（1件以上）',
+        done: menuVerticalCount > 0,
+        action: '/admin/menu',
+        detail: menuVerticalCount > 0 ? `${menuVerticalCount}件` : undefined,
+      },
+      {
+        key: 'repeatConfig',
+        label: 'リピート購入リマインド設定',
+        done: repeatEnabled && templateSet,
+        action: '/admin/settings',
+      },
+      {
+        key: 'lineSetup',
+        label: 'LINE連携設定',
+        done: false,
+        action: '/admin/settings',
+        detail: 'お客様がLINEから注文・問い合わせできるようにしましょう',
+      },
+      {
+        key: 'staffSetup',
+        label: 'スタッフ登録（1名以上）',
+        done: false,
+        action: '/admin/staff',
+        detail: '注文対応スタッフを登録してください',
+      },
+    ];
+  },
+
+  getRepeatTemplateFallback() {
+    return GENERIC_REPEAT_TEMPLATE;
+  },
+
+  labels: {
+    karteTab: '購入履歴',
+    menuFilterHeading: '商品絞り込み',
+    kpiHeading: 'ショップ KPI',
+    settingsHeading: 'ショップ設定',
+    menuSettingsHeading: '商品設定',
+    staffSettingsHeading: 'スタッフ設定',
+    settingsDescription: 'ネットショップ特化の商品管理・リピート施策を設定します',
+  },
+
+  flags: {
+    hasKarte: false,
+    hasMenuFilter: true,
+    hasVerticalKpi: true,
+    hasStaffAttributes: false,
+    hasMenuAttributes: true,
+    hasVerticalSettings: true,
+  },
+
+  menuFilterConfig: {
+    filterKey: 'productCategory',
+    options: { regular: '定番', limited: '限定', gift: 'ギフト', trial: 'お試し', set: 'セット', other: 'その他' },
+    label: 'カテゴリ',
+  },
+
+  validateMenuAttrs(attrs) {
+    const valid = ['regular', 'limited', 'gift', 'trial', 'set', 'other'];
+    if (attrs.productCategory && typeof attrs.productCategory === 'string' && !valid.includes(attrs.productCategory)) {
+      return { valid: false, error: `Invalid productCategory: ${attrs.productCategory}` };
+    }
+    return { valid: true };
+  },
+
+  repeatCadence: {
+    defaultIntervalDays: 0,
+    dormantThresholdDays: 60,
+    firstVisitFollowupDays: 1,
+  },
+
+  aiConfig: {
+    systemPromptHint: 'このショップはネットショップです。各種商品の販売・ギフト対応・限定商品の案内を行っています。',
+    recommendedVoice: 'friendly',
+    bookingEmphasis: '気になる商品がございましたらお気軽にお問い合わせください。ギフトラッピングも承ります。',
+  },
+  specialFeatures: ['beforeAfterPhoto', 'visitSummary'],
+};
+
+// ── food plugin (EC) ─────────────────────────────────────────────────
+
+const foodPlugin: VerticalPlugin = {
+  key: 'food',
+  coreType: 'ec',
+  label: '食品・お取り寄せ',
+
+  defaultMenu() {
+    return [
+      { id: 'food-veggie-set', name: '季節の野菜セット', price: 3500, durationMin: 0, active: true, sortOrder: 1 },
+      { id: 'food-wagyu', name: '特選和牛', price: 8000, durationMin: 0, active: true, sortOrder: 2 },
+      { id: 'food-sweets', name: '手作りスイーツ詰合せ', price: 4000, durationMin: 0, active: true, sortOrder: 3 },
+      { id: 'food-juice-set', name: 'クラフトジュースセット', price: 3000, durationMin: 0, active: true, sortOrder: 4 },
+      { id: 'food-omakase', name: 'おまかせセット', price: 5000, durationMin: 0, active: true, sortOrder: 5 },
+      { id: 'food-gift-box', name: 'ギフトボックス', price: 6000, durationMin: 0, active: true, sortOrder: 6 },
+    ];
+  },
+
+  getDefaultSettingsPatch() {
+    return {
+      vertical: 'food',
+      verticalConfig: {
+        surveyEnabled: false,
+        bedCount: 1,
+      },
+    };
+  },
+
+  getOnboardingChecks({ menuVerticalCount, repeatEnabled, templateSet }) {
+    return [
+      {
+        key: 'menuFood',
+        label: '商品登録（1件以上）',
+        done: menuVerticalCount > 0,
+        action: '/admin/menu',
+        detail: menuVerticalCount > 0 ? `${menuVerticalCount}件` : undefined,
+      },
+      {
+        key: 'repeatConfig',
+        label: 'リピート購入リマインド設定',
+        done: repeatEnabled && templateSet,
+        action: '/admin/settings',
+      },
+      {
+        key: 'lineSetup',
+        label: 'LINE連携設定',
+        done: false,
+        action: '/admin/settings',
+        detail: 'お客様がLINEから注文・問い合わせできるようにしましょう',
+      },
+      {
+        key: 'staffSetup',
+        label: 'スタッフ登録（1名以上）',
+        done: false,
+        action: '/admin/staff',
+        detail: '注文対応スタッフを登録してください',
+      },
+    ];
+  },
+
+  getRepeatTemplateFallback() {
+    return GENERIC_REPEAT_TEMPLATE;
+  },
+
+  labels: {
+    karteTab: '注文履歴',
+    menuFilterHeading: '商品絞り込み',
+    kpiHeading: '食品EC KPI',
+    settingsHeading: '食品ショップ設定',
+    menuSettingsHeading: '商品設定',
+    staffSettingsHeading: 'スタッフ設定',
+    settingsDescription: '食品・お取り寄せ特化の商品管理・リピート施策を設定します',
+  },
+
+  flags: {
+    hasKarte: false,
+    hasMenuFilter: true,
+    hasVerticalKpi: true,
+    hasStaffAttributes: false,
+    hasMenuAttributes: true,
+    hasVerticalSettings: true,
+  },
+
+  menuFilterConfig: {
+    filterKey: 'foodCategory',
+    options: { vegetable: '野菜', meat: '肉', sweets: 'スイーツ', drink: '飲料', set: 'セット', gift: 'ギフト' },
+    label: 'カテゴリ',
+  },
+
+  validateMenuAttrs(attrs) {
+    const valid = ['vegetable', 'meat', 'sweets', 'drink', 'set', 'gift'];
+    if (attrs.foodCategory && typeof attrs.foodCategory === 'string' && !valid.includes(attrs.foodCategory)) {
+      return { valid: false, error: `Invalid foodCategory: ${attrs.foodCategory}` };
+    }
+    return { valid: true };
+  },
+
+  repeatCadence: {
+    defaultIntervalDays: 0,
+    dormantThresholdDays: 90,
+    firstVisitFollowupDays: 1,
+  },
+
+  aiConfig: {
+    systemPromptHint: 'このショップは食品・お取り寄せ専門店です。季節の野菜・和牛・スイーツ・ギフトなどを販売しています。',
+    recommendedVoice: 'friendly',
+    bookingEmphasis: '旬の食材やおすすめセットをご案内します。ギフト対応も承りますのでお気軽にどうぞ。',
+  },
+  specialFeatures: ['visitSummary'],
+};
+
+// ── handmade plugin (EC) ─────────────────────────────────────────────
+
+const handmadePlugin: VerticalPlugin = {
+  key: 'handmade',
+  coreType: 'ec',
+  label: 'ハンドメイド・クリエイター',
+
+  defaultMenu() {
+    return [
+      { id: 'handmade-earrings', name: 'オリジナルピアス', price: 2500, durationMin: 0, active: true, sortOrder: 1 },
+      { id: 'handmade-keychain', name: 'レザーキーホルダー', price: 3000, durationMin: 0, active: true, sortOrder: 2 },
+      { id: 'handmade-mug', name: '陶器マグカップ', price: 4000, durationMin: 0, active: true, sortOrder: 3 },
+      { id: 'handmade-wreath', name: 'ドライフラワーリース', price: 5500, durationMin: 0, active: true, sortOrder: 4 },
+      { id: 'handmade-ring', name: 'オーダーメイドリング', price: 8000, durationMin: 0, active: true, sortOrder: 5 },
+      { id: 'handmade-wrapping', name: 'ギフトラッピング', price: 500, durationMin: 0, active: true, sortOrder: 6 },
+    ];
+  },
+
+  getDefaultSettingsPatch() {
+    return {
+      vertical: 'handmade',
+      verticalConfig: {
+        surveyEnabled: false,
+        bedCount: 1,
+      },
+    };
+  },
+
+  getOnboardingChecks({ menuVerticalCount, repeatEnabled, templateSet }) {
+    return [
+      {
+        key: 'menuHandmade',
+        label: '作品登録（1件以上）',
+        done: menuVerticalCount > 0,
+        action: '/admin/menu',
+        detail: menuVerticalCount > 0 ? `${menuVerticalCount}件` : undefined,
+      },
+      {
+        key: 'repeatConfig',
+        label: 'リピート購入リマインド設定',
+        done: repeatEnabled && templateSet,
+        action: '/admin/settings',
+      },
+      {
+        key: 'lineSetup',
+        label: 'LINE連携設定',
+        done: false,
+        action: '/admin/settings',
+        detail: 'お客様がLINEから注文・問い合わせできるようにしましょう',
+      },
+      {
+        key: 'staffSetup',
+        label: 'スタッフ登録（1名以上）',
+        done: false,
+        action: '/admin/staff',
+        detail: 'クリエイター・スタッフを登録してください',
+      },
+    ];
+  },
+
+  getRepeatTemplateFallback() {
+    return GENERIC_REPEAT_TEMPLATE;
+  },
+
+  labels: {
+    karteTab: '購入履歴',
+    menuFilterHeading: '作品絞り込み',
+    kpiHeading: 'クリエイター KPI',
+    settingsHeading: 'クリエイター設定',
+    menuSettingsHeading: '作品設定',
+    staffSettingsHeading: 'スタッフ設定',
+    settingsDescription: 'ハンドメイド・クリエイター特化の作品管理・リピート施策を設定します',
+  },
+
+  flags: {
+    hasKarte: false,
+    hasMenuFilter: true,
+    hasVerticalKpi: true,
+    hasStaffAttributes: false,
+    hasMenuAttributes: true,
+    hasVerticalSettings: true,
+  },
+
+  menuFilterConfig: {
+    filterKey: 'craftCategory',
+    options: { accessory: 'アクセサリー', leather: 'レザー', ceramic: '陶器', flower: 'フラワー', custom: 'オーダーメイド', other: 'その他' },
+    label: 'カテゴリ',
+  },
+
+  validateMenuAttrs(attrs) {
+    const valid = ['accessory', 'leather', 'ceramic', 'flower', 'custom', 'other'];
+    if (attrs.craftCategory && typeof attrs.craftCategory === 'string' && !valid.includes(attrs.craftCategory)) {
+      return { valid: false, error: `Invalid craftCategory: ${attrs.craftCategory}` };
+    }
+    return { valid: true };
+  },
+
+  repeatCadence: {
+    defaultIntervalDays: 0,
+    dormantThresholdDays: 90,
+    firstVisitFollowupDays: 1,
+  },
+
+  aiConfig: {
+    systemPromptHint: 'このショップはハンドメイド・クリエイター作品の販売店です。アクセサリー・レザー小物・陶器・フラワーアレンジなどのオリジナル作品を販売しています。',
+    recommendedVoice: 'casual',
+    bookingEmphasis: 'オーダーメイドのご相談も大歓迎です。世界にひとつだけの作品をお届けします。',
+  },
+  specialFeatures: ['beforeAfterPhoto', 'visitSummary'],
+};
+
 // ── Registry ────────────────────────────────────────────────────────
 
 const REGISTRY: Record<string, VerticalPlugin> = {
@@ -1565,6 +1898,9 @@ const REGISTRY: Record<string, VerticalPlugin> = {
   seitai: seitaiPlugin,
   gym: gymPlugin,
   school: schoolPlugin,
+  shop: shopPlugin,
+  food: foodPlugin,
+  handmade: handmadePlugin,
 };
 
 /**

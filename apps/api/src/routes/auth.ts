@@ -506,7 +506,7 @@ export function registerAuthRoutes(app: any) {
         ? body.planId : undefined;
 
       // Phase 1a: persist vertical selection from signup form
-      const VALID_VERTICALS = new Set(['eyebrow', 'nail', 'dental', 'hair', 'esthetic', 'cleaning', 'handyman', 'pet', 'seitai', 'gym', 'school', 'generic']);
+      const VALID_VERTICALS = new Set(['eyebrow', 'nail', 'dental', 'hair', 'esthetic', 'cleaning', 'handyman', 'pet', 'seitai', 'gym', 'school', 'shop', 'food', 'handmade', 'generic']);
       const signupVertical: string | undefined = (typeof body.vertical === 'string' && VALID_VERTICALS.has(body.vertical))
         ? body.vertical : undefined;
 

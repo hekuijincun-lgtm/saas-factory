@@ -11,14 +11,14 @@ export interface NavItem {
 }
 
 export const adminNavItems: NavItem[] = [
-  { label: "ダッシュボード", href: "/admin",               hideFor: ["pet", "gym", "school"] },
-  { label: "メニュー管理",   href: "/admin/menu",          hideFor: ["pet", "gym", "school"] },
-  { label: "スタッフ管理",   href: "/admin/staff",         hideFor: ["pet", "gym", "school"] },
-  { label: "予約管理",       href: "/admin/reservations",  hideFor: ["pet", "gym", "school"] },
-  { label: "顧客管理",       href: "/admin/customers",     hideFor: ["pet", "gym", "school"] },
-  { label: "AI接客設定",     href: "/admin/ai",            hideFor: ["pet", "gym", "school"] },
-  { label: "LINE Core",      href: "/admin/line-core",     hideFor: ["pet", "gym", "school"] },
-  { label: "請求管理",       href: "/admin/billing",       hideFor: ["pet", "gym", "school"] },
+  { label: "ダッシュボード", href: "/admin",               hideFor: ["pet", "gym", "school", "shop", "food", "handmade"] },
+  { label: "メニュー管理",   href: "/admin/menu",          hideFor: ["pet", "gym", "school", "shop", "food", "handmade"] },
+  { label: "スタッフ管理",   href: "/admin/staff",         hideFor: ["pet", "gym", "school", "shop", "food", "handmade"] },
+  { label: "予約管理",       href: "/admin/reservations",  hideFor: ["pet", "gym", "school", "shop", "food", "handmade"] },
+  { label: "顧客管理",       href: "/admin/customers",     hideFor: ["pet", "gym", "school", "shop", "food", "handmade"] },
+  { label: "AI接客設定",     href: "/admin/ai",            hideFor: ["pet", "gym", "school", "shop", "food", "handmade"] },
+  { label: "LINE Core",      href: "/admin/line-core",     hideFor: ["pet", "gym", "school", "shop", "food", "handmade"] },
+  { label: "請求管理",       href: "/admin/billing",       hideFor: ["pet", "gym", "school", "shop", "food", "handmade"] },
   // ── ペットサロン専用 ──
   { label: "ダッシュボード", href: "/admin/pet",           verticals: ["pet"] },
   { label: "予約管理",       href: "/admin/pet/reservations", verticals: ["pet"] },
@@ -33,6 +33,11 @@ export const adminNavItems: NavItem[] = [
   { label: "会員管理",       href: "/admin/subscription/members",   verticals: ["gym", "school"] },
   { label: "プラン管理",     href: "/admin/subscription/plans",     verticals: ["gym", "school"] },
   { label: "チェックイン",   href: "/admin/subscription/checkin",   verticals: ["gym", "school"] },
+  // ── EC系（shop / food / handmade）──
+  { label: "ダッシュボード", href: "/admin/ec",              verticals: ["shop", "food", "handmade"] },
+  { label: "商品管理",       href: "/admin/ec/products",     verticals: ["shop", "food", "handmade"] },
+  { label: "注文管理",       href: "/admin/ec/orders",       verticals: ["shop", "food", "handmade"] },
+  { label: "送料設定",       href: "/admin/ec/shipping",     verticals: ["shop", "food", "handmade"] },
   // ── 業務特化機能（specialFeatures ベースで表示制御） ──
   { label: "施術メモ",       href: "/admin/visit-summary",   verticals: ["eyebrow", "nail", "hair", "seitai"] },
   { label: "カラーレシピ",   href: "/admin/color-formula",   verticals: ["nail", "hair"] },
@@ -43,7 +48,7 @@ export const adminNavItems: NavItem[] = [
   { label: "機器チェック",   href: "/admin/equipment-check", verticals: ["cleaning", "handyman", "gym"] },
   // ── 共通 ──
   { label: "サポート",       href: "/admin/support" },
-  { label: "管理者設定",     href: "/admin/settings",      hideFor: ["pet", "gym", "school"] },
+  { label: "管理者設定",     href: "/admin/settings",      hideFor: ["pet", "gym", "school", "shop", "food", "handmade"] },
 ];
 
 /**

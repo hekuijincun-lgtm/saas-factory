@@ -147,6 +147,26 @@ const indigoTheme: VerticalThemeTokens = {
   lpThemeKey: 'indigo',
 };
 
+const red: VerticalThemeTokens = {
+  primary: 'bg-red-500', primaryHover: 'hover:bg-red-600',
+  light: 'bg-red-50', text: 'text-red-600', textSubtle: 'text-red-500',
+  border: 'border-red-200', borderStrong: 'border-red-300',
+  focusRing: 'focus:ring-red-100',
+  sidebarActive: 'bg-red-600', sidebarShadow: 'shadow-red-900/30',
+  sidebarText: 'text-red-400', sidebarHover: 'hover:text-red-200',
+  lpThemeKey: 'rose',
+};
+
+const yellow: VerticalThemeTokens = {
+  primary: 'bg-yellow-500', primaryHover: 'hover:bg-yellow-600',
+  light: 'bg-yellow-50', text: 'text-yellow-600', textSubtle: 'text-yellow-500',
+  border: 'border-yellow-200', borderStrong: 'border-yellow-300',
+  focusRing: 'focus:ring-yellow-100',
+  sidebarActive: 'bg-yellow-600', sidebarShadow: 'shadow-yellow-900/30',
+  sidebarText: 'text-yellow-400', sidebarHover: 'hover:text-yellow-200',
+  lpThemeKey: 'amber',
+};
+
 const slate: VerticalThemeTokens = {
   primary: 'bg-slate-500', primaryHover: 'hover:bg-slate-600',
   light: 'bg-slate-50', text: 'text-slate-600', textSubtle: 'text-slate-500',
@@ -179,6 +199,9 @@ export const VERTICAL_HEX: Record<string, VerticalHexColors> = {
   seitai:   { primary: '#14b8a6', primaryHover: '#0d9488', header: '#115e59' },
   gym:      { primary: '#3b82f6', primaryHover: '#2563eb', header: '#1e40af' },
   school:   { primary: '#6366f1', primaryHover: '#4f46e5', header: '#3730a3' },
+  shop:     { primary: '#ef4444', primaryHover: '#dc2626', header: '#991b1b' },
+  food:     { primary: '#eab308', primaryHover: '#ca8a04', header: '#854d0e' },
+  handmade: { primary: '#ec4899', primaryHover: '#db2777', header: '#9d174d' },
   generic:  { primary: '#2563eb', primaryHover: '#1d4ed8', header: '#475569' },
 };
 
@@ -200,6 +223,9 @@ export const VERTICAL_THEMES: Record<string, VerticalThemeTokens> = {
   seitai:   teal,
   gym:      blue,
   school:   indigoTheme,
+  shop:     red,
+  food:     yellow,
+  handmade: pink,
   generic:  slate,
 };
 

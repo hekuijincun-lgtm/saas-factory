@@ -22,6 +22,7 @@ import { registerPetRoutes } from "./routes/pets";
 import { registerWebhookRoutes } from "./routes/webhooks";
 import { registerSpecialFeatureRoutes } from "./routes/special-features";
 import { registerSubscriptionRoutes } from "./routes/subscription";
+import { registerEcRoutes } from "./routes/ec";
 import { scheduled } from "./routes/scheduled";
 
 // ── Durable Objects ──────────────────────────────────────────────────
@@ -127,6 +128,7 @@ registerLineRoutes(app);
 registerAiRoutes(app);
 registerSpecialFeatureRoutes(app);
 registerSubscriptionRoutes(app);
+registerEcRoutes(app);
 
 // ── Queue consumer (no-op) ───────────────────────────────────────────
 async function queue(batch: MessageBatch<unknown>): Promise<void> {
