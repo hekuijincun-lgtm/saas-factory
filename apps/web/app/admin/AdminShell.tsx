@@ -25,6 +25,7 @@ import {
   ChevronsRight,
 } from "lucide-react";
 import { adminNavItems, filterNavItems } from "./nav.config";
+import { getVerticalTheme } from "@/src/lib/verticalTheme";
 
 // ============================================================
 // 定数
@@ -80,6 +81,7 @@ function Sidebar({
 }) {
   const pathname = usePathname();
   const isPet = vertical === "pet";
+  const vt = getVerticalTheme(vertical);
   const filteredNavItems = filterNavItems([...adminNavItems], vertical);
 
   return (
@@ -110,9 +112,9 @@ function Sidebar({
             <div className="min-w-0">
               <div className="flex items-center gap-2 mb-0.5">
                 {isPet ? (
-                  <PawPrint className="w-4 h-4 text-orange-400 shrink-0" />
+                  <PawPrint className={`w-4 h-4 ${vt.sidebarText} shrink-0`} />
                 ) : (
-                  <Store className="w-4 h-4 text-indigo-400 shrink-0" />
+                  <Store className={`w-4 h-4 ${vt.sidebarText} shrink-0`} />
                 )}
                 <span
                   className="font-bold text-base text-white truncate"
@@ -121,7 +123,7 @@ function Sidebar({
                   {storeName}
                 </span>
               </div>
-              <span className={`text-[10px] uppercase tracking-wider ${isPet ? "text-orange-400/80" : "text-gray-400"}`}>
+              <span className={`text-[10px] uppercase tracking-wider ${vt.sidebarText}`}>
                 {isPet ? "ペットサロン管理" : "管理パネル"}
               </span>
             </div>
@@ -129,9 +131,9 @@ function Sidebar({
           {collapsed && (
             <div className="flex items-center justify-center">
               {isPet ? (
-                <PawPrint className="w-5 h-5 text-orange-400" />
+                <PawPrint className={`w-5 h-5 ${vt.sidebarText}`} />
               ) : (
-                <Store className="w-5 h-5 text-indigo-400" />
+                <Store className={`w-5 h-5 ${vt.sidebarText}`} />
               )}
             </div>
           )}
@@ -165,12 +167,8 @@ function Sidebar({
                   "relative flex items-center rounded-lg text-sm font-medium transition-all duration-150",
                   collapsed ? "justify-center px-2 py-2.5" : "gap-3 px-4 py-2.5",
                   isActive
-                    ? isPet
-                      ? "bg-orange-600 text-white shadow-lg shadow-orange-900/30"
-                      : "bg-indigo-600 text-white shadow-lg shadow-indigo-900/30"
-                    : isPet
-                      ? "text-orange-400 hover:bg-gray-800 hover:text-orange-200"
-                      : "text-gray-400 hover:bg-gray-800 hover:text-white",
+                    ? `${vt.sidebarActive} text-white shadow-lg ${vt.sidebarShadow}`
+                    : `${vt.sidebarText} hover:bg-gray-800 ${vt.sidebarHover}`,
                 ].join(" ")}
               >
                 {isActive && !collapsed && (
@@ -188,7 +186,7 @@ function Sidebar({
           <a
             href={`/api/auth/logout${tenantId && tenantId !== "default" ? `?tenantId=${encodeURIComponent(tenantId)}` : ""}`}
             title={collapsed ? "ログアウト" : undefined}
-            className={`flex items-center rounded-lg text-sm font-medium transition-all duration-150 ${collapsed ? "justify-center px-2 py-2.5" : "gap-3 px-4 py-2.5"} ${isPet ? "text-orange-400 hover:bg-gray-800 hover:text-orange-200" : "text-gray-400 hover:bg-gray-800 hover:text-white"}`}
+            className={`flex items-center rounded-lg text-sm font-medium transition-all duration-150 ${collapsed ? "justify-center px-2 py-2.5" : "gap-3 px-4 py-2.5"} ${vt.sidebarText} hover:bg-gray-800 ${vt.sidebarHover}`}
           >
             <LogOut className={collapsed ? "w-5 h-5" : "w-4 h-4 shrink-0"} />
             {!collapsed && <span className="truncate">ログアウト</span>}
@@ -196,7 +194,7 @@ function Sidebar({
           {/* デスクトップ折りたたみトグル */}
           <button
             onClick={onToggleCollapse}
-            className={`hidden lg:flex items-center w-full rounded-lg text-sm font-medium transition-all duration-150 ${collapsed ? "justify-center px-2 py-2.5" : "gap-3 px-4 py-2.5"} ${isPet ? "text-orange-400 hover:bg-gray-800 hover:text-orange-200" : "text-gray-400 hover:bg-gray-800 hover:text-white"}`}
+            className={`hidden lg:flex items-center w-full rounded-lg text-sm font-medium transition-all duration-150 ${collapsed ? "justify-center px-2 py-2.5" : "gap-3 px-4 py-2.5"} ${vt.sidebarText} hover:bg-gray-800 ${vt.sidebarHover}`}
             title={collapsed ? "サイドバーを開く" : "サイドバーを閉じる"}
           >
             {collapsed ? <ChevronsRight className="w-5 h-5" /> : <ChevronsLeft className="w-4 h-4 shrink-0" />}

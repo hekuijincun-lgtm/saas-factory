@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { CheckCircle2 } from "lucide-react";
+import { getVerticalTheme } from "@/src/lib/verticalTheme";
 
 interface PlanVerification {
   status: "idle" | "verifying" | "verified" | "error";
@@ -54,6 +55,7 @@ interface SignupFormProps {
 
 export default function SignupForm({ initialVertical }: SignupFormProps) {
   const verticalLocked = !!initialVertical && initialVertical !== "generic";
+  const vt = getVerticalTheme(initialVertical);
   const [email, setEmail] = useState("");
   const [storeName, setStoreName] = useState("");
   const [vertical, setVertical] = useState(initialVertical || "generic");
@@ -274,10 +276,10 @@ export default function SignupForm({ initialVertical }: SignupFormProps) {
 
           {/* Vertical badge (when pre-selected from LP) */}
           {verticalLocked && verticalLabel && (
-            <div className="mb-5 rounded-xl bg-indigo-50 border border-indigo-200 px-4 py-3 text-center">
-              <p className="text-sm font-medium text-indigo-700">{verticalLabel}</p>
+            <div className={`mb-5 rounded-xl ${vt.light} border ${vt.border} px-4 py-3 text-center`}>
+              <p className={`text-sm font-medium ${vt.text}`}>{verticalLabel}</p>
               {VERTICAL_DESCRIPTIONS[vertical] && (
-                <p className="text-xs text-indigo-500 mt-1">{VERTICAL_DESCRIPTIONS[vertical]}</p>
+                <p className={`text-xs ${vt.textSubtle} mt-1`}>{VERTICAL_DESCRIPTIONS[vertical]}</p>
               )}
             </div>
           )}
@@ -350,7 +352,7 @@ export default function SignupForm({ initialVertical }: SignupFormProps) {
             <button
               type="submit"
               disabled={status === "loading" || !email.trim()}
-              className="block w-full rounded-full bg-indigo-600 py-4 text-center text-base font-semibold text-white shadow-md transition hover:bg-indigo-700 active:opacity-80 disabled:opacity-50 disabled:cursor-not-allowed"
+              className={`block w-full rounded-full ${verticalLocked ? vt.primary : 'bg-indigo-600'} py-4 text-center text-base font-semibold text-white shadow-md transition ${verticalLocked ? vt.primaryHover : 'hover:bg-indigo-700'} active:opacity-80 disabled:opacity-50 disabled:cursor-not-allowed`}
             >
               {status === "loading" ? "送信中..." : "ログインリンクを送信"}
             </button>

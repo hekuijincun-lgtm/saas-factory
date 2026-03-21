@@ -2,6 +2,7 @@
 import Link from 'next/link';
 import { withTenant } from '@/src/lib/useAdminTenantId';
 import { getVerticalPluginUI, type SpecialFeatureKey } from '@/src/lib/verticalPlugins';
+import { getVerticalTheme } from '@/src/lib/verticalTheme';
 import { FileText, Palette, Syringe, ShieldAlert, ClipboardCheck, Camera, PawPrint, User, TrendingUp, BookOpen, type LucideIcon } from 'lucide-react';
 
 const ICONS: Record<string, LucideIcon> = {
@@ -23,6 +24,7 @@ const FEATURE_META: Record<SpecialFeatureKey, { label: string; description: stri
 };
 
 export default function SpecialFeaturesSection({ vertical, tenantId }: { vertical: string; tenantId: string }) {
+  const vt = getVerticalTheme(vertical);
   const plugin = getVerticalPluginUI(vertical);
   const features = plugin.specialFeatures;
   if (!features || features.length === 0) return null;
@@ -39,16 +41,16 @@ export default function SpecialFeaturesSection({ vertical, tenantId }: { vertica
             <Link
               key={key}
               href={withTenant(meta.href, tenantId)}
-              className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm hover:border-indigo-300 hover:shadow-md transition-all"
+              className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm hover:border-gray-300 hover:shadow-md transition-all"
             >
               <div className="flex items-start gap-3">
                 <div className="flex-shrink-0">
-                  {Icon && <Icon size={24} className="text-indigo-500" />}
+                  {Icon && <Icon size={24} className={vt.textSubtle} />}
                 </div>
                 <div className="min-w-0">
                   <p className="font-semibold text-gray-900">{meta.label}</p>
                   <p className="text-sm text-gray-500 truncate">{meta.description}</p>
-                  <p className="text-sm text-indigo-600 font-medium mt-2">開く →</p>
+                  <p className={`text-sm font-medium mt-2 ${vt.text}`}>開く →</p>
                 </div>
               </div>
             </Link>

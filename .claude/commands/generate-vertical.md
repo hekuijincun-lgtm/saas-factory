@@ -144,10 +144,13 @@
     - dark-hero, split-hero, minimal, storytelling, card-showcase,
       comparison, testimonial, gradient-wave, magazine, bold-typography
 
-### 5c. テーマカラー追加（必要な場合）
-- apps/web/app/lp/_designs/shared.ts の VERTICAL_THEME に追加
-  - 既存: nail→rose, hair→indigo, dental→sky, esthetic→violet, cleaning→emerald, handyman→amber, pet→orange
-  - 未使用: teal, fuchsia, cyan から選択
+### 5c. テーマカラー追加（必須）
+- apps/web/src/lib/verticalTheme.ts に新業種のテーマトークンを追加
+  - VerticalThemeTokens 型に従い、primary/light/text/border/sidebar等のTailwindクラスを定義
+  - VERTICAL_THEMES レコードに追加
+  - lpThemeKey で LP用テーマキー（shared.ts の THEMES から選択）を指定
+  - 既存カラー: eyebrow→rose, nail→pink, hair→violet, dental→sky, esthetic→purple, cleaning→emerald, handyman→amber, pet→orange, seitai→teal
+  - LP側の shared.ts は verticalTheme.ts の lpThemeKey を自動参照するため追加不要
 
 ## 6. デモUI実装（必須）
 - apps/web/app/demo/{vertical名}/page.tsx — Server Component (metadata + layout)

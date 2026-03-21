@@ -124,14 +124,15 @@ export const THEMES: Record<ThemeKey, ThemeColors> = {
 };
 
 // ── Vertical → Theme mapping ────────────────────────────────────────
-const VERTICAL_THEME: Record<string, ThemeKey> = {
-  nail: 'rose', hair: 'indigo', dental: 'sky', esthetic: 'violet',
-  cleaning: 'emerald', handyman: 'amber', pet: 'orange', seitai: 'teal',
-};
+// Source of truth: src/lib/verticalTheme.ts (lpThemeKey)
+import { VERTICAL_THEMES } from '../../../src/lib/verticalTheme';
 
 export function getTheme(vertical: string): ThemeColors {
-  const key = VERTICAL_THEME[vertical];
-  if (key) return THEMES[key];
+  const vt = VERTICAL_THEMES[vertical];
+  if (vt) {
+    const key = vt.lpThemeKey as ThemeKey;
+    if (key in THEMES) return THEMES[key];
+  }
   const keys = Object.keys(THEMES) as ThemeKey[];
   let hash = 0;
   for (let i = 0; i < vertical.length; i++) hash = ((hash << 5) - hash + vertical.charCodeAt(i)) | 0;
