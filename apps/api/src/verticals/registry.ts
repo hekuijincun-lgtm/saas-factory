@@ -23,6 +23,7 @@ import { DEFAULT_REPEAT_TEMPLATE as ESTHETIC_REPEAT_TEMPLATE } from './esthetic'
 import { DEFAULT_REPEAT_TEMPLATE as CLEANING_REPEAT_TEMPLATE } from './cleaning';
 import { DEFAULT_REPEAT_TEMPLATE as HANDYMAN_REPEAT_TEMPLATE } from './handyman';
 import { DEFAULT_REPEAT_TEMPLATE as PET_REPEAT_TEMPLATE } from './pet';
+import { DEFAULT_REPEAT_TEMPLATE as SEITAI_REPEAT_TEMPLATE } from './seitai';
 
 // ── Special Feature Catalog ──────────────────────────────────────────
 
@@ -1213,6 +1214,111 @@ const petPlugin: VerticalPlugin = {
   specialFeatures: ['vaccineRecord', 'petProfile', 'beforeAfterPhoto'],
 };
 
+const seitaiPlugin: VerticalPlugin = {
+  key: 'seitai',
+  coreType: 'reservation',
+  label: '整体院',
+
+  defaultMenu() {
+    return [
+      { id: 'seitai-standard', name: '整体コース（60分）', price: 6000, durationMin: 60, active: true, sortOrder: 1 },
+      { id: 'seitai-short', name: 'お手軽コース（30分）', price: 3500, durationMin: 30, active: true, sortOrder: 2 },
+      { id: 'seitai-premium', name: 'じっくり全身コース（90分）', price: 9000, durationMin: 90, active: true, sortOrder: 3 },
+      { id: 'seitai-headneck', name: 'ヘッド＆首肩集中', price: 5000, durationMin: 45, active: true, sortOrder: 4 },
+    ];
+  },
+
+  getDefaultSettingsPatch() {
+    return {
+      vertical: 'seitai',
+      verticalConfig: {
+        surveyEnabled: false,
+        bedCount: 2,
+      },
+    };
+  },
+
+  getOnboardingChecks({ menuVerticalCount, repeatEnabled, templateSet }) {
+    return [
+      {
+        key: 'menuSeitai',
+        label: '施術メニュー設定（1件以上）',
+        done: menuVerticalCount > 0,
+        action: '/admin/menu',
+        detail: menuVerticalCount > 0 ? `${menuVerticalCount}件` : undefined,
+      },
+      {
+        key: 'repeatConfig',
+        label: 'リピート設定（有効化 + テンプレ設定）',
+        done: repeatEnabled && templateSet,
+        action: '/admin/settings',
+      },
+      {
+        key: 'lineSetup',
+        label: 'LINE連携設定',
+        done: false,
+        action: '/admin/settings',
+        detail: 'お客様がLINEから予約できるようにしましょう',
+      },
+      {
+        key: 'staffSetup',
+        label: '施術者登録（1名以上）',
+        done: false,
+        action: '/admin/staff',
+        detail: '指名予約を受け付けるにはスタッフ登録が必要です',
+      },
+    ];
+  },
+
+  getRepeatTemplateFallback() {
+    return SEITAI_REPEAT_TEMPLATE;
+  },
+
+  labels: {
+    karteTab: '施術カルテ',
+    menuFilterHeading: '施術メニュー絞り込み',
+    kpiHeading: '整体院 KPI',
+    settingsHeading: '整体施術設定',
+    menuSettingsHeading: '施術設定',
+    staffSettingsHeading: '施術スキル',
+    settingsDescription: '整体院特化の同意文・リピート施策を設定します',
+  },
+
+  flags: {
+    hasKarte: true,
+    hasMenuFilter: true,
+    hasVerticalKpi: true,
+    hasStaffAttributes: true,
+    hasMenuAttributes: true,
+    hasVerticalSettings: true,
+  },
+
+  menuFilterConfig: {
+    filterKey: 'bodyArea',
+    options: { neck: '首・肩', back: '背中・腰', leg: '脚・膝', full: '全身' },
+    label: '施術部位',
+  },
+  validateMenuAttrs(attrs) {
+    const validAreas = ['neck', 'back', 'leg', 'arm', 'head', 'full'];
+    if (attrs.bodyArea && typeof attrs.bodyArea === 'string' && !validAreas.includes(attrs.bodyArea)) {
+      return { valid: false, error: `Invalid bodyArea: ${attrs.bodyArea}` };
+    }
+    return { valid: true };
+  },
+  repeatCadence: {
+    defaultIntervalDays: 14,
+    categoryIntervals: { neck: 14, back: 14, leg: 21, full: 21 },
+    dormantThresholdDays: 45,
+    firstVisitFollowupDays: 1,
+  },
+  aiConfig: {
+    systemPromptHint: 'この院は整体・カイロプラクティックの専門院です。肩こり・腰痛・姿勢改善など、お客様の身体の不調に寄り添った施術を提供しています。',
+    recommendedVoice: 'professional',
+    bookingEmphasis: 'お身体の状態を初回カウンセリングでしっかり確認します。まずはご予約をお取りください。',
+  },
+  specialFeatures: ['treatmentBodyMap', 'beforeAfterPhoto', 'visitSummary'],
+};
+
 // ── Registry ────────────────────────────────────────────────────────
 
 const REGISTRY: Record<string, VerticalPlugin> = {
@@ -1225,6 +1331,7 @@ const REGISTRY: Record<string, VerticalPlugin> = {
   cleaning: cleaningPlugin,
   handyman: handymanPlugin,
   pet: petPlugin,
+  seitai: seitaiPlugin,
 };
 
 /**

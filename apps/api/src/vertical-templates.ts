@@ -429,6 +429,33 @@ export const VERTICAL_TEMPLATES: Record<string, VerticalTemplate> = {
       ],
     },
   },
+  // 整体院
+  // ────────────────────────────────────────────────────────────────────
+  seitai: {
+    menus: [
+      { name: '整体コース（60分）', duration: 60, price: 6000, description: '全身のバランスを整える基本コース', category: '整体' },
+      { name: 'お手軽コース（30分）', duration: 30, price: 3500, description: '気になる部位を集中ケア', category: '整体' },
+      { name: 'じっくり全身コース（90分）', duration: 90, price: 9000, description: '頭から足先まで丁寧にほぐす贅沢コース', category: '整体' },
+      { name: 'ヘッド＆首肩集中', duration: 45, price: 5000, description: 'デスクワーク疲れに最適な上半身集中ケア', category: '部位集中' },
+      { name: '骨盤矯正コース', duration: 50, price: 7000, description: '骨盤の歪みを整え姿勢改善をサポート', category: '矯正' },
+      { name: '猫背改善プログラム', duration: 60, price: 8000, description: '姿勢分析＋矯正施術で根本改善を目指す', category: '矯正' },
+    ],
+    staff: [
+      { name: '山田 健太', role: '院長・柔道整復師' },
+      { name: '佐藤 美咲', role: '整体師' },
+    ],
+    faq: [
+      { question: '予約なしでも受けられますか？', answer: '当院は完全予約制です。LINE予約なら24時間いつでもお取りいただけます。空き状況もリアルタイムでご確認いただけます。' },
+      { question: '施術は痛いですか？', answer: 'お身体の状態に合わせて力加減を調整します。痛みの少ないソフトな施術も可能ですので、お気軽にご相談ください。' },
+      { question: 'どのくらいの頻度で通えばいいですか？', answer: '症状にもよりますが、最初は週1回程度、改善に伴い2〜4週間に1回のメンテナンス通院をおすすめしています。' },
+      { question: '保険は使えますか？', answer: '当院は自費診療の整体院です。保険適用外となりますが、その分一人ひとりに合わせたオーダーメイド施術を提供しています。' },
+      { question: '着替えは必要ですか？', answer: '動きやすい服装でお越しいただければそのまま施術可能です。お着替えのご用意もございますのでお仕事帰りでもお気軽にどうぞ。' },
+    ],
+    aiCharacter: 'あなたは整体院の受付AIアシスタントです。お客様の身体の不調に寄り添い、適切なコースの提案と予約案内を丁寧に行ってください。専門用語は避け、わかりやすい言葉でお伝えしましょう。',
+    businessHours: { openTime: '10:00', closeTime: '20:00' },
+    closedWeekdays: [0],
+    verticalConfig: { surveyEnabled: false, bedCount: 2 },
+  },
 };
 
 /**

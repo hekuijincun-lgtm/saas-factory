@@ -229,6 +229,27 @@ const VERTICAL_CAMPAIGNS: Record<VerticalType, CampaignTypeConfig[]> = {
       messageHint: 'お久しぶりです。わんちゃんの毛玉や皮膚トラブル予防のためにも、定期的なトリミングがおすすめです。',
     },
   ],
+  seitai: [
+    ...COMMON_CAMPAIGNS,
+    {
+      type: 'repeat_reminder' as const,
+      label: 'メンテナンス来院リマインド',
+      description: '前回施術から推奨間隔が経過した顧客に来院を促す',
+      defaultEnabled: true,
+      safetyLevel: 'safe' as const,
+      defaultTriggerDays: 14,
+      messageHint: '前回の施術からそろそろ{interval}週が経ちます。お身体の調子はいかがですか？',
+    },
+    {
+      type: 'dormant_recovery' as const,
+      label: '休眠顧客 復帰促進',
+      description: '45日以上来院がない顧客に声掛けする',
+      defaultEnabled: true,
+      safetyLevel: 'review' as const,
+      defaultTriggerDays: 45,
+      messageHint: '最近お身体の調子はいかがですか？痛みが出る前の定期メンテナンスがおすすめです。',
+    },
+  ],
   generic: [
     ...COMMON_CAMPAIGNS,
     {

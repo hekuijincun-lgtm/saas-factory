@@ -16,6 +16,7 @@ const VERTICAL_DESIGN: Record<string, DesignKey> = {
   cleaning:  'gradient-wave',   // ポップで親しみやすい — 家庭向けサービス
   handyman:  'card-showcase',   // Bentoグリッド — 多彩なサービスカテゴリを見せる
   pet:       'gradient-wave',  // ポップで親しみやすい — ペット業界のフレンドリーさ
+  seitai:    'storytelling',  // ストーリーテリング — 整体院の施術体験を伝える
 };
 
 function getDesignKey(vertical: string): DesignKey {
@@ -266,6 +267,40 @@ const LP: Record<string, VerticalLPConfig> = {
     ],
     metaTitle: 'PetBook | ペットサロン専用予約管理ツール',
     metaDesc: 'LINE予約・犬種別メニュー管理・前日リマインドを自動化。ペットサロン・トリミングの予約業務を効率化するツール。',
+  },
+  seitai: {
+    label: '整体院',
+    badge: '整体・カイロプラクティック',
+    headline: '整体院の予約・顧客管理を\nAIでまるっと自動化',
+    subheadline: '紙の予約台帳・電話対応をゼロに。LINE予約＋AIコンシェルジュで、施術に集中できる環境を。',
+    problems: [
+      { icon: 'phone', title: '電話予約の対応で施術が中断される', desc: '施術中に電話が鳴り、患者様を待たせてしまう場面が頻発' },
+      { icon: 'calendar', title: '紙カルテで患者の施術履歴が探しにくい', desc: '過去の施術内容や経過を確認するのに時間がかかる' },
+      { icon: 'clock', title: 'リピート促進の連絡を手動で行っている', desc: '来院間隔が空いた患者への連絡が追いつかない' },
+      { icon: 'users', title: '予約のダブルブッキングが起きる', desc: '手書きの予約台帳では変更・キャンセルの追跡が困難' },
+      { icon: 'chart', title: '新規集客に手が回らない', desc: '施術と事務作業で手一杯。集客施策を打つ余裕がない' },
+    ],
+    features: [
+      { icon: '📱', title: 'LINE予約', desc: '24時間自動受付。空き枠をリアルタイム表示' },
+      { icon: '🤖', title: 'AI受付コンシェルジュ', desc: 'LINEで症状ヒアリング＆最適コース提案' },
+      { icon: '🗺️', title: '施術部位マッピング', desc: '人体図で施術箇所を記録・患者と共有' },
+      { icon: '📸', title: 'ビフォーアフター写真', desc: '施術前後の姿勢変化を写真で記録' },
+      { icon: '🔁', title: 'リピート自動促進', desc: '来院間隔に応じたLINEメッセージを自動送信' },
+      { icon: '📊', title: '施術メモ・カルテ', desc: '来院ごとの施術内容と経過を一元管理' },
+    ],
+    flow: [
+      { step: '01', title: 'LINE友だち追加', desc: 'QRコードを読み取るだけで予約開始' },
+      { step: '02', title: 'AIが症状ヒアリング', desc: 'お悩みに合わせて最適コースを提案' },
+      { step: '03', title: '予約確定・来院', desc: 'リマインド通知で来院率UP' },
+    ],
+    faqs: [
+      { q: '導入にどのくらいかかりますか？', a: '最短即日で利用開始できます。メニュー・スタッフ登録はテンプレートで自動セットアップされます。' },
+      { q: '既存の予約システムと併用できますか？', a: 'はい、LINE予約と既存システムを並行運用しながら段階的に移行できます。' },
+      { q: '患者情報のセキュリティは？', a: 'すべてのデータは暗号化して保存。HTTPS通信でセキュリティも万全です。' },
+      { q: '何人まで利用できますか？', a: 'Starterプランで施術者2名まで、Proプランは無制限です。' },
+    ],
+    metaTitle: '整体院向けLINE予約・AI顧客管理システム | LumiBook',
+    metaDesc: '整体院の予約管理をLINE×AIで自動化。施術部位マッピング・リピート自動促進・カルテ管理で売上アップ。',
   },
 };
 

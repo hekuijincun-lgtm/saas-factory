@@ -71,7 +71,7 @@ export interface IntegrationSettings {
 
 // ── Multi-LINE Account Management ───────────────────────────────────────────
 export type LineAccountPurpose = 'booking' | 'sales' | 'support' | 'broadcast' | 'internal';
-export type LineAccountIndustry = 'hair' | 'nail' | 'eyebrow' | 'esthetic' | 'dental' | 'cleaning' | 'handyman' | 'pet' | 'shared';
+export type LineAccountIndustry = 'hair' | 'nail' | 'eyebrow' | 'esthetic' | 'dental' | 'cleaning' | 'handyman' | 'pet' | 'seitai' | 'shared';
 
 export interface LineAccount {
   id: string;
@@ -105,7 +105,7 @@ export interface OnboardingSettings {
 export type VerticalCoreType = 'reservation' | 'project';
 
 /** 業種バーティカル識別子 */
-export type VerticalType = 'eyebrow' | 'nail' | 'dental' | 'hair' | 'esthetic' | 'cleaning' | 'handyman' | 'pet' | 'generic';
+export type VerticalType = 'eyebrow' | 'nail' | 'dental' | 'hair' | 'esthetic' | 'cleaning' | 'handyman' | 'pet' | 'seitai' | 'generic';
 
 /** 汎用リピート促進テンプレート（eyebrow 以外のフォールバック） */
 export const GENERIC_REPEAT_TEMPLATE =

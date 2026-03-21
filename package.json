@@ -5,7 +5,8 @@
     "build": "turbo build",
     "dev": "turbo dev",
     "lint": "turbo lint",
-    "clean": "turbo clean"
+    "clean": "turbo clean",
+    "test": "pnpm -C apps/api test && pnpm -C apps/web test"
   },
   "devDependencies": {
     "@next/swc-linux-x64-gnu": "15.5.2",

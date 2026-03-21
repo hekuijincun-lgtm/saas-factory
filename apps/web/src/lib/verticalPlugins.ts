@@ -324,6 +324,34 @@ const handymanPlugin: VerticalPluginUI = {
   specialFeatures: ['equipmentCheck', 'beforeAfterPhoto'],
 };
 
+const seitaiPlugin: VerticalPluginUI = {
+  key: 'seitai',
+  label: '整体院',
+  labels: {
+    karteTab: '施術カルテ',
+    menuFilterHeading: '施術メニュー絞り込み',
+    kpiHeading: '整体院 KPI',
+    settingsHeading: '整体施術設定',
+    menuSettingsHeading: '施術設定',
+    staffSettingsHeading: '施術スキル',
+    settingsDescription: '整体院特化の同意文・リピート施策を設定します',
+  },
+  flags: {
+    hasKarte: true,
+    hasMenuFilter: true,
+    hasVerticalKpi: true,
+    hasStaffAttributes: true,
+    hasMenuAttributes: true,
+    hasVerticalSettings: true,
+  },
+  menuFilterConfig: {
+    filterKey: 'bodyArea',
+    options: { neck: '首・肩', back: '背中・腰', leg: '脚・膝', full: '全身' },
+    label: '施術部位',
+  },
+  specialFeatures: ['treatmentBodyMap', 'beforeAfterPhoto', 'visitSummary'],
+};
+
 // ── Registry ────────────────────────────────────────────────────────
 
 const REGISTRY: Record<string, VerticalPluginUI> = {
@@ -336,6 +364,7 @@ const REGISTRY: Record<string, VerticalPluginUI> = {
   cleaning: cleaningPlugin,
   handyman: handymanPlugin,
   pet: petPlugin,
+  seitai: seitaiPlugin,
 };
 
 /**
