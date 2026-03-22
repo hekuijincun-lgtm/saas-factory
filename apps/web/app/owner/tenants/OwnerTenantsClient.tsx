@@ -252,7 +252,7 @@ export default function OwnerTenantsClient() {
           type="text"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="テナントID / オーナー名 / メールで検索..."
+          placeholder="テナント名 / テナントID / メールで検索..."
           className="w-full pl-10 pr-4 py-2.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-200 focus:border-amber-400"
         />
         {search && (
@@ -275,8 +275,7 @@ export default function OwnerTenantsClient() {
             <thead>
               <tr className="bg-gray-50 border-b border-gray-200">
                 <th className="px-4 py-3 text-left font-medium text-gray-600">業種</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-600">テナントID</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-600">オーナー</th>
+                <th className="px-4 py-3 text-left font-medium text-gray-600">テナント名</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-600">プラン</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-600">ステータス</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-600">登録日</th>
@@ -286,7 +285,7 @@ export default function OwnerTenantsClient() {
             <tbody className="divide-y divide-gray-100">
               {filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-4 py-10 text-center text-gray-400">
+                  <td colSpan={6} className="px-4 py-10 text-center text-gray-400">
                     テナントが見つかりません
                   </td>
                 </tr>
@@ -299,12 +298,8 @@ export default function OwnerTenantsClient() {
                       </span>
                     </td>
                     <td className="px-4 py-3">
-                      <div className="font-medium text-gray-900 truncate max-w-[180px]">{t.storeName}</div>
-                      <div className="text-xs text-gray-400 truncate max-w-[180px]">{t.tenantId}</div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="text-gray-700 truncate max-w-[160px]">{t.ownerName || "-"}</div>
-                      <div className="text-xs text-gray-400 truncate max-w-[160px]">{t.ownerEmail || "-"}</div>
+                      <div className="font-medium text-gray-900 truncate max-w-[200px]">{t.storeName}</div>
+                      <div className="text-xs text-gray-400 truncate max-w-[200px]">{t.ownerEmail || t.tenantId}</div>
                     </td>
                     <td className="px-4 py-3">
                       <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${PLAN_COLORS[t.planId || "free"]}`}>
