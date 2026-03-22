@@ -298,8 +298,10 @@ export default function OwnerTenantsClient() {
                       </span>
                     </td>
                     <td className="px-4 py-3">
-                      <div className="font-medium text-gray-900 truncate max-w-[200px]">{t.storeName}</div>
-                      <div className="text-xs text-gray-400 truncate max-w-[200px]">{t.ownerEmail || t.tenantId}</div>
+                      <div className="font-medium text-gray-900 truncate max-w-[200px]">{t.storeName || t.tenantId}</div>
+                      <div className="text-xs text-gray-400 truncate max-w-[200px]">
+                        {t.ownerEmail ? `${t.tenantId} / ${t.ownerEmail}` : t.tenantId}
+                      </div>
                     </td>
                     <td className="px-4 py-3">
                       <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${PLAN_COLORS[t.planId || "free"]}`}>

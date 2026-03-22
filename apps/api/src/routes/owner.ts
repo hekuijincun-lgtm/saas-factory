@@ -275,9 +275,11 @@ export function registerOwnerRoutes(app: Hono<{ Bindings: Record<string, unknown
       for (const { tenantId, settings } of allSettings) {
         const sub = settings.subscription;
         const vertical = settings.vertical || "generic";
+        // Build display name: storeName > tenant.name > tenantId
+        const displayName = settings.storeName || settings.tenant?.name || tenantId;
         tenants.push({
           tenantId,
-          storeName: settings.storeName || tenantId,
+          storeName: displayName,
           vertical,
           verticalLabel: VERTICAL_LABELS[vertical] || vertical,
           verticalCore: VERTICAL_CORE_MAP[vertical] || "reservation",
