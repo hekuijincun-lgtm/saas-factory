@@ -9,6 +9,7 @@ import {
   X,
   Menu,
   Shield,
+  Building,
   Target,
   CheckSquare,
   Kanban,
@@ -38,6 +39,7 @@ function Sidebar({
 
   const navItems = [
     { href: "/owner", label: "概要", icon: LayoutDashboard },
+    { href: "/owner/tenants", label: "テナント管理", icon: Building },
     { href: "/owner/outreach/leads", label: "営業リード", icon: Target },
     { href: "/owner/outreach/review", label: "レビューキュー", icon: CheckSquare },
     { href: "/owner/outreach/crm", label: "CRM", icon: Kanban },

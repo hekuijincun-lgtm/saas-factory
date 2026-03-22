@@ -199,7 +199,52 @@ export function registerOwnerRoutes(app: Hono<{ Bindings: Record<string, unknown
     }
   });
 
-  // ── GET /owner/tenants — tenant list ───────────────────────────────────
+  // ── Vertical → Core type mapping ─────────────────────────────────────
+  const VERTICAL_CORE_MAP: Record<string, string> = {
+    eyebrow: "reservation", nail: "reservation", hair: "reservation",
+    dental: "reservation", esthetic: "reservation", cleaning: "reservation",
+    handyman: "reservation", pet: "reservation", seitai: "reservation",
+    gym: "subscription", school: "subscription",
+    shop: "ec", food: "ec", handmade: "ec",
+    construction: "project", reform: "project", equipment: "project",
+    generic: "reservation",
+  };
+
+  // ── Vertical display labels ──────────────────────────────────────────
+  const VERTICAL_LABELS: Record<string, string> = {
+    eyebrow: "眉毛サロン", nail: "ネイルサロン", hair: "美容室",
+    dental: "歯科", esthetic: "エステ", cleaning: "清掃",
+    handyman: "便利屋", pet: "ペット", seitai: "整体",
+    gym: "ジム", school: "スクール",
+    shop: "ショップ", food: "フード", handmade: "ハンドメイド",
+    construction: "建設", reform: "リフォーム", equipment: "設備",
+    generic: "汎用",
+  };
+
+  // ── Plan monthly prices (JPY) — shared ───────────────────────────────
+  const PLAN_PRICES: Record<string, number> = {
+    starter: 3980,
+    pro: 9800,
+    enterprise: 30000,
+  };
+
+  // ── Helper: collect all tenant settings from KV ──────────────────────
+  async function collectTenantSettings(kv: KVNamespace) {
+    const settingsKeys = await kv.list({ prefix: "settings:" });
+    const results: Array<{ tenantId: string; settings: any }> = [];
+    for (const key of settingsKeys.keys ?? []) {
+      const tenantId = key.name.replace("settings:", "");
+      try {
+        const raw = await kv.get(key.name, "json");
+        results.push({ tenantId, settings: raw ? mergeSettings(raw) : DEFAULT_ADMIN_SETTINGS });
+      } catch {
+        results.push({ tenantId, settings: DEFAULT_ADMIN_SETTINGS });
+      }
+    }
+    return results;
+  }
+
+  // ── GET /owner/tenants — tenant list (extended with vertical info) ───
   app.get("/owner/tenants", async (c) => {
     const env = c.env as any;
     const kv = env.SAAS_FACTORY;
@@ -207,7 +252,7 @@ export function registerOwnerRoutes(app: Hono<{ Bindings: Record<string, unknown
     if (!kv) return c.json({ ok: false, error: "Internal error" }, 500);
 
     try {
-      const settingsKeys = await kv.list({ prefix: "settings:" });
+      const allSettings = await collectTenantSettings(kv);
       const now = new Date();
       const jstDate = new Date(now.getTime() + 9 * 60 * 60 * 1000)
         .toISOString()
@@ -226,45 +271,81 @@ export function registerOwnerRoutes(app: Hono<{ Bindings: Record<string, unknown
         }
       }
 
-      // Plan monthly prices (JPY)
-      const PLAN_PRICES: Record<string, number> = {
-        starter: 3980,
-        pro: 9800,
-        enterprise: 30000,
-      };
-
       const tenants: any[] = [];
-      for (const key of settingsKeys.keys ?? []) {
-        const tenantId = key.name.replace("settings:", "");
-        try {
-          const raw = await kv.get(key.name, "json");
-          const settings = raw ? mergeSettings(raw) : DEFAULT_ADMIN_SETTINGS;
-          const sub = settings.subscription;
-          tenants.push({
-            tenantId,
-            storeName: settings.storeName || tenantId,
-            lineConnected: !!settings.integrations?.line?.channelAccessToken,
-            reservationsToday: resCounts[tenantId] ?? 0,
-            subscriptionStatus: sub?.status ?? "unknown",
-            planId: sub?.planId ?? null,
-            monthlyAmount: sub ? (PLAN_PRICES[sub.planId] ?? 0) : 0,
-          });
-        } catch {
-          tenants.push({
-            tenantId,
-            storeName: tenantId,
-            lineConnected: false,
-            reservationsToday: 0,
-            subscriptionStatus: "unknown",
-            planId: null,
-            monthlyAmount: 0,
-          });
-        }
+      for (const { tenantId, settings } of allSettings) {
+        const sub = settings.subscription;
+        const vertical = settings.vertical || "generic";
+        tenants.push({
+          tenantId,
+          storeName: settings.storeName || tenantId,
+          vertical,
+          verticalLabel: VERTICAL_LABELS[vertical] || vertical,
+          verticalCore: VERTICAL_CORE_MAP[vertical] || "reservation",
+          lineConnected: !!settings.integrations?.line?.channelAccessToken,
+          reservationsToday: resCounts[tenantId] ?? 0,
+          subscriptionStatus: sub?.status ?? "unknown",
+          planId: sub?.planId ?? null,
+          monthlyAmount: sub ? (PLAN_PRICES[sub.planId] ?? 0) : 0,
+          ownerName: settings.tenant?.name || "",
+          ownerEmail: settings.tenant?.email || "",
+          createdAt: sub?.createdAt ? new Date(sub.createdAt).toISOString() : "",
+        });
       }
 
       return c.json({ ok: true, tenants });
     } catch (e: any) {
       console.error("[owner/tenants]", String(e?.message ?? e));
+      return c.json({ ok: false, error: "Internal error" }, 500);
+    }
+  });
+
+  // ── GET /owner/tenants/stats — vertical/core/plan breakdown ──────────
+  app.get("/owner/tenants/stats", async (c) => {
+    const env = c.env as any;
+    const kv = env.SAAS_FACTORY;
+    if (!kv) return c.json({ ok: false, error: "Internal error" }, 500);
+
+    try {
+      const allSettings = await collectTenantSettings(kv);
+
+      const byVertical: Record<string, number> = {};
+      const byCore: Record<string, number> = {};
+      const byPlan: Record<string, number> = {};
+      let thisMonthNew = 0;
+
+      const now = new Date();
+      const thisMonthPrefix = new Date(now.getTime() + 9 * 60 * 60 * 1000)
+        .toISOString()
+        .slice(0, 7); // "YYYY-MM"
+
+      for (const { settings } of allSettings) {
+        const vertical = settings.vertical || "generic";
+        const core = VERTICAL_CORE_MAP[vertical] || "reservation";
+        const plan = settings.subscription?.planId || "free";
+
+        byVertical[vertical] = (byVertical[vertical] || 0) + 1;
+        byCore[core] = (byCore[core] || 0) + 1;
+        byPlan[plan] = (byPlan[plan] || 0) + 1;
+
+        // Check if created this month
+        const createdAt = settings.subscription?.createdAt;
+        if (createdAt) {
+          const createdDate = new Date(createdAt).toISOString().slice(0, 7);
+          if (createdDate === thisMonthPrefix) thisMonthNew++;
+        }
+      }
+
+      return c.json({
+        ok: true,
+        totalCount: allSettings.length,
+        thisMonthNew,
+        byVertical,
+        byCore,
+        byPlan,
+        verticalLabels: VERTICAL_LABELS,
+      });
+    } catch (e: any) {
+      console.error("[owner/tenants/stats]", String(e?.message ?? e));
       return c.json({ ok: false, error: "Internal error" }, 500);
     }
   });
