@@ -1512,87 +1512,157 @@ app.get("/admin/customers/:id/reservations", async (c) => {
   }
 });
 
-/** =========================
- * Admin Dashboard
- * GET /admin/dashboard?tenantId=&date=YYYY-MM-DD
- * Returns: kpis, schedule (today's reservations), customers (recent)
- * ========================= */
-app.get("/admin/dashboard", async (c) => {
+// ── GET /admin/dashboard — ダッシュボード集計 ──────────────────────────────
+app.get("/admin/dashboard", async (c: any) => {
   const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
-  const STAMP = "ADMIN_DASHBOARD_V1";
-  const tenantId = getTenantId(c, null);
+  const tenantId = getTenantId(c);
   const db = (c.env as any).DB;
-  if (!db) return c.json({ ok: false, stamp: STAMP, error: "DB_not_bound" }, 500);
-
-  // Resolve date: query param → JST today fallback
-  let date = (c.req.query("date") || "").trim();
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-    const jst = new Date(Date.now() + 9 * 60 * 60 * 1000);
-    date = jst.toISOString().slice(0, 10);
-  }
-  const like = `${date}T%`;
+  if (!db) return c.json({ ok: false, error: "DB_not_bound" }, 500);
 
   try {
-    const [resResult, cusResult] = await Promise.all([
-      db
-        .prepare(
-          `SELECT id, slot_start, start_at, customer_name, customer_phone, staff_id, duration_minutes
-           FROM reservations
-           WHERE tenant_id = ? AND slot_start LIKE ? AND ${SQL_ACTIVE_FILTER}
-           ORDER BY slot_start ASC`
-        )
-        .bind(tenantId, like)
-        .all(),
-      db
-        .prepare(
-          `SELECT id, name, phone, visit_count, last_visit_at
-           FROM customers
-           WHERE tenant_id = ?
-           ORDER BY updated_at DESC
-           LIMIT 50`
-        )
-        .bind(tenantId)
-        .all(),
+    // JST dates for period boundaries
+    const nowMs = Date.now();
+    const jstOff = 9 * 60 * 60 * 1000;
+    const nowJST = new Date(nowMs + jstOff);
+    const todayStr = nowJST.toISOString().slice(0, 10);
+    const year = nowJST.getFullYear();
+    const month = nowJST.getMonth(); // 0-indexed
+    const monthStart = `${year}-${String(month + 1).padStart(2, '0')}-01`;
+    const prevMonthDate = new Date(year, month - 1, 1);
+    const prevMonthStart = `${prevMonthDate.getFullYear()}-${String(prevMonthDate.getMonth() + 1).padStart(2, '0')}-01`;
+    const prevMonthEnd = `${year}-${String(month + 1).padStart(2, '0')}-01`;
+    // Week boundaries (Mon-Sun)
+    const dayOfWeek = nowJST.getDay(); // 0=Sun
+    const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+    const mondayJST = new Date(nowJST);
+    mondayJST.setDate(nowJST.getDate() + mondayOffset);
+    const weekStart = mondayJST.toISOString().slice(0, 10);
+    const sundayJST = new Date(mondayJST);
+    sundayJST.setDate(mondayJST.getDate() + 6);
+    // 30 days ago for top menus
+    const thirtyDaysAgo = new Date(nowMs - 30 * 24 * 60 * 60 * 1000 + jstOff).toISOString().slice(0, 10);
+
+    const todayLike = `${todayStr}T%`;
+    const nextMonthStartStr = `${month + 2 > 12 ? year + 1 : year}-${String((month + 2 > 12 ? 1 : month + 2)).padStart(2, '0')}-01`;
+
+    // Run all queries in parallel
+    const [
+      todayQ, weekQ, monthQ, prevMonthQ,
+      monthCancelQ, recentQ, topMenuQ,
+      totalCustQ, newCustQ, repeatCustQ,
+    ] = await Promise.all([
+      // Today count + revenue
+      db.prepare(`SELECT COUNT(*) as cnt, COALESCE(SUM(json_extract(meta, '$.pricing.totalPrice')), 0) as rev
+        FROM reservations WHERE tenant_id = ? AND slot_start LIKE ? AND ${SQL_ACTIVE_FILTER}`)
+        .bind(tenantId, todayLike).first(),
+      // Week count + revenue
+      db.prepare(`SELECT COUNT(*) as cnt, COALESCE(SUM(json_extract(meta, '$.pricing.totalPrice')), 0) as rev
+        FROM reservations WHERE tenant_id = ? AND slot_start >= ? AND slot_start < ? AND ${SQL_ACTIVE_FILTER}`)
+        .bind(tenantId, `${weekStart}T00:00:00`, `${new Date(sundayJST.getTime() + 24 * 60 * 60 * 1000).toISOString().slice(0, 10)}T00:00:00`).first(),
+      // Month count + revenue
+      db.prepare(`SELECT COUNT(*) as cnt, COALESCE(SUM(json_extract(meta, '$.pricing.totalPrice')), 0) as rev
+        FROM reservations WHERE tenant_id = ? AND slot_start >= ? AND slot_start < ? AND ${SQL_ACTIVE_FILTER}`)
+        .bind(tenantId, `${monthStart}T00:00:00`, `${nextMonthStartStr}T00:00:00`).first(),
+      // Prev month count + revenue (for comparison)
+      db.prepare(`SELECT COUNT(*) as cnt, COALESCE(SUM(json_extract(meta, '$.pricing.totalPrice')), 0) as rev
+        FROM reservations WHERE tenant_id = ? AND slot_start >= ? AND slot_start < ? AND ${SQL_ACTIVE_FILTER}`)
+        .bind(tenantId, `${prevMonthStart}T00:00:00`, `${prevMonthEnd}T00:00:00`).first(),
+      // Month cancel count
+      db.prepare(`SELECT COUNT(*) as cnt FROM reservations WHERE tenant_id = ? AND slot_start >= ? AND slot_start < ? AND status = ?`)
+        .bind(tenantId, `${monthStart}T00:00:00`, `${nextMonthStartStr}T00:00:00`, CANCELLED_STATUS).first(),
+      // Recent 5 reservations
+      db.prepare(`SELECT id, slot_start, start_at, customer_name, staff_id, status, duration_minutes, meta
+        FROM reservations WHERE tenant_id = ? AND ${SQL_ACTIVE_FILTER}
+        ORDER BY slot_start DESC LIMIT 5`)
+        .bind(tenantId).all(),
+      // Top menus (last 30 days)
+      db.prepare(`SELECT json_extract(meta, '$.menuName') as menu_name, COUNT(*) as cnt
+        FROM reservations WHERE tenant_id = ? AND slot_start >= ? AND ${SQL_ACTIVE_FILTER}
+        AND json_extract(meta, '$.menuName') IS NOT NULL
+        GROUP BY menu_name ORDER BY cnt DESC LIMIT 3`)
+        .bind(tenantId, `${thirtyDaysAgo}T00:00:00`).all(),
+      // Total unique customers
+      db.prepare(`SELECT COUNT(DISTINCT json_extract(meta, '$.customerKey')) as cnt
+        FROM reservations WHERE tenant_id = ? AND ${SQL_ACTIVE_FILTER}
+        AND json_extract(meta, '$.customerKey') IS NOT NULL`)
+        .bind(tenantId).first(),
+      // New customers this month (first reservation in this month)
+      db.prepare(`SELECT COUNT(DISTINCT json_extract(meta, '$.customerKey')) as cnt
+        FROM reservations WHERE tenant_id = ? AND slot_start >= ? AND slot_start < ? AND ${SQL_ACTIVE_FILTER}
+        AND json_extract(meta, '$.customerKey') IS NOT NULL
+        AND json_extract(meta, '$.customerKey') NOT IN (
+          SELECT json_extract(meta, '$.customerKey') FROM reservations
+          WHERE tenant_id = ? AND slot_start < ? AND ${SQL_ACTIVE_FILTER}
+          AND json_extract(meta, '$.customerKey') IS NOT NULL
+        )`)
+        .bind(tenantId, `${monthStart}T00:00:00`, `${nextMonthStartStr}T00:00:00`, tenantId, `${monthStart}T00:00:00`).first(),
+      // Repeat customers (2+ reservations)
+      db.prepare(`SELECT COUNT(*) as cnt FROM (
+          SELECT json_extract(meta, '$.customerKey') as ck, COUNT(*) as visits
+          FROM reservations WHERE tenant_id = ? AND ${SQL_ACTIVE_FILTER}
+          AND json_extract(meta, '$.customerKey') IS NOT NULL
+          GROUP BY ck HAVING visits >= 2
+        )`)
+        .bind(tenantId).first(),
     ]);
 
-    const rows: any[] = resResult.results || [];
-    const reservationsToday = rows.length;
-
-    const schedule = rows.map((r: any) => {
+    // Parse recent reservations
+    const recentRows: any[] = recentQ.results || [];
+    const recentBookings = recentRows.map((r: any) => {
       const slotStr = String(r.slot_start || r.start_at || "");
-      const timeMatch = /T(\d{2}:\d{2})/.exec(slotStr);
+      const dtMatch = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/.exec(slotStr);
+      let meta: any = {};
+      try { meta = r.meta ? JSON.parse(r.meta) : {}; } catch {}
       return {
-        time: timeMatch ? timeMatch[1] : "",
-        reservationId: r.id,
-        customerName: r.customer_name ?? "",
-        customerPhone: r.customer_phone ?? null,
-        staffId: r.staff_id ?? "",
-        durationMin: r.duration_minutes ?? 60,
+        id: r.id,
+        date: dtMatch?.[1] || "",
+        time: dtMatch?.[2] || "",
+        customerName: r.customer_name || "",
+        menuName: meta.menuName || "",
+        staffId: r.staff_id || "",
+        durationMin: r.duration_minutes || 60,
       };
     });
 
-    const customers = (cusResult.results || []).map((r: any) => ({
-      id: r.id,
-      name: r.name ?? "",
-      phone: r.phone ?? null,
-      visitCount: r.visit_count ?? 0,
-      lastVisitAt: r.last_visit_at ?? null,
+    // Top menus
+    const topMenuRows: any[] = topMenuQ.results || [];
+    const topMenus = topMenuRows.map((r: any) => ({
+      name: r.menu_name || "不明",
+      count: r.cnt || 0,
     }));
 
+    // KPI calculations
+    const monthCount = monthQ?.cnt || 0;
+    const monthRevenue = monthQ?.rev || 0;
+    const monthCancelCount = monthCancelQ?.cnt || 0;
+    const monthTotal = monthCount + monthCancelCount;
+    const monthCancelRate = monthTotal > 0 ? Math.round((monthCancelCount / monthTotal) * 100) : 0;
+
+    const totalCustomers = totalCustQ?.cnt || 0;
+    const newCustomersThisMonth = newCustQ?.cnt || 0;
+    const repeatCustomers = repeatCustQ?.cnt || 0;
+    const repeatRate = totalCustomers > 0 ? Math.round((repeatCustomers / totalCustomers) * 100) : 0;
+
+    const prevMonthCount = prevMonthQ?.cnt || 0;
+    const prevMonthRevenue = prevMonthQ?.rev || 0;
+
+    const countVsLastMonth = prevMonthCount > 0 ? Math.round(((monthCount - prevMonthCount) / prevMonthCount) * 100) : null;
+    const revenueVsLastMonth = prevMonthRevenue > 0 ? Math.round(((monthRevenue - prevMonthRevenue) / prevMonthRevenue) * 100) : null;
+
     return c.json({
-      ok: true,
-      stamp: STAMP,
-      tenantId,
-      date,
-      kpis: {
-        reservationsToday,
-        revenueExpectedToday: 0, // Phase 1: no price in reservations table
-      },
-      schedule,
-      customers,
+      ok: true, tenantId,
+      today: { count: todayQ?.cnt || 0, revenue: todayQ?.rev || 0 },
+      week: { count: weekQ?.cnt || 0, revenue: weekQ?.rev || 0 },
+      month: { count: monthCount, revenue: monthRevenue, cancelRate: monthCancelRate },
+      prevMonth: { count: prevMonthCount, revenue: prevMonthRevenue },
+      comparison: { countVsLastMonth, revenueVsLastMonth },
+      customers: { total: totalCustomers, newThisMonth: newCustomersThisMonth, repeatRate },
+      recentBookings,
+      topMenus,
     });
   } catch (e: any) {
-    return c.json({ ok: false, stamp: STAMP, error: "dashboard_error", message: String(e?.message ?? e) }, 500);
+    console.error("[ADMIN_DASHBOARD]", String(e?.message ?? e));
+    return c.json({ ok: false, error: "db_error", detail: String(e?.message ?? e) }, 500);
   }
 });
 
