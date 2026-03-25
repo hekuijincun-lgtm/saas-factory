@@ -1538,6 +1538,140 @@ export async function POST(req: Request) {
         });
       }
     }
+
+    // ── show_coupon: クーポン一覧をFlex Messageで返信 ─────────────────────
+    if (params.get("action") === "show_coupon") {
+      try {
+        const apiBase = (
+          process.env.API_BASE ?? process.env.NEXT_PUBLIC_API_BASE ?? ""
+        ).replace(/\/+$/, "");
+        const lineUserId = postbackEv.source?.userId || "";
+
+        let messages: any[] = [{ type: "text", text: "現在ご利用可能なクーポンはありません。\n新しいクーポンが届くまでお待ちください🐾" }];
+
+        if (apiBase) {
+          const couponsUrl = `${apiBase}/coupons?tenantId=${encodeURIComponent(tenantId)}&lineUserId=${encodeURIComponent(lineUserId)}`;
+          const r = await fetchT(couponsUrl, { timeout: TIMEOUT_SETTINGS_FETCH_MS });
+          if (r.ok) {
+            const json = (await r.json()) as any;
+            const coupons: any[] = json?.coupons ?? [];
+            if (coupons.length > 0) {
+              messages = coupons.slice(0, 5).map((c: any) => {
+                const discountText = c.discountType === 'amount'
+                  ? `¥${(c.discountValue || 0).toLocaleString()} OFF`
+                  : c.discountType === 'percent'
+                  ? `${c.discountValue}% OFF`
+                  : '無料';
+                return {
+                  type: "flex",
+                  altText: `クーポン: ${c.title}`,
+                  contents: {
+                    type: "bubble", size: "kilo",
+                    header: { type: "box", layout: "vertical", backgroundColor: "#D4845A", paddingAll: "16px",
+                      contents: [{ type: "text", text: "🎫 クーポン", color: "#FFFFFF", weight: "bold", size: "sm" }] },
+                    body: { type: "box", layout: "vertical", spacing: "md", paddingAll: "20px",
+                      contents: [
+                        { type: "text", text: c.title, weight: "bold", size: "lg", wrap: true },
+                        { type: "text", text: discountText, color: "#D4845A", size: "xxl", weight: "bold" },
+                        ...(c.description ? [{ type: "text", text: c.description, color: "#666666", size: "sm", wrap: true }] : []),
+                        { type: "text", text: `有効期限: ${c.validUntil}`, color: "#888888", size: "xs", margin: "md" },
+                      ] },
+                    footer: { type: "box", layout: "vertical", paddingAll: "12px",
+                      contents: [{
+                        type: "button",
+                        action: { type: "uri", label: "クーポンを使って予約する",
+                          uri: `${process.env.NEXT_PUBLIC_BASE_URL || "https://saas-factory-web-v2.pages.dev"}/booking?tenantId=${encodeURIComponent(tenantId)}&couponId=${c.id}` },
+                        style: "primary", color: "#D4845A", height: "sm",
+                      }] },
+                  },
+                };
+              });
+            }
+          }
+        }
+
+        const pbRep = await replyLine(cfg.channelAccessToken, String(postbackEv.replyToken), messages);
+        console.log(`[WH_POSTBACK] show_coupon replyOk=${pbRep.ok} st=${pbRep.status} traceId=${traceId}`);
+
+        return NextResponse.json({
+          ok: true, stamp: STAMP, where, tenantId, source: cfg.source,
+          purpose: cfg.purpose, traceId,
+          verified, replied: true, action: "show_coupon",
+        });
+      } catch (err: any) {
+        console.error(`[WH_POSTBACK] show_coupon error: ${err.message} traceId=${traceId}`);
+        return NextResponse.json({
+          ok: true, stamp: STAMP, where, tenantId, source: cfg.source,
+          purpose: cfg.purpose, traceId,
+          verified, replied: false, action: "show_coupon", error: String(err.message),
+        });
+      }
+    }
+  }
+
+  // ── follow event: 友だち追加時のクーポン自動配信 ──────────────────────────
+  const followEv = events.find((x: any) => x?.type === "follow" && x?.replyToken);
+  if (followEv) {
+    try {
+      const apiBase = (
+        process.env.API_BASE ?? process.env.NEXT_PUBLIC_API_BASE ?? ""
+      ).replace(/\/+$/, "");
+      if (apiBase) {
+        let adminToken = "";
+        try {
+          const cfEnv = (getRequestContext()?.env as any);
+          if (cfEnv?.ADMIN_TOKEN) adminToken = String(cfEnv.ADMIN_TOKEN);
+        } catch {}
+        if (!adminToken) adminToken = process.env.ADMIN_TOKEN ?? "";
+
+        const headers: Record<string, string> = { Accept: "application/json" };
+        if (adminToken) headers["X-Admin-Token"] = adminToken;
+
+        // Fetch follow-trigger coupons
+        const couponsUrl = `${apiBase}/coupons?tenantId=${encodeURIComponent(tenantId)}&lineUserId=${encodeURIComponent(followEv.source?.userId || "")}`;
+        const r = await fetchT(couponsUrl, { headers, timeout: TIMEOUT_SETTINGS_FETCH_MS });
+        if (r.ok) {
+          const json = (await r.json()) as any;
+          const coupons: any[] = (json?.coupons ?? []).filter((c: any) => c.triggerType === "follow" || !c.triggerType);
+          if (coupons.length > 0) {
+            const c = coupons[0];
+            const discountText = c.discountType === 'amount'
+              ? `¥${(c.discountValue || 0).toLocaleString()} OFF`
+              : c.discountType === 'percent' ? `${c.discountValue}% OFF` : '無料';
+            const welcomeMsg: any[] = [
+              { type: "text", text: "友だち追加ありがとうございます🐾\nさっそくクーポンをプレゼント！" },
+              {
+                type: "flex", altText: `クーポン: ${c.title}`,
+                contents: {
+                  type: "bubble", size: "kilo",
+                  header: { type: "box", layout: "vertical", backgroundColor: "#D4845A", paddingAll: "16px",
+                    contents: [{ type: "text", text: "🎫 友だち追加クーポン", color: "#FFFFFF", weight: "bold", size: "sm" }] },
+                  body: { type: "box", layout: "vertical", spacing: "md", paddingAll: "20px",
+                    contents: [
+                      { type: "text", text: c.title, weight: "bold", size: "lg", wrap: true },
+                      { type: "text", text: discountText, color: "#D4845A", size: "xxl", weight: "bold" },
+                      ...(c.description ? [{ type: "text", text: c.description, color: "#666666", size: "sm", wrap: true }] : []),
+                      { type: "text", text: `有効期限: ${c.validUntil}`, color: "#888888", size: "xs", margin: "md" },
+                    ] },
+                  footer: { type: "box", layout: "vertical", paddingAll: "12px",
+                    contents: [{
+                      type: "button",
+                      action: { type: "uri", label: "クーポンを使って予約する",
+                        uri: `${process.env.NEXT_PUBLIC_BASE_URL || "https://saas-factory-web-v2.pages.dev"}/booking?tenantId=${encodeURIComponent(tenantId)}&couponId=${c.id}` },
+                      style: "primary", color: "#D4845A", height: "sm",
+                    }] },
+                },
+              },
+            ];
+            await replyLine(cfg.channelAccessToken, String(followEv.replyToken), welcomeMsg);
+            console.log(`[WH_FOLLOW] coupon sent traceId=${traceId} tenantId=${tenantId}`);
+          }
+        }
+      }
+    } catch (err: any) {
+      console.error(`[WH_FOLLOW] coupon error: ${err.message} traceId=${traceId}`);
+    }
+    // Don't return early — allow follow event to continue to other handlers if needed
   }
 
   if (textEvents.length === 0) {

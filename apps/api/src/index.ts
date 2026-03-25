@@ -24,6 +24,7 @@ import { registerSpecialFeatureRoutes } from "./routes/special-features";
 import { registerSubscriptionRoutes } from "./routes/subscription";
 import { registerEcRoutes } from "./routes/ec";
 import { registerProjectRoutes } from "./routes/project";
+import { registerCouponRoutes } from "./routes/coupons";
 import { scheduled } from "./routes/scheduled";
 
 // ── Durable Objects ──────────────────────────────────────────────────
@@ -131,6 +132,7 @@ registerSpecialFeatureRoutes(app);
 registerSubscriptionRoutes(app);
 registerEcRoutes(app);
 registerProjectRoutes(app);
+registerCouponRoutes(app);
 
 // ── Queue consumer (no-op) ───────────────────────────────────────────
 async function queue(batch: MessageBatch<unknown>): Promise<void> {
