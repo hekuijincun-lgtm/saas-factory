@@ -16,7 +16,7 @@ import { registerAdminDataRoutes } from "./routes/admin-data";
 import { registerAuthRoutes } from "./routes/auth";
 import { registerBillingRoutes } from "./routes/billing";
 import { registerBookingRoutes } from "./routes/booking";
-import { registerLineRoutes } from "./routes/line";
+import { registerLineRoutes, getRichMenuImage } from "./routes/line";
 import { registerAiRoutes } from "./routes/ai";
 import { registerPetRoutes } from "./routes/pets";
 import { registerWebhookRoutes } from "./routes/webhooks";
