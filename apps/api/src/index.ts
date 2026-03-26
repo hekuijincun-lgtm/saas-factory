@@ -11,6 +11,7 @@ import { cors } from "hono/cors";
 // ── Route modules ────────────────────────────────────────────────────
 import { registerOwnerRoutes, getOwnerIds, bootstrapOwnerIfEmpty, isPrincipalAllowed, normalizePrincipal } from "./routes/owner";
 import { registerOwnerLeadRoutes } from "./routes/ownerLeads";
+import { registerOwnerMarketingRoutes } from "./routes/owner-marketing";
 import { registerAdminCoreRoutes } from "./routes/admin-core";
 import { registerAdminDataRoutes } from "./routes/admin-data";
 import { registerAuthRoutes } from "./routes/auth";
@@ -119,6 +120,7 @@ app.get("/auth/owner-check", async (c) => {
 // ── Register all route modules ───────────────────────────────────────
 registerOwnerRoutes(app);
 registerOwnerLeadRoutes(app);
+registerOwnerMarketingRoutes(app);
 registerAdminCoreRoutes(app);
 registerAdminDataRoutes(app);
 registerBookingRoutes(app);

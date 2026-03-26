@@ -1,4 +1,5 @@
 import { runAllDueAgents } from '../agents';
+import { cronPostQueue, cronFetchInsights, cronRefreshTokens, cronABTestAggregation } from './owner-marketing';
 
 const CANCELLED_STATUS = 'cancelled' as const;
 const SQL_ACTIVE_FILTER = `status != '${CANCELLED_STATUS}'` as const;
@@ -937,5 +938,53 @@ export async function scheduled(_event: any, env: any, _ctx: any): Promise<void>
     }
   } catch (agentErr: any) {
     console.error("[AGENT_SCHEDULER] error:", String(agentErr?.message ?? agentErr));
+  }
+
+  // ── Instagram Marketing Cron Jobs ────────────────────────────────────────
+  // Runs every 5 min (same as main cron). Each handler checks timing internally.
+  //
+  // wrangler.toml [triggers] crons already has "*/5 * * * *" for production.
+  // If finer scheduling is needed, add these cron expressions:
+  //   "0 * * * *"      — hourly: post queue check
+  //   "0 3 * * *"      — daily 3am: fetch insights
+  //   "0 4 * * *"      — daily 4am: token refresh
+  //   "0 8 * * 1"      — weekly Monday 8am: A/B test aggregation
+
+  const nowHour = new Date().getUTCHours();
+  const nowMinute = new Date().getUTCMinutes();
+  const nowDay = new Date().getUTCDay(); // 0=Sun, 1=Mon
+
+  // Every run (every 5 min): check queue for posts due
+  try {
+    await cronPostQueue(env);
+  } catch (e: any) {
+    console.error("[IG_POST_CRON] error:", String(e?.message ?? e));
+  }
+
+  // Daily at ~3:00 UTC: fetch insights for yesterday's posts
+  if (nowHour === 3 && nowMinute < 5) {
+    try {
+      await cronFetchInsights(env);
+    } catch (e: any) {
+      console.error("[IG_INSIGHTS_CRON] error:", String(e?.message ?? e));
+    }
+  }
+
+  // Daily at ~4:00 UTC: refresh expiring tokens
+  if (nowHour === 4 && nowMinute < 5) {
+    try {
+      await cronRefreshTokens(env);
+    } catch (e: any) {
+      console.error("[IG_TOKEN_CRON] error:", String(e?.message ?? e));
+    }
+  }
+
+  // Weekly Monday ~8:00 UTC: A/B test aggregation
+  if (nowDay === 1 && nowHour === 8 && nowMinute < 5) {
+    try {
+      await cronABTestAggregation(env);
+    } catch (e: any) {
+      console.error("[IG_ABTEST_CRON] error:", String(e?.message ?? e));
+    }
   }
 }

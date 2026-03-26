@@ -24,6 +24,7 @@ import {
   Activity,
   UserCheck,
   FlaskConical,
+  Instagram,
 } from "lucide-react";
 
 function Sidebar({
@@ -54,6 +55,7 @@ function Sidebar({
     { href: "/owner/outreach/handoffs", label: "ハンドオフ", icon: UserCheck },
     { href: "/owner/outreach/close-variants", label: "クロージング", icon: FlaskConical },
     { href: "/owner/outreach/settings", label: "配信設定", icon: Settings2 },
+    { href: "/owner/marketing", label: "IG集客", icon: Instagram },
   ];
 
   return (
