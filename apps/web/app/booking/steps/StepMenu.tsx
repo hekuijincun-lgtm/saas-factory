@@ -43,19 +43,25 @@ export default function StepMenu({ tenantId, onSelect }: Props) {
   const [verticalFilter, setVerticalFilter] = useState<string | null>(null);
 
   useEffect(() => {
-    getMenu(tenantId)
-      .then(data =>
-        setItems(
-          data
-            .filter(m => m.active)
-            .sort((a, b) => a.sortOrder - b.sortOrder)
-        )
-      )
-      .catch(e => setError(e.message || 'メニューの取得に失敗しました'))
+    let settingsImages: Record<string, string> = {};
+    Promise.all([
+      getMenu(tenantId),
+      fetchBookingSettings(tenantId).then(s => {
+        setVertical(resolveVertical(s as any));
+        settingsImages = (s as any)?.images?.menus || {};
+      }).catch(() => {}),
+    ]).then(([data]) => {
+      setItems(
+        data
+          .filter(m => m.active)
+          .sort((a, b) => a.sortOrder - b.sortOrder)
+          .map(m => ({
+            ...m,
+            imageUrl: m.imageUrl || settingsImages[m.id] || undefined,
+          }))
+      );
+    }).catch(e => setError(e.message || 'メニューの取得に失敗しました'))
       .finally(() => setLoading(false));
-    fetchBookingSettings(tenantId)
-      .then(s => setVertical(resolveVertical(s as any)))
-      .catch(() => {});
   }, [tenantId]);
 
   const vPlugin = getVerticalPluginUI(vertical);
