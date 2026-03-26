@@ -939,8 +939,16 @@ app.post("/admin/integrations/line/richmenu/publish", async (c) => {
     }
 
     const origin = (c.env as any)?.WEB_ORIGIN || "https://saas-factory-web-v2.pages.dev";
-    // Allow template selection via request body (default: beauty-default-v2)
-    let requestedTemplate = "beauty-default-v2";
+
+    // Read existing state first (needed for template default + version increment)
+    let existing: any = null;
+    try {
+      const raw = await kv.get(`${RICHMENU_KV_PREFIX}${tenantId}`);
+      if (raw) existing = JSON.parse(raw);
+    } catch {}
+
+    // Template selection: body.templateKey > existing KV templateKey > beauty-default-v2
+    let requestedTemplate = existing?.templateKey || "beauty-default-v2";
     try {
       const body = await c.req.json().catch(() => ({} as any));
       if (body?.templateKey && RICH_MENU_TEMPLATES[body.templateKey]) {
@@ -955,13 +963,6 @@ app.post("/admin/integrations/line/richmenu/publish", async (c) => {
 
     // Build payload
     const { payload } = template.build({ origin, tenantId });
-
-    // Read existing state (used for version increment + post-publish cleanup)
-    let existing: any = null;
-    try {
-      const raw = await kv.get(`${RICHMENU_KV_PREFIX}${tenantId}`);
-      if (raw) existing = JSON.parse(raw);
-    } catch {}
 
     // NOTE: Old menu deletion moved to AFTER new default is set (safe republish).
     // This ensures users always have a valid rich menu during the transition.
