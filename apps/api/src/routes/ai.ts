@@ -685,14 +685,16 @@ app.post("/ai/chat", async (c) => {
     let aiUpsell: any = { ...AI_DEFAULT_UPSELL };
     let storeSettings: any = null;
     let menuList: any[] = [];
+    let staffList: any[] = [];
     if (kv) {
-      const [s, p, f, u, ss, ml] = await Promise.all([
+      const [s, p, f, u, ss, ml, sl] = await Promise.all([
         aiGetJson(kv, `ai:settings:${tenantId}`),
         aiGetJson(kv, `ai:policy:${tenantId}`),
         aiGetJson(kv, `ai:faq:${tenantId}`),
         aiGetJson(kv, `ai:upsell:${tenantId}`),
         aiGetJson(kv, `settings:${tenantId}`),
         aiGetJson(kv, `admin:menu:list:${tenantId}`),
+        aiGetJson(kv, `admin:staff:list:${tenantId}`),
       ]);
       // Prefer unified settings.ai, fall back to legacy ai:settings:{tenantId}
       const unifiedAi = ss?.ai;
@@ -706,6 +708,7 @@ app.post("/ai/chat", async (c) => {
       if (u && typeof u === "object") aiUpsell = { ...AI_DEFAULT_UPSELL, ...u };
       if (ss && typeof ss === "object") storeSettings = ss;
       if (Array.isArray(ml)) menuList = ml.filter((m: any) => m.active !== false);
+      if (Array.isArray(sl)) staffList = sl.filter((s: any) => s.active !== false);
     }
 
     console.log(`[AI_SETTINGS_LOAD]`, JSON.stringify({
@@ -774,6 +777,10 @@ app.post("/ai/chat", async (c) => {
       if (sn) storeContextLines.push(`店舗名: ${sn}`);
       const addr = storeSettings.storeAddress;
       if (addr) storeContextLines.push(`住所: ${addr}`);
+      const phone = storeSettings.phone;
+      if (phone) storeContextLines.push(`電話番号: ${phone}`);
+      const instagram = storeSettings.instagram;
+      if (instagram) storeContextLines.push(`Instagram: ${instagram}`);
       const bh = storeSettings.businessHours;
       if (bh?.openTime && bh?.closeTime) storeContextLines.push(`営業時間: ${bh.openTime}〜${bh.closeTime}`);
       const cw: number[] = storeSettings.closedWeekdays;
@@ -800,6 +807,15 @@ app.post("/ai/chat", async (c) => {
         return parts.join(" / ");
       }).join("\n");
       storeContextLines.push(`\nメニュー一覧:\n${menuSummary}`);
+    }
+    // スタッフ要約（上位8件、名前・役職のみ）
+    if (staffList.length > 0) {
+      const staffSummary = staffList.slice(0, 8).map((s: any) => {
+        const parts = [s.name];
+        if (s.role) parts.push(s.role);
+        return parts.join(" / ");
+      }).join("\n");
+      storeContextLines.push(`\nスタッフ一覧:\n${staffSummary}`);
     }
     const storeBlock = storeContextLines.length > 0
       ? "\n\n## 店舗情報（この情報に基づいて正確に案内してください）\n" + storeContextLines.join("\n")
@@ -859,6 +875,7 @@ app.post("/ai/chat", async (c) => {
       "- 店舗情報セクションに記載された情報はそのまま案内してください。",
       "- 店舗情報セクションに無い情報は「お問い合わせください」と案内してください。",
       "- 料金は店舗情報のメニュー一覧に記載がある場合のみ案内し、空き枠は断定しません。",
+      "- スタッフ名はスタッフ一覧に記載された名前のみ案内してください。",
       "- 予約に関する質問には「予約フォームからご予約ください」と案内してください（URLはシステムが自動追記するため回答文に含めないでください）。",
       "- 医療・法律・政治・宗教などのアドバイスはしません。",
       "- booking created や reservation confirmed などの行動を起こしたとは絶対に言いません。",
@@ -1255,6 +1272,148 @@ app.get("/ai/linelog", async (c) => {
   } catch { /* ignore */ }
 
   return c.json({ ok: true, tenantId, count: logs.length, logs });
+});
+
+// ── POST /admin/ai/generate-image — DALL-E 3 画像生成 ─────────────────
+app.post("/admin/ai/generate-image", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
+  const rbac = await requireRole(c, 'admin'); if (rbac) return rbac;
+  const tenantId = getTenantId(c);
+  const env = c.env as any;
+  const kv = env.SAAS_FACTORY;
+  const r2 = env.MENU_IMAGES;
+  const apiKey = env.OPENAI_API_KEY;
+
+  if (!apiKey) return c.json({ ok: false, error: "OPENAI_API_KEY not configured" }, 503);
+  if (!r2) return c.json({ ok: false, error: "R2 not configured" }, 503);
+  if (!kv) return c.json({ ok: false, error: "KV not configured" }, 503);
+
+  try {
+    const body = await c.req.json();
+    const { type, prompt: customPrompt, vertical, shopName, menuName, menuId } = body as {
+      type: 'hero' | 'richmenu' | 'menu-thumbnail';
+      prompt?: string;
+      vertical?: string;
+      shopName?: string;
+      menuName?: string;
+      menuId?: string;
+    };
+
+    if (!type) return c.json({ ok: false, error: "missing_type" }, 400);
+
+    // Build prompt
+    const v = vertical || 'pet';
+    const shop = shopName || '店舗';
+    let finalPrompt = customPrompt || '';
+    let size: '1024x1024' | '1792x1024' = '1024x1024';
+
+    if (!finalPrompt) {
+      const prompts: Record<string, Record<string, { prompt: string; size: '1024x1024' | '1792x1024' }>> = {
+        pet: {
+          hero: { prompt: `A warm and inviting Japanese pet salon interior, soft natural lighting, cute small dogs being groomed by professional staff, clean and modern space with wooden accents, cream and terracotta color palette, no text, high quality professional photograph`, size: '1792x1024' },
+          richmenu: { prompt: `Minimalist pet salon background design, warm cream (#FFF8F0) and terracotta (#D4845A) colors, subtle paw print watermark patterns, soft gradient, clean and modern, no text or buttons, suitable for LINE rich menu background at 2500x1686`, size: '1792x1024' },
+          'menu-thumbnail': { prompt: `Professional pet grooming scene showing ${menuName || 'dog grooming'}, bright studio lighting, cute small dog looking happy, Japanese pet salon setting, clean background, no text, high quality photograph`, size: '1024x1024' },
+        },
+        hair: {
+          hero: { prompt: `Elegant Japanese hair salon interior, modern minimalist design, professional stylist at work, warm lighting, luxury feel, no text`, size: '1792x1024' },
+          richmenu: { prompt: `Minimalist hair salon background, soft gradients, elegant, clean design for LINE rich menu`, size: '1792x1024' },
+          'menu-thumbnail': { prompt: `Professional hair styling scene, ${menuName || 'hair cut'}, Japanese salon, studio lighting, no text`, size: '1024x1024' },
+        },
+        nail: {
+          hero: { prompt: `Beautiful Japanese nail salon, elegant nail art display, soft pink and white tones, professional setting, no text`, size: '1792x1024' },
+          richmenu: { prompt: `Minimalist nail salon background, soft pink gradients, elegant, clean design`, size: '1792x1024' },
+          'menu-thumbnail': { prompt: `Beautiful nail art close-up, ${menuName || 'gel nail'}, professional quality, soft lighting, no text`, size: '1024x1024' },
+        },
+      };
+      const verticalPrompts = prompts[v] || prompts.pet;
+      const typeConfig = verticalPrompts[type] || verticalPrompts.hero;
+      finalPrompt = typeConfig.prompt;
+      size = typeConfig.size;
+    }
+
+    // Call DALL-E 3
+    const dalleRes = await fetch("https://api.openai.com/v1/images/generations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model: "dall-e-3",
+        prompt: finalPrompt,
+        n: 1,
+        size,
+        quality: "standard",
+        response_format: "b64_json",
+      }),
+    });
+
+    if (!dalleRes.ok) {
+      const errText = await dalleRes.text().catch(() => "");
+      return c.json({ ok: false, error: "dalle_error", status: dalleRes.status, detail: errText }, 502);
+    }
+
+    const dalleData = await dalleRes.json() as any;
+    const b64 = dalleData?.data?.[0]?.b64_json;
+    if (!b64) return c.json({ ok: false, error: "no_image_data" }, 502);
+
+    // Decode base64 to binary
+    const binaryStr = atob(b64);
+    const bytes = new Uint8Array(binaryStr.length);
+    for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
+
+    // Store in R2
+    const rand = Math.random().toString(36).slice(2, 9);
+    const ts = Date.now();
+    let r2Key: string;
+    if (type === 'menu-thumbnail') {
+      const mid = menuId || menuName?.replace(/\s+/g, '-') || 'unknown';
+      r2Key = `ai-images/${tenantId}/menu/${mid}-${ts}-${rand}.png`;
+    } else {
+      r2Key = `ai-images/${tenantId}/${type}-${ts}-${rand}.png`;
+    }
+
+    await r2.put(r2Key, bytes.buffer, { httpMetadata: { contentType: "image/png" } });
+
+    const reqUrl = new URL(c.req.url);
+    const apiBase = `${reqUrl.protocol}//${reqUrl.host}`;
+    const imageUrl = `${apiBase}/media/menu/${r2Key}`;
+
+    // Save to KV settings
+    let settings: any = {};
+    try { const raw = await kv.get(`settings:${tenantId}`); if (raw) settings = JSON.parse(raw); } catch {}
+    if (!settings.images) settings.images = {};
+
+    if (type === 'hero') {
+      settings.images.hero = imageUrl;
+    } else if (type === 'richmenu') {
+      settings.images.richMenuBg = imageUrl;
+    } else if (type === 'menu-thumbnail' && menuId) {
+      if (!settings.images.menus) settings.images.menus = {};
+      settings.images.menus[menuId] = imageUrl;
+    }
+
+    await kv.put(`settings:${tenantId}`, JSON.stringify(settings));
+
+    console.log(`[AI_IMAGE] tenant=${tenantId} type=${type} r2Key=${r2Key}`);
+    return c.json({ ok: true, tenantId, type, imageUrl, r2Key, revisedPrompt: dalleData?.data?.[0]?.revised_prompt });
+  } catch (e: any) {
+    console.error(`[AI_IMAGE] error: ${e?.message}`);
+    return c.json({ ok: false, error: "generate_error", detail: String(e?.message ?? e) }, 500);
+  }
+});
+
+// ── GET /admin/ai/images — テナントの生成画像一覧 ─────────────────────
+app.get("/admin/ai/images", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
+  const tenantId = getTenantId(c);
+  const kv = (c.env as any).SAAS_FACTORY;
+  if (!kv) return c.json({ ok: false, error: "kv_missing" }, 500);
+
+  try {
+    let settings: any = {};
+    try { const raw = await kv.get(`settings:${tenantId}`); if (raw) settings = JSON.parse(raw); } catch {}
+    return c.json({ ok: true, tenantId, images: settings.images || {} });
+  } catch (e: any) {
+    return c.json({ ok: false, error: String(e?.message ?? e) }, 500);
+  }
 });
 
 } // end registerAiRoutes

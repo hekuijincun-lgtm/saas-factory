@@ -27,6 +27,7 @@ export const adminNavItems: NavItem[] = [
   { label: "スタッフ管理",   href: "/admin/pet/staff",     verticals: ["pet"] },
   { label: "メニュー管理",   href: "/admin/pet/pricing",   verticals: ["pet"] },
   { label: "クーポン管理",   href: "/admin/pet/coupons",   verticals: ["pet"] },
+  { label: "画像管理",       href: "/admin/pet/images",    verticals: ["pet"] },
   { label: "AI応答設定",     href: "/admin/pet/ai-config", verticals: ["pet"] },
   { label: "管理者設定",     href: "/admin/pet/settings",  verticals: ["pet"] },
   // ── サブスクリプション系（gym / school）──
