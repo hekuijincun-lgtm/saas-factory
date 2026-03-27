@@ -146,7 +146,7 @@ export function registerOwnerRoutes(app: Hono<{ Bindings: Record<string, unknown
       for (const key of settingsKeys.keys ?? []) {
         try {
           const raw = await kv.get(key.name, "json");
-          const settings = raw ? mergeSettings(raw) : DEFAULT_ADMIN_SETTINGS;
+          const settings = raw ? mergeSettings(DEFAULT_ADMIN_SETTINGS, raw) : DEFAULT_ADMIN_SETTINGS;
           if (settings.integrations?.line?.channelAccessToken) lineConnected++;
           const sub = settings.subscription;
           if (sub && (sub.status === "active" || sub.status === "trialing")) {
@@ -236,7 +236,7 @@ export function registerOwnerRoutes(app: Hono<{ Bindings: Record<string, unknown
       const tenantId = key.name.replace("settings:", "");
       try {
         const raw = await kv.get(key.name, "json") as any;
-        const merged = raw ? mergeSettings(raw) : DEFAULT_ADMIN_SETTINGS;
+        const merged = raw ? mergeSettings(DEFAULT_ADMIN_SETTINGS, raw) : DEFAULT_ADMIN_SETTINGS;
         // Preserve createdAt which mergeSettings does not include in its return type
         if (raw?.createdAt) (merged as any).createdAt = raw.createdAt;
         results.push({ tenantId, settings: merged });
