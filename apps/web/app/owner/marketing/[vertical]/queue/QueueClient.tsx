@@ -45,6 +45,7 @@ export default function QueueClient() {
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState<{ msg: string; type: "ok" | "err" } | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [postImageUrls, setPostImageUrls] = useState<Record<string, string>>({});
 
   const showToast = (msg: string, type: "ok" | "err" = "ok") => {
     setToast({ msg, type });
@@ -79,8 +80,11 @@ export default function QueueClient() {
   };
 
   const handlePost = async (id: string) => {
-    const imageUrl = prompt("投稿する画像のURLを入力してください（R2公開URL）:");
-    if (!imageUrl) return;
+    const imageUrl = postImageUrls[id]?.trim();
+    if (!imageUrl) {
+      showToast("画像URLを入力してください（Instagram投稿には画像が必須です）", "err");
+      return;
+    }
     try {
       const res = await fetch(`/api/proxy/owner/marketing/post/${vertical}`, {
         method: "POST",
@@ -93,7 +97,8 @@ export default function QueueClient() {
         showToast("投稿しました!");
         fetchQueue();
       } else {
-        showToast(data.error || "投稿に失敗しました", "err");
+        const msg = data.detail ? `${data.error}: ${data.detail}` : (data.error || "投稿に失敗しました");
+        showToast(msg, "err");
       }
     } catch { showToast("投稿に失敗しました", "err"); }
   };
@@ -201,6 +206,17 @@ export default function QueueClient() {
                               {h.startsWith("#") ? h : `#${h}`}
                             </span>
                           ))}
+                        </div>
+                      )}
+                      {expandedId === item.id && (
+                        <div className="mt-2">
+                          <input
+                            type="url"
+                            value={postImageUrls[item.id] ?? ""}
+                            onChange={(e) => setPostImageUrls((prev) => ({ ...prev, [item.id]: e.target.value }))}
+                            placeholder="画像URL（即時投稿に必須）"
+                            className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-xs"
+                          />
                         </div>
                       )}
                     </div>

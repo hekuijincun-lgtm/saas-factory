@@ -127,7 +127,8 @@ export default function GenerateClient() {
       if (data.ok) {
         showToast("投稿しました!");
       } else {
-        showToast(data.error || "投稿に失敗しました", "err");
+        const msg = data.detail ? `${data.error}: ${data.detail}` : (data.error || "投稿に失敗しました");
+        showToast(msg, "err");
       }
     } catch {
       showToast("投稿に失敗しました", "err");

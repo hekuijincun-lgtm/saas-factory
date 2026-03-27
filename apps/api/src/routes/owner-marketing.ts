@@ -407,6 +407,8 @@ export function registerOwnerMarketingRoutes(app: Hono<{ Bindings: Record<string
     }
 
     try {
+      console.log(`[IG_POST] vertical=${vertical} igUserId=${account.igUserId} imageUrl=${imageUrl}`);
+
       // Step 1: Create media container
       const containerRes = await fetch(
         `https://graph.facebook.com/v19.0/${account.igUserId}/media`,
@@ -420,12 +422,19 @@ export function registerOwnerMarketingRoutes(app: Hono<{ Bindings: Record<string
           }),
         },
       );
+      const containerData = (await containerRes.json().catch(() => ({}))) as any;
+      console.log(`[IG_POST] container status=${containerRes.status} body=${JSON.stringify(containerData).slice(0, 500)}`);
       if (!containerRes.ok) {
-        const err = await containerRes.json().catch(() => ({})) as any;
-        return c.json({ ok: false, error: "Meta API: media container creation failed", detail: err?.error?.message }, 502);
+        return c.json({
+          ok: false,
+          error: `Meta API: media container creation failed (${containerRes.status})`,
+          detail: containerData?.error?.message || JSON.stringify(containerData).slice(0, 300),
+        }, 502);
       }
-      const container = (await containerRes.json()) as any;
-      const creationId = container.id;
+      const creationId = containerData.id;
+      if (!creationId) {
+        return c.json({ ok: false, error: "Meta API: no creation_id returned", detail: JSON.stringify(containerData).slice(0, 300) }, 502);
+      }
 
       // Step 2: Publish
       const publishRes = await fetch(
@@ -439,12 +448,16 @@ export function registerOwnerMarketingRoutes(app: Hono<{ Bindings: Record<string
           }),
         },
       );
+      const publishData = (await publishRes.json().catch(() => ({}))) as any;
+      console.log(`[IG_POST] publish status=${publishRes.status} body=${JSON.stringify(publishData).slice(0, 500)}`);
       if (!publishRes.ok) {
-        const err = await publishRes.json().catch(() => ({})) as any;
-        return c.json({ ok: false, error: "Meta API: publish failed", detail: err?.error?.message }, 502);
+        return c.json({
+          ok: false,
+          error: `Meta API: publish failed (${publishRes.status})`,
+          detail: publishData?.error?.message || JSON.stringify(publishData).slice(0, 300),
+        }, 502);
       }
-      const published = (await publishRes.json()) as any;
-      const igMediaId = published.id;
+      const igMediaId = publishData.id;
 
       // Update queue item status if applicable
       if (queueItemId) {
