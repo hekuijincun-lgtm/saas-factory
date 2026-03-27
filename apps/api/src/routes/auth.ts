@@ -8,12 +8,24 @@
  *         /admin/members/password
  */
 import type { Hono } from "hono";
-import Stripe from "stripe";
 import { getTenantId, checkTenantMismatch, requireRole, sha256Hex } from '../helpers';
 import { mergeSettings, DEFAULT_ADMIN_SETTINGS } from '../settings';
 import type { PlanId, SubscriptionInfo } from '../settings';
 import { TRIAL_DURATION_DAYS } from '../plan-limits';
 import { getVerticalTemplate } from '../vertical-templates';
+
+const PAYJP_API = 'https://api.pay.jp/v1';
+
+async function payjpFetch(env: any, path: string): Promise<any> {
+  const key: string = env.PAYJP_SECRET_KEY ?? '';
+  if (!key) throw new Error('payjp_not_configured');
+  const res = await fetch(`${PAYJP_API}${path}`, {
+    headers: { 'Authorization': 'Basic ' + btoa(key + ':') },
+  });
+  const json = await res.json();
+  if (!res.ok) throw new Error((json as any)?.error?.message ?? `PAY.JP error ${res.status}`);
+  return json;
+}
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -94,11 +106,6 @@ async function ensureEmailAuthTable(db: D1Database): Promise<void> {
   ).run();
 }
 
-function getStripe(env: any): Stripe | null {
-  const key: string = env.STRIPE_SECRET_KEY ?? '';
-  if (!key) return null;
-  return new Stripe(key, { httpClient: Stripe.createFetchHttpClient() });
-}
 
 // ── Route registration ───────────────────────────────────────────────────────
 
@@ -325,6 +332,17 @@ export function registerAuthRoutes(app: any) {
       return c.json({ ok: false, error: 'missing_password' }, 400);
     }
 
+    // ── Login attempt rate limiting (10 failures / 15 min → account lock) ──
+    const LOGIN_FAIL_MAX = 10;
+    const LOGIN_FAIL_TTL = 900; // 15 minutes
+    const failKey = `login:fail:${rawEmail}`;
+    const failCountRaw = await kv.get(failKey);
+    const failCount = failCountRaw ? parseInt(failCountRaw, 10) : 0;
+    if (failCount >= LOGIN_FAIL_MAX) {
+      return c.json({ ok: false, error: 'account_locked',
+        message: 'アカウントがロックされました。15分後に再試行してください。' }, 429);
+    }
+
     const identityKey = `email:${rawEmail}`;
 
     // Resolve tenantId: client-provided or reverse lookup
@@ -347,6 +365,7 @@ export function registerAuthRoutes(app: any) {
     const store: AdminMembersStore = JSON.parse(raw);
     const member = store.members.find((m: AdminMember) => m.lineUserId === identityKey && m.enabled);
     if (!member) {
+      await kv.put(failKey, String(failCount + 1), { expirationTtl: LOGIN_FAIL_TTL });
       return c.json({ ok: false, error: 'invalid_credentials' }, 401);
     }
 
@@ -358,8 +377,12 @@ export function registerAuthRoutes(app: any) {
 
     const valid = await verifyPassword(password, member.passwordHash);
     if (!valid) {
+      await kv.put(failKey, String(failCount + 1), { expirationTtl: LOGIN_FAIL_TTL });
       return c.json({ ok: false, error: 'invalid_credentials' }, 401);
     }
+
+    // Login success — reset failure counter
+    await kv.delete(failKey);
 
     // Check onboarding state
     let onboardingCompleted: boolean | undefined;
@@ -472,37 +495,35 @@ export function registerAuthRoutes(app: any) {
       tenantId = baseSlug + '-' + crypto.randomUUID().slice(0, 4);
       safeReturnTo = `/admin/onboarding?tenantId=${encodeURIComponent(tenantId)}`;
 
-      // Stripe session verification (if provided from Checkout flow)
-      const stripeSessionId: string = String(body.stripeSessionId ?? '').trim();
-      let stripeInfo: { sessionId: string; planId: string; customerId: string; subscriptionId: string } | undefined;
-      if (stripeSessionId) {
-        // Prevent session reuse: one Checkout Session → one tenant
-        const usedKey = `stripe:session:used:${stripeSessionId}`;
+      // PAY.JP subscription verification (if provided from subscribe flow)
+      const payjpSubscriptionId: string = String(body.payjpSubscriptionId ?? '').trim();
+      let payjpInfo: { planId: string; customerId: string; subscriptionId: string } | undefined;
+      if (payjpSubscriptionId) {
+        // Prevent subscription reuse: one subscription → one tenant
+        const usedKey = `payjp:subscription:used:${payjpSubscriptionId}`;
         const alreadyUsed = await kv.get(usedKey);
         if (alreadyUsed) {
-          return c.json({ ok: false, error: 'stripe_session_already_used' }, 409);
+          return c.json({ ok: false, error: 'payjp_subscription_already_used' }, 409);
         }
-        const stripe = getStripe(env);
-        if (stripe) {
+        if (env.PAYJP_SECRET_KEY) {
           try {
-            const session = await stripe.checkout.sessions.retrieve(stripeSessionId);
-            if (session.payment_status === 'paid') {
-              stripeInfo = {
-                sessionId: stripeSessionId,
-                planId: (session.metadata?.planId ?? 'starter'),
-                customerId: String(session.customer ?? ''),
-                subscriptionId: String(session.subscription ?? ''),
+            const sub = await payjpFetch(env, `/subscriptions/${payjpSubscriptionId}`);
+            if (sub.status === 'active' || sub.status === 'trial') {
+              payjpInfo = {
+                planId: (sub.metadata?.planId ?? 'starter'),
+                customerId: String(sub.customer ?? ''),
+                subscriptionId: payjpSubscriptionId,
               };
-              // Mark session as used (30 days TTL — Stripe sessions expire in 24h anyway)
+              // Mark subscription as used (30 days TTL)
               await kv.put(usedKey, tenantId, { expirationTtl: 2592000 });
             }
-          } catch { /* invalid session — continue without stripe info */ }
+          } catch { /* invalid subscription — continue without payjp info */ }
         }
       }
 
-      // Fallback planId from URL ?plan= (when Stripe is not configured)
+      // Fallback planId from URL ?plan= (when PAY.JP is not configured)
       const VALID_PLAN_IDS = new Set(['starter', 'pro', 'enterprise']);
-      const fallbackPlanId: string | undefined = (!stripeInfo && typeof body.planId === 'string' && VALID_PLAN_IDS.has(body.planId))
+      const fallbackPlanId: string | undefined = (!payjpInfo && typeof body.planId === 'string' && VALID_PLAN_IDS.has(body.planId))
         ? body.planId : undefined;
 
       // Phase 1a: persist vertical selection from signup form
@@ -510,12 +531,12 @@ export function registerAuthRoutes(app: any) {
       const signupVertical: string | undefined = (typeof body.vertical === 'string' && VALID_VERTICALS.has(body.vertical))
         ? body.vertical : undefined;
 
-      // Trial flag: body.trial = true → 14-day free Pro trial (no Stripe required)
-      const isTrial = (body.trial === true || body.trial === '1' || body.trial === 'true') && !stripeInfo;
+      // Trial flag: body.trial = true → 14-day free Pro trial (no PAY.JP required)
+      const isTrial = (body.trial === true || body.trial === '1' || body.trial === 'true') && !payjpInfo;
 
       await kv.put(`signup:init:${tenantId}`, JSON.stringify({
         storeName, ownerEmail: rawEmail,
-        ...(stripeInfo ? { stripe: stripeInfo } : {}),
+        ...(payjpInfo ? { payjp: payjpInfo } : {}),
         ...(fallbackPlanId ? { planId: fallbackPlanId } : {}),
         ...(signupVertical ? { vertical: signupVertical } : {}),
         ...(isTrial ? { trial: true } : {}),
@@ -685,7 +706,7 @@ export function registerAuthRoutes(app: any) {
     // --- Signup provisioning (signup:init written by /start when signup=1) ---
     const signupInitRaw = await kv.get(`signup:init:${tenantId}`);
     if (signupInitRaw) {
-      const si: { storeName?: string; planId?: string; trial?: boolean; vertical?: string; stripe?: { sessionId?: string; planId: string; customerId: string; subscriptionId: string } } = JSON.parse(signupInitRaw);
+      const si: { storeName?: string; planId?: string; trial?: boolean; vertical?: string; payjp?: { planId: string; customerId: string; subscriptionId: string } } = JSON.parse(signupInitRaw);
       const storedName = si.storeName || email;
       const ownerStore: AdminMembersStore = {
         version: 1,
@@ -722,16 +743,15 @@ export function registerAuthRoutes(app: any) {
           await kv.put(`admin:members:${tenantId}`, JSON.stringify(existing));
         }
       }
-      // Determine subscription seed: Stripe > trial > fallback planId
-      const resolvedPlanId: PlanId | undefined = si.stripe
-        ? (si.stripe.planId as PlanId)
+      // Determine subscription seed: PAY.JP > trial > fallback planId
+      const resolvedPlanId: PlanId | undefined = si.payjp
+        ? (si.payjp.planId as PlanId)
         : (si.planId as PlanId | undefined);
-      const subscriptionSeed: Partial<SubscriptionInfo> | undefined = si.stripe
+      const subscriptionSeed: Partial<SubscriptionInfo> | undefined = si.payjp
         ? {
-            planId: si.stripe.planId as PlanId,
-            stripeCustomerId: si.stripe.customerId || undefined,
-            stripeSubscriptionId: si.stripe.subscriptionId || undefined,
-            stripeSessionId: si.stripe.sessionId || undefined,
+            planId: si.payjp.planId as PlanId,
+            payjpCustomerId: si.payjp.customerId || undefined,
+            payjpSubscriptionId: si.payjp.subscriptionId || undefined,
             status: 'active' as const,
             createdAt: Date.now(),
           }
@@ -754,12 +774,13 @@ export function registerAuthRoutes(app: any) {
         tenant: { name: storedName, email },
         onboarding: { onboardingCompleted: false },
         subscription: subscriptionSeed as SubscriptionInfo,
+        createdAt: new Date().toISOString(),
         ...(seedVertical ? { vertical: seedVertical } : {}),
       });
       await kv.put('settings:' + tenantId, JSON.stringify(seedSettings));
-      // Write reverse index: stripeCustomerId → tenantId
-      if (si.stripe?.customerId) {
-        await kv.put(`stripe:customer:${si.stripe.customerId}`, tenantId);
+      // Write reverse index: payjpCustomerId → tenantId
+      if (si.payjp?.customerId) {
+        await kv.put(`payjp:customer:${si.payjp.customerId}`, tenantId);
       }
       // admin:settings: key for tenant listing/lookup (simple format)
       const existingAdminSettings = await kv.get('admin:settings:' + tenantId);

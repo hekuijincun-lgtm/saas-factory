@@ -272,11 +272,17 @@ export function registerOwnerRoutes(app: Hono<{ Bindings: Record<string, unknown
       }
 
       const tenants: any[] = [];
-      for (const { tenantId, settings } of allSettings) {
+      for (let i = 0; i < allSettings.length; i++) {
+        const { tenantId, settings } = allSettings[i];
         const sub = settings.subscription;
         const vertical = settings.vertical || "generic";
         // Build display name: storeName > tenant.name > tenantId
         const displayName = settings.storeName || settings.tenant?.name || tenantId;
+        // Resolve createdAt from multiple sources
+        const rawCreatedAt = sub?.createdAt || settings.createdAt || settings.tenant?.createdAt || null;
+        const createdAtIso = rawCreatedAt
+          ? (typeof rawCreatedAt === "number" ? new Date(rawCreatedAt).toISOString() : String(rawCreatedAt))
+          : "";
         tenants.push({
           tenantId,
           storeName: displayName,
@@ -290,16 +296,22 @@ export function registerOwnerRoutes(app: Hono<{ Bindings: Record<string, unknown
           monthlyAmount: sub ? (PLAN_PRICES[sub.planId] ?? 0) : 0,
           ownerName: settings.tenant?.name || "",
           ownerEmail: settings.tenant?.email || "",
-          createdAt: sub?.createdAt ? new Date(sub.createdAt).toISOString() : "",
+          createdAt: createdAtIso,
+          _kvOrder: i, // preserve KV list order as fallback
         });
       }
 
-      // Sort by createdAt descending (newest first); null/empty at end
+      // Sort: tenants with createdAt by newest first; without createdAt at end (KV order)
       tenants.sort((a: any, b: any) => {
         const aTime = a.createdAt ? new Date(a.createdAt).getTime() : 0;
         const bTime = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        if (!aTime && !bTime) return a._kvOrder - b._kvOrder;
+        if (!aTime) return 1;
+        if (!bTime) return -1;
         return bTime - aTime;
       });
+      // Remove internal field
+      for (const t of tenants) delete t._kvOrder;
 
       return c.json({ ok: true, tenants });
     } catch (e: any) {
