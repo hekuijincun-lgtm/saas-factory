@@ -220,6 +220,72 @@ export function registerOwnerMarketingRoutes(app: Hono<{ Bindings: Record<string
     return c.json({ ok: true });
   });
 
+  // ── DALL-E image generation ─────────────────────────────────────
+
+  app.post("/owner/marketing/generate-image", async (c) => {
+    const env = c.env as any;
+    const openaiKey: string | undefined = env.OPENAI_API_KEY;
+    if (!openaiKey) return c.json({ ok: false, error: "OPENAI_API_KEY not configured" }, 503);
+
+    const r2 = env.MENU_IMAGES;
+    if (!r2) return c.json({ ok: false, error: "R2 not configured" }, 503);
+
+    const body = await c.req.json<{ prompt: string; vertical: string }>();
+    if (!body.prompt?.trim()) {
+      return c.json({ ok: false, error: "prompt is required" }, 400);
+    }
+
+    try {
+      // Call DALL-E 3
+      const dalleRes = await fetch("https://api.openai.com/v1/images/generations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${openaiKey}` },
+        body: JSON.stringify({
+          model: "dall-e-3",
+          prompt: body.prompt,
+          n: 1,
+          size: "1024x1024",
+          quality: "standard",
+          response_format: "b64_json",
+        }),
+      });
+
+      if (!dalleRes.ok) {
+        const errText = await dalleRes.text().catch(() => "");
+        return c.json({ ok: false, error: "dalle_error", status: dalleRes.status, detail: errText }, 502);
+      }
+
+      const dalleData = (await dalleRes.json()) as any;
+      const b64 = dalleData?.data?.[0]?.b64_json;
+      if (!b64) return c.json({ ok: false, error: "no_image_data" }, 502);
+
+      // Decode base64 to binary
+      const binaryStr = atob(b64);
+      const bytes = new Uint8Array(binaryStr.length);
+      for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
+
+      // Store in R2
+      const vertical = body.vertical || "generic";
+      const rand = Math.random().toString(36).slice(2, 9);
+      const r2Key = `marketing/${vertical}/${Date.now()}-${rand}.png`;
+      await r2.put(r2Key, bytes.buffer, { httpMetadata: { contentType: "image/png" } });
+
+      // Build public URL via /media/menu/ route (serves R2 objects)
+      const reqUrl = new URL(c.req.url);
+      const apiBase = `${reqUrl.protocol}//${reqUrl.host}`;
+      const imageUrl = `${apiBase}/media/menu/${r2Key}`;
+
+      return c.json({
+        ok: true,
+        imageUrl,
+        r2Key,
+        revisedPrompt: dalleData?.data?.[0]?.revised_prompt,
+      });
+    } catch (e: any) {
+      return c.json({ ok: false, error: `Image generation failed: ${e?.message}` }, 500);
+    }
+  });
+
   // ── Content generation (AI) ─────────────────────────────────────
 
   app.post("/owner/marketing/generate", async (c) => {

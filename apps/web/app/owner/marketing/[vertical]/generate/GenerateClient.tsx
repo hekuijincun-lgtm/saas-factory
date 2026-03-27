@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, Sparkles, Loader2, Plus, Send } from "lucide-react";
+import { ArrowLeft, Sparkles, Loader2, Plus, Send, Wand2 } from "lucide-react";
 
 const VERTICAL_LABELS: Record<string, string> = {
   eyebrow: "眉毛サロン", nail: "ネイルサロン", hair: "美容室", dental: "歯科医院",
@@ -40,6 +40,8 @@ export default function GenerateClient() {
   const [toast, setToast] = useState<{ msg: string; type: "ok" | "err" } | null>(null);
   const [scheduledAt, setScheduledAt] = useState("");
   const [queueing, setQueueing] = useState(false);
+  const [imageUrls, setImageUrls] = useState<Record<number, string>>({});
+  const [generatingImage, setGeneratingImage] = useState<Record<number, boolean>>({});
 
   const showToast = (msg: string, type: "ok" | "err" = "ok") => {
     setToast({ msg, type });
@@ -70,7 +72,7 @@ export default function GenerateClient() {
     }
   };
 
-  const handleAddToQueue = async (content: GeneratedContent) => {
+  const handleAddToQueue = async (content: GeneratedContent, idx: number) => {
     if (!scheduledAt) {
       showToast("投稿日時を指定してください", "err");
       return;
@@ -85,6 +87,7 @@ export default function GenerateClient() {
           caption: content.caption,
           hashtags: content.hashtags,
           imagePrompt: content.imagePrompt,
+          imageUrl: imageUrls[idx] || undefined,
           variantGroup,
           variant: content.variant,
           scheduledAt: new Date(scheduledAt).toISOString(),
@@ -103,9 +106,12 @@ export default function GenerateClient() {
     }
   };
 
-  const handleImmediatePost = async (content: GeneratedContent) => {
-    const imageUrl = prompt("投稿する画像のURLを入力してください（R2公開URL）:");
-    if (!imageUrl) return;
+  const handleImmediatePost = async (content: GeneratedContent, idx: number) => {
+    const imageUrl = imageUrls[idx]?.trim();
+    if (!imageUrl) {
+      showToast("画像URLを入力してください（Instagram投稿には画像が必須です）", "err");
+      return;
+    }
     try {
       const res = await fetch(`/api/proxy/owner/marketing/post/${vertical}`, {
         method: "POST",
@@ -125,6 +131,33 @@ export default function GenerateClient() {
       }
     } catch {
       showToast("投稿に失敗しました", "err");
+    }
+  };
+
+  const handleGenerateImage = async (imagePrompt: string, idx: number) => {
+    if (!imagePrompt?.trim()) {
+      showToast("画像プロンプトがありません", "err");
+      return;
+    }
+    setGeneratingImage((prev) => ({ ...prev, [idx]: true }));
+    try {
+      const res = await fetch("/api/proxy/owner/marketing/generate-image", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: imagePrompt, vertical }),
+      });
+      const data = (await res.json()) as any;
+      if (data?.ok && data.imageUrl) {
+        setImageUrls((prev) => ({ ...prev, [idx]: data.imageUrl }));
+        showToast("画像を生成しました");
+      } else {
+        showToast(data?.error || "画像生成に失敗しました", "err");
+      }
+    } catch {
+      showToast("画像生成に失敗しました", "err");
+    } finally {
+      setGeneratingImage((prev) => ({ ...prev, [idx]: false }));
     }
   };
 
@@ -265,10 +298,52 @@ export default function GenerateClient() {
                   <div className="p-2 bg-gray-50 rounded text-xs text-gray-600 italic">{r.imagePrompt}</div>
                 </div>
 
+                {/* Image URL Input */}
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">画像URL（即時投稿に必須）</label>
+                  <div className="flex gap-2">
+                    <input
+                      type="url"
+                      value={imageUrls[i] ?? ""}
+                      onChange={(e) => setImageUrls((prev) => ({ ...prev, [i]: e.target.value }))}
+                      placeholder="https://example.com/image.jpg"
+                      className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                    />
+                    <button
+                      onClick={() => handleGenerateImage(r.imagePrompt, i)}
+                      disabled={!!generatingImage[i]}
+                      className="inline-flex items-center gap-1.5 px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50 whitespace-nowrap"
+                    >
+                      {generatingImage[i] ? (
+                        <>
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          生成中...
+                        </>
+                      ) : (
+                        <>
+                          <Wand2 className="w-3.5 h-3.5" />
+                          AI生成
+                        </>
+                      )}
+                    </button>
+                  </div>
+                  <p className="text-xs text-gray-400 mt-1">R2公開URLまたは外部画像URL。キュー追加時は任意。</p>
+                  {imageUrls[i] && (
+                    <div className="mt-2">
+                      <img
+                        src={imageUrls[i]}
+                        alt="プレビュー"
+                        className="w-40 h-40 object-cover rounded-lg border border-gray-200"
+                        onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                      />
+                    </div>
+                  )}
+                </div>
+
                 {/* Actions */}
                 <div className="flex gap-2 pt-2">
                   <button
-                    onClick={() => handleAddToQueue(r)}
+                    onClick={() => handleAddToQueue(r, i)}
                     disabled={queueing}
                     className="inline-flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50"
                   >
@@ -276,7 +351,7 @@ export default function GenerateClient() {
                     キューに追加
                   </button>
                   <button
-                    onClick={() => handleImmediatePost(r)}
+                    onClick={() => handleImmediatePost(r, i)}
                     className="inline-flex items-center gap-1.5 px-4 py-2 bg-green-600 hover:bg-green-700 text-white text-sm font-medium rounded-lg transition-colors"
                   >
                     <Send className="w-3.5 h-3.5" />
