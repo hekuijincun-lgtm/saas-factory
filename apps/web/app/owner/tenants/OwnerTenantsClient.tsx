@@ -11,6 +11,7 @@ import {
   ShoppingBag,
   Hammer,
   X,
+  ArrowUpDown,
 } from "lucide-react";
 
 // ── Types ──────────────────────────────────────────────────────────────
@@ -98,6 +99,7 @@ export default function OwnerTenantsClient() {
   const [coreFilter, setCoreFilter] = useState<CoreFilter>("all");
   const [verticalFilter, setVerticalFilter] = useState<string>("all");
   const [toast, setToast] = useState("");
+  const [sortAsc, setSortAsc] = useState(false); // false = newest first (default from API)
 
   const showToast = useCallback((msg: string) => {
     setToast(msg);
@@ -145,8 +147,16 @@ export default function OwnerTenantsClient() {
           t.ownerEmail.toLowerCase().includes(q)
       );
     }
+    // Sort by createdAt (API returns newest-first; flip if ascending requested)
+    if (sortAsc) {
+      list = [...list].sort((a, b) => {
+        const aT = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const bT = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        return aT - bT;
+      });
+    }
     return list;
-  }, [tenants, coreFilter, verticalFilter, search]);
+  }, [tenants, coreFilter, verticalFilter, search, sortAsc]);
 
   // Available verticals for current core filter
   const availableVerticals = useMemo(() => {
@@ -266,7 +276,11 @@ export default function OwnerTenantsClient() {
       </div>
 
       {/* Results count */}
-      <p className="text-xs text-gray-500">{filtered.length} 件表示</p>
+      <p className="text-xs text-gray-500">
+        {filtered.length === tenants.length
+          ? `${tenants.length}件`
+          : `${tenants.length}件中 ${filtered.length}件表示`}
+      </p>
 
       {/* Tenant Table */}
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
@@ -278,7 +292,16 @@ export default function OwnerTenantsClient() {
                 <th className="px-4 py-3 text-left font-medium text-gray-600">テナント名</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-600">プラン</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-600">ステータス</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-600">登録日</th>
+                <th className="px-4 py-3 text-left font-medium text-gray-600">
+                  <button
+                    onClick={() => setSortAsc((v) => !v)}
+                    className="inline-flex items-center gap-1 hover:text-amber-600 transition-colors"
+                  >
+                    登録日
+                    <ArrowUpDown className="w-3 h-3" />
+                    <span className="text-[10px] text-gray-400 font-normal">{sortAsc ? "古い順" : "新しい順"}</span>
+                  </button>
+                </th>
                 <th className="px-4 py-3 text-right font-medium text-gray-600">操作</th>
               </tr>
             </thead>
@@ -286,7 +309,9 @@ export default function OwnerTenantsClient() {
               {filtered.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="px-4 py-10 text-center text-gray-400">
-                    テナントが見つかりません
+                    {search.trim()
+                      ? `「${search}」に該当するテナントが見つかりません`
+                      : "テナントが見つかりません"}
                   </td>
                 </tr>
               ) : (

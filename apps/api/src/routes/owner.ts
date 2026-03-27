@@ -294,6 +294,13 @@ export function registerOwnerRoutes(app: Hono<{ Bindings: Record<string, unknown
         });
       }
 
+      // Sort by createdAt descending (newest first); null/empty at end
+      tenants.sort((a: any, b: any) => {
+        const aTime = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const bTime = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        return bTime - aTime;
+      });
+
       return c.json({ ok: true, tenants });
     } catch (e: any) {
       console.error("[owner/tenants]", String(e?.message ?? e));
