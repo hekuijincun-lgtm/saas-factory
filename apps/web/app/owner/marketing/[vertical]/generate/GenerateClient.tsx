@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, Sparkles, Loader2, Plus, Send, Wand2 } from "lucide-react";
@@ -42,6 +42,17 @@ export default function GenerateClient() {
   const [queueing, setQueueing] = useState(false);
   const [imageUrls, setImageUrls] = useState<Record<number, string>>({});
   const [generatingImage, setGeneratingImage] = useState<Record<number, boolean>>({});
+  const [hasIgAccount, setHasIgAccount] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    fetch("/api/proxy/owner/marketing/accounts", { credentials: "same-origin", cache: "no-store" })
+      .then((r) => r.json())
+      .then((d: any) => {
+        const accs: any[] = d.accounts ?? [];
+        setHasIgAccount(accs.some((a: any) => a.vertical === vertical));
+      })
+      .catch(() => setHasIgAccount(false));
+  }, [vertical]);
 
   const showToast = (msg: string, type: "ok" | "err" = "ok") => {
     setToast({ msg, type });
@@ -167,6 +178,16 @@ export default function GenerateClient() {
       {toast && (
         <div className={`fixed top-4 right-4 z-50 px-4 py-3 rounded-lg shadow-lg text-sm font-medium ${toast.type === "ok" ? "bg-green-600 text-white" : "bg-red-600 text-white"}`}>
           {toast.msg}
+        </div>
+      )}
+
+      {hasIgAccount === false && (
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+          <p className="text-sm text-amber-800">
+            <strong>{label}</strong> のInstagramアカウントが未登録です。即時投稿するには先に
+            <Link href="/owner/marketing/accounts" className="text-amber-700 underline ml-1">アカウント管理</Link>
+            で登録してください。（コンテンツ生成・キュー追加は可能です）
+          </p>
         </div>
       )}
 
