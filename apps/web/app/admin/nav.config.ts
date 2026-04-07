@@ -22,12 +22,16 @@ export const adminNavItems: NavItem[] = [
   // ── ペットサロン専用 ──
   { label: "ダッシュボード", href: "/admin/pet",           verticals: ["pet"] },
   { label: "予約管理",       href: "/admin/pet/reservations", verticals: ["pet"] },
+  { label: "飼い主管理",     href: "/admin/pet/customers",  verticals: ["pet"] },
   { label: "ペットカルテ",   href: "/admin/pet/profiles",  verticals: ["pet"] },
   { label: "ワクチン管理",   href: "/admin/pet/vaccines",  verticals: ["pet"] },
   { label: "スタッフ管理",   href: "/admin/pet/staff",     verticals: ["pet"] },
   { label: "メニュー管理",   href: "/admin/pet/pricing",   verticals: ["pet"] },
   { label: "クーポン管理",   href: "/admin/pet/coupons",   verticals: ["pet"] },
   { label: "画像管理",       href: "/admin/pet/images",    verticals: ["pet"] },
+  { label: "見積管理",       href: "/admin/pet/estimates",  verticals: ["pet"] },
+  { label: "カルテ",         href: "/admin/pet/karte",     verticals: ["pet"] },
+  { label: "リッチメニュー", href: "/admin/pet/rich-menu", verticals: ["pet"] },
   { label: "AI応答設定",     href: "/admin/pet/ai-config", verticals: ["pet"] },
   { label: "管理者設定",     href: "/admin/pet/settings",  verticals: ["pet"] },
   // ── サブスクリプション系（gym / school）──
@@ -53,6 +57,8 @@ export const adminNavItems: NavItem[] = [
   // ワクチン記録（共有ページ）は pet では非表示 — pet は /admin/pet/vaccines を使用
   { label: "施術部位マップ", href: "/admin/treatment-body-map", verticals: ["dental", "esthetic", "seitai"] },
   { label: "機器チェック",   href: "/admin/equipment-check", verticals: ["cleaning", "handyman", "gym"] },
+  // ── マーケティング ──
+  { label: "マーケティング", href: "/admin/marketing", verticals: ["pet", "nail", "hair", "esthetic", "eyebrow", "dental", "cleaning", "handyman", "seitai"] },
   // ── 共通 ──
   { label: "サポート",       href: "/admin/support" },
   { label: "管理者設定",     href: "/admin/settings",      hideFor: ["pet", "gym", "school", "shop", "food", "handmade", "construction", "reform", "equipment"] },

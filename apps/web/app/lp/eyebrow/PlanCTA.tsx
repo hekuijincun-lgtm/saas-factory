@@ -17,31 +17,9 @@ export function PlanCTA({ planId, label, highlighted = false }: PlanCTAProps) {
     setLoading(true);
     setError('');
 
-    try {
-      const res = await fetch('/api/proxy/billing/checkout', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ planId }),
-      });
-
-      const data = await res.json() as { ok: boolean; url?: string; error?: string };
-
-      if (data.ok && data.url) {
-        window.location.href = data.url;
-        return;
-      }
-
-      // Stripe unavailable (not configured, price missing, or account issue) — fallback to signup
-      if (!res.ok || !data.ok) {
-        window.location.href = `/signup?plan=${encodeURIComponent(planId)}`;
-        return;
-      }
-    } catch {
-      // Network error — fallback to signup with plan preserved
-      window.location.href = `/signup?plan=${encodeURIComponent(planId)}`;
-    } finally {
-      setLoading(false);
-    }
+    // PAY.JP flow: redirect to signup page with plan pre-selected.
+    // Card input is handled on the signup page via payjp.js.
+    window.location.href = `/signup?plan=${encodeURIComponent(planId)}`;
   }
 
   return (

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { CheckCircle2 } from "lucide-react";
 import { getVerticalTheme } from "@/src/lib/verticalTheme";
@@ -8,6 +8,7 @@ import { getVerticalTheme } from "@/src/lib/verticalTheme";
 interface PlanVerification {
   status: "idle" | "verifying" | "verified" | "error";
   planId?: string;
+  subscriptionId?: string;
   error?: string;
 }
 
@@ -58,6 +59,9 @@ const VERTICAL_DESCRIPTIONS: Record<string, string> = {
   handmade: '作品管理・オーダー対応・ファン育成をLINEで自動化',
 };
 
+// PAY.JP public key from env
+const PAYJP_PUBLIC_KEY = process.env.NEXT_PUBLIC_PAYJP_PUBLIC_KEY ?? '';
+
 interface SignupFormProps {
   /** Pre-selected vertical from URL path (e.g. /signup/nail) */
   initialVertical?: string;
@@ -67,6 +71,8 @@ export default function SignupForm({ initialVertical }: SignupFormProps) {
   const verticalLocked = !!initialVertical && initialVertical !== "generic";
   const vt = getVerticalTheme(initialVertical);
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [passwordConfirm, setPasswordConfirm] = useState("");
   const [storeName, setStoreName] = useState("");
   const [vertical, setVertical] = useState(initialVertical || "generic");
   const [status, setStatus] = useState<"idle" | "loading" | "sent" | "error">(
@@ -75,12 +81,19 @@ export default function SignupForm({ initialVertical }: SignupFormProps) {
   const [errorMsg, setErrorMsg] = useState("");
   const [debugLink, setDebugLink] = useState<string | null>(null);
 
-  // Stripe session verification
+  // PAY.JP card payment state
   const [plan, setPlan] = useState<PlanVerification>({ status: "idle" });
-  const [stripeSessionId, setStripeSessionId] = useState<string | null>(null);
   const [urlPlanId, setUrlPlanId] = useState<string | null>(null);
   const [isTrial, setIsTrial] = useState(false);
+  const [payjpSubscriptionId, setPayjpSubscriptionId] = useState<string | null>(null);
+  const [cardToken, setCardToken] = useState<string | null>(null);
+  const [cardError, setCardError] = useState<string | null>(null);
+  const [subscribing, setSubscribing] = useState(false);
+  const payjpRef = useRef<any>(null);
+  const cardElementRef = useRef<any>(null);
+  const cardMountRef = useRef<HTMLDivElement>(null);
 
+  // Load payjp.js and mount card element
   useEffect(() => {
     if (typeof window === "undefined") return;
     const params = new URLSearchParams(window.location.search);
@@ -101,38 +114,115 @@ export default function SignupForm({ initialVertical }: SignupFormProps) {
     if (params.get("trial") === "1") {
       setIsTrial(true);
     }
-
-    const sid = params.get("session_id");
-    if (!sid) return;
-
-    setStripeSessionId(sid);
-    setPlan({ status: "verifying" });
-
-    fetch("/api/proxy/billing/verify-session", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sessionId: sid }),
-    })
-      .then((r) => r.json() as Promise<Record<string, unknown>>)
-      .then((data) => {
-        if (data.ok && data.planId) {
-          setPlan({ status: "verified", planId: String(data.planId) });
-        } else {
-          setPlan({
-            status: "error",
-            error: String(data.error ?? "決済が確認できません"),
-          });
-        }
-      })
-      .catch(() => {
-        setPlan({ status: "error", error: "決済確認に失敗しました" });
-      });
   }, [verticalLocked]);
+
+  // Mount PAY.JP card element when plan is selected and not trial
+  useEffect(() => {
+    const needsCard = urlPlanId && !isTrial && PAYJP_PUBLIC_KEY;
+    if (!needsCard) return;
+
+    // Load payjp.js v2 script
+    if (!document.getElementById('payjp-script')) {
+      const script = document.createElement('script');
+      script.id = 'payjp-script';
+      script.src = 'https://js.pay.jp/v2/pay.js';
+      script.onload = () => initPayjp();
+      document.head.appendChild(script);
+    } else if ((window as any).Payjp) {
+      initPayjp();
+    }
+
+    function initPayjp() {
+      if (payjpRef.current) return;
+      const payjp = (window as any).Payjp(PAYJP_PUBLIC_KEY);
+      payjpRef.current = payjp;
+      const elements = payjp.elements();
+      const cardElement = elements.create('card', {
+        style: {
+          base: {
+            fontSize: '14px',
+            color: '#334155',
+          },
+          invalid: {
+            color: '#ef4444',
+          },
+        },
+      });
+      cardElementRef.current = cardElement;
+      if (cardMountRef.current) {
+        cardElement.mount(cardMountRef.current);
+      }
+    }
+
+    return () => {
+      if (cardElementRef.current) {
+        try { cardElementRef.current.unmount(); } catch {}
+        cardElementRef.current = null;
+      }
+      payjpRef.current = null;
+    };
+  }, [urlPlanId, isTrial]);
+
+  async function handleSubscribe(): Promise<string | null> {
+    if (!cardElementRef.current || !payjpRef.current || !urlPlanId) return null;
+
+    setSubscribing(true);
+    setCardError(null);
+
+    try {
+      // Create token with 3-D Secure authentication
+      const result = await payjpRef.current.createToken(cardElementRef.current, {
+        three_d_secure: true,
+        card: {
+          email: email.trim().toLowerCase(),
+        },
+      });
+      if (result.error) {
+        setCardError(result.error.message ?? 'カード情報が正しくありません');
+        return null;
+      }
+
+      const token = result.id;
+
+      // Call subscribe API
+      const res = await fetch('/api/proxy/billing/subscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token, planId: urlPlanId, email: email.trim().toLowerCase() }),
+      });
+      const data = await res.json() as any;
+      if (data.ok && data.subscriptionId) {
+        setPayjpSubscriptionId(data.subscriptionId);
+        setPlan({ status: 'verified', planId: data.planId, subscriptionId: data.subscriptionId });
+        return data.subscriptionId;
+      } else {
+        setCardError(data.detail ?? data.error ?? '決済に失敗しました');
+        return null;
+      }
+    } catch {
+      setCardError('決済処理中にエラーが発生しました');
+      return null;
+    } finally {
+      setSubscribing(false);
+    }
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     const emailTrimmed = email.trim().toLowerCase();
     if (!emailTrimmed) return;
+
+    // Password validation
+    if (password.length < 8) {
+      setErrorMsg("パスワードは8文字以上で入力してください。");
+      setStatus("error");
+      return;
+    }
+    if (password !== passwordConfirm) {
+      setErrorMsg("パスワードが一致しません。");
+      setStatus("error");
+      return;
+    }
 
     const isDebug =
       typeof window !== "undefined" &&
@@ -142,16 +232,28 @@ export default function SignupForm({ initialVertical }: SignupFormProps) {
     setErrorMsg("");
     setDebugLink(null);
 
+    // If plan requires payment and no subscription yet, subscribe first
+    let subId = payjpSubscriptionId;
+    if (urlPlanId && !isTrial && !subId && PAYJP_PUBLIC_KEY) {
+      subId = await handleSubscribe();
+      if (!subId) {
+        setStatus("error");
+        setErrorMsg(cardError ?? '決済に失敗しました');
+        return;
+      }
+    }
+
     const res = await fetch("/api/auth/email/start", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         email: emailTrimmed,
+        password,
         storeName: storeName.trim(),
         signup: true,
         ...(vertical !== "generic" ? { vertical } : {}),
-        ...(stripeSessionId ? { stripeSessionId } : {}),
-        ...(urlPlanId && !stripeSessionId ? { planId: urlPlanId } : {}),
+        ...(subId ? { payjpSubscriptionId: subId } : {}),
+        ...(urlPlanId && !subId ? { planId: urlPlanId } : {}),
         ...(isTrial ? { trial: true } : {}),
         ...(isDebug ? { debug: "1" } : {}),
       }),
@@ -171,8 +273,8 @@ export default function SignupForm({ initialVertical }: SignupFormProps) {
           ? "送信回数の上限です。1分後に再試行してください。"
           : err === "invalid_store_name"
           ? "ショップ名は2〜50文字で入力してください。"
-          : err === "stripe_session_already_used"
-          ? "この決済セッションは既に使用されています。LPから再度お申し込みください。"
+          : err === "payjp_subscription_already_used"
+          ? "このサブスクリプションは既に使用されています。LPから再度お申し込みください。"
           : `エラー: ${err || "不明なエラー"}`
       );
       setStatus("error");
@@ -234,6 +336,8 @@ export default function SignupForm({ initialVertical }: SignupFormProps) {
     );
   }
 
+  const showCardForm = urlPlanId && !isTrial && PAYJP_PUBLIC_KEY;
+
   return (
     <div className="min-h-screen bg-slate-50 flex items-center justify-center px-6">
       <div className="w-full max-w-md overflow-hidden rounded-3xl bg-white shadow-xl ring-1 ring-black/5">
@@ -248,12 +352,7 @@ export default function SignupForm({ initialVertical }: SignupFormProps) {
         </div>
 
         <div className="px-8 py-10">
-          {/* Plan verification badge */}
-          {plan.status === "verifying" && (
-            <div className="mb-5 rounded-xl bg-slate-50 border border-slate-200 px-4 py-3 text-sm text-slate-500 text-center">
-              決済を確認中...
-            </div>
-          )}
+          {/* Plan badge */}
           {plan.status === "verified" && plan.planId && (
             <div className="mb-5 rounded-xl bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-700 flex items-center gap-2 justify-center">
               <CheckCircle2 className="w-4 h-4 shrink-0" />
@@ -263,17 +362,12 @@ export default function SignupForm({ initialVertical }: SignupFormProps) {
               </span>
             </div>
           )}
-          {plan.status === "error" && (
-            <div className="mb-5 rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-700 text-center">
-              {plan.error}
-            </div>
-          )}
           {plan.status === "idle" && urlPlanId && !isTrial && (
             <div className="mb-5 rounded-xl bg-indigo-50 border border-indigo-200 px-4 py-3 text-sm text-indigo-700 text-center">
               <strong>{PLAN_LABELS[urlPlanId] ?? urlPlanId}</strong> プランで登録
             </div>
           )}
-          {isTrial && plan.status === "idle" && !stripeSessionId && (
+          {isTrial && plan.status === "idle" && !payjpSubscriptionId && (
             <div className="mb-5 rounded-xl bg-emerald-50 border border-emerald-200 px-4 py-4 text-center">
               <span className="inline-block bg-emerald-600 text-white text-xs font-bold px-3 py-1 rounded-full mb-2">
                 14日間無料トライアル
@@ -307,6 +401,37 @@ export default function SignupForm({ initialVertical }: SignupFormProps) {
                 required
                 autoFocus
                 autoComplete="email"
+                className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100 transition"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                パスワード
+              </label>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="8文字以上"
+                required
+                minLength={8}
+                autoComplete="new-password"
+                className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100 transition"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                パスワード（確認）
+              </label>
+              <input
+                type="password"
+                value={passwordConfirm}
+                onChange={(e) => setPasswordConfirm(e.target.value)}
+                placeholder="もう一度入力"
+                required
+                autoComplete="new-password"
                 className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100 transition"
               />
             </div>
@@ -353,6 +478,25 @@ export default function SignupForm({ initialVertical }: SignupFormProps) {
               </div>
             )}
 
+            {/* PAY.JP Card Element */}
+            {showCardForm && plan.status !== 'verified' && (
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                  カード情報
+                </label>
+                <div
+                  ref={cardMountRef}
+                  className="w-full rounded-xl border border-slate-200 px-4 py-3 min-h-[44px] bg-white"
+                />
+                {cardError && (
+                  <p className="mt-1.5 text-xs text-red-500">{cardError}</p>
+                )}
+                <p className="mt-1 text-xs text-slate-400">
+                  決済はPAY.JPにより安全に処理されます
+                </p>
+              </div>
+            )}
+
             {status === "error" && (
               <div className="rounded-xl bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-600">
                 {errorMsg}
@@ -361,10 +505,10 @@ export default function SignupForm({ initialVertical }: SignupFormProps) {
 
             <button
               type="submit"
-              disabled={status === "loading" || !email.trim()}
+              disabled={status === "loading" || subscribing || !email.trim() || password.length < 8 || password !== passwordConfirm}
               className={`block w-full rounded-full ${verticalLocked ? vt.primary : 'bg-indigo-600'} py-4 text-center text-base font-semibold text-white shadow-md transition ${verticalLocked ? vt.primaryHover : 'hover:bg-indigo-700'} active:opacity-80 disabled:opacity-50 disabled:cursor-not-allowed`}
             >
-              {status === "loading" ? "送信中..." : "ログインリンクを送信"}
+              {status === "loading" || subscribing ? "処理中..." : "ログインリンクを送信"}
             </button>
 
             <p className="text-center text-xs text-slate-400 pt-2">

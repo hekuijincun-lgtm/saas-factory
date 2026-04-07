@@ -96,6 +96,9 @@ export default function PetProfileDetailPage() {
   const [photoUploading, setPhotoUploading] = useState(false);
   const [groomingPhotoUploading, setGroomingPhotoUploading] = useState<'before' | 'after' | null>(null);
 
+  // Linked customer kartes from D1
+  const [linkedKartes, setLinkedKartes] = useState<any[]>([]);
+
   const showToast = useCallback((msg: string) => {
     setToast(msg);
     setTimeout(() => setToast(''), 3000);
@@ -197,6 +200,17 @@ export default function PetProfileDetailPage() {
       setSaving(false);
     }
   };
+
+  // Fetch linked customer kartes from D1
+  useEffect(() => {
+    if (status !== 'ready' || !petId || tab !== 'grooming') return;
+    fetch(`/api/proxy/admin/kartes?tenantId=${encodeURIComponent(tenantId)}&petProfileId=${encodeURIComponent(petId)}`, { cache: 'no-store' })
+      .then(r => r.json())
+      .then((json: any) => {
+        if (json.ok) setLinkedKartes(json.data ?? []);
+      })
+      .catch(() => {});
+  }, [tenantId, status, petId, tab]);
 
   // Add grooming record
   const handleAddGrooming = async () => {
@@ -786,6 +800,49 @@ export default function PetProfileDetailPage() {
                 ))}
               </div>
             )}
+
+            {/* Linked customer kartes from D1 */}
+            {linkedKartes.length > 0 && (
+              <div className="mt-6">
+                <h3 className="text-sm font-semibold text-gray-700 mb-3">顧客カルテ（リンク済み）</h3>
+                <div className="space-y-3">
+                  {linkedKartes.map((k: any) => (
+                    <Link
+                      key={k.id}
+                      href={`/admin/pet/karte?tenantId=${encodeURIComponent(tenantId)}`}
+                      className="block rounded-2xl border border-gray-200 bg-white p-4 shadow-sm hover:border-orange-300 transition-colors"
+                    >
+                      <div className="flex items-start justify-between">
+                        <div>
+                          <p className="text-sm font-medium text-gray-900">
+                            {k.customer_name || k.customer_id?.slice(0, 12)}
+                          </p>
+                          {k.cut_style && (
+                            <p className="text-xs text-gray-600 mt-1">カット: {k.cut_style}</p>
+                          )}
+                          {k.notes && (
+                            <p className="text-xs text-gray-500 mt-1 line-clamp-2">{k.notes}</p>
+                          )}
+                        </div>
+                        <span className="text-xs text-gray-400">
+                          {k.updated_at ? new Date(k.updated_at).toLocaleDateString('ja-JP') : ''}
+                        </span>
+                      </div>
+                    </Link>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Link to create new karte for this pet */}
+            <div className="mt-4">
+              <Link
+                href={`/admin/pet/karte?tenantId=${encodeURIComponent(tenantId)}`}
+                className="inline-flex items-center gap-1.5 text-sm text-orange-600 hover:text-orange-700 hover:underline"
+              >
+                カルテ管理画面を開く
+              </Link>
+            </div>
           </div>
         )}
 

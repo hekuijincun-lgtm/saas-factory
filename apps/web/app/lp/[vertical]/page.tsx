@@ -247,6 +247,12 @@ const LP: Record<string, VerticalLPConfig> = {
     badge: 'ペットサロン専用の予約自動化ツール',
     headline: 'ペットサロンの予約を\nLINEで簡単管理',
     subheadline: '犬種別メニュー管理・トリマー指名・仕上がり写真共有。\n飼い主さまの満足度を高めて、リピーターを増やします。',
+    heroImageUrl: 'https://saas-factory-api.hekuijincun.workers.dev/media/menu/lp-images/pet/hero-1774499575714.png',
+    stats: [
+      { num: '94%', label: '予約の無断キャンセル削減', icon: '📉' },
+      { num: '3h', label: '1日あたりの業務削減時間', icon: '⏱' },
+      { num: '2.3倍', label: 'リピート率向上', icon: '🔄' },
+    ],
     problems: [
       { icon: 'phone', title: '電話予約の対応で手が止まる', desc: 'トリミング中に電話が鳴っても出られない。折り返す頃には他店に予約済み' },
       { icon: 'calendar', title: '犬種ごとの所要時間管理が大変', desc: '小型犬と大型犬でかかる時間が全然違う。手書きの予約表では管理しきれない' },
@@ -255,12 +261,12 @@ const LP: Record<string, VerticalLPConfig> = {
       { icon: 'chart', title: 'どの犬種・コースが人気か分からない', desc: 'データで分析できていないため、スタッフ配置やメニュー改善が感覚頼み' },
     ],
     features: [
-      { icon: 'message', title: 'LINEで予約完結', desc: '飼い主さまはLINEから犬種→コース→トリマー指名→日時選択→予約確定。電話不要。' },
+      { icon: 'message', title: 'LINEで予約完結', desc: '飼い主さまはLINEから犬種→コース→トリマー指名→日時選択→予約確定。電話不要。', imageUrl: 'https://saas-factory-api.hekuijincun.workers.dev/media/menu/lp-images/pet/line-booking-1774499597520.png' },
       { icon: 'bell', title: '前日自動リマインド', desc: '「明日のトリミング、爪切りもご希望ですか？」予約前日に自動でLINE通知。' },
       { icon: 'calendar', title: '犬種別メニュー管理', desc: '小型犬・中型犬・大型犬・猫。犬種サイズごとに料金と所要時間を自動設定。' },
       { icon: 'users', title: 'トリマー指名・シフト連動', desc: 'お気に入りのトリマーを指名予約。シフトに連動して空き枠を自動表示。' },
       { icon: 'chart', title: 'コース別KPI分析', desc: 'どのコースが人気か、リピート率はどうか。データで見えるからメニュー改善に直結。' },
-      { icon: 'sparkles', title: 'トリミング時期お知らせ', desc: '「前回のトリミングから1ヶ月です」「換毛期のケアはいかがですか？」最適タイミングで自動配信。' },
+      { icon: 'sparkles', title: 'トリミング時期お知らせ', desc: '「前回のトリミングから1ヶ月です」「換毛期のケアはいかがですか？」最適タイミングで自動配信。', imageUrl: 'https://saas-factory-api.hekuijincun.workers.dev/media/menu/lp-images/pet/before-after-1774499623211.png' },
     ],
     flow: [
       { step: '01', title: 'LINE公式アカウント連携', desc: 'お手持ちのLINE公式アカウントと連携。ガイドに沿って最短15分で完了。' },
@@ -406,7 +412,7 @@ const LP: Record<string, VerticalLPConfig> = {
     faqs: [
       { q: '商品画像は何枚まで登録できますか？', a: '1商品あたり複数枚の画像を登録できます。メイン画像とサブ画像で商品の魅力を伝えられます。' },
       { q: '送料の設定は柔軟にできますか？', a: 'はい。送料ルールを複数設定でき、「○○円以上で送料無料」などの条件も設定可能です。' },
-      { q: '決済方法は何に対応していますか？', a: 'Stripe決済に対応しており、クレジットカード・Apple Pay・Google Payなどが利用できます。' },
+      { q: '決済方法は何に対応していますか？', a: 'PAY.JP決済に対応しており、VISA・Mastercard・JCB・AMEXなど主要クレジットカードが利用できます。' },
       { q: '複数カテゴリの商品を扱えますか？', a: 'はい。カテゴリを自由に作成でき、商品を分類して管理できます。お客様も見やすいストアになります。' },
     ],
     metaTitle: 'ShopBook | ネットショップ専用販売管理ツール',
@@ -596,8 +602,15 @@ export async function generateMetadata({ params }: { params: Promise<{ vertical:
   };
 }
 
+// Verticals with custom pages (apps/web/app/lp/<name>/page.tsx) are excluded
+// to avoid route conflicts. Next.js prefers static over dynamic, but the
+// dynamic chunk's framer-motion still hydrates and injects opacity:0.
+const CUSTOM_PAGE_VERTICALS = new Set(['pet', 'eyebrow']);
+
 export function generateStaticParams() {
-  return Object.keys(LP).map(v => ({ vertical: v }));
+  return Object.keys(LP)
+    .filter(v => !CUSTOM_PAGE_VERTICALS.has(v))
+    .map(v => ({ vertical: v }));
 }
 
 // ── Page ────────────────────────────────────────────────────────────

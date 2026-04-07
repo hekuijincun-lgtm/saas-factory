@@ -12,6 +12,29 @@ const config = {
   turbopack: {
     root: repoRoot,
   },
+  async headers() {
+    return [
+      {
+        source: '/(.*)',
+        headers: [
+          {
+            key: 'Content-Security-Policy',
+            value: [
+              "default-src 'self'",
+              "script-src 'self' 'unsafe-inline' https://js.pay.jp",
+              "style-src 'self' 'unsafe-inline'",
+              "img-src 'self' data: blob: https:",
+              "connect-src 'self' https://api.pay.jp",
+              "frame-src https://js.pay.jp",
+              "font-src 'self' data:",
+              "object-src 'none'",
+              "base-uri 'self'",
+            ].join('; '),
+          },
+        ],
+      },
+    ];
+  },
   async redirects() {
     return [
       { source: '/legal', destination: '/legal/tokushoho', permanent: true },

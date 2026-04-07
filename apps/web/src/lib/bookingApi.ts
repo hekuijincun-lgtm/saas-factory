@@ -34,6 +34,7 @@ export interface CreateReservationPayload {
   lineUserId?: string;
   durationMin?: number;
   meta?: Record<string, any>;
+  couponId?: string;
 }
 
 export interface ReservationResponse {
@@ -341,6 +342,7 @@ export async function createReservation(
       ...(payload.email ? { email: payload.email.toLowerCase().trim() } : {}),
       ...(payload.lineUserId ? { lineUserId: payload.lineUserId } : {}),
       ...(payload.meta ? { meta: payload.meta } : {}),
+      ...(payload.couponId ? { couponId: payload.couponId } : {}),
     };
 
     console.log("[createReservation payload->newPayload]", { payload, newPayload });
@@ -399,6 +401,27 @@ export async function getMyReservations(
     if (error instanceof ApiClientError) throw error;
     throw new ApiClientError('Failed to fetch my reservations');
   }
+}
+
+/**
+ * POST /my/reservations/:id/cancel — 顧客向けキャンセル
+ */
+export async function cancelMyReservation(
+  tenantId: string,
+  reservationId: string,
+  customerKey: string
+): Promise<{ ok: boolean; message?: string }> {
+  const params = new URLSearchParams({ tenantId });
+  const res = await fetch(`/api/proxy/my/reservations/${encodeURIComponent(reservationId)}/cancel?${params.toString()}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', accept: 'application/json' },
+    body: JSON.stringify({ customerKey }),
+  });
+  const data = await res.json() as any;
+  if (!data.ok) {
+    throw new ApiClientError(data.message || data.error || 'キャンセルに失敗しました', res.status);
+  }
+  return data;
 }
 
 /**

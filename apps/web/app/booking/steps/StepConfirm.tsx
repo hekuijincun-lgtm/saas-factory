@@ -94,10 +94,41 @@ export default function StepConfirm({ booking, onBack, onDone, consentText, trea
   const [error, setError] = useState<string | null>(null);
   const [isDuplicate, setIsDuplicate] = useState(false);
   const [done, setDone] = useState(false);
+  const [couponCode, setCouponCode] = useState('');
+  const [appliedCoupon, setAppliedCoupon] = useState<{ id: string; title: string; discountType: string; discountValue: number } | null>(null);
+  const [couponError, setCouponError] = useState('');
   // 二重送信防止用フラグ（React の state 非同期更新を補完する ref ガード）
   const submittingRef = useRef(false);
 
   const resolvedTenantId = tenantId || 'default';
+
+  const calcDiscount = (original: number) => {
+    if (!appliedCoupon) return original;
+    if (appliedCoupon.discountType === 'amount') return Math.max(0, original - appliedCoupon.discountValue);
+    if (appliedCoupon.discountType === 'percent') return Math.floor(original * (1 - appliedCoupon.discountValue / 100));
+    if (appliedCoupon.discountType === 'free') return 0;
+    return original;
+  };
+
+  const handleApplyCoupon = async () => {
+    if (!couponCode.trim()) return;
+    setCouponError('');
+    try {
+      const res = await fetch(
+        `/api/proxy/public/coupons/validate?tenantId=${encodeURIComponent(resolvedTenantId)}&code=${encodeURIComponent(couponCode.trim())}&menuId=${encodeURIComponent(booking.menuId ?? '')}`
+      );
+      const data = await res.json() as any;
+      if (data.valid) {
+        setAppliedCoupon(data.coupon);
+        setCouponError('');
+      } else {
+        setCouponError(data.message || '無効なクーポンです');
+        setAppliedCoupon(null);
+      }
+    } catch {
+      setCouponError('通信エラー');
+    }
+  };
 
   if (done) {
     return <SuccessScreen booking={booking} onDone={onDone} tenantId={resolvedTenantId} />;
@@ -136,11 +167,19 @@ export default function StepConfirm({ booking, onBack, onDone, consentText, trea
         const menuPrice = booking.menuPrice;
         const nominationFee = booking.nominationFee ?? 0;
         const optionsPrice = (booking.selectedOptions ?? []).reduce((s, o) => s + o.price, 0);
+        const totalBeforeDiscount = menuPrice + nominationFee;
+        const totalAfterDiscount = calcDiscount(totalBeforeDiscount);
         metaPayload.pricing = {
           menuPrice: menuPrice - optionsPrice,
           optionsPrice,
           nominationFee,
-          totalPrice: menuPrice + nominationFee,
+          totalPrice: totalBeforeDiscount,
+          ...(appliedCoupon ? {
+            couponId: appliedCoupon.id,
+            couponTitle: appliedCoupon.title,
+            discountAmount: totalBeforeDiscount - totalAfterDiscount,
+            discountedTotal: totalAfterDiscount,
+          } : {}),
         };
       }
       // Pre-flight: re-check slot availability (bookableForMenu) to catch stale data
@@ -167,6 +206,7 @@ export default function StepConfirm({ booking, onBack, onDone, consentText, trea
         lineUserId: booking.lineUserId ?? undefined,
         durationMin: booking.menuDurationMin ?? undefined,
         ...(Object.keys(metaPayload).length > 0 ? { meta: metaPayload } : {}),
+        ...(appliedCoupon ? { couponId: appliedCoupon.id } : {}),
       });
       // save customerKey to localStorage for reservation list lookup
       if (res.customerKey) {
@@ -252,6 +292,52 @@ export default function StepConfirm({ booking, onBack, onDone, consentText, trea
           }
         />
       </div>
+
+      {/* Coupon */}
+      {booking.menuPrice != null && (
+        <div className="bg-amber-50 rounded-2xl p-4 space-y-3">
+          <p className="text-xs font-medium text-brand-muted">クーポンコード（任意）</p>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={couponCode}
+              onChange={e => { setCouponCode(e.target.value.toUpperCase()); setCouponError(''); }}
+              placeholder="クーポンコードを入力"
+              disabled={!!appliedCoupon}
+              className="flex-1 px-3 py-2 border border-brand-border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-primary/20"
+            />
+            {appliedCoupon ? (
+              <button
+                onClick={() => { setAppliedCoupon(null); setCouponCode(''); setCouponError(''); }}
+                className="px-4 py-2 text-sm font-medium text-red-600 border border-red-200 rounded-xl hover:bg-red-50"
+              >
+                取消
+              </button>
+            ) : (
+              <button
+                onClick={handleApplyCoupon}
+                disabled={!couponCode.trim()}
+                className="px-4 py-2 bg-brand-primary text-white text-sm font-medium rounded-xl hover:opacity-90 disabled:opacity-50"
+              >
+                適用
+              </button>
+            )}
+          </div>
+          {couponError && <p className="text-xs text-red-500">{couponError}</p>}
+          {appliedCoupon && (
+            <div className="text-sm">
+              <span className="text-green-700 font-medium">
+                {appliedCoupon.title} 適用済み
+              </span>
+              <div className="text-xs text-brand-muted mt-1">
+                <span className="line-through">¥{((booking.menuPrice ?? 0) + (booking.nominationFee ?? 0)).toLocaleString()}</span>
+                {' → '}
+                <span className="text-green-700 font-bold">¥{calcDiscount((booking.menuPrice ?? 0) + (booking.nominationFee ?? 0)).toLocaleString()}</span>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Survey answers summary */}
       {enabledQuestions.length > 0 && (

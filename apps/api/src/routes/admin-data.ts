@@ -2,6 +2,8 @@ import { getTenantId, checkTenantMismatch, requireRole, setTenantDebugHeaders, C
 import { resolveVertical, GENERIC_REPEAT_TEMPLATE } from '../settings';
 import { getRepeatConfig, getStyleLabel, buildRepeatMessage, DEFAULT_REPEAT_TEMPLATE } from '../verticals/eyebrow';
 import { getVerticalPlugin } from '../verticals/registry';
+import { geocodeAddress } from '../lib/geocode';
+import { getTravelMinutes } from '../lib/distanceMatrix';
 
 export function registerAdminDataRoutes(app: any) {
 
@@ -64,6 +66,85 @@ app.get("/admin/reservations", async (c) => {
     return c.json({ ok: true, tenantId, date, reservations });
   } catch (error) {
     return c.json({ ok: false, error: "Failed to fetch reservations", message: String(error) }, 500);
+  }
+});
+
+// ── GET /admin/reservations/travel-check — 移動時間チェック ───────────────
+app.get("/admin/reservations/travel-check", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
+  const tenantId = getTenantId(c, null);
+  const db = (c.env as any).DB;
+  if (!db) return c.json({ ok: false, error: "DB_not_bound" }, 500);
+
+  const date = c.req.query("date");
+  const customerId = c.req.query("customerId");
+  const startTime = c.req.query("startTime");
+  if (!date || !customerId || !startTime) {
+    return c.json({ ok: false, error: "date, customerId, startTime required" }, 400);
+  }
+
+  const apiKey = (c.env as any).GOOGLE_MAPS_API_KEY;
+  if (!apiKey) return c.json({ ok: false, error: "GOOGLE_MAPS_API_KEY not configured" }, 500);
+
+  try {
+    // Get target customer's location
+    const target: any = await db.prepare(
+      "SELECT id, name, lat, lng FROM customers WHERE id = ? AND tenant_id = ? LIMIT 1"
+    ).bind(customerId, tenantId).first();
+    if (!target) return c.json({ ok: false, error: "customer_not_found" }, 404);
+    if (!target.lat || !target.lng) {
+      return c.json({ ok: true, travelFromPrev: null, travelToNext: null, prevCustomerName: null, nextCustomerName: null, warning: "対象顧客の住所が未登録です" });
+    }
+
+    const slotTarget = `${date}T${startTime}`;
+
+    // Get previous reservation on the same day (before startTime)
+    const prevRes: any = await db.prepare(
+      `SELECT r.customer_id, c.name, c.lat, c.lng, r.slot_start
+       FROM reservations r
+       LEFT JOIN customers c ON c.id = r.customer_id AND c.tenant_id = r.tenant_id
+       WHERE r.tenant_id = ? AND r.slot_start >= ? AND r.slot_start < ? AND r.status != 'cancelled'
+       ORDER BY r.slot_start DESC LIMIT 1`
+    ).bind(tenantId, `${date}T00:00`, slotTarget).first();
+
+    // Get next reservation on the same day (after startTime)
+    const nextRes: any = await db.prepare(
+      `SELECT r.customer_id, c.name, c.lat, c.lng, r.slot_start
+       FROM reservations r
+       LEFT JOIN customers c ON c.id = r.customer_id AND c.tenant_id = r.tenant_id
+       WHERE r.tenant_id = ? AND r.slot_start > ? AND r.slot_start < ? AND r.status != 'cancelled'
+       ORDER BY r.slot_start ASC LIMIT 1`
+    ).bind(tenantId, slotTarget, `${date}T23:59`).first();
+
+    let travelFromPrev: number | null = null;
+    let travelToNext: number | null = null;
+    let prevCustomerName: string | null = null;
+    let nextCustomerName: string | null = null;
+    let warning: string | null = null;
+
+    if (prevRes?.lat && prevRes?.lng) {
+      prevCustomerName = prevRes.name ?? null;
+      travelFromPrev = await getTravelMinutes(prevRes.lat, prevRes.lng, target.lat, target.lng, apiKey);
+    }
+
+    if (nextRes?.lat && nextRes?.lng) {
+      nextCustomerName = nextRes.name ?? null;
+      travelToNext = await getTravelMinutes(target.lat, target.lng, nextRes.lat, nextRes.lng, apiKey);
+    }
+
+    // Check if travel time exceeds gap between reservations
+    if (travelFromPrev !== null && prevRes?.slot_start) {
+      const prevTime = new Date(prevRes.slot_start).getTime();
+      const targetTime = new Date(slotTarget).getTime();
+      const gapMinutes = (targetTime - prevTime) / 60000;
+      if (travelFromPrev > gapMinutes) {
+        warning = "移動時間が予約間隔より長い可能性があります";
+      }
+    }
+
+    return c.json({ ok: true, travelFromPrev, travelToNext, prevCustomerName, nextCustomerName, warning });
+  } catch (e: any) {
+    return c.json({ ok: false, error: "travel_check_error", message: String(e?.message ?? e) }, 500);
   }
 });
 
@@ -1512,6 +1593,244 @@ app.get("/admin/customers/:id/reservations", async (c) => {
   }
 });
 
+/** =========================
+ * GET /admin/customers/:id?tenantId=
+ * Single customer detail
+ * ========================= */
+app.get("/admin/customers/:id", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
+  const tenantId = getTenantId(c, null);
+  const customerId = c.req.param("id");
+  const db = (c.env as any).DB;
+  if (!db) return c.json({ ok: false, error: "DB_not_bound" }, 500);
+
+  try {
+    const row: any = await db
+      .prepare("SELECT id, name, phone, email, notes, visit_count, last_visit_at, created_at, updated_at FROM customers WHERE id = ? AND tenant_id = ? LIMIT 1")
+      .bind(customerId, tenantId)
+      .first();
+
+    if (!row) return c.json({ ok: false, error: "not_found" }, 404);
+
+    const phone = row.phone ?? null;
+    const customerKey = phone ? buildCustomerKey({ phone }) : (row.email ? buildCustomerKey({ email: row.email }) : null);
+    return c.json({
+      ok: true,
+      tenantId,
+      customer: {
+        id: row.id,
+        name: row.name ?? "",
+        phone,
+        email: row.email ?? null,
+        notes: row.notes ?? null,
+        visitCount: row.visit_count ?? 0,
+        lastVisitAt: row.last_visit_at ?? null,
+        createdAt: row.created_at ?? null,
+        updatedAt: row.updated_at ?? null,
+        customerKey,
+      },
+    });
+  } catch (e: any) {
+    return c.json({ ok: false, error: "db_error", message: String(e?.message ?? e) }, 500);
+  }
+});
+
+/** =========================
+ * PUT /admin/customers/:id?tenantId=
+ * Update customer fields (name, phone, email, notes)
+ * ========================= */
+app.put("/admin/customers/:id", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
+  const role = await requireRole(c, "admin"); if (role) return role;
+  const tenantId = getTenantId(c, null);
+  const customerId = c.req.param("id");
+  const db = (c.env as any).DB;
+  if (!db) return c.json({ ok: false, error: "DB_not_bound" }, 500);
+
+  try {
+    const body = await c.req.json();
+    const { name, phone, email, notes, address } = body;
+
+    // Verify customer exists
+    const existing: any = await db
+      .prepare("SELECT id FROM customers WHERE id = ? AND tenant_id = ? LIMIT 1")
+      .bind(customerId, tenantId)
+      .first();
+    if (!existing) return c.json({ ok: false, error: "not_found" }, 404);
+
+    const now = new Date().toISOString();
+
+    // If address provided, attempt geocoding
+    let lat: number | null = null;
+    let lng: number | null = null;
+    if (address) {
+      const apiKey = (c.env as any).GOOGLE_MAPS_API_KEY;
+      if (apiKey) {
+        try {
+          const coords = await geocodeAddress(address, apiKey);
+          if (coords) { lat = coords.lat; lng = coords.lng; }
+        } catch { /* geocode failure is non-fatal */ }
+      }
+    }
+
+    if ("address" in body) {
+      await db
+        .prepare(
+          `UPDATE customers SET name = ?, phone = ?, email = ?, notes = ?, address = ?, lat = ?, lng = ?, updated_at = ? WHERE id = ? AND tenant_id = ?`
+        )
+        .bind(name ?? null, phone ?? null, email ?? null, notes ?? null, address ?? null, lat, lng, now, customerId, tenantId)
+        .run();
+    } else {
+      await db
+        .prepare(
+          `UPDATE customers SET name = ?, phone = ?, email = ?, notes = ?, updated_at = ? WHERE id = ? AND tenant_id = ?`
+        )
+        .bind(name ?? null, phone ?? null, email ?? null, notes ?? null, now, customerId, tenantId)
+        .run();
+    }
+
+    return c.json({ ok: true, tenantId, customerId, address: address ?? null, lat, lng });
+  } catch (e: any) {
+    return c.json({ ok: false, error: "db_error", message: String(e?.message ?? e) }, 500);
+  }
+});
+
+// ── PUT /admin/customers/:id/reset-dormant — 休眠通知リセット ─────────────
+app.put("/admin/customers/:id/reset-dormant", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
+  const role = await requireRole(c, "admin"); if (role) return role;
+  const tenantId = getTenantId(c, null);
+  const customerId = c.req.param("id");
+  const db = (c.env as any).DB;
+  if (!db) return c.json({ ok: false, error: "DB_not_bound" }, 500);
+
+  try {
+    const existing: any = await db
+      .prepare("SELECT id FROM customers WHERE id = ? AND tenant_id = ? LIMIT 1")
+      .bind(customerId, tenantId)
+      .first();
+    if (!existing) return c.json({ ok: false, error: "not_found" }, 404);
+
+    await db
+      .prepare("UPDATE customers SET dormant_notified_at = NULL WHERE id = ? AND tenant_id = ?")
+      .bind(customerId, tenantId)
+      .run();
+
+    return c.json({ ok: true, tenantId, customerId });
+  } catch (e: any) {
+    return c.json({ ok: false, error: "db_error", message: String(e?.message ?? e) }, 500);
+  }
+});
+
+// ── GET /admin/customers/:id/recommended-duration — 推奨施術時間 ─────────
+app.get("/admin/customers/:id/recommended-duration", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
+  const tenantId = getTenantId(c, null);
+  const customerId = c.req.param("id");
+  const db = (c.env as any).DB;
+  if (!db) return c.json({ ok: false, error: "DB_not_bound" }, 500);
+
+  try {
+    // Get past actual_duration_minutes (latest 3)
+    const pastRows = await db.prepare(
+      `SELECT actual_duration_minutes, is_first_visit, is_puppy
+       FROM reservations
+       WHERE tenant_id = ? AND customer_id = ? AND actual_duration_minutes IS NOT NULL AND status != 'cancelled'
+       ORDER BY slot_start DESC LIMIT 3`
+    ).bind(tenantId, customerId).all();
+
+    const records = (pastRows.results ?? []) as any[];
+    const pastRecords = records.map((r: any) => r.actual_duration_minutes as number);
+
+    // Latest flags
+    const latestRow: any = await db.prepare(
+      `SELECT is_first_visit, is_puppy FROM reservations
+       WHERE tenant_id = ? AND customer_id = ? AND status != 'cancelled'
+       ORDER BY slot_start DESC LIMIT 1`
+    ).bind(tenantId, customerId).first();
+
+    const isFirstVisit = latestRow?.is_first_visit === 1;
+    const isPuppy = latestRow?.is_puppy === 1;
+    const bufferSuggested = (isFirstVisit || isPuppy) ? 30 : 0;
+
+    if (pastRecords.length > 0) {
+      const avg = Math.round(pastRecords.reduce((a: number, b: number) => a + b, 0) / pastRecords.length);
+      return c.json({ ok: true, recommendedMinutes: avg, basedOn: 'actual_history', bufferSuggested, pastRecords });
+    }
+
+    // Fallback: breed_size_pricing duration
+    const karte: any = await db.prepare(
+      "SELECT pet_name FROM customer_kartes WHERE tenant_id = ? AND customer_id = ? LIMIT 1"
+    ).bind(tenantId, customerId).first().catch(() => null);
+
+    // Try to get breed/size from latest reservation meta
+    const latestMeta: any = await db.prepare(
+      `SELECT meta FROM reservations WHERE tenant_id = ? AND customer_id = ? AND status != 'cancelled' ORDER BY slot_start DESC LIMIT 1`
+    ).bind(tenantId, customerId).first().catch(() => null);
+
+    let breedDuration: number | null = null;
+    if (latestMeta?.meta) {
+      try {
+        const m = JSON.parse(latestMeta.meta);
+        const breed = m?.surveyAnswers?.pet_breed || m?.petProfile?.breed;
+        const size = m?.surveyAnswers?.pet_size || m?.petProfile?.size;
+        const menuId = m?.menuId;
+        if (breed && size && menuId) {
+          const bsp: any = await db.prepare(
+            "SELECT duration_minutes FROM breed_size_pricing WHERE tenant_id = ? AND menu_id = ? AND breed = ? AND size = ? LIMIT 1"
+          ).bind(tenantId, menuId, breed, size).first().catch(() => null);
+          if (bsp?.duration_minutes) breedDuration = bsp.duration_minutes;
+        }
+      } catch { /* ignore */ }
+    }
+
+    if (breedDuration) {
+      return c.json({ ok: true, recommendedMinutes: breedDuration, basedOn: 'breed_size_matrix', bufferSuggested, pastRecords: [] });
+    }
+
+    return c.json({ ok: true, recommendedMinutes: 60, basedOn: 'default', bufferSuggested, pastRecords: [] });
+  } catch (e: any) {
+    return c.json({ ok: false, error: "db_error", message: String(e?.message ?? e) }, 500);
+  }
+});
+
+// ── PUT /admin/reservations/:id/complete — 予約完了＋実績時間記録 ─────────
+app.put("/admin/reservations/:id/complete", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
+  const role = await requireRole(c, "admin"); if (role) return role;
+  const tenantId = getTenantId(c, null);
+  const reservationId = c.req.param("id");
+  const db = (c.env as any).DB;
+  if (!db) return c.json({ ok: false, error: "DB_not_bound" }, 500);
+
+  try {
+    const body = await c.req.json().catch(() => ({} as any));
+    const { actualDurationMinutes } = body;
+
+    const existing: any = await db
+      .prepare("SELECT id, status FROM reservations WHERE id = ? AND tenant_id = ? LIMIT 1")
+      .bind(reservationId, tenantId)
+      .first();
+    if (!existing) return c.json({ ok: false, error: "not_found" }, 404);
+
+    const sets = ["status = 'completed'"];
+    const vals: unknown[] = [];
+    if (actualDurationMinutes != null && typeof actualDurationMinutes === "number") {
+      sets.push("actual_duration_minutes = ?");
+      vals.push(actualDurationMinutes);
+    }
+    vals.push(reservationId, tenantId);
+
+    await db.prepare(
+      `UPDATE reservations SET ${sets.join(", ")} WHERE id = ? AND tenant_id = ?`
+    ).bind(...vals).run();
+
+    return c.json({ ok: true, tenantId, reservationId, status: "completed", actualDurationMinutes: actualDurationMinutes ?? null });
+  } catch (e: any) {
+    return c.json({ ok: false, error: "db_error", message: String(e?.message ?? e) }, 500);
+  }
+});
+
 // ── GET /admin/dashboard — ダッシュボード集計 ──────────────────────────────
 app.get("/admin/dashboard", async (c: any) => {
   const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
@@ -1687,6 +2006,527 @@ app.onError((err, c) => {
     }
   } catch {}
   return c.json({ ok:false, error:"internal_error" }, 500)
+});
+
+// ── Breed × Size Pricing ─────────────────────────────────────────────────────
+
+/** GET /admin/breeds-master — preset breed list */
+app.get("/admin/breeds-master", async (c) => {
+  const db = (c.env as any).DB;
+  if (!db) return c.json({ ok: false, error: "DB_not_bound" }, 500);
+  try {
+    const result = await db
+      .prepare("SELECT id, name, default_size, category, sort_order FROM breeds_master ORDER BY sort_order ASC")
+      .all();
+    return c.json({ ok: true, breeds: result.results ?? [] });
+  } catch (e: any) {
+    return c.json({ ok: false, error: "db_error", message: String(e?.message ?? e) }, 500);
+  }
+});
+
+/** GET /admin/breed-pricing?tenantId=&menuId= — list breed×size pricing rules */
+app.get("/admin/breed-pricing", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
+  const tenantId = getTenantId(c, null);
+  const menuId = c.req.query("menuId") || null;
+  const db = (c.env as any).DB;
+  if (!db) return c.json({ ok: false, error: "DB_not_bound" }, 500);
+
+  try {
+    let sql = "SELECT id, menu_id, breed, size, price, duration_minutes, notes, created_at, updated_at FROM breed_size_pricing WHERE tenant_id = ?";
+    const binds: any[] = [tenantId];
+    if (menuId) {
+      sql += " AND menu_id = ?";
+      binds.push(menuId);
+    }
+    sql += " ORDER BY breed ASC, size ASC";
+
+    const result = await db.prepare(sql).bind(...binds).all();
+    const rules = (result.results || []).map((r: any) => ({
+      id: r.id,
+      menuId: r.menu_id,
+      breed: r.breed,
+      size: r.size,
+      price: r.price,
+      durationMinutes: r.duration_minutes,
+      notes: r.notes ?? null,
+    }));
+    return c.json({ ok: true, tenantId, rules });
+  } catch (e: any) {
+    return c.json({ ok: false, error: "db_error", message: String(e?.message ?? e) }, 500);
+  }
+});
+
+/** POST /admin/breed-pricing — create or upsert breed×size pricing rule */
+app.post("/admin/breed-pricing", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
+  const role = await requireRole(c, "admin"); if (role) return role;
+  const tenantId = getTenantId(c, null);
+  const db = (c.env as any).DB;
+  if (!db) return c.json({ ok: false, error: "DB_not_bound" }, 500);
+
+  try {
+    const body = await c.req.json();
+    const { menuId, breed, size, price, durationMinutes, notes } = body;
+    if (!menuId || !breed || !size || price == null || durationMinutes == null) {
+      return c.json({ ok: false, error: "missing_fields" }, 400);
+    }
+    const id = `bp_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
+    const now = new Date().toISOString();
+    await db
+      .prepare(
+        `INSERT INTO breed_size_pricing (id, tenant_id, menu_id, breed, size, price, duration_minutes, notes, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (tenant_id, menu_id, breed, size) DO UPDATE SET
+           price = excluded.price,
+           duration_minutes = excluded.duration_minutes,
+           notes = excluded.notes,
+           updated_at = excluded.updated_at`
+      )
+      .bind(id, tenantId, menuId, breed, size, price, durationMinutes, notes ?? null, now, now)
+      .run();
+
+    return c.json({ ok: true, tenantId, id });
+  } catch (e: any) {
+    return c.json({ ok: false, error: "db_error", message: String(e?.message ?? e) }, 500);
+  }
+});
+
+/** POST /admin/breed-pricing/bulk — bulk upsert breed×size pricing rules */
+app.post("/admin/breed-pricing/bulk", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
+  const role = await requireRole(c, "admin"); if (role) return role;
+  const tenantId = getTenantId(c, null);
+  const db = (c.env as any).DB;
+  if (!db) return c.json({ ok: false, error: "DB_not_bound" }, 500);
+
+  try {
+    const body = await c.req.json();
+    const { menuId, rules } = body;
+    if (!menuId || !Array.isArray(rules)) {
+      return c.json({ ok: false, error: "missing_fields" }, 400);
+    }
+
+    const stmts: any[] = [];
+    const now = new Date().toISOString();
+    for (const rule of rules) {
+      const { breed, size, price, durationMinutes, notes } = rule;
+      if (!breed || !size || price == null || durationMinutes == null) continue;
+      const id = `bp_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
+      stmts.push(
+        db.prepare(
+          `INSERT INTO breed_size_pricing (id, tenant_id, menu_id, breed, size, price, duration_minutes, notes, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT (tenant_id, menu_id, breed, size) DO UPDATE SET
+             price = excluded.price,
+             duration_minutes = excluded.duration_minutes,
+             notes = excluded.notes,
+             updated_at = excluded.updated_at`
+        ).bind(id, tenantId, menuId, breed, size, price, durationMinutes, notes ?? null, now, now)
+      );
+    }
+
+    if (stmts.length > 0) {
+      await db.batch(stmts);
+    }
+
+    return c.json({ ok: true, tenantId, menuId, count: stmts.length });
+  } catch (e: any) {
+    return c.json({ ok: false, error: "db_error", message: String(e?.message ?? e) }, 500);
+  }
+});
+
+/** PUT /admin/breed-pricing/:id — update a single pricing rule */
+app.put("/admin/breed-pricing/:id", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
+  const role = await requireRole(c, "admin"); if (role) return role;
+  const tenantId = getTenantId(c, null);
+  const ruleId = c.req.param("id");
+  const db = (c.env as any).DB;
+  if (!db) return c.json({ ok: false, error: "DB_not_bound" }, 500);
+
+  try {
+    const body = await c.req.json();
+    const { price, durationMinutes, notes } = body;
+
+    const existing: any = await db
+      .prepare("SELECT id FROM breed_size_pricing WHERE id = ? AND tenant_id = ? LIMIT 1")
+      .bind(ruleId, tenantId)
+      .first();
+    if (!existing) return c.json({ ok: false, error: "not_found" }, 404);
+
+    const now = new Date().toISOString();
+    await db
+      .prepare("UPDATE breed_size_pricing SET price = ?, duration_minutes = ?, notes = ?, updated_at = ? WHERE id = ? AND tenant_id = ?")
+      .bind(price, durationMinutes, notes ?? null, now, ruleId, tenantId)
+      .run();
+
+    return c.json({ ok: true, tenantId, id: ruleId });
+  } catch (e: any) {
+    return c.json({ ok: false, error: "db_error", message: String(e?.message ?? e) }, 500);
+  }
+});
+
+/** DELETE /admin/breed-pricing/:id — delete a single pricing rule */
+app.delete("/admin/breed-pricing/:id", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
+  const role = await requireRole(c, "admin"); if (role) return role;
+  const tenantId = getTenantId(c, null);
+  const ruleId = c.req.param("id");
+  const db = (c.env as any).DB;
+  if (!db) return c.json({ ok: false, error: "DB_not_bound" }, 500);
+
+  try {
+    await db
+      .prepare("DELETE FROM breed_size_pricing WHERE id = ? AND tenant_id = ?")
+      .bind(ruleId, tenantId)
+      .run();
+    return c.json({ ok: true, tenantId, id: ruleId });
+  } catch (e: any) {
+    return c.json({ ok: false, error: "db_error", message: String(e?.message ?? e) }, 500);
+  }
+});
+
+/** GET /admin/breed-pricing/lookup?tenantId=&menuId=&breed=&size= — lookup price for reservation */
+app.get("/admin/breed-pricing/lookup", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
+  const tenantId = getTenantId(c, null);
+  const menuId = c.req.query("menuId");
+  const breed = c.req.query("breed");
+  const size = c.req.query("size");
+  const db = (c.env as any).DB;
+  if (!db) return c.json({ ok: false, error: "DB_not_bound" }, 500);
+
+  if (!menuId || !breed || !size) {
+    return c.json({ ok: true, found: false, reason: "missing_params" });
+  }
+
+  try {
+    // Exact match first
+    let row: any = await db
+      .prepare("SELECT price, duration_minutes, notes FROM breed_size_pricing WHERE tenant_id = ? AND menu_id = ? AND breed = ? AND size = ? LIMIT 1")
+      .bind(tenantId, menuId, breed, size)
+      .first();
+
+    if (row) {
+      return c.json({ ok: true, found: true, price: row.price, durationMinutes: row.duration_minutes, notes: row.notes });
+    }
+
+    // No match — return not found so frontend falls back to menu default
+    return c.json({ ok: true, found: false });
+  } catch (e: any) {
+    return c.json({ ok: false, error: "db_error", message: String(e?.message ?? e) }, 500);
+  }
+});
+
+// ── AI Estimate (Pet Grooming) ────────────────────────────────────────────────
+
+/** POST /admin/ai-estimate — AI-powered grooming estimate */
+app.post("/admin/ai-estimate", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
+  const tenantId = getTenantId(c, null);
+  const db = (c.env as any).DB;
+  const kv = (c.env as any).SAAS_FACTORY;
+  const openaiApiKey: string | undefined = (c.env as any).OPENAI_API_KEY;
+
+  try {
+    const body = await c.req.json();
+    const { petId, breed, size, weightKg, ageYears, sex, menuIds, notes } = body;
+
+    if (!Array.isArray(menuIds) || menuIds.length === 0 || !breed || !size) {
+      return c.json({ ok: false, error: "missing_fields", hint: "breed, size, menuIds required" }, 400);
+    }
+
+    // 1. Fetch breed_size_pricing for each menu
+    const pricingData: { menuId: string; menuName: string; price: number; duration: number; source: string }[] = [];
+
+    // Get menu list from KV
+    const menuKey = `admin:menu:list:${tenantId}`;
+    const menuRaw = await kv?.get(menuKey);
+    const allMenus: any[] = menuRaw ? JSON.parse(menuRaw) : [];
+
+    for (const menuId of menuIds) {
+      const menu = allMenus.find((m: any) => m.id === menuId);
+      if (!menu) continue;
+
+      // Try breed_size_pricing lookup
+      let found = false;
+      if (db) {
+        try {
+          const row: any = await db
+            .prepare("SELECT price, duration_minutes, notes FROM breed_size_pricing WHERE tenant_id = ? AND menu_id = ? AND breed = ? AND size = ? LIMIT 1")
+            .bind(tenantId, menuId, breed, size)
+            .first();
+          if (row) {
+            pricingData.push({ menuId, menuName: menu.name, price: row.price, duration: row.duration_minutes, source: "breed_pricing" });
+            found = true;
+          }
+        } catch { /* fallback to menu default */ }
+      }
+      if (!found) {
+        pricingData.push({ menuId, menuName: menu.name, price: menu.price ?? 0, duration: menu.durationMin ?? 60, source: "menu_default" });
+      }
+    }
+
+    const basePrice = pricingData.reduce((sum, p) => sum + p.price, 0);
+    const baseDuration = pricingData.reduce((sum, p) => sum + p.duration, 0);
+
+    // 2. Fetch pet grooming history if petId provided
+    let groomingHistory: any[] = [];
+    if (petId && kv) {
+      try {
+        const petsRaw = await kv.get(`pet:profiles:${tenantId}`);
+        const pets: any[] = petsRaw ? JSON.parse(petsRaw) : [];
+        const pet = pets.find((p: any) => p.id === petId);
+        if (pet?.groomingHistory) {
+          groomingHistory = pet.groomingHistory.slice(0, 5); // Last 5 records
+        }
+      } catch { /* ignore */ }
+    }
+
+    // 3. If no OpenAI key, return base pricing as-is (fallback)
+    if (!openaiApiKey) {
+      return c.json({
+        ok: true,
+        estimatedPrice: basePrice,
+        estimatedDurationMinutes: baseDuration,
+        breakdown: pricingData.map(p => ({
+          item: `${p.menuName}（${breed}・${size}）`,
+          price: p.price,
+          duration: p.duration,
+        })),
+        aiReasoning: "AI見積もりは現在利用できません。料金表の値を表示しています。",
+        confidence: "low",
+      });
+    }
+
+    // 4. Call GPT-4o with timeout
+    const pricingContext = pricingData.map(p =>
+      `- ${p.menuName}: ¥${p.price.toLocaleString()} / ${p.duration}分 (${p.source === "breed_pricing" ? "犬種別料金" : "メニューデフォルト"})`
+    ).join("\n");
+
+    const historyContext = groomingHistory.length > 0
+      ? groomingHistory.map(g =>
+          `- ${g.date}: ${g.course}${g.cutStyle ? ` (${g.cutStyle})` : ""}${g.notes ? ` メモ: ${g.notes}` : ""}${g.weight ? ` 体重: ${g.weight}kg` : ""}`
+        ).join("\n")
+      : "なし";
+
+    const systemPrompt = `あなたはペットサロンの料金見積もりアシスタントです。
+オーナーが設定した料金表をもとに、ペットの特徴を考慮した見積もりを出してください。
+最終判断はオーナーが行うので、あくまで参考値です。
+
+以下のJSON形式で返してください:
+{
+  "estimated_price": 数値（円）,
+  "estimated_duration_minutes": 数値（分）,
+  "breakdown": [{ "item": "項目名", "price": 数値, "duration": 数値 }],
+  "ai_reasoning": "判断理由（1-2文）",
+  "confidence": "high" | "medium" | "low"
+}
+
+ルール:
+- 料金表に該当がある場合はその値をベースにする
+- オーナー補足メモの内容（毛玉多め、攻撃的等）があれば追加料金・時間を考慮する
+- 追加料金は1項目500〜2000円、追加時間は10〜30分を目安とする
+- 過去の施術履歴があれば参考にする
+- 料金表にない場合はconfidenceを"low"にする`;
+
+    const userPrompt = `【ペット情報】
+犬種: ${breed}
+サイズ: ${size}
+${weightKg ? `体重: ${weightKg}kg` : ""}
+${ageYears ? `年齢: ${ageYears}歳` : ""}
+${sex ? `性別: ${sex === "male" ? "オス" : sex === "female" ? "メス" : sex}` : ""}
+
+【料金表データ】
+${pricingContext}
+
+【過去の施術履歴】
+${historyContext}
+
+${notes ? `【オーナー補足メモ】\n${notes}` : ""}`;
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+
+    try {
+      const aiResp = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${openaiApiKey}`,
+        },
+        body: JSON.stringify({
+          model: "gpt-4o-mini",
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userPrompt },
+          ],
+          temperature: 0.2,
+          max_tokens: 500,
+          response_format: { type: "json_object" },
+        }),
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+
+      if (!aiResp.ok) throw new Error(`OpenAI ${aiResp.status}`);
+
+      const aiJson = await aiResp.json() as any;
+      const content = aiJson?.choices?.[0]?.message?.content;
+      if (!content) throw new Error("empty_ai_response");
+
+      const parsed = JSON.parse(content);
+      return c.json({
+        ok: true,
+        estimatedPrice: parsed.estimated_price ?? basePrice,
+        estimatedDurationMinutes: parsed.estimated_duration_minutes ?? baseDuration,
+        breakdown: parsed.breakdown ?? pricingData.map(p => ({ item: p.menuName, price: p.price, duration: p.duration })),
+        aiReasoning: parsed.ai_reasoning ?? "",
+        confidence: parsed.confidence ?? "medium",
+      });
+    } catch (aiErr: any) {
+      clearTimeout(timeout);
+      // Fallback: return base pricing
+      return c.json({
+        ok: true,
+        estimatedPrice: basePrice,
+        estimatedDurationMinutes: baseDuration,
+        breakdown: pricingData.map(p => ({
+          item: `${p.menuName}（${breed}・${size}）`,
+          price: p.price,
+          duration: p.duration,
+        })),
+        aiReasoning: aiErr?.name === "AbortError"
+          ? "AI応答がタイムアウトしました。料金表の値を表示しています。"
+          : "AI見積もりの生成に失敗しました。料金表の値を表示しています。",
+        confidence: "low",
+      });
+    }
+  } catch (e: any) {
+    return c.json({ ok: false, error: "estimate_error", message: String(e?.message ?? e) }, 500);
+  }
+});
+
+// ── Estimates CRUD ────────────────────────────────────────────────────────────
+
+/** GET /admin/estimates?tenantId=&status= — list estimates */
+app.get("/admin/estimates", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
+  const tenantId = getTenantId(c, null);
+  const status = c.req.query("status") || null;
+  const db = (c.env as any).DB;
+  if (!db) return c.json({ ok: false, error: "DB_not_bound" }, 500);
+
+  try {
+    let sql = `SELECT e.id, e.reservation_id, e.customer_id, e.pet_id,
+                      e.estimated_price, e.estimated_duration_minutes,
+                      e.breakdown, e.ai_reasoning, e.final_price, e.status,
+                      e.created_at, e.updated_at,
+                      r.customer_name, r.slot_start, r.meta AS reservation_meta
+               FROM estimates e
+               LEFT JOIN reservations r ON r.id = e.reservation_id AND r.tenant_id = e.tenant_id
+               WHERE e.tenant_id = ?`;
+    const binds: any[] = [tenantId];
+    if (status) {
+      sql += " AND e.status = ?";
+      binds.push(status);
+    }
+    sql += " ORDER BY CASE e.status WHEN 'pending' THEN 0 WHEN 'revised' THEN 1 ELSE 2 END, e.created_at DESC LIMIT 100";
+
+    const result = await db.prepare(sql).bind(...binds).all();
+    const estimates = (result.results || []).map((r: any) => {
+      let breakdown: any[] = [];
+      try { breakdown = JSON.parse(r.breakdown || "[]"); } catch {}
+      let reservationMeta: any = null;
+      try { reservationMeta = JSON.parse(r.reservation_meta || "null"); } catch {}
+      return {
+        id: r.id,
+        reservationId: r.reservation_id,
+        customerId: r.customer_id,
+        petId: r.pet_id,
+        estimatedPrice: r.estimated_price,
+        estimatedDurationMinutes: r.estimated_duration_minutes,
+        breakdown,
+        aiReasoning: r.ai_reasoning,
+        finalPrice: r.final_price,
+        status: r.status,
+        createdAt: r.created_at,
+        updatedAt: r.updated_at,
+        customerName: r.customer_name ?? null,
+        slotStart: r.slot_start ?? null,
+        petName: reservationMeta?.petName ?? null,
+      };
+    });
+    return c.json({ ok: true, tenantId, estimates });
+  } catch (e: any) {
+    return c.json({ ok: false, error: "db_error", message: String(e?.message ?? e) }, 500);
+  }
+});
+
+/** GET /admin/estimates/:id — single estimate detail */
+app.get("/admin/estimates/:id", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
+  const tenantId = getTenantId(c, null);
+  const estimateId = c.req.param("id");
+  const db = (c.env as any).DB;
+  if (!db) return c.json({ ok: false, error: "DB_not_bound" }, 500);
+
+  try {
+    const row: any = await db
+      .prepare(`SELECT id, reservation_id, customer_id, pet_id, estimated_price, estimated_duration_minutes,
+                       breakdown, ai_reasoning, final_price, status, created_at, updated_at
+                FROM estimates WHERE id = ? AND tenant_id = ? LIMIT 1`)
+      .bind(estimateId, tenantId)
+      .first();
+    if (!row) return c.json({ ok: false, error: "not_found" }, 404);
+
+    let breakdown: any[] = [];
+    try { breakdown = JSON.parse(row.breakdown || "[]"); } catch {}
+    return c.json({
+      ok: true,
+      tenantId,
+      estimate: {
+        id: row.id, reservationId: row.reservation_id, customerId: row.customer_id, petId: row.pet_id,
+        estimatedPrice: row.estimated_price, estimatedDurationMinutes: row.estimated_duration_minutes,
+        breakdown, aiReasoning: row.ai_reasoning, finalPrice: row.final_price,
+        status: row.status, createdAt: row.created_at, updatedAt: row.updated_at,
+      },
+    });
+  } catch (e: any) {
+    return c.json({ ok: false, error: "db_error", message: String(e?.message ?? e) }, 500);
+  }
+});
+
+/** PUT /admin/estimates/:id — update estimate (approve/revise) */
+app.put("/admin/estimates/:id", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
+  const role = await requireRole(c, "admin"); if (role) return role;
+  const tenantId = getTenantId(c, null);
+  const estimateId = c.req.param("id");
+  const db = (c.env as any).DB;
+  if (!db) return c.json({ ok: false, error: "DB_not_bound" }, 500);
+
+  try {
+    const body = await c.req.json();
+    const { finalPrice, status } = body;
+
+    const existing: any = await db
+      .prepare("SELECT id FROM estimates WHERE id = ? AND tenant_id = ? LIMIT 1")
+      .bind(estimateId, tenantId)
+      .first();
+    if (!existing) return c.json({ ok: false, error: "not_found" }, 404);
+
+    const now = new Date().toISOString();
+    await db
+      .prepare("UPDATE estimates SET final_price = ?, status = ?, updated_at = ? WHERE id = ? AND tenant_id = ?")
+      .bind(finalPrice ?? null, status ?? "pending", now, estimateId, tenantId)
+      .run();
+
+    return c.json({ ok: true, tenantId, id: estimateId });
+  } catch (e: any) {
+    return c.json({ ok: false, error: "db_error", message: String(e?.message ?? e) }, 500);
+  }
 });
 
 } // end registerAdminDataRoutes

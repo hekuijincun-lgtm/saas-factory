@@ -28,7 +28,7 @@ function OnboardingBanner() {
   if (!show) return null;
 
   return (
-    <div className="mx-6 mt-4 flex items-center justify-between gap-4 rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4">
+    <div className="mx-4 sm:mx-6 mt-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 sm:px-5 py-4">
       <div className="flex items-center gap-3">
         <span className="text-amber-500 text-lg">⚠️</span>
         <div>

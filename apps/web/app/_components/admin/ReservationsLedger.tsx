@@ -31,6 +31,21 @@ function generateTimeSlots(open = '10:00', close = '19:00', interval = 60): stri
   return slots;
 }
 
+interface TravelCheckResult {
+  travelFromPrev: number | null;
+  travelToNext: number | null;
+  prevCustomerName: string | null;
+  nextCustomerName: string | null;
+  warning: string | null;
+}
+
+interface RecommendedDuration {
+  recommendedMinutes: number;
+  basedOn: 'actual_history' | 'breed_size_matrix' | 'default';
+  bufferSuggested: number;
+  pastRecords: number[];
+}
+
 interface ReservationsLedgerProps {
   /** Optional extra fields rendered inside the create-reservation modal (e.g. pet picker) */
   createFormExtra?: React.ReactNode;
@@ -40,9 +55,15 @@ interface ReservationsLedgerProps {
   renderCardExtra?: (reservation: Reservation) => React.ReactNode;
   /** Override menu list (e.g. from vertical-specific pricing). When provided, skips getMenu() fetch. */
   overrideMenuList?: MenuItem[];
+  /** Hide prices in menu selection (estimate mode) */
+  hidePrices?: boolean;
+  /** Enable mobile trimming features (travel check, recommended duration) */
+  mobileTrimming?: boolean;
+  /** Customer ID resolver for travel check (from pet picker or name) */
+  getSelectedCustomerId?: () => string | null;
 }
 
-export default function ReservationsLedger({ createFormExtra, getCreateMeta, renderCardExtra, overrideMenuList }: ReservationsLedgerProps = {}) {
+export default function ReservationsLedger({ createFormExtra, getCreateMeta, renderCardExtra, overrideMenuList, hidePrices, mobileTrimming, getSelectedCustomerId }: ReservationsLedgerProps = {}) {
   const { tenantId, status: tenantStatus } = useAdminTenantId();
   // settings hook (失敗時は 10:00/19:00/30min fallback で継続)
   const { settings: bizSettings } = useAdminSettings(tenantId);
@@ -85,6 +106,17 @@ export default function ReservationsLedger({ createFormExtra, getCreateMeta, ren
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [menuList, setMenuList] = useState<MenuItem[]>([]);
+
+  // Mobile trimming state
+  const [isFirstVisit, setIsFirstVisit] = useState(false);
+  const [isPuppy, setIsPuppy] = useState(false);
+  const [recommendedDuration, setRecommendedDuration] = useState<RecommendedDuration | null>(null);
+  const [travelCheck, setTravelCheck] = useState<TravelCheckResult | null>(null);
+  const [travelLoading, setTravelLoading] = useState(false);
+  const [completeModalOpen, setCompleteModalOpen] = useState(false);
+  const [completeReservationId, setCompleteReservationId] = useState<string | null>(null);
+  const [actualDuration, setActualDuration] = useState<string>('60');
+  const [completing, setCompleting] = useState(false);
 
   // 予約可能日時グリッド
   // availabilityOverrides: KV生データ（cycleAvailabilityのサイクル判定用）
@@ -275,6 +307,64 @@ export default function ReservationsLedger({ createFormExtra, getCreateMeta, ren
     fetchSlotsPerStaff();
   }, [fetchSlotsPerStaff]);
 
+  // ── Mobile trimming: fetch recommended duration when customer selected ──
+  useEffect(() => {
+    if (!mobileTrimming || !createModalOpen) return;
+    const custId = getSelectedCustomerId?.();
+    if (!custId) { setRecommendedDuration(null); return; }
+    fetch(`/api/proxy/admin/customers/${encodeURIComponent(custId)}/recommended-duration?tenantId=${encodeURIComponent(tenantId)}`, { cache: 'no-store' })
+      .then(r => r.ok ? r.json() : null)
+      .then((json: any) => {
+        if (json?.ok) setRecommendedDuration(json as RecommendedDuration);
+        else setRecommendedDuration(null);
+      })
+      .catch(() => setRecommendedDuration(null));
+  }, [mobileTrimming, createModalOpen, getSelectedCustomerId, tenantId]);
+
+  // ── Mobile trimming: travel check (debounced) ──
+  useEffect(() => {
+    if (!mobileTrimming || !createModalOpen) return;
+    const custId = getSelectedCustomerId?.();
+    if (!custId || !createForm.date || !createForm.time) { setTravelCheck(null); return; }
+    setTravelLoading(true);
+    const timer = setTimeout(() => {
+      const params = new URLSearchParams({ tenantId, date: createForm.date, customerId: custId, startTime: createForm.time });
+      fetch(`/api/proxy/admin/reservations/travel-check?${params.toString()}`, { cache: 'no-store' })
+        .then(r => r.ok ? r.json() : null)
+        .then((json: any) => {
+          if (json?.ok) setTravelCheck(json as TravelCheckResult);
+          else setTravelCheck(null);
+        })
+        .catch(() => setTravelCheck(null))
+        .finally(() => setTravelLoading(false));
+    }, 800);
+    return () => { clearTimeout(timer); setTravelLoading(false); };
+  }, [mobileTrimming, createModalOpen, createForm.date, createForm.time, getSelectedCustomerId, tenantId]);
+
+  // ── Complete reservation handler ──
+  const handleComplete = async () => {
+    if (!completeReservationId) return;
+    setCompleting(true);
+    try {
+      const res = await fetch(`/api/proxy/admin/reservations/${encodeURIComponent(completeReservationId)}/complete?tenantId=${encodeURIComponent(tenantId)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          actualDurationMinutes: actualDuration ? parseInt(actualDuration, 10) : undefined,
+        }),
+      });
+      const json = await res.json() as any;
+      if (!json.ok) throw new Error(json.error || 'failed');
+      setCompleteModalOpen(false);
+      setCompleteReservationId(null);
+      await fetchReservations();
+    } catch {
+      // stay in modal on error
+    } finally {
+      setCompleting(false);
+    }
+  };
+
   // 表示用スロット状態（/slots と同一ソース → bookingと完全一致）
   const getSlotStatusForDisplay = useCallback((staffId: string, time: string): 'available' | 'few' | 'full' => {
     return (slotsPerStaff.get(staffId)?.[time] ?? 'available') as 'available' | 'few' | 'full';
@@ -444,6 +534,10 @@ export default function ReservationsLedger({ createFormExtra, getCreateMeta, ren
   const openCreateModal = () => {
     setCreateForm(f => ({ ...f, date, staffId: 'any', time: timeSlots[0] || '' }));
     setCreateError(null);
+    setIsFirstVisit(false);
+    setIsPuppy(false);
+    setRecommendedDuration(null);
+    setTravelCheck(null);
     setCreateModalOpen(true);
   };
 
@@ -456,13 +550,19 @@ export default function ReservationsLedger({ createFormExtra, getCreateMeta, ren
     setCreating(true);
     setCreateError(null);
     try {
+      // Build meta: merge external getCreateMeta() with menuId/menuName from the form
+      const externalMeta = getCreateMeta ? getCreateMeta() : {};
+      const selectedMenu = createForm.menuId ? menuList.find(m => m.id === createForm.menuId) : null;
+      const menuMeta = selectedMenu ? { menuId: selectedMenu.id, menuName: selectedMenu.name } : {};
+      const mobileMeta = mobileTrimming ? { isFirstVisit, isPuppy } : {};
       await createReservation({
         date: createForm.date,
         time: createForm.time,
         name: createForm.name.trim(),
         phone: createForm.phone.trim() || undefined,
         staffId: createForm.staffId,
-        ...(getCreateMeta ? { meta: getCreateMeta() } : {}),
+        durationMin: selectedMenu?.durationMin,
+        meta: { ...externalMeta, ...menuMeta, ...mobileMeta },
       });
       setCreateModalOpen(false);
       setCreateForm({ menuId: '', staffId: 'any', date: '', time: '', name: '', phone: '', note: '' });
@@ -481,44 +581,48 @@ export default function ReservationsLedger({ createFormExtra, getCreateMeta, ren
   return (
     <div className="space-y-6">
       {/* ヘッダー */}
-      <div className="bg-white rounded-2xl shadow-soft border border-brand-border p-6">
-        <div className="flex items-center justify-between">
-          {/* 左: タイトル */}
+      <div className="bg-white rounded-2xl shadow-soft border border-brand-border p-4 sm:p-6">
+        {/* PC: 横並び */}
+        <div className="hidden sm:flex items-center justify-between">
           <h1 className="text-2xl font-semibold text-brand-text">予約台帳</h1>
-
-          {/* 中央: 日付ナビ */}
           <div className="flex items-center gap-3">
-            <button
-              onClick={() => handleDateChange(-1)}
-              className="p-2 text-brand-muted hover:text-brand-text hover:bg-brand-bg rounded-xl transition-all"
-            >
+            <button onClick={() => handleDateChange(-1)} className="p-2 text-brand-muted hover:text-brand-text hover:bg-brand-bg rounded-xl transition-all">
               <ChevronLeft className="w-5 h-5" />
             </button>
             <div className="px-4 py-2 bg-brand-bg border border-brand-border rounded-xl">
               <span className="text-sm font-medium text-brand-text">{formatDate(date)}</span>
             </div>
-            <button
-              onClick={() => handleDateChange(1)}
-              className="p-2 text-brand-muted hover:text-brand-text hover:bg-brand-bg rounded-xl transition-all"
-            >
+            <button onClick={() => handleDateChange(1)} className="p-2 text-brand-muted hover:text-brand-text hover:bg-brand-bg rounded-xl transition-all">
               <ChevronRight className="w-5 h-5" />
             </button>
           </div>
-
-          {/* 右: 今日ボタン + 予約作成 */}
           <div className="flex items-center gap-3">
-            <button
-              onClick={handleToday}
-              className="px-4 py-2 text-sm font-medium text-brand-text bg-white border border-brand-border rounded-xl hover:shadow-md transition-all"
-            >
-              今日
-            </button>
-            <button
-              onClick={openCreateModal}
-              className="px-5 py-4 bg-brand-primary text-white rounded-2xl shadow-soft hover:shadow-md transition-all flex items-center gap-2 leading-tight"
-            >
+            <button onClick={handleToday} className="px-4 py-2 text-sm font-medium text-brand-text bg-white border border-brand-border rounded-xl hover:shadow-md transition-all">今日</button>
+            <button onClick={openCreateModal} className="px-5 py-4 bg-brand-primary text-white rounded-2xl shadow-soft hover:shadow-md transition-all flex items-center gap-2 leading-tight">
               <Plus className="w-5 h-5" />
               <span className="font-medium">予約作成</span>
+            </button>
+          </div>
+        </div>
+        {/* スマホ: 縦並び */}
+        <div className="flex sm:hidden flex-col gap-3">
+          <div className="flex items-center justify-between">
+            <h1 className="text-lg font-semibold text-brand-text">予約台帳</h1>
+            <button onClick={openCreateModal} className="px-4 py-2.5 bg-brand-primary text-white rounded-xl shadow-soft hover:shadow-md transition-all flex items-center gap-1.5 text-sm">
+              <Plus className="w-4 h-4" />
+              <span className="font-medium">予約作成</span>
+            </button>
+          </div>
+          <div className="flex items-center justify-between">
+            <button onClick={() => handleDateChange(-1)} className="p-2 text-brand-muted hover:text-brand-text hover:bg-brand-bg rounded-xl transition-all">
+              <ChevronLeft className="w-5 h-5" />
+            </button>
+            <button onClick={handleToday} className="text-xs text-brand-muted underline">今日</button>
+            <div className="px-3 py-1.5 bg-brand-bg border border-brand-border rounded-xl">
+              <span className="text-sm font-medium text-brand-text">{formatDate(date)}</span>
+            </div>
+            <button onClick={() => handleDateChange(1)} className="p-2 text-brand-muted hover:text-brand-text hover:bg-brand-bg rounded-xl transition-all">
+              <ChevronRight className="w-5 h-5" />
             </button>
           </div>
         </div>
@@ -531,8 +635,53 @@ export default function ReservationsLedger({ createFormExtra, getCreateMeta, ren
         </div>
       )}
 
-      {/* グリッドテーブル */}
-      <div className="bg-white rounded-2xl shadow-soft border border-brand-border overflow-hidden">
+      {/* スマホ: カードリスト */}
+      <div className="sm:hidden space-y-3">
+        {loading ? (
+          <div className="flex items-center justify-center py-12">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-brand-primary"></div>
+            <span className="ml-3 text-sm text-brand-muted">読み込み中...</span>
+          </div>
+        ) : reservations.length === 0 ? (
+          <div className="bg-white rounded-2xl shadow-soft border border-brand-border p-8 text-center">
+            <p className="text-sm text-brand-muted">この日の予約はありません</p>
+          </div>
+        ) : (
+          reservations.map((reservation) => {
+            const staffName = (() => {
+              if (!reservation.staffId || reservation.staffId === 'any') return '指名なし';
+              const s = staffList.find((x) => x.id === reservation.staffId);
+              return s ? s.name : reservation.staffId;
+            })();
+            return (
+              <div
+                key={reservation.reservationId}
+                onClick={() => setSelectedReservation(reservation)}
+                className="bg-white rounded-xl p-4 shadow-sm border border-brand-border active:bg-blue-50 transition-colors cursor-pointer"
+              >
+                <div className="flex items-start justify-between mb-2">
+                  <div>
+                    <span className="text-base font-semibold text-brand-text">{reservation.name}</span>
+                    {reservation.phone && (
+                      <span className="ml-2 text-xs text-brand-muted">{reservation.phone}</span>
+                    )}
+                  </div>
+                  <Badge variant="reserved">予約済み</Badge>
+                </div>
+                <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-brand-muted">
+                  <span>{reservation.time}〜</span>
+                  <span>{staffName}</span>
+                  {reservation.durationMin && <span>{reservation.durationMin}分</span>}
+                </div>
+                {renderCardExtra && <div className="mt-2">{renderCardExtra(reservation)}</div>}
+              </div>
+            );
+          })
+        )}
+      </div>
+
+      {/* PC: グリッドテーブル */}
+      <div className="hidden sm:block bg-white rounded-2xl shadow-soft border border-brand-border overflow-hidden">
         {loading ? (
           <div className="flex items-center justify-center py-12">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-brand-primary"></div>
@@ -648,8 +797,8 @@ export default function ReservationsLedger({ createFormExtra, getCreateMeta, ren
         )}
       </div>
 
-      {/* 予約可能日時グリッド */}
-      <div className="bg-white rounded-2xl shadow-soft border border-brand-border overflow-hidden">
+      {/* 予約可能日時グリッド（PCのみ — スマホでは横スクロールが不便なため非表示） */}
+      <div className="hidden sm:block bg-white rounded-2xl shadow-soft border border-brand-border overflow-hidden">
         <div className="flex items-center justify-between p-4 border-b border-brand-border">
           <div>
             <h2 className="text-lg font-semibold text-brand-text">予約可能日時</h2>
@@ -725,16 +874,22 @@ export default function ReservationsLedger({ createFormExtra, getCreateMeta, ren
           onRefresh={fetchReservations}
           onCancelReservation={(r) => { setSelectedReservation(null); handleCancel(r); }}
           isCancelling={cancellingId === selectedReservation.reservationId}
+          onCompleteReservation={(r) => {
+            setSelectedReservation(null);
+            setCompleteReservationId(r.reservationId);
+            setActualDuration('60');
+            setCompleteModalOpen(true);
+          }}
         />
       )}
       {/* 予約作成モーダル */}
       {createModalOpen && (
         <div
-          className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+          className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 sm:p-4"
           onClick={() => setCreateModalOpen(false)}
         >
           <div
-            className="bg-white rounded-2xl shadow-soft max-w-lg w-full p-6 space-y-4"
+            className="bg-white rounded-t-2xl sm:rounded-2xl shadow-soft max-w-lg w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between">
@@ -762,12 +917,12 @@ export default function ReservationsLedger({ createFormExtra, getCreateMeta, ren
                 <select
                   value={createForm.menuId}
                   onChange={(e) => setCreateForm((f) => ({ ...f, menuId: e.target.value }))}
-                  className="w-full px-3 py-2 border border-brand-border rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary bg-white text-sm"
+                  className="w-full px-3 py-2 min-h-[44px] border border-brand-border rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary bg-white text-sm"
                 >
                   <option value="">選択（任意）</option>
                   {menuList.filter((m) => m.active).map((m) => (
                     <option key={m.id} value={m.id}>
-                      {m.name}（{m.durationMin}分 / ¥{m.price.toLocaleString()}）
+                      {hidePrices ? `${m.name}（${m.durationMin}分）` : `${m.name}（${m.durationMin}分 / ¥${m.price.toLocaleString()}）`}
                     </option>
                   ))}
                 </select>
@@ -779,7 +934,7 @@ export default function ReservationsLedger({ createFormExtra, getCreateMeta, ren
                 <select
                   value={createForm.staffId}
                   onChange={(e) => setCreateForm((f) => ({ ...f, staffId: e.target.value }))}
-                  className="w-full px-3 py-2 border border-brand-border rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary bg-white text-sm"
+                  className="w-full px-3 py-2 min-h-[44px] border border-brand-border rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary bg-white text-sm"
                 >
                   <option value="any">指名なし</option>
                   {staffList.map((s) => (
@@ -800,7 +955,7 @@ export default function ReservationsLedger({ createFormExtra, getCreateMeta, ren
                     type="date"
                     value={createForm.date}
                     onChange={(e) => setCreateForm((f) => ({ ...f, date: e.target.value }))}
-                    className="w-full px-3 py-2 border border-brand-border rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary text-sm"
+                    className="w-full px-3 py-2 min-h-[44px] border border-brand-border rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary text-sm"
                   />
                 </div>
                 <div>
@@ -810,7 +965,7 @@ export default function ReservationsLedger({ createFormExtra, getCreateMeta, ren
                   <select
                     value={createForm.time}
                     onChange={(e) => setCreateForm((f) => ({ ...f, time: e.target.value }))}
-                    className="w-full px-3 py-2 border border-brand-border rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary bg-white text-sm"
+                    className="w-full px-3 py-2 min-h-[44px] border border-brand-border rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary bg-white text-sm"
                   >
                     <option value="">選択</option>
                     {timeSlots.map((t) => <option key={t} value={t}>{t}</option>)}
@@ -828,7 +983,7 @@ export default function ReservationsLedger({ createFormExtra, getCreateMeta, ren
                   value={createForm.name}
                   onChange={(e) => setCreateForm((f) => ({ ...f, name: e.target.value }))}
                   placeholder="山田 花子"
-                  className="w-full px-3 py-2 border border-brand-border rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary text-sm"
+                  className="w-full px-3 py-2 min-h-[44px] border border-brand-border rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary text-sm"
                 />
               </div>
 
@@ -842,7 +997,7 @@ export default function ReservationsLedger({ createFormExtra, getCreateMeta, ren
                   value={createForm.phone}
                   onChange={(e) => setCreateForm((f) => ({ ...f, phone: e.target.value }))}
                   placeholder="090-0000-0000"
-                  className="w-full px-3 py-2 border border-brand-border rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary text-sm"
+                  className="w-full px-3 py-2 min-h-[44px] border border-brand-border rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary text-sm"
                 />
               </div>
 
@@ -854,31 +1009,145 @@ export default function ReservationsLedger({ createFormExtra, getCreateMeta, ren
                   onChange={(e) => setCreateForm((f) => ({ ...f, note: e.target.value }))}
                   rows={2}
                   placeholder="電話予約、特記事項など"
-                  className="w-full px-3 py-2 border border-brand-border rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary text-sm resize-none"
+                  className="w-full px-3 py-2 min-h-[44px] border border-brand-border rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary text-sm resize-none"
                 />
               </div>
 
               {/* Vertical-specific extra fields */}
               {createFormExtra}
+
+              {/* ── Mobile trimming fields ── */}
+              {mobileTrimming && (
+                <>
+                  {/* First visit / Puppy checkboxes */}
+                  <div className="flex flex-wrap gap-4">
+                    <label className="flex items-center gap-2 text-sm text-brand-text cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={isFirstVisit}
+                        onChange={e => setIsFirstVisit(e.target.checked)}
+                        className="rounded border-brand-border text-brand-primary focus:ring-brand-primary/20"
+                      />
+                      初回来店
+                    </label>
+                    <label className="flex items-center gap-2 text-sm text-brand-text cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={isPuppy}
+                        onChange={e => setIsPuppy(e.target.checked)}
+                        className="rounded border-brand-border text-brand-primary focus:ring-brand-primary/20"
+                      />
+                      パピー（1歳未満）
+                    </label>
+                  </div>
+                  {(isFirstVisit || isPuppy) && (
+                    <p className="text-xs text-amber-600 bg-amber-50 px-3 py-1.5 rounded-lg">+30分バッファを追加します</p>
+                  )}
+
+                  {/* Recommended duration */}
+                  {recommendedDuration && (
+                    <div className="bg-blue-50 border border-blue-200 rounded-xl px-3 py-2.5 text-sm space-y-1">
+                      <p className="font-medium text-blue-800">
+                        {recommendedDuration.basedOn === 'actual_history'
+                          ? `過去の実績から：${recommendedDuration.recommendedMinutes}分`
+                          : recommendedDuration.basedOn === 'breed_size_matrix'
+                            ? `犬種・サイズから：${recommendedDuration.recommendedMinutes}分`
+                            : `デフォルト：${recommendedDuration.recommendedMinutes}分`}
+                      </p>
+                      {recommendedDuration.bufferSuggested > 0 && (
+                        <p className="text-xs text-blue-600">＋{recommendedDuration.bufferSuggested}分（初回/パピーバッファ）</p>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Travel check */}
+                  {travelLoading && (
+                    <div className="text-xs text-gray-400 flex items-center gap-1">
+                      <div className="w-3 h-3 border border-gray-300 border-t-transparent rounded-full animate-spin" />
+                      移動時間を確認中...
+                    </div>
+                  )}
+                  {!travelLoading && travelCheck && (travelCheck.travelFromPrev !== null || travelCheck.travelToNext !== null) && (
+                    <div className="bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5 text-sm space-y-1">
+                      <p className="font-medium text-gray-700 flex items-center gap-1">🚗 移動時間チェック</p>
+                      {travelCheck.travelFromPrev !== null && (
+                        <p className="text-gray-600">前の予約（{travelCheck.prevCustomerName ?? '—'}）から → 約{travelCheck.travelFromPrev}分</p>
+                      )}
+                      {travelCheck.travelToNext !== null && (
+                        <p className="text-gray-600">次の予約（{travelCheck.nextCustomerName ?? '—'}）まで → 約{travelCheck.travelToNext}分</p>
+                      )}
+                    </div>
+                  )}
+                  {!travelLoading && travelCheck?.warning && (
+                    <div className="bg-amber-50 border border-amber-300 rounded-xl px-3 py-2.5 text-sm text-amber-700 font-medium">
+                      ⚠️ {travelCheck.warning}
+                    </div>
+                  )}
+                </>
+              )}
             </div>
 
-            <div className="flex gap-3 pt-2">
+            <div className="flex flex-col sm:flex-row gap-3 pt-2">
               <button
                 onClick={handleCreate}
                 disabled={creating}
-                className="flex-1 px-4 py-3 bg-brand-primary text-white rounded-xl font-medium hover:shadow-md focus:outline-none focus:ring-2 focus:ring-brand-primary/20 disabled:opacity-50 disabled:cursor-not-allowed transition-all text-sm"
+                className="flex-1 px-4 py-3 min-h-[44px] bg-brand-primary text-white rounded-xl font-medium hover:shadow-md focus:outline-none focus:ring-2 focus:ring-brand-primary/20 disabled:opacity-50 disabled:cursor-not-allowed transition-all text-sm"
               >
                 {creating ? '作成中...' : '予約を作成'}
               </button>
               <button
                 onClick={() => setCreateModalOpen(false)}
-                className="px-4 py-3 text-sm font-medium text-brand-text bg-white border border-brand-border rounded-xl hover:shadow-md transition-all"
+                className="px-4 py-3 min-h-[44px] text-sm font-medium text-brand-text bg-white border border-brand-border rounded-xl hover:shadow-md transition-all"
               >
                 キャンセル
               </button>
             </div>
 
             <p className="text-xs text-brand-muted">チャンネル: 電話（phone）として記録されます</p>
+          </div>
+        </div>
+      )}
+
+      {/* 予約完了モーダル */}
+      {completeModalOpen && (
+        <div
+          className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 sm:p-4"
+          onClick={() => setCompleteModalOpen(false)}
+        >
+          <div
+            className="bg-white rounded-t-2xl sm:rounded-2xl shadow-soft max-w-sm w-full p-6 space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-lg font-semibold text-brand-text">✅ 予約を完了にしますか？</h2>
+            <div>
+              <label className="block text-sm font-medium text-brand-text mb-1">実際の施術時間（任意）</label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  value={actualDuration}
+                  onChange={e => setActualDuration(e.target.value)}
+                  min={0}
+                  className="w-24 px-3 py-2 border border-brand-border rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary text-sm text-center"
+                />
+                <span className="text-sm text-brand-muted">分</span>
+              </div>
+              <p className="text-xs text-brand-muted mt-1.5">※次回の予約時間の参考に使います</p>
+            </div>
+            <div className="flex gap-3 pt-2">
+              <button
+                onClick={handleComplete}
+                disabled={completing}
+                className="flex-1 px-4 py-3 bg-green-600 text-white rounded-xl font-medium hover:bg-green-700 disabled:opacity-50 transition-all text-sm"
+              >
+                {completing ? '処理中...' : '完了にする'}
+              </button>
+              <button
+                onClick={() => setCompleteModalOpen(false)}
+                className="px-4 py-3 text-sm font-medium text-brand-text bg-white border border-brand-border rounded-xl hover:shadow-md transition-all"
+              >
+                キャンセル
+              </button>
+            </div>
           </div>
         </div>
       )}

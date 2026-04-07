@@ -23,6 +23,8 @@ interface Props {
   /** If provided, shows Cancel button on the basic tab */
   onCancelReservation?: (reservation: Reservation) => void;
   isCancelling?: boolean;
+  /** If provided, shows Complete button on the basic tab */
+  onCompleteReservation?: (reservation: Reservation) => void;
 }
 
 export default function ReservationDetailPanel({
@@ -34,6 +36,7 @@ export default function ReservationDetailPanel({
   onRefresh,
   onCancelReservation,
   isCancelling,
+  onCompleteReservation,
 }: Props) {
   const { vertical } = useVertical(tenantId);
   // Phase 4: registry 経由で labels / flags を取得
@@ -189,11 +192,11 @@ export default function ReservationDetailPanel({
 
   return (
     <div
-      className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+      className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 sm:p-4"
       onClick={() => { onClose(); setEditMode(false); }}
     >
       <div
-        className="bg-white rounded-2xl shadow-soft max-w-2xl w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto"
+        className="bg-white rounded-t-2xl sm:rounded-2xl shadow-soft max-w-2xl w-full p-5 sm:p-6 space-y-4 max-h-[90vh] overflow-y-auto"
         onClick={e => e.stopPropagation()}
       >
         {/* ── Header ── */}
@@ -576,6 +579,14 @@ export default function ReservationDetailPanel({
             >
               編集
             </button>
+            {onCompleteReservation && reservation.status !== 'completed' && reservation.status !== 'cancelled' && (
+              <button
+                onClick={() => onCompleteReservation(reservation)}
+                className="px-4 py-2 text-sm font-medium text-green-700 bg-green-50 border border-green-200 rounded-xl hover:bg-green-100 focus:outline-none focus:ring-2 focus:ring-green-500/20 focus:ring-offset-2 transition-all"
+              >
+                完了にする
+              </button>
+            )}
             {onCancelReservation && (
               <button
                 onClick={() => onCancelReservation(reservation)}

@@ -1,121 +1,196 @@
 /**
- * Billing routes — Stripe Checkout, webhooks, portal, enterprise inquiry, support
+ * Billing routes — PAY.JP subscription, webhooks, self-managed portal, enterprise inquiry, support
+ *
+ * PAY.JP REST API を fetch() で直接呼び出す（Cloudflare Workers 互換）。
+ * SDK は Edge Runtime 非対応のため不使用。
  */
-import Stripe from "stripe";
 import type { PlanId, SubscriptionInfo } from "../settings";
 import { getTenantId } from "../helpers";
 
-function getStripe(env: any): Stripe | null {
-  const key: string = env.STRIPE_SECRET_KEY ?? '';
-  if (!key) return null;
-  return new Stripe(key, { httpClient: Stripe.createFetchHttpClient() });
+const PAYJP_API = 'https://api.pay.jp/v1';
+
+/** PAY.JP REST API helper — Basic Auth (secret key : empty password) */
+async function payjpFetch(env: any, path: string, method: string = 'GET', body?: Record<string, string>): Promise<any> {
+  const key: string = env.PAYJP_SECRET_KEY ?? '';
+  if (!key) throw new Error('payjp_not_configured');
+
+  const headers: Record<string, string> = {
+    'Authorization': 'Basic ' + btoa(key + ':'),
+  };
+
+  let fetchBody: string | undefined;
+  if (body && (method === 'POST' || method === 'PUT' || method === 'DELETE')) {
+    headers['Content-Type'] = 'application/x-www-form-urlencoded';
+    fetchBody = new URLSearchParams(body).toString();
+  }
+
+  const res = await fetch(`${PAYJP_API}${path}`, { method, headers, body: fetchBody });
+  const json = await res.json();
+  if (!res.ok) {
+    const err = (json as any)?.error?.message ?? `PAY.JP API error ${res.status}`;
+    throw new Error(err);
+  }
+  return json;
+}
+
+/** HMAC-SHA256 Webhook signature verification */
+async function verifyPayjpSignature(rawBody: string, signature: string, secret: string): Promise<boolean> {
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey('raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const sig = await crypto.subtle.sign('HMAC', key, enc.encode(rawBody));
+  const expected = Array.from(new Uint8Array(sig)).map(b => b.toString(16).padStart(2, '0')).join('');
+  return expected === signature;
 }
 
 export function registerBillingRoutes(app: any) {
 
-  app.post('/billing/checkout', async (c: any) => {
+  // ── Rate limit helper for card operations (10 attempts/hour per IP) ──
+  const CARD_RATE_LIMIT = 10;
+  const CARD_RATE_TTL = 3600; // 1 hour
+  async function checkCardRateLimit(c: any): Promise<Response | null> {
     const env = c.env as any;
-    const stripe = getStripe(env);
-    if (!stripe) {
-      return c.json({ ok: false, error: 'stripe_not_configured' }, 500);
+    const kv = env.SAAS_FACTORY as KVNamespace;
+    const ip = c.req.header('CF-Connecting-IP') ?? c.req.header('x-forwarded-for') ?? 'unknown';
+    const rlKey = `billing:attempt:${ip}`;
+    const countRaw = await kv.get(rlKey);
+    const count = countRaw ? parseInt(countRaw, 10) : 0;
+    if (count >= CARD_RATE_LIMIT) {
+      return c.json({ ok: false, error: 'rate_limited',
+        message: 'カード操作の試行回数が上限を超えました。1時間後に再試行してください。' }, 429);
     }
+    await kv.put(rlKey, String(count + 1), { expirationTtl: CARD_RATE_TTL });
+    return null;
+  }
+
+  // ── Create subscription (card token from frontend → customer → subscription) ──
+  app.post('/billing/subscribe', async (c: any) => {
+    const env = c.env as any;
+    if (!env.PAYJP_SECRET_KEY) {
+      return c.json({ ok: false, error: 'payjp_not_configured' }, 500);
+    }
+
+    // Card attempt rate limiting
+    const rlBlock = await checkCardRateLimit(c);
+    if (rlBlock) return rlBlock;
 
     let body: any = {};
     try { body = await c.req.json(); } catch {}
 
+    const token: string = String(body.token ?? '').trim();
     const planId: string = String(body.planId ?? '');
+    const email: string = String(body.email ?? '').trim();
+
+    if (!token) {
+      return c.json({ ok: false, error: 'missing_token' }, 400);
+    }
     if (planId !== 'starter' && planId !== 'pro') {
       return c.json({ ok: false, error: 'invalid_plan' }, 400);
     }
 
-    const priceId: string = planId === 'starter'
-      ? (env.STRIPE_PRICE_STARTER ?? '')
-      : (env.STRIPE_PRICE_PRO ?? '');
+    const payjpPlanId: string = planId === 'starter'
+      ? (env.PAYJP_PLAN_STARTER ?? '')
+      : (env.PAYJP_PLAN_PRO ?? '');
 
-    if (!priceId) {
-      return c.json({ ok: false, error: 'price_not_configured' }, 500);
+    if (!payjpPlanId) {
+      return c.json({ ok: false, error: 'plan_not_configured' }, 500);
     }
 
-    const webOrigin: string = (env.WEB_ORIGIN ?? env.WEB_BASE ?? 'https://saas-factory-web-v2.pages.dev')
-      .replace(/\/+$/, '');
-
     try {
-      const session = await stripe.checkout.sessions.create({
-        mode: 'subscription',
-        line_items: [{ price: priceId, quantity: 1 }],
-        metadata: { planId },
-        success_url: `${webOrigin}/signup?session_id={CHECKOUT_SESSION_ID}`,
-        cancel_url: `${webOrigin}/signup?canceled=1`,
+      // 1. Finalize 3-D Secure on token (required before use)
+      try {
+        await payjpFetch(env, `/tokens/${token}/tds_finish`, 'POST');
+      } catch (tdsErr: any) {
+        // tds_finish may fail if 3DS was not triggered (e.g. frictionless flow) — log but continue
+        console.warn('tds_finish warning:', tdsErr?.message);
+      }
+
+      // 2. Create customer with card token
+      const customerParams: Record<string, string> = { card: token };
+      if (email) customerParams.email = email;
+      customerParams.metadata_planId = planId;
+
+      const customer = await payjpFetch(env, '/customers', 'POST', customerParams);
+
+      // 3. Create subscription
+      const subscription = await payjpFetch(env, '/subscriptions', 'POST', {
+        customer: customer.id,
+        plan: payjpPlanId,
+        metadata_planId: planId,
       });
 
-      return c.json({ ok: true, url: session.url });
+      return c.json({
+        ok: true,
+        customerId: customer.id,
+        subscriptionId: subscription.id,
+        planId,
+        status: subscription.status,
+      });
     } catch (err: any) {
-      const msg: string = err?.message ?? 'checkout_failed';
-      console.error('billing/checkout error:', msg);
-      return c.json({ ok: false, error: 'checkout_failed', detail: msg }, 500);
+      const msg: string = err?.message ?? 'subscribe_failed';
+      console.error('billing/subscribe error:', msg);
+      return c.json({ ok: false, error: 'subscribe_failed', detail: msg }, 500);
     }
   });
 
-  app.post('/billing/verify-session', async (c: any) => {
+  // ── Verify subscription (used during signup to confirm subscription exists) ──
+  app.post('/billing/verify-subscription', async (c: any) => {
     const env = c.env as any;
-    const stripe = getStripe(env);
-    if (!stripe) {
-      return c.json({ ok: false, error: 'stripe_not_configured' }, 500);
+    if (!env.PAYJP_SECRET_KEY) {
+      return c.json({ ok: false, error: 'payjp_not_configured' }, 500);
     }
 
     let body: any = {};
     try { body = await c.req.json(); } catch {}
 
-    const sessionId: string = String(body.sessionId ?? '');
-    if (!sessionId) {
-      return c.json({ ok: false, error: 'missing_session_id' }, 400);
+    const subscriptionId: string = String(body.subscriptionId ?? '').trim();
+    if (!subscriptionId) {
+      return c.json({ ok: false, error: 'missing_subscription_id' }, 400);
     }
 
     try {
-      const session = await stripe.checkout.sessions.retrieve(sessionId);
-      if (session.payment_status !== 'paid') {
-        return c.json({ ok: false, error: 'payment_not_completed', paymentStatus: session.payment_status });
+      const sub = await payjpFetch(env, `/subscriptions/${subscriptionId}`);
+      if (sub.status !== 'active' && sub.status !== 'trial') {
+        return c.json({ ok: false, error: 'subscription_not_active', status: sub.status });
       }
-      const planId = (session.metadata?.planId ?? 'starter') as PlanId;
+      const planId = (sub.metadata?.planId ?? 'starter') as PlanId;
       return c.json({
         ok: true,
         planId,
-        paymentStatus: session.payment_status,
-        customerId: session.customer,
-        subscriptionId: session.subscription,
+        status: sub.status,
+        customerId: sub.customer,
+        subscriptionId: sub.id,
       });
     } catch (err: any) {
-      return c.json({ ok: false, error: 'session_not_found', detail: err.message }, 404);
+      return c.json({ ok: false, error: 'subscription_not_found', detail: err.message }, 404);
     }
   });
 
+  // ── Webhook ──────────────────────────────────────────────────────────────────
   app.post('/billing/webhook', async (c: any) => {
     const env = c.env as any;
     const kv = env.SAAS_FACTORY as KVNamespace;
-    const stripe = getStripe(env);
-    const whSecret: string = env.STRIPE_WEBHOOK_SECRET ?? '';
+    const whSecret: string = env.PAYJP_WEBHOOK_SECRET ?? '';
 
-    if (!stripe || !whSecret) {
+    if (!env.PAYJP_SECRET_KEY || !whSecret) {
       return c.json({ ok: false, error: 'webhook_not_configured' }, 500);
     }
 
     // 1. Signature verification
     const rawBody = await c.req.text();
-    const sig = c.req.header('Stripe-Signature') ?? '';
-    let event: Stripe.Event;
-    try {
-      event = await stripe.webhooks.constructEventAsync(
-        rawBody, sig, whSecret,
-        undefined,
-        Stripe.createSubtleCryptoProvider()
-      );
-    } catch {
+    const sig = c.req.header('X-Payjp-Signature') ?? '';
+    const valid = await verifyPayjpSignature(rawBody, sig, whSecret);
+    if (!valid) {
       return c.json({ ok: false, error: 'signature_invalid' }, 401);
+    }
+
+    let event: any;
+    try { event = JSON.parse(rawBody); } catch {
+      return c.json({ ok: false, error: 'invalid_json' }, 400);
     }
 
     // 2. Tenant resolution helper
     async function resolveTenant(customerId: string) {
-      const tenantId = await kv.get(`stripe:customer:${customerId}`);
+      const tenantId = await kv.get(`payjp:customer:${customerId}`);
       if (!tenantId) return null;
       const raw = await kv.get(`settings:${tenantId}`);
       const settings = raw ? JSON.parse(raw) : null;
@@ -133,20 +208,22 @@ export function registerBillingRoutes(app: any) {
       await kv.put(`settings:${tenantId}`, JSON.stringify(merged));
     }
 
-    // 3. Event dispatch
-    switch (event.type) {
-      case 'checkout.session.completed': {
-        const session = event.data.object as Stripe.Checkout.Session;
-        const customerId = String(session.customer ?? '');
-        const subscriptionId = String(session.subscription ?? '');
-        const planId = (session.metadata?.planId ?? '') as PlanId;
+    // 3. Event dispatch — PAY.JP event types
+    const eventType: string = event.type ?? '';
+    const data = event.data ?? {};
+
+    switch (eventType) {
+      case 'subscription.created': {
+        const customerId = String(data.customer ?? '');
+        const subscriptionId = String(data.id ?? '');
+        const planId = (data.metadata?.planId ?? '') as PlanId;
         if (customerId) {
           const t = await resolveTenant(customerId);
           if (t) {
             await saveSubscription(t.tenantId, t.settings, {
               planId: planId || t.settings?.subscription?.planId || 'starter',
-              stripeCustomerId: customerId,
-              stripeSubscriptionId: subscriptionId || undefined,
+              payjpCustomerId: customerId,
+              payjpSubscriptionId: subscriptionId || undefined,
               status: 'active',
             });
           }
@@ -154,44 +231,41 @@ export function registerBillingRoutes(app: any) {
         break;
       }
 
-      case 'customer.subscription.updated': {
-        const sub = event.data.object as Stripe.Subscription;
-        const customerId = String(sub.customer ?? '');
+      case 'subscription.updated': {
+        const customerId = String(data.customer ?? '');
         const t = await resolveTenant(customerId);
         if (t) {
-          const stripeStatus = sub.status;
+          const payjpStatus: string = data.status ?? '';
           const statusMap: Record<string, SubscriptionInfo['status']> = {
-            active: 'active', past_due: 'past_due', canceled: 'cancelled',
-            trialing: 'trialing', unpaid: 'past_due', incomplete: 'past_due',
-            incomplete_expired: 'cancelled', paused: 'cancelled',
+            active: 'active', trial: 'trialing', canceled: 'cancelled',
+            paused: 'cancelled',
           };
-          const planId = (sub.metadata?.planId ?? '') as PlanId;
+          const planId = (data.metadata?.planId ?? '') as PlanId;
           await saveSubscription(t.tenantId, t.settings, {
-            status: statusMap[stripeStatus] ?? 'active',
-            currentPeriodEnd: sub.current_period_end ? sub.current_period_end * 1000 : undefined,
+            status: statusMap[payjpStatus] ?? 'active',
+            currentPeriodEnd: data.current_period_end ? data.current_period_end * 1000 : undefined,
             ...(planId ? { planId } : {}),
-            stripeSubscriptionId: sub.id,
+            payjpSubscriptionId: data.id,
           });
         }
         break;
       }
 
-      case 'customer.subscription.deleted': {
-        const sub = event.data.object as Stripe.Subscription;
-        const customerId = String(sub.customer ?? '');
+      case 'subscription.deleted': {
+        const customerId = String(data.customer ?? '');
         const t = await resolveTenant(customerId);
         if (t) {
           await saveSubscription(t.tenantId, t.settings, {
             status: 'cancelled',
-            stripeSubscriptionId: sub.id,
+            payjpSubscriptionId: data.id,
           });
         }
         break;
       }
 
-      case 'invoice.payment_failed': {
-        const invoice = event.data.object as Stripe.Invoice;
-        const customerId = String(invoice.customer ?? '');
+      case 'charge.failed': {
+        // Payment failure — mark as past_due
+        const customerId = String(data.customer ?? '');
         const t = await resolveTenant(customerId);
         if (t) {
           await saveSubscription(t.tenantId, t.settings, {
@@ -202,15 +276,64 @@ export function registerBillingRoutes(app: any) {
       }
     }
 
-    return c.json({ ok: true, type: event.type });
+    return c.json({ ok: true, type: eventType });
   });
 
-  app.post('/admin/billing/portal-session', async (c: any) => {
+  // ── Self-managed billing portal (PAY.JP has no hosted portal) ─────────────
+
+  // Card update: replace customer's default card
+  app.post('/admin/billing/update-card', async (c: any) => {
     const env = c.env as any;
     const kv = env.SAAS_FACTORY as KVNamespace;
-    const stripe = getStripe(env);
-    if (!stripe) {
-      return c.json({ ok: false, error: 'stripe_not_configured' }, 500);
+    if (!env.PAYJP_SECRET_KEY) {
+      return c.json({ ok: false, error: 'payjp_not_configured' }, 500);
+    }
+
+    // Card attempt rate limiting
+    const rlBlock = await checkCardRateLimit(c);
+    if (rlBlock) return rlBlock;
+
+    const tenantId = getTenantId(c);
+    if (!tenantId || tenantId === 'default') {
+      return c.json({ ok: false, error: 'missing_tenant_id' }, 400);
+    }
+
+    let body: any = {};
+    try { body = await c.req.json(); } catch {}
+    const token: string = String(body.token ?? '').trim();
+    if (!token) {
+      return c.json({ ok: false, error: 'missing_token' }, 400);
+    }
+
+    const raw = await kv.get(`settings:${tenantId}`);
+    if (!raw) return c.json({ ok: false, error: 'tenant_not_found' }, 404);
+    const settings = JSON.parse(raw);
+    const customerId: string = settings?.subscription?.payjpCustomerId ?? '';
+    if (!customerId) {
+      return c.json({ ok: false, error: 'no_payjp_customer' }, 400);
+    }
+
+    try {
+      // Finalize 3-D Secure on token before use
+      try {
+        await payjpFetch(env, `/tokens/${token}/tds_finish`, 'POST');
+      } catch (tdsErr: any) {
+        console.warn('tds_finish warning (card update):', tdsErr?.message);
+      }
+
+      await payjpFetch(env, `/customers/${customerId}`, 'POST', { card: token });
+      return c.json({ ok: true });
+    } catch (err: any) {
+      return c.json({ ok: false, error: 'card_update_failed', detail: err.message }, 500);
+    }
+  });
+
+  // Cancel subscription
+  app.post('/admin/billing/cancel', async (c: any) => {
+    const env = c.env as any;
+    const kv = env.SAAS_FACTORY as KVNamespace;
+    if (!env.PAYJP_SECRET_KEY) {
+      return c.json({ ok: false, error: 'payjp_not_configured' }, 500);
     }
 
     const tenantId = getTenantId(c);
@@ -218,29 +341,64 @@ export function registerBillingRoutes(app: any) {
       return c.json({ ok: false, error: 'missing_tenant_id' }, 400);
     }
 
-    // Resolve customerId from tenant settings
     const raw = await kv.get(`settings:${tenantId}`);
-    if (!raw) {
-      return c.json({ ok: false, error: 'tenant_not_found' }, 404);
-    }
+    if (!raw) return c.json({ ok: false, error: 'tenant_not_found' }, 404);
     const settings = JSON.parse(raw);
-    const customerId: string = settings?.subscription?.stripeCustomerId ?? '';
-    if (!customerId) {
-      return c.json({ ok: false, error: 'no_stripe_customer' }, 400);
+    const subscriptionId: string = settings?.subscription?.payjpSubscriptionId ?? '';
+    if (!subscriptionId) {
+      return c.json({ ok: false, error: 'no_subscription' }, 400);
     }
-
-    const webOrigin: string = (env.WEB_ORIGIN ?? env.WEB_BASE ?? 'https://saas-factory-web-v2.pages.dev')
-      .replace(/\/+$/, '');
-    const returnUrl = `${webOrigin}/admin/billing?tenantId=${encodeURIComponent(tenantId)}`;
 
     try {
-      const session = await stripe.billingPortal.sessions.create({
-        customer: customerId,
-        return_url: returnUrl,
-      });
-      return c.json({ ok: true, url: session.url });
+      await payjpFetch(env, `/subscriptions/${subscriptionId}/cancel`, 'POST');
+      // Update local state immediately
+      const existing: SubscriptionInfo | undefined = settings?.subscription;
+      const updated: SubscriptionInfo = {
+        ...existing,
+        status: 'cancelled',
+      } as SubscriptionInfo;
+      const merged = { ...settings, subscription: updated };
+      await kv.put(`settings:${tenantId}`, JSON.stringify(merged));
+      return c.json({ ok: true });
     } catch (err: any) {
-      return c.json({ ok: false, error: 'portal_session_failed', detail: err.message }, 500);
+      return c.json({ ok: false, error: 'cancel_failed', detail: err.message }, 500);
+    }
+  });
+
+  // Charges list (billing history)
+  app.get('/admin/billing/charges', async (c: any) => {
+    const env = c.env as any;
+    const kv = env.SAAS_FACTORY as KVNamespace;
+    if (!env.PAYJP_SECRET_KEY) {
+      return c.json({ ok: false, error: 'payjp_not_configured' }, 500);
+    }
+
+    const tenantId = getTenantId(c);
+    if (!tenantId || tenantId === 'default') {
+      return c.json({ ok: false, error: 'missing_tenant_id' }, 400);
+    }
+
+    const raw = await kv.get(`settings:${tenantId}`);
+    if (!raw) return c.json({ ok: false, error: 'tenant_not_found' }, 404);
+    const settings = JSON.parse(raw);
+    const customerId: string = settings?.subscription?.payjpCustomerId ?? '';
+    if (!customerId) {
+      return c.json({ ok: false, error: 'no_payjp_customer' }, 400);
+    }
+
+    try {
+      const charges = await payjpFetch(env, `/charges?customer=${customerId}&limit=20`);
+      const items = (charges.data ?? []).map((ch: any) => ({
+        id: ch.id,
+        amount: ch.amount,
+        currency: ch.currency,
+        status: ch.paid ? 'paid' : ch.refunded ? 'refunded' : 'failed',
+        createdAt: ch.created ? ch.created * 1000 : 0,
+        description: ch.description ?? '',
+      }));
+      return c.json({ ok: true, charges: items });
+    } catch (err: any) {
+      return c.json({ ok: false, error: 'charges_fetch_failed', detail: err.message }, 500);
     }
   });
 
@@ -276,8 +434,6 @@ export function registerBillingRoutes(app: any) {
 
     // Also store individually for lookup
     await kv.put(`billing:enterprise:${inquiryId}`, JSON.stringify(inquiry), { expirationTtl: 7776000 }); // 90 days
-
-    // TODO: Send notification email via Resend when configured
 
     return c.json({ ok: true, inquiryId });
   });

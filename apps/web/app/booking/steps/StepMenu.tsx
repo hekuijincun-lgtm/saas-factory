@@ -32,6 +32,7 @@ export default function StepMenu({ tenantId, onSelect }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [vertical, setVertical] = useState<string>('generic');
+  const [hidePrices, setHidePrices] = useState(false);
 
   // オプション選択
   const [selectedMenu, setSelectedMenu] = useState<MenuItem | null>(null);
@@ -49,6 +50,7 @@ export default function StepMenu({ tenantId, onSelect }: Props) {
       fetchBookingSettings(tenantId).then(s => {
         setVertical(resolveVertical(s as any));
         settingsImages = (s as any)?.images?.menus || {};
+        if ((s as any)?.estimateMode === 'enabled') setHidePrices(true);
       }).catch(() => {}),
     ]).then(([data]) => {
       setItems(
@@ -245,9 +247,11 @@ export default function StepMenu({ tenantId, onSelect }: Props) {
                     );
                   })()}
                 </div>
-                <span className="text-brand-primary font-semibold ml-4 flex-shrink-0">
-                  ¥{item.price.toLocaleString()}
-                </span>
+                {!hidePrices && (
+                  <span className="text-brand-primary font-semibold ml-4 flex-shrink-0">
+                    ¥{item.price.toLocaleString()}
+                  </span>
+                )}
               </div>
             </button>
             );
@@ -302,20 +306,24 @@ export default function StepMenu({ tenantId, onSelect }: Props) {
                       {opt.durationMin > 0 && `+${opt.durationMin}分`}
                     </span>
                   </div>
-                  <span className="text-sm font-semibold text-brand-primary">
-                    +¥{opt.price.toLocaleString()}
-                  </span>
+                  {!hidePrices && (
+                    <span className="text-sm font-semibold text-brand-primary">
+                      +¥{opt.price.toLocaleString()}
+                    </span>
+                  )}
                 </label>
               ))}
             </div>
 
             <div className="border-t border-gray-100 pt-3 space-y-1">
-              <div className="flex justify-between text-sm">
-                <span className="text-brand-muted">合計金額</span>
-                <span className="font-semibold text-brand-text">
-                  ¥{(selectedMenu.price + optionsPrice).toLocaleString()}
-                </span>
-              </div>
+              {!hidePrices && (
+                <div className="flex justify-between text-sm">
+                  <span className="text-brand-muted">合計金額</span>
+                  <span className="font-semibold text-brand-text">
+                    ¥{(selectedMenu.price + optionsPrice).toLocaleString()}
+                  </span>
+                </div>
+              )}
               <div className="flex justify-between text-sm">
                 <span className="text-brand-muted">合計時間</span>
                 <span className="font-semibold text-brand-text">

@@ -26,9 +26,11 @@ export async function generateMetadata({ params }: { params: Promise<{ vertical:
     construction: "工務店・建設", reform: "リフォーム", equipment: "設備工事",
   };
   const label = LABELS[vertical] ?? vertical;
+  const BRANDS: Record<string, string> = { pet: 'PetBook' };
+  const brand = BRANDS[vertical] ?? 'LumiBook';
   return {
-    title: `${label}向け サービス登録 | LumiBook`,
-    description: `${label}の予約・顧客管理をAIで自動化。LumiBookに無料登録してすぐに始められます。`,
+    title: `${label}向け サービス登録 | ${brand}`,
+    description: `${label}の予約・顧客管理をAIで自動化。${brand}に無料登録してすぐに始められます。`,
   };
 }
 

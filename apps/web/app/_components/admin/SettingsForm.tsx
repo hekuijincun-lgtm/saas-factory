@@ -1321,15 +1321,15 @@ export default function SettingsForm() {
               <div className="flex items-center gap-3">
                 <span
                   className={`w-3 h-3 rounded-full ${
-                    formData.integrations.stripe?.connected ? 'bg-purple-500' : 'bg-gray-300'
+                    formData.integrations.payjp?.connected ? 'bg-purple-500' : 'bg-gray-300'
                   }`}
                 />
-                <span className="text-sm font-medium text-brand-text">Stripe 決済連携</span>
+                <span className="text-sm font-medium text-brand-text">PAY.JP 決済連携</span>
               </div>
               <button
                 onClick={() => {
                   if (typeof window !== 'undefined') {
-                    alert('準備中: Stripe 決済連携');
+                    alert('準備中: PAY.JP 決済連携');
                   }
                 }}
                 className="px-4 py-2 bg-white text-brand-text border border-brand-border rounded-xl text-sm font-medium hover:shadow-md transition-all"

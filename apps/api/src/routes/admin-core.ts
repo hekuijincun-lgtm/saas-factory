@@ -278,6 +278,7 @@ app.get('/admin/rbac/audit', async (c) => {
     if(body.storeAddress != null) patch.storeAddress = String(body.storeAddress)
     if(body.consentText != null) patch.consentText = String(body.consentText)
     if(body.staffSelectionEnabled != null) patch.staffSelectionEnabled = Boolean(body.staffSelectionEnabled)
+    if(body.estimateMode != null) patch.estimateMode = body.estimateMode === true || body.estimateMode === 'enabled' ? 'enabled' : 'disabled'
     if(body.businessName != null) patch.businessName = String(body.businessName)
     if(body.timezone != null) patch.timezone = String(body.timezone)
     if(body.openTime != null) patch.openTime = normTime(body.openTime, "10:00")
@@ -309,7 +310,7 @@ app.get('/admin/rbac/audit', async (c) => {
       if(ev && typeof ev === 'object') existing = ev
     } catch { try { const s = await kv.get(key); if(s) existing = JSON.parse(s) } catch {} }
 
-    // deep-merge integrations so sub-objects (line, stripe) are merged not replaced
+    // deep-merge integrations so sub-objects (line, payjp) are merged not replaced
     if(body.integrations != null && typeof body.integrations === 'object') {
       const existingInteg = existing.integrations || {}
       const bodyInteg = body.integrations
@@ -317,8 +318,8 @@ app.get('/admin/rbac/audit', async (c) => {
       if(bodyInteg.line != null && typeof bodyInteg.line === 'object') {
         patch.integrations.line = { ...(existingInteg.line || {}), ...bodyInteg.line }
       }
-      if(bodyInteg.stripe != null && typeof bodyInteg.stripe === 'object') {
-        patch.integrations.stripe = { ...(existingInteg.stripe || {}), ...bodyInteg.stripe }
+      if(bodyInteg.payjp != null && typeof bodyInteg.payjp === 'object') {
+        patch.integrations.payjp = { ...(existingInteg.payjp || {}), ...bodyInteg.payjp }
       }
     }
     // notifications: deep merge (lineReminder sub-object も保持)
@@ -590,6 +591,76 @@ app.post("/admin/menu/image", async (c) => {
     const imageUrl = `${apiBase}/media/menu/${imageKey}`;
 
     return c.json({ ok: true, tenantId, menuId, imageKey, imageUrl });
+  } catch (err: any) {
+    return c.json({ ok: false, error: "upload_failed", message: String(err?.message ?? err) }, 500);
+  }
+});
+
+/** =========================
+ * POST /admin/images/upload?tenantId=&type=hero|richmenu|menu-thumbnail&menuId=
+ * multipart/form-data  field: file (image/*)
+ * 3MB limit. Upload to R2, save URL to KV settings.
+ * ========================= */
+app.post("/admin/images/upload", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
+  const rbac = await requireRole(c, 'admin'); if (rbac) return rbac;
+  try {
+    const tenantId = getTenantId(c);
+    const imageType = (c.req.query("type") || "").trim();
+    const menuId = (c.req.query("menuId") || "").replace(/[^a-zA-Z0-9_\-]/g, "_");
+    if (!["hero", "richmenu", "menu-thumbnail"].includes(imageType)) {
+      return c.json({ ok: false, error: "bad_type", hint: "hero | richmenu | menu-thumbnail" }, 400);
+    }
+
+    const r2 = (c.env as any).MENU_IMAGES;
+    if (!r2) return c.json({ ok: false, error: "R2_not_bound" }, 500);
+    const kv = (c.env as any).SAAS_FACTORY;
+    if (!kv) return c.json({ ok: false, error: "kv_missing" }, 500);
+
+    const formData = await c.req.formData().catch(() => null);
+    if (!formData) return c.json({ ok: false, error: "invalid_form_data" }, 400);
+
+    const file = formData.get("file") as File | null;
+    if (!file) return c.json({ ok: false, error: "missing_file_field" }, 400);
+    if (file.size > 3 * 1024 * 1024) return c.json({ ok: false, error: "file_too_large", maxBytes: 3145728 }, 413);
+
+    const contentType = file.type || "application/octet-stream";
+    if (!contentType.startsWith("image/")) return c.json({ ok: false, error: "invalid_file_type", got: contentType }, 400);
+
+    const ext = (file.name.split(".").pop() ?? "jpg").toLowerCase().replace(/[^a-z0-9]/g, "") || "jpg";
+    const rand = Math.random().toString(36).slice(2, 9);
+    const ts = Date.now();
+    let r2Key: string;
+    if (imageType === 'menu-thumbnail' && menuId) {
+      r2Key = `images/${tenantId}/menu/${menuId}-${ts}-${rand}.${ext}`;
+    } else {
+      r2Key = `images/${tenantId}/${imageType}-${ts}-${rand}.${ext}`;
+    }
+
+    const buf = await file.arrayBuffer();
+    await r2.put(r2Key, buf, { httpMetadata: { contentType } });
+
+    const reqUrl = new URL(c.req.url);
+    const apiBase = `${reqUrl.protocol}//${reqUrl.host}`;
+    const imageUrl = `${apiBase}/media/menu/${r2Key}`;
+
+    // Save to KV settings (same structure as AI generate)
+    let settings: any = {};
+    try { const raw = await kv.get(`settings:${tenantId}`); if (raw) settings = JSON.parse(raw); } catch {}
+    if (!settings.images) settings.images = {};
+
+    if (imageType === 'hero') {
+      settings.images.hero = imageUrl;
+    } else if (imageType === 'richmenu') {
+      settings.images.richMenuBg = imageUrl;
+    } else if (imageType === 'menu-thumbnail' && menuId) {
+      if (!settings.images.menus) settings.images.menus = {};
+      settings.images.menus[menuId] = imageUrl;
+    }
+
+    await kv.put(`settings:${tenantId}`, JSON.stringify(settings));
+    console.log(`[IMAGE_UPLOAD] tenant=${tenantId} type=${imageType} r2Key=${r2Key}`);
+    return c.json({ ok: true, tenantId, imageType, imageUrl, r2Key });
   } catch (err: any) {
     return c.json({ ok: false, error: "upload_failed", message: String(err?.message ?? err) }, 500);
   }
@@ -1126,6 +1197,93 @@ app.delete("/admin/menu/:id", async (c) => {
     const next = list.filter((x) => x && x.id !== id);
     if (next.length === list.length) return c.json({ ok: false, error: "not_found" }, 404);
     await c.env.SAAS_FACTORY.put(key, JSON.stringify(next));
+    return c.json({ ok: true, tenantId });
+  } catch (e: any) {
+    return c.json({ ok: false, error: "exception", detail: String(e?.message ?? e) }, 500);
+  }
+});
+
+// ── Customer Kartes (pet) ──────────────────────────────────────────────────
+
+// GET /admin/kartes — list all kartes for tenant, or single by customerId
+app.get('/admin/kartes', async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
+  try {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    if (!db) return c.json({ ok: false, error: "DB not available" }, 500);
+
+    const customerId = c.req.query("customerId");
+    if (customerId) {
+      const row = await db.prepare(
+        "SELECT * FROM customer_kartes WHERE tenant_id = ?1 AND customer_id = ?2"
+      ).bind(tenantId, customerId).first();
+      return c.json({ ok: true, tenantId, data: row ?? null });
+    }
+
+    // Filter by pet_profile_id (for pet detail page)
+    const petProfileId = c.req.query("petProfileId");
+    if (petProfileId) {
+      const rows = await db.prepare(
+        "SELECT * FROM customer_kartes WHERE tenant_id = ?1 AND pet_profile_id = ?2 ORDER BY updated_at DESC"
+      ).bind(tenantId, petProfileId).all();
+      return c.json({ ok: true, tenantId, data: rows.results ?? [] });
+    }
+
+    const rows = await db.prepare(
+      "SELECT * FROM customer_kartes WHERE tenant_id = ?1 ORDER BY updated_at DESC"
+    ).bind(tenantId).all();
+    return c.json({ ok: true, tenantId, data: rows.results ?? [] });
+  } catch (e: any) {
+    return c.json({ ok: false, error: "exception", detail: String(e?.message ?? e) }, 500);
+  }
+});
+
+// POST /admin/kartes — upsert karte
+app.post('/admin/kartes', async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
+  try {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    if (!db) return c.json({ ok: false, error: "DB not available" }, 500);
+
+    const body = await c.req.json().catch(() => ({} as any));
+    const { customerId, customerName, petName, petBreed, petAge, petWeight, allergies, cutStyle, notes, firstVisitDate, petProfileId } = body;
+    if (!customerId) return c.json({ ok: false, error: "customerId is required" }, 400);
+
+    const id = `${tenantId}:${customerId}`;
+    await db.prepare(`
+      INSERT INTO customer_kartes (id, tenant_id, customer_id, customer_name, pet_name, pet_breed, pet_age, pet_weight, allergies, cut_style, notes, first_visit_date, pet_profile_id, updated_at)
+      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, datetime('now'))
+      ON CONFLICT(tenant_id, customer_id) DO UPDATE SET
+        customer_name = ?4, pet_name = ?5, pet_breed = ?6, pet_age = ?7, pet_weight = ?8,
+        allergies = ?9, cut_style = ?10, notes = ?11, first_visit_date = ?12, pet_profile_id = ?13, updated_at = datetime('now')
+    `).bind(
+      id, tenantId, customerId,
+      customerName ?? null, petName ?? null, petBreed ?? null, petAge ?? null, petWeight ?? null,
+      allergies ?? null, cutStyle ?? null, notes ?? null, firstVisitDate ?? null, petProfileId ?? null,
+    ).run();
+
+    return c.json({ ok: true, tenantId, id });
+  } catch (e: any) {
+    return c.json({ ok: false, error: "exception", detail: String(e?.message ?? e) }, 500);
+  }
+});
+
+// DELETE /admin/kartes/:id
+app.delete('/admin/kartes/:id', async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
+  try {
+    const tenantId = getTenantId(c);
+    const db = c.env.DB;
+    if (!db) return c.json({ ok: false, error: "DB not available" }, 500);
+
+    const id = c.req.param("id");
+    const result = await db.prepare(
+      "DELETE FROM customer_kartes WHERE id = ?1 AND tenant_id = ?2"
+    ).bind(id, tenantId).run();
+
+    if ((result.meta?.changes ?? 0) === 0) return c.json({ ok: false, error: "not_found" }, 404);
     return c.json({ ok: true, tenantId });
   } catch (e: any) {
     return c.json({ ok: false, error: "exception", detail: String(e?.message ?? e) }, 500);

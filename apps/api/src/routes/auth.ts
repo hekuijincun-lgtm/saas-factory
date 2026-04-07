@@ -468,11 +468,15 @@ export function registerAuthRoutes(app: any) {
       return c.json({ ok: false, error: 'invalid_email' }, 400);
     }
 
-    // Signup: validate storeName before any KV writes (including rate-limit)
+    // Signup: validate storeName and password before any KV writes (including rate-limit)
     if (isSignup) {
       const rawStoreName = String(body.storeName ?? '').trim();
       if (rawStoreName.length < 2 || rawStoreName.length > 50) {
         return c.json({ ok: false, error: 'invalid_store_name' }, 400);
+      }
+      const rawPassword = String(body.password ?? '');
+      if (rawPassword.length < 8 || rawPassword.length > 128) {
+        return c.json({ ok: false, error: 'password_length', hint: '8-128 characters required' }, 400);
       }
     }
 
@@ -534,8 +538,12 @@ export function registerAuthRoutes(app: any) {
       // Trial flag: body.trial = true → 14-day free Pro trial (no PAY.JP required)
       const isTrial = (body.trial === true || body.trial === '1' || body.trial === 'true') && !payjpInfo;
 
+      // Hash password at signup time (never stored in plaintext)
+      const signupPasswordHash = body.password ? await hashPassword(String(body.password)) : undefined;
+
       await kv.put(`signup:init:${tenantId}`, JSON.stringify({
         storeName, ownerEmail: rawEmail,
+        ...(signupPasswordHash ? { passwordHash: signupPasswordHash } : {}),
         ...(payjpInfo ? { payjp: payjpInfo } : {}),
         ...(fallbackPlanId ? { planId: fallbackPlanId } : {}),
         ...(signupVertical ? { vertical: signupVertical } : {}),
@@ -706,7 +714,7 @@ export function registerAuthRoutes(app: any) {
     // --- Signup provisioning (signup:init written by /start when signup=1) ---
     const signupInitRaw = await kv.get(`signup:init:${tenantId}`);
     if (signupInitRaw) {
-      const si: { storeName?: string; planId?: string; trial?: boolean; vertical?: string; payjp?: { planId: string; customerId: string; subscriptionId: string } } = JSON.parse(signupInitRaw);
+      const si: { storeName?: string; planId?: string; trial?: boolean; vertical?: string; passwordHash?: string; payjp?: { planId: string; customerId: string; subscriptionId: string } } = JSON.parse(signupInitRaw);
       const storedName = si.storeName || email;
       const ownerStore: AdminMembersStore = {
         version: 1,
@@ -716,7 +724,8 @@ export function registerAuthRoutes(app: any) {
           enabled: true,
           displayName,
           createdAt: new Date().toISOString(),
-          authMethods: ['email'],
+          ...(si.passwordHash ? { passwordHash: si.passwordHash } : {}),
+          authMethods: si.passwordHash ? ['email', 'password'] : ['email'],
         }],
       };
       await kv.put('tenant:exists:' + tenantId, '1');
@@ -738,7 +747,8 @@ export function registerAuthRoutes(app: any) {
             enabled: true,
             displayName,
             createdAt: new Date().toISOString(),
-            authMethods: ['email'],
+            ...(si.passwordHash ? { passwordHash: si.passwordHash } : {}),
+            authMethods: si.passwordHash ? ['email', 'password'] : ['email'],
           });
           await kv.put(`admin:members:${tenantId}`, JSON.stringify(existing));
         }
@@ -834,7 +844,7 @@ export function registerAuthRoutes(app: any) {
       await kv.delete(`signup:init:${tenantId}`);
       await kv.put(`member:tenant:${identityKey}`, tenantId, { expirationTtl: 7776000 });
       return c.json({ ok: true, identityKey, email, displayName, allowed: true,
-                      role: 'owner', membersFound: false, signedUp: true, hasPassword: false, tenantId });
+                      role: 'owner', membersFound: false, signedUp: true, hasPassword: !!si.passwordHash, tenantId });
     }
 
     // --- Step 1: RBAC members check (admin:members:{tenantId}) ---

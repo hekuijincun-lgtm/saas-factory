@@ -83,9 +83,13 @@ export function GradientWave({ d, t, vertical, signupUrl }: DesignProps) {
         </div>
       </nav>
 
-      {/* ── Hero (gradient, rounded container) ───────────────────────── */}
+      {/* ── Hero (gradient + optional image) ────────────────────────── */}
       <section className="px-4 pt-6 pb-0">
         <div className={`mx-auto max-w-7xl bg-gradient-to-br ${t.heroGradient} rounded-3xl overflow-hidden relative`}>
+          {/* Background image if available */}
+          {d.heroImageUrl && (
+            <img src={d.heroImageUrl} alt="" className="absolute inset-0 w-full h-full object-cover opacity-30 mix-blend-overlay" />
+          )}
           {/* Decorative circles */}
           <div className="absolute top-10 right-10 w-64 h-64 bg-white/5 rounded-full blur-2xl" />
           <div className="absolute bottom-10 left-10 w-48 h-48 bg-white/5 rounded-full blur-2xl" />
@@ -128,7 +132,29 @@ export function GradientWave({ d, t, vertical, signupUrl }: DesignProps) {
         </div>
       </section>
 
-      {/* Wave: gradient → white */}
+      {/* ── Stats (if provided) ────────────────────────────────────── */}
+      {d.stats && d.stats.length > 0 && (
+        <section className={`py-12 px-4 ${t.sectionBg}`}>
+          <div className="mx-auto max-w-5xl">
+            <FadeInUp>
+            <h2 className="text-center text-2xl sm:text-3xl font-bold mb-8">導入店舗の実績</h2>
+            </FadeInUp>
+            <div className="grid grid-cols-3 gap-4 sm:gap-6">
+              {d.stats.map((s, i) => (
+                <ScaleIn key={i} delay={i * 0.1}>
+                <div className="bg-white rounded-2xl p-4 sm:p-6 shadow-sm text-center">
+                  <div className="text-3xl mb-2">{s.icon}</div>
+                  <div className={`text-2xl sm:text-3xl font-black ${t.iconColor}`}>{s.num}</div>
+                  <div className="text-xs sm:text-sm text-gray-500 mt-1">{s.label}</div>
+                </div>
+                </ScaleIn>
+              ))}
+            </div>
+          </div>
+        </section>
+      )}
+
+      {/* Wave: stats/hero → white */}
       <WaveA fillClass="fill-white" />
 
       {/* ── Problems ─────────────────────────────────────────────────── */}
@@ -178,13 +204,18 @@ export function GradientWave({ d, t, vertical, signupUrl }: DesignProps) {
               return (
                 <StaggerItem key={i}>
                 <div
-                  className="bg-white rounded-3xl p-6 shadow-lg hover:shadow-xl transition-shadow"
+                  className="bg-white rounded-3xl overflow-hidden shadow-lg hover:shadow-xl transition-shadow"
                 >
-                  <div className={`w-14 h-14 ${t.iconBg} rounded-full flex items-center justify-center mb-4`}>
-                    <Icon className={`w-7 h-7 ${t.iconColor}`} />
+                  {f.imageUrl && (
+                    <img src={f.imageUrl} alt={f.title} className="w-full h-40 object-cover" />
+                  )}
+                  <div className="p-6">
+                    <div className={`w-14 h-14 ${t.iconBg} rounded-full flex items-center justify-center mb-4`}>
+                      <Icon className={`w-7 h-7 ${t.iconColor}`} />
+                    </div>
+                    <h3 className="text-lg font-bold mb-2">{f.title}</h3>
+                    <p className="text-gray-500 text-sm leading-relaxed">{f.desc}</p>
                   </div>
-                  <h3 className="text-lg font-bold mb-2">{f.title}</h3>
-                  <p className="text-gray-500 text-sm leading-relaxed">{f.desc}</p>
                 </div>
                 </StaggerItem>
               );

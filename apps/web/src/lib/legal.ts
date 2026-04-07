@@ -17,12 +17,12 @@ export const LEGAL = {
   phone: '080-7353-0117',
   /** メールアドレス */
   email: 'hekuijincun@gmail.com',
-  /** サービス名（Stripe 登録と一致させる） */
+  /** サービス名（PAY.JP 登録と一致させる） */
   serviceName: 'SaaS Factory',
   /** 販売価格の説明 */
   salesPriceText: '各プランページに記載',
   /** 支払方法 */
-  paymentMethodText: 'クレジットカード（Stripe）',
+  paymentMethodText: 'クレジットカード（PAY.JP）',
   /** 支払時期 */
   paymentTimingText: 'お申し込み時に即時決済',
   /** 商品の提供時期 */

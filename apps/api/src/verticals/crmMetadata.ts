@@ -402,3 +402,10 @@ export function getVerticalCampaigns(vertical: VerticalType): CampaignTypeConfig
 export function getDefaultRepeatCampaign(vertical: VerticalType): CampaignTypeConfig | undefined {
   return getVerticalCampaigns(vertical).find(c => c.type === 'repeat_reminder');
 }
+
+/**
+ * Get the dormant recovery config for a vertical.
+ */
+export function getDormantRecoveryCampaign(vertical: VerticalType): CampaignTypeConfig | undefined {
+  return getVerticalCampaigns(vertical).find(c => c.type === 'dormant_recovery');
+}

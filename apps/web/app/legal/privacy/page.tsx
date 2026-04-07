@@ -35,7 +35,7 @@ const SECTIONS: Section[] = [
     body: (
       <ul className="list-disc pl-5 space-y-1 text-sm text-gray-700">
         <li>氏名、メールアドレス、電話番号</li>
-        <li>クレジットカード情報（決済代行会社 Stripe を通じて処理されます）</li>
+        <li>クレジットカード情報（決済代行会社 PAY.JP を通じて処理されます）</li>
         <li>LINE ユーザー ID（LINE 連携をご利用の場合）</li>
         <li>サービス利用に伴うアクセスログ・Cookie 情報</li>
       </ul>
@@ -58,7 +58,7 @@ const SECTIONS: Section[] = [
     body: (
       <p>
         当サービスでは、法令に基づく場合を除き、ご本人の同意なく個人情報を第三者に提供することはありません。
-        ただし、決済処理のため Stripe, Inc. に必要な情報を連携します。
+        ただし、決済処理のため PAY株式会社（PAY.JP）に必要な情報を連携します。
       </p>
     ),
   },

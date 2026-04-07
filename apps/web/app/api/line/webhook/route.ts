@@ -4,7 +4,7 @@ import { getRequestContext } from "@cloudflare/next-on-pages";
 export const runtime = "edge";
 
 // ─── version / stamps ────────────────────────────────────────────────────────
-const STAMP = "LINE_WEBHOOK_V29_20260312_EVENT_AUDIT";
+const STAMP = "LINE_WEBHOOK_V30_20260330_ASYNC_REPLY";
 const where  = "api/line/webhook";
 
 type LinePurpose = "booking" | "sales";
@@ -375,6 +375,96 @@ function detectBookingIntent(textIn: string): boolean {
   return BOOKING_INTENT_KW.some(k => normalized.includes(k));
 }
 
+// Menu intent: keyword matching
+const MENU_INTENT_KW = [
+  "メニュー", "めにゅー", "メニューを見たい", "コース", "料金表",
+  "メニュー見", "メニュー教", "メニュー知",
+] as const;
+
+function detectMenuIntent(textIn: string): boolean {
+  const normalized = textIn
+    .normalize("NFKC")
+    .replace(/[\s\u200B-\u200D\uFEFF]/g, "")
+    .toLowerCase();
+  return MENU_INTENT_KW.some(k => normalized.includes(k));
+}
+
+async function buildMenuFlexMessage(
+  tenantId: string,
+  lineUserId: string,
+  apiBase: string,
+  bookingUrl: string,
+): Promise<any[]> {
+  let menus: any[] = [];
+  try {
+    const adminToken = process.env.ADMIN_TOKEN ?? "";
+    let cfAdminToken = "";
+    try {
+      const cfEnv = (getRequestContext()?.env as any);
+      if (cfEnv?.ADMIN_TOKEN) cfAdminToken = String(cfEnv.ADMIN_TOKEN);
+    } catch {}
+    const token = cfAdminToken || adminToken;
+    const headers: Record<string, string> = { Accept: "application/json" };
+    if (token) headers["X-Admin-Token"] = token;
+    const res = await fetchT(`${apiBase}/admin/menu?tenantId=${encodeURIComponent(tenantId)}`, {
+      headers,
+      timeout: 5000,
+    });
+    if (res.ok) {
+      const json = (await res.json()) as any;
+      menus = Array.isArray(json?.data) ? json.data : [];
+    }
+  } catch (e: any) {
+    console.log(`[MENU_FLEX] fetch error: ${String(e?.message ?? e).slice(0, 80)}`);
+  }
+
+  if (menus.length === 0) {
+    return [{ type: "text", text: "現在メニュー情報を準備中です。しばらくお待ちください。" }];
+  }
+
+  // Build Flex bubble
+  const menuContents: any[] = menus.slice(0, 10).map((m: any) => ({
+    type: "box",
+    layout: "horizontal",
+    spacing: "sm",
+    contents: [
+      { type: "text", text: String(m.name ?? ""), flex: 3, size: "sm", color: "#333333", wrap: true },
+      { type: "text", text: `¥${Number(m.price ?? 0).toLocaleString()}`, flex: 1, size: "sm", align: "end", color: "#C9A96E", weight: "bold" },
+      { type: "text", text: `${m.duration ?? "-"}分`, flex: 1, size: "sm", align: "end", color: "#999999" },
+    ],
+  }));
+
+  const bookingLink = buildBookingLink(bookingUrl, tenantId, lineUserId);
+
+  const flexBody: any = {
+    type: "bubble",
+    body: {
+      type: "box",
+      layout: "vertical",
+      spacing: "md",
+      contents: [
+        { type: "text", text: "メニュー一覧", weight: "bold", size: "xl", color: "#1C1C1C" },
+        { type: "separator", margin: "md" },
+        ...menuContents,
+        { type: "separator", margin: "md" },
+        {
+          type: "button",
+          style: "primary",
+          color: "#1C1C1C",
+          margin: "lg",
+          action: { type: "uri", label: "予約する", uri: bookingLink },
+        },
+      ],
+    },
+  };
+
+  return [{
+    type: "flex",
+    altText: "メニュー一覧",
+    contents: flexBody,
+  }];
+}
+
 function buildBookingTemplateMessage(bookingUrl: string): object {
   return {
     type: "template",
@@ -411,6 +501,24 @@ async function handleBookingEvent(ctx: HandlerContext): Promise<HandlerResult> {
   const { textIn, cfg, tenantId, lineUserId, apiBase } = ctx;
   const uid = lineUserId.slice(0, 12);
   const txt = textIn.slice(0, 40);
+
+  // ── 0. Menu intent → Flex message with menu list ──
+  if (detectMenuIntent(textIn)) {
+    console.log(`[LINE_AI_ROUTING]`, JSON.stringify({
+      tenantId, userId: uid, text: txt,
+      matchedIntent: "menu", aiEnabled: "skipped",
+      faqMatched: false, bookingMatched: false,
+      replyMode: "reply", openaiAttempted: false, openaiSucceeded: false, replySent: true,
+    }));
+    const menuMessages = await buildMenuFlexMessage(tenantId, lineUserId, apiBase, cfg.bookingUrl);
+    return {
+      branch: "menu_list",
+      salesIntent: null,
+      replyMessages: menuMessages,
+      leadLabel: null,
+      leadCapture: false,
+    };
+  }
 
   // ── 1. Booking intent → template card (highest priority, always synchronous) ──
   if (detectBookingIntent(textIn)) {
@@ -1539,6 +1647,252 @@ export async function POST(req: Request) {
       }
     }
 
+    // ── custom_msg: リッチメニューボタン（メニュー/クーポン/カルテ/お知らせ） ───
+    if (params.get("action") === "custom_msg") {
+      const msgText = decodeURIComponent(params.get("text") ?? "");
+      const lineUserId = postbackEv.source?.userId || "";
+      try {
+        const apiBase = (
+          process.env.API_BASE ?? process.env.NEXT_PUBLIC_API_BASE ?? ""
+        ).replace(/\/+$/, "");
+        let adminToken = "";
+        try {
+          const cfEnv = (getRequestContext()?.env as any);
+          if (cfEnv?.ADMIN_TOKEN) adminToken = String(cfEnv.ADMIN_TOKEN);
+        } catch {}
+        if (!adminToken) adminToken = process.env.ADMIN_TOKEN ?? "";
+        const webBase = process.env.NEXT_PUBLIC_BASE_URL || "https://saas-factory-web-v2.pages.dev";
+
+        let messages: any[] = [{ type: "text", text: msgText || "ご利用ありがとうございます🐾" }];
+
+        // ── メニューを見たい ───────────────────────────────────────────
+        if (msgText === "メニューを見たい" && apiBase) {
+          const menuUrl = `${apiBase}/admin/menu?tenantId=${encodeURIComponent(tenantId)}`;
+          const mHeaders: Record<string, string> = { Accept: "application/json" };
+          if (adminToken) mHeaders["X-Admin-Token"] = adminToken;
+          const r = await fetchT(menuUrl, { headers: mHeaders, timeout: TIMEOUT_SETTINGS_FETCH_MS });
+          if (r.ok) {
+            const json = (await r.json()) as any;
+            const menus: any[] = json?.data ?? [];
+            if (menus.length > 0) {
+              const items = menus.slice(0, 15).map((m: any) => ({
+                type: "box", layout: "horizontal", paddingAll: "sm",
+                contents: [
+                  { type: "text", text: m.name || m.title || "メニュー", flex: 4, size: "sm", color: "#333333", wrap: true },
+                  { type: "text", text: m.duration ? `${m.duration}分` : "-", flex: 2, size: "sm", align: "center", color: "#888888" },
+                  { type: "text", text: `¥${Number(m.price ?? 0).toLocaleString()}`, flex: 3, size: "sm", align: "end", color: "#C9A96E", weight: "bold" },
+                ],
+              }));
+              messages = [{
+                type: "flex", altText: "メニュー一覧",
+                contents: {
+                  type: "bubble",
+                  header: { type: "box", layout: "vertical", backgroundColor: "#1C1C1C", paddingAll: "16px",
+                    contents: [{ type: "text", text: "メニュー一覧", color: "#FFFFFF", weight: "bold", size: "lg" }] },
+                  body: { type: "box", layout: "vertical", spacing: "xs", paddingAll: "16px",
+                    contents: [
+                      { type: "box", layout: "horizontal", contents: [
+                        { type: "text", text: "コース", flex: 4, size: "xs", color: "#999999" },
+                        { type: "text", text: "時間", flex: 2, size: "xs", align: "center", color: "#999999" },
+                        { type: "text", text: "料金", flex: 3, size: "xs", align: "end", color: "#999999" },
+                      ]},
+                      { type: "separator" },
+                      ...items,
+                    ] },
+                  footer: { type: "box", layout: "vertical", paddingAll: "12px",
+                    contents: [{
+                      type: "button", style: "primary", color: "#1C1C1C",
+                      action: { type: "uri", label: "予約する", uri: `${webBase}/booking?tenantId=${encodeURIComponent(tenantId)}` },
+                    }] },
+                },
+              }];
+            } else {
+              messages = [{ type: "text", text: "現在メニューが登録されていません。\nしばらくお待ちください🐾" }];
+            }
+          }
+        }
+
+        // ── クーポンを確認する ─────────────────────────────────────────
+        else if (msgText === "クーポンを確認する" && apiBase) {
+          const couponsUrl = `${apiBase}/coupons?tenantId=${encodeURIComponent(tenantId)}&lineUserId=${encodeURIComponent(lineUserId)}`;
+          const r = await fetchT(couponsUrl, { timeout: TIMEOUT_SETTINGS_FETCH_MS });
+          if (r.ok) {
+            const json = (await r.json()) as any;
+            const coupons: any[] = json?.coupons ?? [];
+            if (coupons.length > 0) {
+              messages = coupons.slice(0, 5).map((c: any) => {
+                const discountText = c.discountType === "amount"
+                  ? `¥${(c.discountValue || 0).toLocaleString()} OFF`
+                  : c.discountType === "percent"
+                  ? `${c.discountValue}% OFF`
+                  : "無料";
+                return {
+                  type: "flex", altText: `クーポン: ${c.title}`,
+                  contents: {
+                    type: "bubble", size: "kilo",
+                    header: { type: "box", layout: "vertical", backgroundColor: "#D4845A", paddingAll: "16px",
+                      contents: [{ type: "text", text: "🎫 クーポン", color: "#FFFFFF", weight: "bold", size: "sm" }] },
+                    body: { type: "box", layout: "vertical", spacing: "md", paddingAll: "20px",
+                      contents: [
+                        { type: "text", text: c.title, weight: "bold", size: "lg", wrap: true },
+                        { type: "text", text: discountText, color: "#D4845A", size: "xxl", weight: "bold" },
+                        ...(c.description ? [{ type: "text", text: c.description, color: "#666666", size: "sm", wrap: true }] : []),
+                        { type: "text", text: `有効期限: ${c.validUntil || "なし"}`, color: "#888888", size: "xs", margin: "md" },
+                      ] },
+                    footer: { type: "box", layout: "vertical", paddingAll: "12px",
+                      contents: [{
+                        type: "button", style: "primary", color: "#D4845A", height: "sm",
+                        action: { type: "uri", label: "クーポンを使って予約する",
+                          uri: `${webBase}/booking?tenantId=${encodeURIComponent(tenantId)}&couponId=${c.id}` },
+                      }] },
+                  },
+                };
+              });
+            } else {
+              messages = [{ type: "text", text: "現在ご利用可能なクーポンはありません。\nまた後日ご確認ください🎫" }];
+            }
+          }
+        }
+
+        // ── カルテを見たい ─────────────────────────────────────────────
+        else if (msgText === "カルテを見たい" && apiBase) {
+          const karteUrl = `${apiBase}/public/karte?tenantId=${encodeURIComponent(tenantId)}&userId=${encodeURIComponent(lineUserId)}`;
+          const r = await fetchT(karteUrl, { timeout: TIMEOUT_SETTINGS_FETCH_MS });
+          const karteJson = r.ok ? (await r.json() as any) : null;
+          const karte = karteJson?.data;
+
+          if (karte) {
+            // カルテあり → 内容表示 + 編集リンク
+            const rows = [
+              { label: "お名前", value: karte.customer_name },
+              { label: "ペット名", value: karte.pet_name },
+              { label: "犬種", value: karte.pet_breed },
+              { label: "年齢/体重", value: [karte.pet_age, karte.pet_weight].filter(Boolean).join(" / ") || null },
+              { label: "アレルギー", value: karte.allergies },
+              { label: "スタイル", value: karte.cut_style },
+            ].filter((r: any) => r.value).map((r: any) => ({
+              type: "box", layout: "horizontal", paddingAll: "xs",
+              contents: [
+                { type: "text", text: r.label, flex: 3, size: "xs", color: "#999999" },
+                { type: "text", text: String(r.value), flex: 5, size: "xs", color: "#333333", wrap: true },
+              ],
+            }));
+            if (rows.length === 0) {
+              rows.push({ type: "box", layout: "horizontal", paddingAll: "xs",
+                contents: [{ type: "text", text: "情報が未入力です", size: "sm", color: "#999999" }] } as any);
+            }
+            messages = [{
+              type: "flex", altText: "あなたのカルテ",
+              contents: {
+                type: "bubble",
+                header: { type: "box", layout: "vertical", backgroundColor: "#1C1C1C", paddingAll: "16px",
+                  contents: [{ type: "text", text: "あなたのカルテ", color: "#FFFFFF", weight: "bold" }] },
+                body: { type: "box", layout: "vertical", spacing: "sm", paddingAll: "16px", contents: rows },
+                footer: { type: "box", layout: "vertical", paddingAll: "12px",
+                  contents: [{
+                    type: "button", style: "secondary",
+                    action: { type: "uri", label: "カルテを編集する",
+                      uri: `${webBase}/karte?tenantId=${encodeURIComponent(tenantId)}&userId=${encodeURIComponent(lineUserId)}` },
+                  }] },
+              },
+            }];
+          } else {
+            // カルテ未登録
+            messages = [{
+              type: "flex", altText: "カルテ未登録",
+              contents: {
+                type: "bubble",
+                body: { type: "box", layout: "vertical", spacing: "md", paddingAll: "20px",
+                  contents: [
+                    { type: "text", text: "カルテ", size: "xs", color: "#C9A96E", weight: "bold" },
+                    { type: "text", text: "カルテが未登録です", size: "lg", weight: "bold", color: "#1C1C1C" },
+                    { type: "text", text: "初回情報を登録して\nよりスムーズなサービスを受けましょう", size: "sm", color: "#666666", wrap: true },
+                  ] },
+                footer: { type: "box", layout: "vertical", paddingAll: "12px",
+                  contents: [{
+                    type: "button", style: "primary", color: "#1C1C1C",
+                    action: { type: "uri", label: "カルテを登録する",
+                      uri: `${webBase}/karte?tenantId=${encodeURIComponent(tenantId)}&userId=${encodeURIComponent(lineUserId)}` },
+                  }] },
+              },
+            }];
+          }
+        }
+
+        // ── 予約履歴を見たい ───────────────────────────────────────────
+        else if (msgText === "予約履歴を見たい" && apiBase) {
+          const histUrl = `${apiBase}/public/reservations?tenantId=${encodeURIComponent(tenantId)}&lineUserId=${encodeURIComponent(lineUserId)}&limit=5`;
+          const r = await fetchT(histUrl, { timeout: TIMEOUT_SETTINGS_FETCH_MS });
+          if (r.ok) {
+            const json = (await r.json()) as any;
+            const reservations: any[] = json?.data ?? [];
+            if (reservations.length > 0) {
+              const rows = reservations.map((rv: any) => {
+                const date = (rv.start_at || "").slice(0, 10);
+                const time = (rv.start_at || "").slice(11, 16);
+                const menuName = rv.menu_name || "";
+                return {
+                  type: "box", layout: "horizontal", paddingAll: "sm",
+                  contents: [
+                    { type: "text", text: date, flex: 3, size: "sm", color: "#333333" },
+                    { type: "text", text: time, flex: 2, size: "sm", color: "#333333", align: "center" },
+                    { type: "text", text: menuName || "-", flex: 3, size: "sm", color: "#666666", wrap: true },
+                  ],
+                };
+              });
+              messages = [{
+                type: "flex", altText: "予約履歴",
+                contents: {
+                  type: "bubble",
+                  header: { type: "box", layout: "vertical", backgroundColor: "#1C1C1C", paddingAll: "16px",
+                    contents: [{ type: "text", text: "予約履歴", color: "#FFFFFF", weight: "bold", size: "lg" }] },
+                  body: { type: "box", layout: "vertical", spacing: "xs", paddingAll: "16px",
+                    contents: [
+                      { type: "box", layout: "horizontal", contents: [
+                        { type: "text", text: "日付", flex: 3, size: "xs", color: "#999999" },
+                        { type: "text", text: "時間", flex: 2, size: "xs", align: "center", color: "#999999" },
+                        { type: "text", text: "メニュー", flex: 3, size: "xs", color: "#999999" },
+                      ]},
+                      { type: "separator" },
+                      ...rows,
+                    ] },
+                  footer: { type: "box", layout: "vertical", paddingAll: "12px",
+                    contents: [{
+                      type: "button", style: "primary", color: "#1C1C1C",
+                      action: { type: "uri", label: "新しく予約する",
+                        uri: `${webBase}/booking?tenantId=${encodeURIComponent(tenantId)}` },
+                    }] },
+                },
+              }];
+            } else {
+              messages = [{ type: "text", text: "まだ予約履歴がありません。\nぜひご予約ください🐾" }];
+            }
+          }
+        }
+
+        // ── お知らせを見たい（後方互換） ─────────────────────────────────
+        else if (msgText === "お知らせを見たい") {
+          messages = [{ type: "text", text: "現在お知らせはありません。\n新着があればお届けします🐾" }];
+        }
+
+        const pbRep = await replyLine(cfg.channelAccessToken, String(postbackEv.replyToken), messages);
+        console.log(`[WH_POSTBACK] custom_msg="${msgText}" replyOk=${pbRep.ok} st=${pbRep.status} traceId=${traceId}`);
+
+        return NextResponse.json({
+          ok: true, stamp: STAMP, where, tenantId, source: cfg.source,
+          purpose: cfg.purpose, traceId,
+          verified, replied: true, action: "custom_msg", text: msgText,
+        });
+      } catch (err: any) {
+        console.error(`[WH_POSTBACK] custom_msg error: ${err.message} traceId=${traceId}`);
+        return NextResponse.json({
+          ok: true, stamp: STAMP, where, tenantId, source: cfg.source,
+          purpose: cfg.purpose, traceId,
+          verified, replied: false, action: "custom_msg", error: String(err.message),
+        });
+      }
+    }
+
     // ── show_coupon: クーポン一覧をFlex Messageで返信 ─────────────────────
     if (params.get("action") === "show_coupon") {
       try {
@@ -1711,8 +2065,11 @@ export async function POST(req: Request) {
   let lastTextIn = "";
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // ── PER-EVENT PROCESSING LOOP ─────────────────────────────────────────────
+  // ── PER-EVENT PROCESSING — moved to waitUntil for non-blocking webhook ──
   // ═══════════════════════════════════════════════════════════════════════════
+  // LINE Platform requires 200 within ~20s. AI chat (8s) + reply (10s) can exceed this.
+  // By moving text event processing to waitUntil, we return 200 immediately and process async.
+  const processTextEvents = async () => {
   for (let ei = 0; ei < textEvents.length; ei++) {
     const ev = textEvents[ei];
     const textIn     = String(ev.message.text ?? "");
@@ -1935,30 +2292,9 @@ export async function POST(req: Request) {
       .catch(() => null);
   }
 
-  // ── Build response ─────────────────────────────────────────────────────────
-  const firstAudit = audits[0];
-  const response = NextResponse.json(
-    {
-      ok: true, stamp: STAMP, where, tenantId, source: cfg.source,
-      verified, mode: "v29_event_audit",
-      purpose: cfg.purpose, traceId,
-      textEventCount: textEvents.length,
-      allDelivered,
-      branch: firstAudit?.routeSelected ?? "none",
-      finalDelivery: firstAudit?.finalDelivery ?? "no_delivery",
-      audits: audits.map(a => ({
-        ei: a.eventIndex, route: a.routeSelected, fd: a.finalDelivery,
-        replyOk: a.replyOk, pushOk: a.pushOk,
-      })),
-      resolvedBy, eventCount: events.length,
-      text: lastTextIn.slice(0, 80),
-      lineUserId: lastLineUserId.slice(0, 8),
-    },
-    { headers: { "x-stamp": STAMP } }
-  );
-
-  // ── KV last result save (fire-and-forget, last event) ──────────────────────
-  if (webhookLogApiBase && internalToken && firstAudit) {
+  // ── KV last result save ─────────────────────────────────────────────────────
+  if (webhookLogApiBase && internalToken && audits[0]) {
+    const firstAudit = audits[0];
     const lastResultPayload = {
       ts: new Date().toISOString(), stamp: STAMP, traceId,
       tenantId, resolvedBy, purpose: cfg.purpose,
@@ -1970,27 +2306,51 @@ export async function POST(req: Request) {
       allDelivered,
       errorClass: firstAudit.errorClass, errorMessage: firstAudit.errorMessage,
     };
-    const saveLastResult = async () => {
+    try {
       const ac = new AbortController();
       const tid = setTimeout(() => ac.abort(), 3000);
-      try {
-        await fetch(
-          `${webhookLogApiBase}/internal/line/last-result?tenantId=${encodeURIComponent(tenantId)}`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "x-internal-token": internalToken },
-            body: JSON.stringify({ result: lastResultPayload }),
-            signal: ac.signal,
-          }
-        );
-      } catch {} finally { clearTimeout(tid); }
-    };
+      await fetch(
+        `${webhookLogApiBase}/internal/line/last-result?tenantId=${encodeURIComponent(tenantId)}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-internal-token": internalToken },
+          body: JSON.stringify({ result: lastResultPayload }),
+          signal: ac.signal,
+        }
+      ).catch(() => null);
+      clearTimeout(tid);
+    } catch {}
+  }
+  }; // end processTextEvents
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // ── RETURN 200 IMMEDIATELY — process text events in background ────────────
+  // ═══════════════════════════════════════════════════════════════════════════
+  // LINE Platform requires webhook to respond quickly. AI chat (8s) + LINE reply
+  // can exceed the edge function timeout. By using waitUntil, we ensure the
+  // webhook always returns 200 and text processing continues in the background.
+  if (textEvents.length > 0) {
     try {
       const ctx = getRequestContext();
-      if (ctx?.ctx?.waitUntil) ctx.ctx.waitUntil(saveLastResult());
-      else saveLastResult().catch(() => null);
-    } catch { saveLastResult().catch(() => null); }
+      if (ctx?.ctx?.waitUntil) {
+        ctx.ctx.waitUntil(processTextEvents());
+      } else {
+        // waitUntil unavailable (local dev) — run inline
+        await processTextEvents();
+      }
+    } catch {
+      await processTextEvents();
+    }
   }
 
-  return response;
+  return NextResponse.json(
+    {
+      ok: true, stamp: STAMP, where, tenantId, source: cfg.source,
+      verified, mode: "v30_async_reply",
+      purpose: cfg.purpose, traceId,
+      textEventCount: textEvents.length,
+      resolvedBy, eventCount: events.length,
+    },
+    { headers: { "x-stamp": STAMP } }
+  );
 }

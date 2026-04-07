@@ -1389,7 +1389,7 @@ function FinalCtaSection() {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Service Info (Stripe compliance: service description, pricing, contact)
+// Service Info (compliance: service description, pricing, contact)
 // ──────────────────────────────────────────────────────────────────────────────
 function ServiceInfoSection() {
   return (

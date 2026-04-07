@@ -11,6 +11,16 @@ interface Pet {
   photoUrl?: string;
 }
 
+interface KarteData {
+  pet_name?: string;
+  pet_breed?: string;
+  pet_age?: string;
+  pet_weight?: string;
+  customer_name?: string;
+  allergies?: string;
+  cut_style?: string;
+}
+
 interface StepPetSelectProps {
   tenantId: string;
   customerKey?: string;
@@ -48,6 +58,8 @@ export default function StepPetSelect({ tenantId, customerKey, onComplete, onBac
   const [loading, setLoading] = useState(true);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [showNewForm, setShowNewForm] = useState(false);
+  const [karte, setKarte] = useState<KarteData | null>(null);
+  const [useKarte, setUseKarte] = useState(false);
 
   // New pet form state
   const [newName, setNewName] = useState('');
@@ -62,17 +74,41 @@ export default function StepPetSelect({ tenantId, customerKey, onComplete, onBac
       setShowNewForm(true);
       return;
     }
+
+    let petsLoaded = false;
+    let karteLoaded = false;
+    let resolvedPets: Pet[] = [];
+    let resolvedKarte: KarteData | null = null;
+
+    const checkDone = () => {
+      if (!petsLoaded || !karteLoaded) return;
+      setRegisteredPets(resolvedPets);
+      if (resolvedKarte?.pet_name) {
+        setKarte(resolvedKarte);
+        setUseKarte(true);
+      } else if (resolvedPets.length === 0) {
+        setShowNewForm(true);
+      }
+      setLoading(false);
+    };
+
+    // Fetch registered pet profiles
     fetch(`/api/proxy/admin/pets?tenantId=${encodeURIComponent(tenantId)}&customerKey=${encodeURIComponent(customerKey)}`)
       .then(r => r.ok ? r.json() : { pets: [] })
       .then((data: any) => {
-        const pets: Pet[] = Array.isArray(data.pets) ? data.pets : [];
-        setRegisteredPets(pets);
-        if (pets.length === 0) setShowNewForm(true);
+        resolvedPets = Array.isArray(data.pets) ? data.pets : [];
       })
-      .catch(() => {
-        setShowNewForm(true);
+      .catch(() => {})
+      .finally(() => { petsLoaded = true; checkDone(); });
+
+    // Fetch karte data
+    fetch(`/api/proxy/public/karte?tenantId=${encodeURIComponent(tenantId)}&userId=${encodeURIComponent(customerKey)}`)
+      .then(r => r.ok ? r.json() : { data: null })
+      .then((data: any) => {
+        if (data.ok && data.data) resolvedKarte = data.data;
       })
-      .finally(() => setLoading(false));
+      .catch(() => {})
+      .finally(() => { karteLoaded = true; checkDone(); });
   }, [tenantId, customerKey]);
 
   const togglePet = (id: string) => {
@@ -118,10 +154,72 @@ export default function StepPetSelect({ tenantId, customerKey, onComplete, onBac
     onComplete(answers);
   };
 
+  const handleKarteSubmit = () => {
+    if (!karte) return;
+    const answers: Record<string, string | boolean> = {
+      pet_name: karte.pet_name || '',
+      pet_breed: karte.pet_breed || '',
+      pet_size: '',
+      pet_count: '1',
+      pet_ids: '',
+      karte_used: true,
+    };
+    if (karte.pet_age) answers.pet_age = karte.pet_age;
+    if (karte.pet_weight) answers.pet_weight = karte.pet_weight;
+    if (karte.allergies) answers.allergies = karte.allergies;
+    if (karte.cut_style) answers.cut_style = karte.cut_style;
+    onComplete(answers);
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
         <div className="w-6 h-6 border-2 border-brand-primary border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  // Karte registered — show confirmation with auto-filled data
+  if (useKarte && karte?.pet_name) {
+    return (
+      <div className="space-y-5">
+        <div className="flex items-center gap-2">
+          {onBack && (
+            <button onClick={onBack} className="p-1 text-brand-muted hover:text-brand-text transition-colors" aria-label="戻る">&#x2190;</button>
+          )}
+          <h2 className="text-lg font-semibold text-brand-text">ペット情報</h2>
+        </div>
+
+        <div className="bg-green-50 border border-green-200 rounded-2xl p-5 space-y-3">
+          <div className="flex items-center gap-2">
+            <span className="text-green-600 text-lg">&#x2705;</span>
+            <span className="text-sm font-bold text-green-700">カルテ情報が登録されています</span>
+          </div>
+          <div className="space-y-1.5 text-sm text-gray-700">
+            {karte.customer_name && <p><span className="font-medium text-gray-500">飼い主:</span> {karte.customer_name}</p>}
+            <p><span className="font-medium text-gray-500">ペット名:</span> {karte.pet_name}{karte.pet_breed ? `（${karte.pet_breed}）` : ''}</p>
+            {karte.pet_age && <p><span className="font-medium text-gray-500">年齢:</span> {karte.pet_age}</p>}
+            {karte.pet_weight && <p><span className="font-medium text-gray-500">体重:</span> {karte.pet_weight}</p>}
+            {karte.allergies && <p><span className="font-medium text-gray-500">アレルギー:</span> {karte.allergies}</p>}
+            {karte.cut_style && <p><span className="font-medium text-gray-500">カットスタイル:</span> {karte.cut_style}</p>}
+          </div>
+          <p className="text-xs text-gray-400">&#x203B; 情報を変更する場合はカルテから編集してください</p>
+        </div>
+
+        <button
+          onClick={handleKarteSubmit}
+          className="w-full py-4 bg-brand-primary text-white rounded-2xl font-semibold hover:shadow-md transition-all"
+        >
+          この情報で次へ &#x2192;
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setUseKarte(false)}
+          className="w-full py-3 text-sm text-brand-muted hover:text-brand-text transition-colors"
+        >
+          別のペットで予約する
+        </button>
       </div>
     );
   }

@@ -64,7 +64,7 @@ new_sqlite_classes = ["SlotLock"]
 
 # ===== STAGING =====
 [env.staging]
-vars = { ENVIRONMENT = "staging", WEB_BASE = "https://saas-factory-web-v2.pages.dev",  LINE_LOGIN_CHANNEL_ID = "2008915612", LINE_REDIRECT_URI = "https://saas-factory-web-v2.pages.dev/api/auth/line/callback", STRIPE_PRICE_STARTER = "price_1TAW3BHYPwzFnFgeuq2WCAul", STRIPE_PRICE_PRO = "price_1TAW3BHYPwzFnFgeoeroZAp8" }
+vars = { ENVIRONMENT = "staging", WEB_BASE = "https://saas-factory-web-v2.pages.dev",  LINE_LOGIN_CHANNEL_ID = "2008915612", LINE_REDIRECT_URI = "https://saas-factory-web-v2.pages.dev/api/auth/line/callback", PAYJP_PLAN_STARTER = "pln_starter", PAYJP_PLAN_PRO = "pln_pro" }
 name = "saas-factory-api-staging"
 [[env.staging.kv_namespaces]]
 binding = "SAAS_FACTORY"
@@ -98,7 +98,7 @@ bindings = [
 # ===== AUTO-ADDED production env (cloned from staging) =====
 [env.production]
 name = "saas-factory-api"
-vars = { ENVIRONMENT = "production", WEB_BASE = "https://saas-factory-web-v2.pages.dev", LINE_LOGIN_CHANNEL_ID = "2008915612", LINE_REDIRECT_URI = "https://saas-factory-web-v2.pages.dev/api/auth/line/callback", WEB_ORIGIN = "https://saas-factory-web-v2.pages.dev", STRIPE_PRICE_STARTER = "price_1TAW3BHYPwzFnFgeuq2WCAul", STRIPE_PRICE_PRO = "price_1TAW3BHYPwzFnFgeoeroZAp8" }
+vars = { ENVIRONMENT = "production", WEB_BASE = "https://saas-factory-web-v2.pages.dev", LINE_LOGIN_CHANNEL_ID = "2008915612", LINE_REDIRECT_URI = "https://saas-factory-web-v2.pages.dev/api/auth/line/callback", WEB_ORIGIN = "https://saas-factory-web-v2.pages.dev", PAYJP_PLAN_STARTER = "pln_starter", PAYJP_PLAN_PRO = "pln_pro" }
 
 [env.production.triggers]
 crons = ["*/5 * * * *"]

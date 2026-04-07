@@ -26,6 +26,9 @@ import { registerSubscriptionRoutes } from "./routes/subscription";
 import { registerEcRoutes } from "./routes/ec";
 import { registerProjectRoutes } from "./routes/project";
 import { registerCouponRoutes } from "./routes/coupons";
+import { registerTimeBlockRoutes } from "./routes/time-blocks";
+import { registerKartePhotoRoutes } from "./routes/karte-photos";
+import { registerAgentRoutes } from "./routes/agent";
 import { scheduled } from "./routes/scheduled";
 
 // ── Durable Objects ──────────────────────────────────────────────────
@@ -135,6 +138,9 @@ registerSubscriptionRoutes(app);
 registerEcRoutes(app);
 registerProjectRoutes(app);
 registerCouponRoutes(app);
+registerTimeBlockRoutes(app);
+registerKartePhotoRoutes(app);
+registerAgentRoutes(app);
 
 // ── Queue consumer (no-op) ───────────────────────────────────────────
 async function queue(batch: MessageBatch<unknown>): Promise<void> {

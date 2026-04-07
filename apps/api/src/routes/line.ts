@@ -168,9 +168,9 @@ const RICH_MENU_TEMPLATES: Record<string, RichMenuTemplate> = {
             action: { type: "uri", label: "ご予約", uri: buildTenantBookingUrl(origin, tenantId) },
           },
           {
-            // 上段中: コース
+            // 上段中: メニュー
             bounds: { x: 833, y: 0, width: 834, height: 843 },
-            action: { type: "uri", label: "コース", uri: buildTenantMenuUrl(origin, tenantId) },
+            action: { type: "message", label: "メニュー", text: "メニューを見たい" },
           },
           {
             // 上段右: クーポン
@@ -178,19 +178,19 @@ const RICH_MENU_TEMPLATES: Record<string, RichMenuTemplate> = {
             action: { type: "postback", label: "クーポン", data: `action=show_coupon&tenantId=${tenantId}`, displayText: "クーポンを確認する" },
           },
           {
-            // 下段左: カルテ（予約一覧）
+            // 下段左: カルテ（メッセージアクション — LINEブラウザからでもAI応答で対応）
             bounds: { x: 0, y: 843, width: 833, height: 843 },
-            action: { type: "uri", label: "カルテ", uri: buildTenantReservationsUrl(origin, tenantId) },
+            action: { type: "postback", label: "カルテ", data: `action=custom_msg&tenantId=${tenantId}&text=${encodeURIComponent("カルテを見たい")}`, displayText: "カルテを見たい" },
           },
           {
-            // 下段中: Instagram（店舗情報にフォールバック）
+            // 下段中: 予約履歴
             bounds: { x: 833, y: 843, width: 834, height: 843 },
-            action: { type: "postback", label: "お知らせ", data: `action=store_info&tenantId=${tenantId}`, displayText: "お知らせを見る" },
+            action: { type: "postback", label: "予約履歴", data: `action=custom_msg&tenantId=${tenantId}&text=${encodeURIComponent("予約履歴を見たい")}`, displayText: "予約履歴を見たい" },
           },
           {
-            // 下段右: お電話
+            // 下段右: インスタグラム
             bounds: { x: 1667, y: 843, width: 833, height: 843 },
-            action: { type: "postback", label: "お電話", data: `action=store_info&tenantId=${tenantId}`, displayText: "店舗情報を見る" },
+            action: { type: "uri", label: "インスタグラム", uri: "https://www.instagram.com/" },
           },
         ],
       },
@@ -961,8 +961,33 @@ app.post("/admin/integrations/line/richmenu/publish", async (c) => {
       return c.json({ ok: false, error: "template_not_found", detail: `テンプレート '${templateKey}' が見つかりません。` }, 400);
     }
 
-    // Build payload
+    // Build payload (with custom button overrides from D1)
     const { payload } = template.build({ origin, tenantId });
+
+    // Override areas with custom button settings from D1
+    const db = (c.env as any)?.DB;
+    if (db) {
+      try {
+        const btnRows = await db.prepare(
+          `SELECT button_index, label, action_type, action_value FROM rich_menu_buttons WHERE tenant_id = ? AND template = ? ORDER BY button_index`
+        ).bind(tenantId, templateKey).all();
+        const customButtons = (btnRows.results || []) as any[];
+        for (const btn of customButtons) {
+          const idx = Number(btn.button_index);
+          if (idx >= 0 && idx < payload.areas.length) {
+            const area = payload.areas[idx];
+            area.action.label = btn.label;
+            if (btn.action_type === 'uri') {
+              area.action = { type: "uri", label: btn.label, uri: btn.action_value };
+            } else if (btn.action_type === 'message') {
+              area.action = { type: "postback", label: btn.label, data: `action=custom_msg&tenantId=${tenantId}&text=${encodeURIComponent(btn.action_value)}`, displayText: btn.action_value };
+            }
+          }
+        }
+      } catch (e: any) {
+        console.warn(`[RICHMENU] custom buttons load failed: ${e?.message}`);
+      }
+    }
 
     // NOTE: Old menu deletion moved to AFTER new default is set (safe republish).
     // This ensures users always have a valid rich menu during the transition.
@@ -987,7 +1012,55 @@ app.post("/admin/integrations/line/richmenu/publish", async (c) => {
     }
 
     // Step 2: Upload rich menu image (2500×1686)
-    const { bytes: imageBytes, contentType: imageContentType } = getRichMenuImage(templateKey);
+    // Priority: custom uploaded bg from KV settings > default template image
+    let imageBytes: Uint8Array;
+    let imageContentType: string;
+    let usedCustomBg = false;
+
+    try {
+      let settingsRaw: any = null;
+      try { const raw = await kv.get(`settings:${tenantId}`); if (raw) settingsRaw = JSON.parse(raw); } catch {}
+      const customBgUrl = settingsRaw?.images?.richMenuBg;
+      if (customBgUrl) {
+        // Extract R2 key from URL to read directly from R2 (avoids Workers self-referential fetch)
+        const r2 = (c.env as any)?.MENU_IMAGES;
+        const r2KeyMatch = customBgUrl.match(/\/media\/menu\/(.+)$/);
+        if (r2 && r2KeyMatch) {
+          const r2Key = decodeURIComponent(r2KeyMatch[1]);
+          const r2Obj = await r2.get(r2Key);
+          if (r2Obj) {
+            const buf = await r2Obj.arrayBuffer();
+            imageBytes = new Uint8Array(buf);
+            imageContentType = r2Obj.httpMetadata?.contentType || "image/png";
+            usedCustomBg = true;
+            console.log(`[RICHMENU] using custom bg from R2: ${r2Key}`);
+          } else {
+            throw new Error(`R2 object not found: ${r2Key}`);
+          }
+        } else {
+          // Fallback: fetch externally (for non-R2 URLs)
+          const bgRes = await fetch(customBgUrl, { signal: AbortSignal.timeout(8000) });
+          if (bgRes.ok) {
+            const buf = await bgRes.arrayBuffer();
+            imageBytes = new Uint8Array(buf);
+            imageContentType = bgRes.headers.get("content-type") || "image/jpeg";
+            usedCustomBg = true;
+            console.log(`[RICHMENU] using custom bg from URL: ${customBgUrl.slice(0, 80)}`);
+          } else {
+            throw new Error(`fetch failed: ${bgRes.status}`);
+          }
+        }
+      } else {
+        throw new Error("no custom bg");
+      }
+    } catch (e: any) {
+      // Fallback to default template image
+      const fallback = getRichMenuImage(templateKey);
+      imageBytes = fallback.bytes;
+      imageContentType = fallback.contentType;
+      console.log(`[RICHMENU] using default template image (${e?.message})`);
+    }
+
     const uploadRes = await fetch(`https://api-data.line.me/v2/bot/richmenu/${richMenuId}/content`, {
       method: "POST",
       headers: {
@@ -1069,6 +1142,62 @@ app.post("/admin/integrations/line/richmenu/publish", async (c) => {
     const safeDetail = String(e?.message ?? e).slice(0, 500);
     console.error(`[RICHMENU] publish_error tenant=${getTenantId(c, null)}: ${safeDetail}`);
     return c.json({ ok: false, error: "publish_error", step: "unknown", detail: safeDetail }, 500);
+  }
+});
+
+// ── GET /admin/line/rich-menu/buttons ──────────────────────────────────────
+app.get("/admin/line/rich-menu/buttons", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
+  const tenantId = getTenantId(c, null);
+  const template = (c.req.query("template") || "pet-default").trim();
+  const db = (c.env as any)?.DB;
+  if (!db) return c.json({ ok: false, error: "DB_not_bound" }, 500);
+  try {
+    const q = await db.prepare(
+      `SELECT button_index, label, action_type, action_value FROM rich_menu_buttons WHERE tenant_id = ? AND template = ? ORDER BY button_index`
+    ).bind(tenantId, template).all();
+    return c.json({ ok: true, buttons: q.results || [] });
+  } catch (e: any) {
+    return c.json({ ok: false, error: "db_error", detail: String(e?.message ?? e) }, 500);
+  }
+});
+
+// ── PUT /admin/line/rich-menu/buttons ──────────────────────────────────────
+app.put("/admin/line/rich-menu/buttons", async (c) => {
+  const mismatch = checkTenantMismatch(c); if (mismatch) return mismatch;
+  const rbac = await requireRole(c, "admin"); if (rbac) return rbac;
+  const body = await c.req.json().catch(() => null) as any;
+  if (!body?.buttons || !Array.isArray(body.buttons)) {
+    return c.json({ ok: false, error: "missing_buttons" }, 400);
+  }
+  const tenantId = getTenantId(c, body);
+  const template = String(body.template || "pet-default").trim();
+  const db = (c.env as any)?.DB;
+  if (!db) return c.json({ ok: false, error: "DB_not_bound" }, 500);
+
+  try {
+    // Delete existing buttons for this tenant+template, then insert new ones
+    await db.prepare(`DELETE FROM rich_menu_buttons WHERE tenant_id = ? AND template = ?`).bind(tenantId, template).run();
+
+    let saved = 0;
+    for (const btn of body.buttons) {
+      const idx = Number(btn.buttonIndex ?? btn.button_index);
+      const label = String(btn.label || "").trim();
+      const actionType = String((btn.actionType ?? btn.action_type) || "uri").trim();
+      const actionValue = String((btn.actionValue ?? btn.action_value) || "").trim();
+      if (isNaN(idx) || idx < 0 || idx > 5 || !label || !actionValue) continue;
+      if (!["uri", "message"].includes(actionType)) continue;
+
+      const id = crypto.randomUUID();
+      await db.prepare(
+        `INSERT INTO rich_menu_buttons (id, tenant_id, template, button_index, label, action_type, action_value) VALUES (?, ?, ?, ?, ?, ?, ?)`
+      ).bind(id, tenantId, template, idx, label, actionType, actionValue).run();
+      saved++;
+    }
+
+    return c.json({ ok: true, saved });
+  } catch (e: any) {
+    return c.json({ ok: false, error: "db_error", detail: String(e?.message ?? e) }, 500);
   }
 });
 

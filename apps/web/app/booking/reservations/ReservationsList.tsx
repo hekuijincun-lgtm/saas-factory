@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { getMyReservations, type MyReservation } from '@/src/lib/bookingApi';
+import { getMyReservations, cancelMyReservation, type MyReservation } from '@/src/lib/bookingApi';
 
 const CUSTOMER_KEY_TTL_MS = 90 * 24 * 60 * 60 * 1000; // 90 days
 
@@ -29,23 +29,33 @@ function formatDate(date: string, time: string): string {
 }
 
 function StatusBadge({ status }: { status: string }) {
-  const isActive = status === 'active' || !status;
+  const map: Record<string, { label: string; className: string }> = {
+    active: { label: '予約確定', className: 'bg-green-100 text-green-700' },
+    cancelled: { label: 'キャンセル済み', className: 'bg-red-100 text-red-500' },
+  };
+  const s = map[status] || map.active;
   return (
-    <span
-      className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${
-        isActive ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
-      }`}
-    >
-      {isActive ? '予約確定' : status}
+    <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${s.className}`}>
+      {s.label}
     </span>
   );
 }
 
-function ReservationCard({ r }: { r: MyReservation }) {
+function ReservationCard({
+  r,
+  onCancel,
+  cancelling,
+}: {
+  r: MyReservation;
+  onCancel: (id: string) => void;
+  cancelling: string | null;
+}) {
   const isPast = r.date ? new Date(`${r.date}T23:59:59+09:00`) < new Date() : false;
+  const isCancelled = r.status === 'cancelled';
+  const canCancel = !isPast && !isCancelled && r.status === 'active';
 
   return (
-    <div className={`rounded-2xl border p-4 space-y-2 ${isPast ? 'border-brand-border bg-gray-50' : 'border-brand-primary/30 bg-white shadow-sm'}`}>
+    <div className={`rounded-2xl border p-4 space-y-2 ${isPast || isCancelled ? 'border-brand-border bg-gray-50' : 'border-brand-primary/30 bg-white shadow-sm'}`}>
       <div className="flex items-start justify-between gap-2">
         <div className="text-sm font-semibold text-brand-text">
           {formatDate(r.date, r.time)}
@@ -55,7 +65,18 @@ function ReservationCard({ r }: { r: MyReservation }) {
       {r.menuName && (
         <div className="text-sm text-brand-text">{r.menuName}</div>
       )}
-      <div className="text-xs text-brand-muted">所要 {r.durationMin}分</div>
+      <div className="flex items-center justify-between">
+        <div className="text-xs text-brand-muted">所要 {r.durationMin}分</div>
+        {canCancel && (
+          <button
+            onClick={() => onCancel(r.reservationId)}
+            disabled={cancelling === r.reservationId}
+            className="text-xs text-red-500 hover:text-red-700 font-medium disabled:opacity-50 transition-colors"
+          >
+            {cancelling === r.reservationId ? 'キャンセル中...' : 'キャンセルする'}
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -68,6 +89,8 @@ export default function ReservationsList() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [noKey, setNoKey] = useState(false);
+  const [cancelling, setCancelling] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
   useEffect(() => {
     const ck = loadCustomerKey(tenantId);
@@ -82,6 +105,33 @@ export default function ReservationsList() {
       .finally(() => setLoading(false));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId]);
+
+  const handleCancel = async (reservationId: string) => {
+    if (!confirm('この予約をキャンセルしますか？')) return;
+    const ck = loadCustomerKey(tenantId);
+    if (!ck) return;
+
+    setCancelling(reservationId);
+    setToast(null);
+    try {
+      await cancelMyReservation(tenantId, reservationId, ck);
+      setReservations(prev =>
+        prev.map(r => r.reservationId === reservationId ? { ...r, status: 'cancelled' } : r)
+      );
+      setToast({ message: '予約をキャンセルしました', type: 'success' });
+    } catch (e: any) {
+      setToast({ message: e.message || 'キャンセルに失敗しました', type: 'error' });
+    } finally {
+      setCancelling(null);
+    }
+  };
+
+  // トースト自動非表示
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 5000);
+    return () => clearTimeout(t);
+  }, [toast]);
 
   const handleGoBook = () => {
     window.location.href = `/booking?tenantId=${encodeURIComponent(tenantId)}`;
@@ -129,12 +179,20 @@ export default function ReservationsList() {
     );
   }
 
-  const upcoming = reservations.filter(r => r.date && new Date(`${r.date}T23:59:59+09:00`) >= new Date());
-  const past = reservations.filter(r => r.date && new Date(`${r.date}T23:59:59+09:00`) < new Date());
+  const upcoming = reservations.filter(r => r.date && new Date(`${r.date}T23:59:59+09:00`) >= new Date() && r.status !== 'cancelled');
+  const cancelled = reservations.filter(r => r.status === 'cancelled');
+  const past = reservations.filter(r => r.date && new Date(`${r.date}T23:59:59+09:00`) < new Date() && r.status !== 'cancelled');
 
   return (
     <div className="space-y-5">
       <h2 className="text-lg font-semibold text-brand-text">予約一覧</h2>
+
+      {/* トースト */}
+      {toast && (
+        <div className={`p-3 rounded-xl text-sm ${toast.type === 'success' ? 'bg-green-50 border border-green-200 text-green-700' : 'bg-red-50 border border-red-200 text-red-700'}`}>
+          {toast.message}
+        </div>
+      )}
 
       {reservations.length === 0 ? (
         <div className="text-center space-y-4 py-8">
@@ -151,13 +209,19 @@ export default function ReservationsList() {
           {upcoming.length > 0 && (
             <div className="space-y-3">
               <p className="text-xs font-medium text-brand-muted uppercase tracking-wide">今後の予約</p>
-              {upcoming.map(r => <ReservationCard key={r.reservationId} r={r} />)}
+              {upcoming.map(r => <ReservationCard key={r.reservationId} r={r} onCancel={handleCancel} cancelling={cancelling} />)}
+            </div>
+          )}
+          {cancelled.length > 0 && (
+            <div className="space-y-3">
+              <p className="text-xs font-medium text-brand-muted uppercase tracking-wide">キャンセル済み</p>
+              {cancelled.map(r => <ReservationCard key={r.reservationId} r={r} onCancel={handleCancel} cancelling={cancelling} />)}
             </div>
           )}
           {past.length > 0 && (
             <div className="space-y-3">
               <p className="text-xs font-medium text-brand-muted uppercase tracking-wide">過去の予約</p>
-              {past.map(r => <ReservationCard key={r.reservationId} r={r} />)}
+              {past.map(r => <ReservationCard key={r.reservationId} r={r} onCancel={handleCancel} cancelling={cancelling} />)}
             </div>
           )}
           <button

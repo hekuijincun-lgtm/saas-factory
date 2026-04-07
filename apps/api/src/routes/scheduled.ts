@@ -1,5 +1,6 @@
 import { runAllDueAgents } from '../agents';
 import { cronPostQueue, cronFetchInsights, cronRefreshTokens, cronABTestAggregation } from './owner-marketing';
+import { getDormantRecoveryCampaign } from '../verticals/crmMetadata';
 
 const CANCELLED_STATUS = 'cancelled' as const;
 const SQL_ACTIVE_FILTER = `status != '${CANCELLED_STATUS}'` as const;
@@ -270,6 +271,107 @@ export async function scheduled(_event: any, env: any, _ctx: any): Promise<void>
       }
     } catch (e: any) {
       console.error(`[${STAMP}] error:`, String(e?.message ?? e));
+    }
+  }
+
+  // ── 休眠顧客フォロー（dormant recovery） ──────────────────────────────────
+  if (db) {
+    const DORMANT_STAMP = "DORMANT_RECOVERY_V1";
+    try {
+      const now = new Date().toISOString();
+      // Get distinct tenant_ids that have customers with last_visit_at
+      const tenantRows = await db
+        .prepare("SELECT DISTINCT tenant_id FROM customers WHERE last_visit_at IS NOT NULL LIMIT 100")
+        .all<{ tenant_id: string }>();
+
+      for (const tRow of tenantRows.results ?? []) {
+        const tId = tRow.tenant_id;
+        try {
+          // Get tenant settings to determine vertical
+          const settingsRaw = await kv.get(`settings:${tId}`);
+          if (!settingsRaw) continue;
+          const settings = JSON.parse(settingsRaw);
+          const vertical = settings?.vertical || "generic";
+
+          // Get dormant recovery campaign config
+          const dormantCfg = getDormantRecoveryCampaign(vertical);
+          if (!dormantCfg) continue;
+          const dormantDays = dormantCfg.defaultTriggerDays ?? 90;
+
+          // Get channelAccessToken
+          const channelAccessToken = settings?.integrations?.line?.channelAccessToken;
+          if (!channelAccessToken) continue;
+
+          // Calculate cutoff date
+          const cutoff = new Date(Date.now() - dormantDays * 24 * 60 * 60 * 1000).toISOString();
+
+          // Find dormant customers: last_visit_at <= cutoff, not yet notified
+          // Join with reservations to get line_user_id
+          const dormantCustomers = await db.prepare(
+            `SELECT c.id, c.tenant_id, c.name,
+                    (SELECT r.line_user_id FROM reservations r
+                     WHERE r.tenant_id = c.tenant_id AND r.customer_id = c.id
+                       AND r.line_user_id IS NOT NULL
+                     ORDER BY r.slot_start DESC LIMIT 1) AS line_user_id
+             FROM customers c
+             WHERE c.tenant_id = ?
+               AND c.last_visit_at IS NOT NULL
+               AND c.last_visit_at <= ?
+               AND c.dormant_notified_at IS NULL
+             LIMIT 50`
+          ).bind(tId, cutoff).all();
+
+          for (const cust of (dormantCustomers.results ?? []) as any[]) {
+            if (!cust.line_user_id) continue;
+
+            // Get pet name from customer_kartes (for pet vertical)
+            let petName: string | null = null;
+            if (vertical === "pet") {
+              try {
+                const karte: any = await db.prepare(
+                  "SELECT pet_name FROM customer_kartes WHERE tenant_id = ? AND customer_id = ? LIMIT 1"
+                ).bind(tId, cust.id).first();
+                petName = karte?.pet_name ?? null;
+              } catch { /* ignore */ }
+            }
+
+            // Build message
+            const displayName = (vertical === "pet" && petName)
+              ? `${petName}ちゃん`
+              : (cust.name || "お客様");
+            const msg = vertical === "pet"
+              ? `${displayName}、最近いかがですか？🐾\nしばらくお会いできていないので、気になってご連絡しました。\nまたのご来店をお待ちしています！`
+              : `${displayName}様、最近いかがですか？\nしばらくお会いできていないので、気になってご連絡しました。\nまたのご来店をお待ちしています！`;
+
+            // Send LINE push
+            try {
+              const lineRes = await fetch("https://api.line.me/v2/bot/message/push", {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  "Authorization": `Bearer ${channelAccessToken}`,
+                },
+                body: JSON.stringify({ to: cust.line_user_id, messages: [{ type: "text", text: msg }] }),
+              });
+              if (lineRes.ok) {
+                await db.prepare(
+                  "UPDATE customers SET dormant_notified_at = ? WHERE id = ? AND tenant_id = ?"
+                ).bind(now, cust.id, tId).run().catch(() => null);
+                console.log(`[${DORMANT_STAMP}] sent to customer=${cust.id} tenant=${tId}`);
+              } else {
+                const errText = await lineRes.text().catch(() => `HTTP ${lineRes.status}`);
+                console.error(`[${DORMANT_STAMP}] LINE push failed for customer=${cust.id}: ${errText.slice(0, 200)}`);
+              }
+            } catch (sendErr: any) {
+              console.error(`[${DORMANT_STAMP}] send error customer=${cust.id}: ${String(sendErr?.message ?? sendErr).slice(0, 200)}`);
+            }
+          }
+        } catch (tenantErr: any) {
+          console.error(`[${DORMANT_STAMP}] tenant=${tId} error: ${String(tenantErr?.message ?? tenantErr).slice(0, 200)}`);
+        }
+      }
+    } catch (cronErr: any) {
+      console.error(`[${DORMANT_STAMP}] cron error:`, String(cronErr?.message ?? cronErr));
     }
   }
 

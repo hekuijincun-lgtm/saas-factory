@@ -63,9 +63,8 @@ export interface IntegrationSettings {
     notifyOnReminder?: boolean; // リマインド通知（default: false）
     lastError?: string; // 最後のエラーメッセージ
   };
-  stripe?: {
+  payjp?: {
     connected: boolean;
-    accountId?: string;
   };
 }
 
@@ -138,9 +137,8 @@ export type PlanId = 'starter' | 'pro' | 'enterprise';
 
 export interface SubscriptionInfo {
   planId: PlanId;
-  stripeCustomerId?: string;
-  stripeSubscriptionId?: string;
-  stripeSessionId?: string;
+  payjpCustomerId?: string;
+  payjpSubscriptionId?: string;
   status: 'active' | 'past_due' | 'cancelled' | 'trialing';
   currentPeriodEnd?: number;
   createdAt: number;
@@ -198,7 +196,7 @@ export interface AdminSettings {
   verticalConfig?: VerticalConfig;
   /** 管理者ログイン許可 LINE userId リスト（空 = セルフシード待ち） */
   allowedAdminLineUserIds?: string[];
-  /** サブスクリプション情報（Stripe Checkout 経由で設定） */
+  /** サブスクリプション情報（PAY.JP 経由で設定） */
   subscription?: SubscriptionInfo;
   /** マルチLINEアカウント */
   lineAccounts?: LineAccount[];
@@ -210,6 +208,8 @@ export interface AdminSettings {
   agents?: AgentCoreSettings;
   /** LINE Core 設定 */
   lineCore?: LineCoreSettingsConfig;
+  /** 見積作成モード（pet vertical用） */
+  estimateMode?: 'enabled' | 'disabled';
 }
 
 /** LINE Core 設定（settings:{tenantId}.lineCore） */
@@ -270,7 +270,7 @@ export const DEFAULT_ADMIN_SETTINGS: AdminSettings = {
       notifyOnCancel: true,
       notifyOnReminder: false,
     },
-    stripe: {
+    payjp: {
       connected: false,
     },
   },

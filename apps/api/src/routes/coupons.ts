@@ -47,7 +47,8 @@ app.post("/admin/coupons", async (c: any) => {
 
   try {
     const body = await c.req.json();
-    const id = `cpn_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    // 短い読みやすいコード（6文字大文字英数字）
+    const id = body.code?.trim() || Math.random().toString(36).slice(2, 8).toUpperCase();
     const {
       title, description, discountType, discountValue,
       targetMenuId, validFrom, validUntil, maxUses,
@@ -220,8 +221,45 @@ app.post("/coupons/:couponId/use", async (c: any) => {
   }
 });
 
-// ── Coupon Flex Message Builder (used by webhook) ──────────────────────────
-// Exported for use in webhook handler
+// ── GET /public/coupons/validate — クーポンコード検証 ─────────────────────
+app.get("/public/coupons/validate", async (c: any) => {
+  const tenantId = c.req.query("tenantId") || "default";
+  const code = (c.req.query("code") || "").trim();
+  const menuId = c.req.query("menuId") || "";
+  const db = (c.env as any).DB;
+  if (!db) return c.json({ ok: false, valid: false, message: "DB_not_bound" }, 500);
+  if (!code) return c.json({ ok: true, valid: false, message: "クーポンコードを入力してください" });
+
+  try {
+    const now = new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const coupon = await db.prepare(
+      `SELECT * FROM coupons
+       WHERE tenant_id = ? AND id = ? AND is_active = 1
+       AND valid_from <= ? AND valid_until >= ?
+       AND (max_uses IS NULL OR used_count < max_uses)`
+    ).bind(tenantId, code, now, now).first();
+
+    if (!coupon) {
+      return c.json({ ok: true, valid: false, message: "クーポンが見つからないか期限切れです" });
+    }
+    if (coupon.target_menu_id && menuId && coupon.target_menu_id !== menuId) {
+      return c.json({ ok: true, valid: false, message: "このメニューには使用できないクーポンです" });
+    }
+
+    return c.json({
+      ok: true, valid: true,
+      coupon: {
+        id: coupon.id,
+        title: coupon.title,
+        discountType: coupon.discount_type,
+        discountValue: coupon.discount_value,
+        validUntil: coupon.valid_until,
+      },
+    });
+  } catch (e: any) {
+    return c.json({ ok: false, valid: false, message: "検証エラー", detail: String(e?.message ?? e) }, 500);
+  }
+});
 
 } // end registerCouponRoutes
 

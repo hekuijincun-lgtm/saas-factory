@@ -146,11 +146,13 @@ export interface VerticalLPConfig {
   headline: string;
   subheadline: string;
   problems: { icon: string; title: string; desc: string }[];
-  features: { icon: string; title: string; desc: string }[];
+  features: { icon: string; title: string; desc: string; imageUrl?: string }[];
   flow: { step: string; title: string; desc: string }[];
   faqs: { q: string; a: string }[];
   metaTitle: string;
   metaDesc: string;
+  heroImageUrl?: string;
+  stats?: { num: string; label: string; icon: string }[];
 }
 
 export interface DesignProps {

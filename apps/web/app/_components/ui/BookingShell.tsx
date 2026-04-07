@@ -14,28 +14,16 @@ interface ShellData {
   vertical: string;
   heroImage: string | null;
   catchcopy: string | null;
-  phone: string | null;
-  storeAddress: string | null;
-  openTime: string | null;
-  closeTime: string | null;
-  closedWeekdays: number[];
 }
 
 const FALLBACK_NAME = 'Lumiere 表参道';
-const DAY_LABELS = ['日', '月', '火', '水', '木', '金', '土'];
-
-function getClosedDayLabel(days: number[]): string {
-  if (!days || days.length === 0) return 'なし';
-  return days.map(d => DAY_LABELS[d] || '?').join('・') + '曜日';
-}
 
 export default function BookingShell({ children }: BookingShellProps) {
   const searchParams = useSearchParams();
   const tenantId = searchParams?.get('tenantId') || 'default';
   const [data, setData] = useState<ShellData>({
     storeName: FALLBACK_NAME, vertical: 'generic', heroImage: null,
-    catchcopy: null, phone: null, storeAddress: null,
-    openTime: null, closeTime: null, closedWeekdays: [],
+    catchcopy: null,
   });
 
   useEffect(() => {
@@ -43,17 +31,11 @@ export default function BookingShell({ children }: BookingShellProps) {
       .then(r => r.ok ? r.json() : null)
       .then((json: any) => {
         const d = json?.data ?? json;
-        const bh = d?.businessHours ?? {};
         setData({
           storeName: d?.storeName?.trim() || FALLBACK_NAME,
           vertical: d?.vertical || 'generic',
           heroImage: d?.images?.hero || null,
           catchcopy: d?.catchcopy || null,
-          phone: d?.phone || null,
-          storeAddress: d?.storeAddress || null,
-          openTime: bh?.openTime || d?.openTime || null,
-          closeTime: bh?.closeTime || d?.closeTime || null,
-          closedWeekdays: bh?.closedWeekdays || d?.closedWeekdays || [],
         });
       })
       .catch(() => {});
@@ -86,25 +68,6 @@ export default function BookingShell({ children }: BookingShellProps) {
         </div>
       </section>
 
-      {/* ── 特徴セクション（ペット限定） ── */}
-      {isPet && (
-        <section className="py-6 px-4" style={{ backgroundColor: '#FFF8F0' }}>
-          <div className="max-w-[520px] mx-auto grid grid-cols-3 gap-3">
-            {[
-              { emoji: '🏆', title: '経験豊富', desc: 'プロのトリマー' },
-              { emoji: '🛡️', title: '安心・安全', desc: 'ワクチン確認済' },
-              { emoji: '📱', title: '24時間予約', desc: 'LINEで簡単' },
-            ].map(item => (
-              <div key={item.title} className="text-center bg-white rounded-xl py-4 px-2 shadow-sm border border-amber-100/50">
-                <div className="text-3xl mb-1.5">{item.emoji}</div>
-                <p className="font-bold text-xs text-gray-800">{item.title}</p>
-                <p className="text-[10px] text-gray-400 mt-0.5">{item.desc}</p>
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
-
       {/* ── 予約フロー（メインコンテンツ） ── */}
       <div className="flex justify-center px-4 py-6">
         <div className="w-full max-w-[520px] bg-white rounded-3xl shadow-soft overflow-hidden">
@@ -118,45 +81,6 @@ export default function BookingShell({ children }: BookingShellProps) {
           </div>
         </div>
       </div>
-
-      {/* ── 店舗情報セクション ── */}
-      {(data.phone || data.storeAddress || data.openTime) && (
-        <section className="px-4 pb-6">
-          <div className="max-w-[520px] mx-auto">
-            <h2 className="text-base font-bold text-gray-800 mb-3">📍 店舗情報</h2>
-            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm divide-y divide-gray-50">
-              {data.openTime && data.closeTime && (
-                <div className="flex items-center gap-3 px-4 py-3">
-                  <span className="text-lg">🕐</span>
-                  <span className="text-sm text-gray-400 w-16 shrink-0">営業時間</span>
-                  <span className="text-sm text-gray-700">{data.openTime}〜{data.closeTime}</span>
-                </div>
-              )}
-              {data.closedWeekdays.length > 0 && (
-                <div className="flex items-center gap-3 px-4 py-3">
-                  <span className="text-lg">📅</span>
-                  <span className="text-sm text-gray-400 w-16 shrink-0">定休日</span>
-                  <span className="text-sm text-gray-700">{getClosedDayLabel(data.closedWeekdays)}</span>
-                </div>
-              )}
-              {data.storeAddress && (
-                <div className="flex items-center gap-3 px-4 py-3">
-                  <span className="text-lg">📍</span>
-                  <span className="text-sm text-gray-400 w-16 shrink-0">住所</span>
-                  <span className="text-sm text-gray-700">{data.storeAddress}</span>
-                </div>
-              )}
-              {data.phone && (
-                <div className="flex items-center gap-3 px-4 py-3">
-                  <span className="text-lg">📞</span>
-                  <span className="text-sm text-gray-400 w-16 shrink-0">電話番号</span>
-                  <a href={`tel:${data.phone}`} className="text-sm text-blue-600 hover:underline">{data.phone}</a>
-                </div>
-              )}
-            </div>
-          </div>
-        </section>
-      )}
 
       {/* ── 予約CTAフッター ── */}
       {isPet && (

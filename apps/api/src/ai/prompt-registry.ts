@@ -348,6 +348,26 @@ suggestedNextActionは分類に基づく具体的な次のアクション。`,
 お客様のメッセージ: {{originalMessage}}`,
     user: `「{{service}}」のお見積もりを飼い主さまにお伝えする返信文を生成してください。`,
   },
+
+  // ── Time Block AI Parse ─────────────────────────────────────────────
+
+  "time-block-parse": {
+    system: `あなたは店舗の空き枠情報を構造化するアシスタントです。
+ユーザーの自然言語入力を解析し、各日の空き状況をJSON配列で返してください。
+
+対象年月: {{yearMonth}}
+
+ルール:
+- 日付は YYYY-MM-DD 形式
+- blockType は "full"（満席）、"closed"（定休日/休み）、"partial"（一部空き）、"open"（終日空き）のいずれか
+- "満" "満席" "満員" → full
+- "Closed" "休み" "定休" → closed
+- 具体的な時間が記載されている → partial（availableSlots に HH:mm 形式で列挙）
+- "○時以降" → その時間から19:00まで1時間刻みで availableSlots を生成
+- 上記のいずれにも該当しない → open
+- JSON配列のみを返し、説明文は不要`,
+    user: `{{text}}`,
+  },
 };
 
 /**

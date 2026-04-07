@@ -23,6 +23,9 @@ import {
   Syringe,
   ChevronsLeft,
   ChevronsRight,
+  MoreHorizontal,
+  Megaphone,
+  ClipboardCheck,
 } from "lucide-react";
 import { adminNavItems, filterNavItems } from "./nav.config";
 import { getVerticalTheme } from "@/src/lib/verticalTheme";
@@ -47,12 +50,16 @@ const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   // "/admin/security":     KeyRound,
   "/admin/pet":          PawPrint,
   "/admin/pet/reservations": Calendar,
+  "/admin/pet/customers": UserCircle,
   "/admin/pet/profiles": FileText,
   "/admin/pet/vaccines": Syringe,
   "/admin/pet/staff":    Users,
   "/admin/pet/pricing":  ClipboardList,
+  "/admin/pet/estimates": ClipboardList,
+  "/admin/pet/karte":    ClipboardCheck,
   "/admin/pet/ai-config": Bot,
   "/admin/pet/settings": Settings,
+  "/admin/marketing":    Megaphone,
   "/admin/support":      LifeBuoy,
   "/admin/settings":     Settings,
 };
@@ -202,6 +209,109 @@ function Sidebar({
           </button>
         </div>
       </aside>
+    </>
+  );
+}
+
+// ============================================================
+// 下部タブバー（スマホ用）
+// ============================================================
+
+/** Bottom tab nav items (max 5). The 5th is a "More" menu. */
+function BottomTabBar({
+  tenantId,
+  vertical,
+}: {
+  tenantId: string;
+  vertical?: string;
+}) {
+  const pathname = usePathname();
+  const [moreOpen, setMoreOpen] = useState(false);
+  const vt = getVerticalTheme(vertical);
+  const filteredNavItems = filterNavItems([...adminNavItems], vertical);
+
+  // Pick first 4 items for direct tabs, rest go into "More"
+  const directItems = filteredNavItems.slice(0, 4);
+  const moreItems = filteredNavItems.slice(4);
+
+  const isActive = (href: string) => {
+    const isPet = vertical === "pet";
+    const dashHref = isPet ? "/admin/pet" : "/admin";
+    return href === dashHref
+      ? pathname === href
+      : pathname === href || pathname?.startsWith(href + "/");
+  };
+
+  return (
+    <>
+      {/* "More" overlay */}
+      {moreOpen && (
+        <div
+          className="fixed inset-0 z-[60] bg-black/40"
+          onClick={() => setMoreOpen(false)}
+        >
+          <div
+            className="absolute bottom-[56px] left-0 right-0 bg-white rounded-t-2xl shadow-xl max-h-[60vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="p-2 space-y-0.5">
+              {moreItems.map(({ href, label }) => {
+                const Icon = ICON_MAP[href] ?? Settings;
+                const active = isActive(href);
+                return (
+                  <Link
+                    key={href}
+                    href={withTenant(href, tenantId)}
+                    onClick={() => setMoreOpen(false)}
+                    className={[
+                      "flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-colors",
+                      active
+                        ? `${vt.sidebarActive} text-white`
+                        : "text-gray-700 hover:bg-gray-100",
+                    ].join(" ")}
+                  >
+                    <Icon className="w-5 h-5 shrink-0" />
+                    <span>{label}</span>
+                  </Link>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Tab bar */}
+      <nav className="fixed bottom-0 left-0 right-0 z-50 bg-white border-t border-gray-200 flex sm:hidden safe-area-bottom">
+        {directItems.map(({ href, label }) => {
+          const Icon = ICON_MAP[href] ?? Settings;
+          const active = isActive(href);
+          return (
+            <Link
+              key={href}
+              href={withTenant(href, tenantId)}
+              className={[
+                "flex-1 flex flex-col items-center justify-center py-2 text-[10px] font-medium transition-colors min-h-[56px]",
+                active ? "text-indigo-600" : "text-gray-500",
+              ].join(" ")}
+            >
+              <Icon className={`w-5 h-5 mb-0.5 ${active ? "text-indigo-600" : "text-gray-400"}`} />
+              <span className="truncate max-w-[64px]">{label}</span>
+            </Link>
+          );
+        })}
+        {moreItems.length > 0 && (
+          <button
+            onClick={() => setMoreOpen((v) => !v)}
+            className={[
+              "flex-1 flex flex-col items-center justify-center py-2 text-[10px] font-medium transition-colors min-h-[56px]",
+              moreOpen ? "text-indigo-600" : "text-gray-500",
+            ].join(" ")}
+          >
+            <MoreHorizontal className={`w-5 h-5 mb-0.5 ${moreOpen ? "text-indigo-600" : "text-gray-400"}`} />
+            <span>その他</span>
+          </button>
+        )}
+      </nav>
     </>
   );
 }
@@ -364,8 +474,8 @@ export default function AdminShell({
 
       {/* メインコンテンツ */}
       <div className="flex-1 flex flex-col overflow-hidden min-w-0">
-        {/* トップバー（モバイル用ハンバーガー） */}
-        <header className="bg-white border-b border-gray-200 px-4 py-3 flex items-center gap-3 lg:hidden shrink-0">
+        {/* トップバー（タブレット用ハンバーガー — sm以下はボトムタブに切替） */}
+        <header className="bg-white border-b border-gray-200 px-4 py-3 hidden sm:flex lg:hidden items-center gap-3 shrink-0">
           <button
             onClick={() => setSidebarOpen(true)}
             className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
@@ -378,11 +488,21 @@ export default function AdminShell({
           </span>
         </header>
 
-        {/* ページコンテンツ */}
-        <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
+        {/* モバイルヘッダー（ストア名のみ） */}
+        <header className="bg-white border-b border-gray-200 px-4 py-3 flex sm:hidden items-center gap-3 shrink-0">
+          <span className="font-semibold text-gray-900 text-sm truncate">
+            {storeName}
+          </span>
+        </header>
+
+        {/* ページコンテンツ — pb-16 for bottom tab bar on mobile */}
+        <main className="flex-1 overflow-y-auto p-4 pb-20 sm:p-6 sm:pb-6 lg:p-8">
           {children}
         </main>
       </div>
+
+      {/* スマホ用下部タブバー */}
+      <BottomTabBar tenantId={sessionTenantId} vertical={vertical} />
     </div>
   );
 }

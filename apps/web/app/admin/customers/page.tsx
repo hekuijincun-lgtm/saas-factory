@@ -114,11 +114,11 @@ function CustomerDetailModal({ customer, tenantId, staffList, mounted, onClose }
     <>
       {/* Customer modal */}
       <div
-        className="fixed inset-0 bg-black/50 flex items-start justify-center z-40 p-4 pt-10 overflow-y-auto"
+        className="fixed inset-0 bg-black/50 flex items-end sm:items-start justify-center z-40 sm:p-4 sm:pt-10 overflow-y-auto"
         onClick={onClose}
       >
         <div
-          className="bg-white rounded-2xl shadow-xl max-w-2xl w-full p-6 space-y-5 mb-10"
+          className="bg-white rounded-t-2xl sm:rounded-2xl shadow-xl max-w-2xl w-full p-5 sm:p-6 space-y-5 sm:mb-10 max-h-[90vh] overflow-y-auto"
           onClick={(e) => e.stopPropagation()}
         >
           {/* Header */}
@@ -295,48 +295,71 @@ export default function CustomersPage() {
     <>
       <AdminTopBar title="顧客管理" subtitle="来店顧客の一覧です。行をクリックすると詳細が開きます。" />
 
-      <div className="px-6 pb-8">
-        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
-          {loading ? (
-            <div className="py-20 text-center text-sm text-gray-400">読み込み中...</div>
-          ) : error ? (
-            <div className="py-20 text-center">
-              <p className="text-sm text-red-500">{error}</p>
-              <button onClick={fetchCustomers} className="mt-3 text-xs text-gray-500 underline">再読み込み</button>
-            </div>
-          ) : customers.length === 0 ? (
-            <EmptyState />
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-gray-100 bg-gray-50">
-                    <th className="text-left px-5 py-3 font-semibold text-gray-600 text-xs uppercase tracking-wider">名前</th>
-                    <th className="text-left px-5 py-3 font-semibold text-gray-600 text-xs uppercase tracking-wider">電話番号</th>
-                    <th className="text-right px-5 py-3 font-semibold text-gray-600 text-xs uppercase tracking-wider">来店回数</th>
-                    <th className="text-right px-5 py-3 font-semibold text-gray-600 text-xs uppercase tracking-wider">最終来店日</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-50">
-                  {customers.map((c) => (
-                    <tr
-                      key={c.id}
-                      onClick={() => setSelectedCustomer(c)}
-                      className="hover:bg-blue-50 transition-colors cursor-pointer group"
-                    >
-                      <td className="px-5 py-3.5 font-medium text-gray-900 group-hover:text-blue-700">
-                        {c.name || '—'}
-                      </td>
-                      <td className="px-5 py-3.5 text-gray-600 tabular-nums">{c.phone ?? '—'}</td>
-                      <td className="px-5 py-3.5 text-gray-600 text-right tabular-nums">{c.visitCount}</td>
-                      <td className="px-5 py-3.5 text-gray-500 text-right tabular-nums">{c.lastVisitAt ?? '—'}</td>
+      <div className="px-4 sm:px-6 pb-8">
+        {loading ? (
+          <div className="py-20 text-center text-sm text-gray-400">読み込み中...</div>
+        ) : error ? (
+          <div className="py-20 text-center">
+            <p className="text-sm text-red-500">{error}</p>
+            <button onClick={fetchCustomers} className="mt-3 text-xs text-gray-500 underline">再読み込み</button>
+          </div>
+        ) : customers.length === 0 ? (
+          <EmptyState />
+        ) : (
+          <>
+            {/* PC: テーブル */}
+            <div className="hidden sm:block bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-gray-100 bg-gray-50">
+                      <th className="text-left px-5 py-3 font-semibold text-gray-600 text-xs uppercase tracking-wider">名前</th>
+                      <th className="text-left px-5 py-3 font-semibold text-gray-600 text-xs uppercase tracking-wider">電話番号</th>
+                      <th className="text-right px-5 py-3 font-semibold text-gray-600 text-xs uppercase tracking-wider">来店回数</th>
+                      <th className="text-right px-5 py-3 font-semibold text-gray-600 text-xs uppercase tracking-wider">最終来店日</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {customers.map((c) => (
+                      <tr
+                        key={c.id}
+                        onClick={() => setSelectedCustomer(c)}
+                        className="hover:bg-blue-50 transition-colors cursor-pointer group"
+                      >
+                        <td className="px-5 py-3.5 font-medium text-gray-900 group-hover:text-blue-700">
+                          {c.name || '—'}
+                        </td>
+                        <td className="px-5 py-3.5 text-gray-600 tabular-nums">{c.phone ?? '—'}</td>
+                        <td className="px-5 py-3.5 text-gray-600 text-right tabular-nums">{c.visitCount}</td>
+                        <td className="px-5 py-3.5 text-gray-500 text-right tabular-nums">{c.lastVisitAt ?? '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
-          )}
-        </div>
+
+            {/* スマホ: カードリスト */}
+            <div className="sm:hidden space-y-3">
+              {customers.map((c) => (
+                <div
+                  key={c.id}
+                  onClick={() => setSelectedCustomer(c)}
+                  className="bg-white rounded-xl p-4 shadow-sm border border-gray-200 active:bg-blue-50 transition-colors cursor-pointer"
+                >
+                  <div className="flex items-start justify-between mb-1.5">
+                    <span className="font-medium text-gray-900 text-base">{c.name || '—'}</span>
+                    <span className="text-xs text-gray-500 tabular-nums whitespace-nowrap ml-2">{c.lastVisitAt ?? '—'}</span>
+                  </div>
+                  <div className="flex items-center gap-4 text-sm text-gray-500">
+                    {c.phone && <span className="tabular-nums">{c.phone}</span>}
+                    <span>来店 {c.visitCount} 回</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
       </div>
 
       {selectedCustomer && (

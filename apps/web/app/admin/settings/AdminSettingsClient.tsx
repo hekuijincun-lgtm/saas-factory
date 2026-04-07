@@ -63,6 +63,11 @@ export default function AdminSettingsClient() {
   // storeAddress: storeName と同階層のフラットフィールドとして保存（Workers deepMerge で透過保存）
   const [storeAddress, setStoreAddress] = useState('');
   const [savedStoreAddress, setSavedStoreAddress] = useState('');
+  // phone / instagram: AI接客で使用するフラットフィールド
+  const [phone, setPhone] = useState('');
+  const [savedPhone, setSavedPhone] = useState('');
+  const [instagram, setInstagram] = useState('');
+  const [savedInstagram, setSavedInstagram] = useState('');
   // consentText: 予約確認画面の同意チェックボックス文言
   const DEFAULT_CONSENT = '予約内容を確認し、同意の上で予約を確定します';
   const [consentText, setConsentText] = useState(DEFAULT_CONSENT);
@@ -75,6 +80,16 @@ export default function AdminSettingsClient() {
   const [savedCloseTime, setSavedCloseTime] = useState('19:00');
   const [slotIntervalMin, setSlotIntervalMin] = useState(30);
   const [savedSlotIntervalMin, setSavedSlotIntervalMin] = useState(30);
+
+  // --- キャンセルポリシー ---
+  const [cpAllowCancel, setCpAllowCancel] = useState(true);
+  const [savedCpAllowCancel, setSavedCpAllowCancel] = useState(true);
+  const [cpDeadlineHours, setCpDeadlineHours] = useState(24);
+  const [savedCpDeadlineHours, setSavedCpDeadlineHours] = useState(24);
+  const [cpAllowSameDay, setCpAllowSameDay] = useState(false);
+  const [savedCpAllowSameDay, setSavedCpAllowSameDay] = useState(false);
+  const [cpMessage, setCpMessage] = useState('');
+  const [savedCpMessage, setSavedCpMessage] = useState('');
 
   const [isMounted, setIsMounted] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -322,6 +337,17 @@ export default function AdminSettingsClient() {
       setSlotIntervalMin(si); setSavedSlotIntervalMin(si);
       const sa = raw.storeAddress || '';
       setStoreAddress(sa); setSavedStoreAddress(sa);
+      const ph = raw.phone || '';
+      setPhone(ph); setSavedPhone(ph);
+      const ig = raw.instagram || '';
+      setInstagram(ig); setSavedInstagram(ig);
+      const cp = raw.cancelPolicy;
+      if (cp) {
+        const ac = cp.allowCancel ?? true; setCpAllowCancel(ac); setSavedCpAllowCancel(ac);
+        const dh = cp.deadlineHours ?? 24; setCpDeadlineHours(dh); setSavedCpDeadlineHours(dh);
+        const sd = cp.allowSameDay ?? false; setCpAllowSameDay(sd); setSavedCpAllowSameDay(sd);
+        const cm = cp.message || ''; setCpMessage(cm); setSavedCpMessage(cm);
+      }
       const cv = raw.consentText || DEFAULT_CONSENT;
       setConsentText(cv); setSavedConsentText(cv);
       // 眉毛施術設定 — Phase 1b: verticalConfig → eyebrow legacy の優先順位で読む
@@ -575,7 +601,15 @@ export default function AdminSettingsClient() {
         closeTime,
         slotIntervalMin,
         storeAddress,
+        phone,
+        instagram,
         consentText,
+        cancelPolicy: {
+          allowCancel: cpAllowCancel,
+          deadlineHours: cpDeadlineHours,
+          allowSameDay: cpAllowSameDay,
+          message: cpMessage,
+        },
         // Phase 6: verticalConfig のみ（eyebrow legacy path 送信停止）
         ...(showVerticalSettings && verticalSettingsPayload ? {
           vertical: vPlugin.key,
@@ -596,6 +630,12 @@ export default function AdminSettingsClient() {
       setSavedCloseTime(closeTime);
       setSavedSlotIntervalMin(slotIntervalMin);
       setSavedStoreAddress(storeAddress);
+      setSavedPhone(phone);
+      setSavedInstagram(instagram);
+      setSavedCpAllowCancel(cpAllowCancel);
+      setSavedCpDeadlineHours(cpDeadlineHours);
+      setSavedCpAllowSameDay(cpAllowSameDay);
+      setSavedCpMessage(cpMessage);
       setSavedConsentText(consentText);
       setSavedEyebrowConsentText(eyebrowConsentText);
       setSavedEyebrowRepeatEnabled(eyebrowRepeatEnabled);
@@ -651,6 +691,12 @@ export default function AdminSettingsClient() {
     setCloseTime(savedCloseTime);
     setSlotIntervalMin(savedSlotIntervalMin);
     setStoreAddress(savedStoreAddress);
+    setPhone(savedPhone);
+    setInstagram(savedInstagram);
+    setCpAllowCancel(savedCpAllowCancel);
+    setCpDeadlineHours(savedCpDeadlineHours);
+    setCpAllowSameDay(savedCpAllowSameDay);
+    setCpMessage(savedCpMessage);
     setConsentText(savedConsentText);
     setEyebrowConsentText(savedEyebrowConsentText);
     setEyebrowRepeatEnabled(savedEyebrowRepeatEnabled);
@@ -847,6 +893,34 @@ export default function AdminSettingsClient() {
               />
             </div>
 
+            {/* 電話番号 */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                電話番号
+              </label>
+              <input
+                type="tel"
+                className="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
+                value={phone}
+                onChange={e => setPhone(e.target.value)}
+                placeholder="03-0000-0000"
+              />
+            </div>
+
+            {/* Instagram */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                Instagram
+              </label>
+              <input
+                type="text"
+                className="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
+                value={instagram}
+                onChange={e => setInstagram(e.target.value)}
+                placeholder="@アカウント名"
+              />
+            </div>
+
             {/* 同意文（consentText: 予約確認画面のチェックボックス文言） */}
             <div className="md:col-span-2">
               <label className="block text-sm font-medium text-gray-700 mb-1.5">
@@ -917,6 +991,110 @@ export default function AdminSettingsClient() {
               />
               <p className="mt-1 text-xs text-gray-400">スロット表示間隔（15・30・60分など）</p>
             </div>
+          </div>
+        </div>
+
+        {/* ============================================================
+            キャンセルポリシー
+        ============================================================ */}
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <div className="flex items-center gap-3 mb-5">
+            <div className="p-2 bg-red-100 rounded-lg shrink-0">
+              <svg className="w-5 h-5 text-red-600" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </div>
+            <div>
+              <h2 className="text-base font-semibold text-gray-900">キャンセルポリシー</h2>
+              <p className="text-xs text-gray-500">顧客が予約をキャンセルできる条件を設定します</p>
+            </div>
+          </div>
+
+          <div className="space-y-5">
+            {/* キャンセル受付 ON/OFF */}
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-gray-700">キャンセル受付</p>
+                <p className="text-xs text-gray-400">OFFにすると顧客は予約をキャンセルできなくなります</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setCpAllowCancel(!cpAllowCancel)}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${cpAllowCancel ? 'bg-indigo-600' : 'bg-gray-300'}`}
+              >
+                <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${cpAllowCancel ? 'translate-x-6' : 'translate-x-1'}`} />
+              </button>
+            </div>
+
+            {cpAllowCancel && (
+              <>
+                {/* キャンセル期限 */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    キャンセル期限
+                  </label>
+                  <div className="flex flex-wrap gap-2 mb-2">
+                    {[12, 24, 48, 72].map(h => (
+                      <button
+                        key={h}
+                        type="button"
+                        onClick={() => setCpDeadlineHours(h)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                          cpDeadlineHours === h
+                            ? 'bg-indigo-50 border-indigo-300 text-indigo-700'
+                            : 'bg-white border-gray-300 text-gray-600 hover:bg-gray-50'
+                        }`}
+                      >
+                        {h}時間前
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-gray-600">予約の</span>
+                    <input
+                      type="number"
+                      min="1"
+                      max="168"
+                      className="w-20 px-3 py-2 border border-gray-300 rounded-lg text-sm text-center focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none"
+                      value={cpDeadlineHours}
+                      onChange={e => setCpDeadlineHours(Math.max(1, Number(e.target.value) || 24))}
+                    />
+                    <span className="text-sm text-gray-600">時間前まで</span>
+                  </div>
+                </div>
+
+                {/* 当日キャンセル */}
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-gray-700">当日キャンセル</p>
+                    <p className="text-xs text-gray-400">期限内であっても当日のキャンセルを許可するか</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setCpAllowSameDay(!cpAllowSameDay)}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${cpAllowSameDay ? 'bg-indigo-600' : 'bg-gray-300'}`}
+                  >
+                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${cpAllowSameDay ? 'translate-x-6' : 'translate-x-1'}`} />
+                  </button>
+                </div>
+
+                {/* キャンセル時メッセージ */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                    キャンセル時メッセージ
+                    <span className="ml-1 text-xs text-gray-400 font-normal">（任意）</span>
+                  </label>
+                  <textarea
+                    rows={2}
+                    className="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all resize-none"
+                    value={cpMessage}
+                    onChange={e => setCpMessage(e.target.value)}
+                    placeholder="キャンセルは予約の24時間前まで受け付けております"
+                  />
+                  <p className="mt-1 text-xs text-gray-400">顧客のキャンセル画面に表示されるメッセージです</p>
+                </div>
+              </>
+            )}
           </div>
         </div>
 

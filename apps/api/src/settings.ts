@@ -63,9 +63,8 @@ export interface IntegrationSettings {
     notifyOnReminder?: boolean; // リマインド通知（default: false）
     lastError?: string; // 最後のエラーメッセージ
   };
-  stripe?: {
+  payjp?: {
     connected: boolean;
-    accountId?: string;
   };
 }
 
@@ -142,9 +141,8 @@ export type PlanId = 'starter' | 'pro' | 'enterprise';
 
 export interface SubscriptionInfo {
   planId: PlanId;
-  stripeCustomerId?: string;
-  stripeSubscriptionId?: string;
-  stripeSessionId?: string;
+  payjpCustomerId?: string;
+  payjpSubscriptionId?: string;
   status: 'active' | 'past_due' | 'cancelled' | 'trialing';
   currentPeriodEnd?: number;
   createdAt: number;
@@ -181,9 +179,18 @@ export interface AISettings {
   core?: AICoreConfig;
 }
 
+export interface CancelPolicy {
+  allowCancel: boolean;       // キャンセル自体を許可するか
+  deadlineHours: number;      // 何時間前までキャンセル可能か
+  allowSameDay: boolean;      // 当日キャンセルを許可するか
+  message?: string;           // キャンセル時に表示するメッセージ
+}
+
 export interface AdminSettings {
   storeName?: string; // 店舗名（表示用）
   storeAddress?: string; // 店舗住所（LINE通知等に使用）
+  phone?: string; // 電話番号（AI接客・問い合わせ案内に使用）
+  instagram?: string; // Instagramアカウント（AI接客・SNS案内に使用）
   consentText?: string; // 予約確認画面の同意チェックボックス文言
   staffSelectionEnabled?: boolean; // スタッフ選択を予約フローで表示するか（デフォルト: true）
   publicDays: number; // 今日から何日後まで公開
@@ -202,18 +209,22 @@ export interface AdminSettings {
   verticalConfig?: VerticalConfig;
   /** 管理者ログイン許可 LINE userId リスト（空 = セルフシード待ち） */
   allowedAdminLineUserIds?: string[];
-  /** サブスクリプション情報（Stripe Checkout 経由で設定） */
+  /** サブスクリプション情報（PAY.JP 経由で設定） */
   subscription?: SubscriptionInfo;
   /** マルチLINEアカウント */
   lineAccounts?: LineAccount[];
   /** LINEルーティング（用途別デフォルトアカウント） */
   lineRouting?: LineRouting;
+  /** キャンセルポリシー（顧客向けキャンセル制御） */
+  cancelPolicy?: CancelPolicy;
   /** AI接客コア設定（settings:{tenantId}.ai に統合） */
   ai?: AISettings;
   /** Agent Core 設定 */
   agents?: AgentCoreSettings;
   /** LINE Core 設定 */
   lineCore?: LineCoreSettingsConfig;
+  /** 見積作成モード（pet vertical用） */
+  estimateMode?: 'enabled' | 'disabled';
 }
 
 /** LINE Core 設定（settings:{tenantId}.lineCore） */
@@ -281,7 +292,7 @@ export const DEFAULT_ADMIN_SETTINGS: AdminSettings = {
       notifyOnReminder: false,
       lastError: undefined,
     },
-    stripe: {
+    payjp: {
       connected: false,
     },
   },
@@ -441,6 +452,8 @@ export function mergeSettings(defaults: AdminSettings, partial: Partial<AdminSet
   return {
     storeName: partial.storeName ?? defaults.storeName,
     storeAddress: partial.storeAddress ?? defaults.storeAddress,
+    phone: partial.phone ?? defaults.phone,
+    instagram: partial.instagram ?? defaults.instagram,
     consentText: partial.consentText ?? defaults.consentText,
     staffSelectionEnabled: partial.staffSelectionEnabled ?? defaults.staffSelectionEnabled,
     publicDays: partial.publicDays ?? defaults.publicDays,
@@ -493,9 +506,8 @@ export function mergeSettings(defaults: AdminSettings, partial: Partial<AdminSet
         notifyOnReminder:    partial.integrations?.line?.notifyOnReminder    ?? defaults.integrations.line?.notifyOnReminder,
         lastError:           partial.integrations?.line?.lastError           ?? defaults.integrations.line?.lastError,
       },
-      stripe: {
-        connected: partial.integrations?.stripe?.connected ?? defaults.integrations.stripe?.connected ?? false,
-        accountId: partial.integrations?.stripe?.accountId ?? defaults.integrations.stripe?.accountId,
+      payjp: {
+        connected: partial.integrations?.payjp?.connected ?? defaults.integrations.payjp?.connected ?? false,
       },
     },
     onboarding: (partial.onboarding || defaults.onboarding)
@@ -564,6 +576,14 @@ export function mergeSettings(defaults: AdminSettings, partial: Partial<AdminSet
           outreachFollowupEnabled: partial.agents?.outreachFollowupEnabled ?? defaults.agents?.outreachFollowupEnabled,
           autoSendFollowup: partial.agents?.autoSendFollowup ?? defaults.agents?.autoSendFollowup,
           defaultFollowupDelayHours: partial.agents?.defaultFollowupDelayHours ?? defaults.agents?.defaultFollowupDelayHours,
+        }
+      : undefined,
+    cancelPolicy: (partial.cancelPolicy || defaults.cancelPolicy)
+      ? {
+          allowCancel: partial.cancelPolicy?.allowCancel ?? defaults.cancelPolicy?.allowCancel ?? true,
+          deadlineHours: partial.cancelPolicy?.deadlineHours ?? defaults.cancelPolicy?.deadlineHours ?? 24,
+          allowSameDay: partial.cancelPolicy?.allowSameDay ?? defaults.cancelPolicy?.allowSameDay ?? false,
+          message: partial.cancelPolicy?.message ?? defaults.cancelPolicy?.message,
         }
       : undefined,
   };

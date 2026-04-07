@@ -732,11 +732,27 @@ app.get("/ping", (c: any) => c.text("pong"));
       .catch((e: any) => console.error("[RESERVE_CUSTOMER_LINK] error:", String(e?.message ?? e)));
   }
 
+  // ── クーポン使用記録 ───────────────────────────────────────────────
+  const couponId = body.couponId ? String(body.couponId).trim() : null;
+  if (couponId) {
+    try {
+      const useId = `use_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+      await env.DB.batch([
+        env.DB.prepare(`INSERT OR IGNORE INTO coupon_uses (id, coupon_id, tenant_id, line_user_id, reservation_id) VALUES (?, ?, ?, ?, ?)`)
+          .bind(useId, couponId, tenantId, lineUserId || '', rid),
+        env.DB.prepare(`UPDATE coupons SET used_count = used_count + 1 WHERE id = ? AND tenant_id = ?`)
+          .bind(couponId, tenantId),
+      ]);
+    } catch (e: any) {
+      console.error("[RESERVE_COUPON] error:", String(e?.message ?? e));
+    }
+  }
+
   // customerKey + body.meta マージ
   const email = body.email ? String(body.email).trim().toLowerCase() : null;
   const customerKey = buildCustomerKey({ lineUserId, phone, email });
   const bodyMeta: Record<string, any> = (body.meta && typeof body.meta === 'object' && !Array.isArray(body.meta)) ? body.meta : {};
-  const finalMeta = { ...bodyMeta, ...(customerKey ? { customerKey } : {}) };
+  const finalMeta = { ...bodyMeta, ...(couponId ? { couponId } : {}), ...(customerKey ? { customerKey } : {}) };
   if (Object.keys(finalMeta).length > 0) {
     await env.DB.prepare("UPDATE reservations SET meta = ? WHERE id = ? AND tenant_id = ?")
       .bind(JSON.stringify(finalMeta), rid, tenantId)
@@ -774,6 +790,170 @@ app.get("/ping", (c: any) => c.text("pong"));
     }
   } catch (e: any) {
     console.error("[RESERVE_PET_AUTO] error:", String(e?.message ?? e));
+  }
+
+  // ── Auto-generate estimate if estimateMode is enabled ──
+  try {
+    const settingsRaw = await env.SAAS_FACTORY.get(`settings:${tenantId}`);
+    const settings: any = settingsRaw ? JSON.parse(settingsRaw) : {};
+    if (settings.estimateMode === 'enabled') {
+      const generateEstimate = async () => {
+        try {
+          const db = env.DB;
+          const kv = env.SAAS_FACTORY;
+          if (!db || !kv) return;
+
+          // Resolve pet info — prefer surveyAnswers, fallback to pet profile
+          const petId = bodyMeta?.petId || bodyMeta?.surveyAnswers?.pet_ids || null;
+          let breed = bodyMeta?.surveyAnswers?.pet_breed || '';
+          let size = bodyMeta?.surveyAnswers?.pet_size || '';
+          const menuName = bodyMeta?.menuName || '';
+          const menuId = bodyMeta?.menuId || '';
+
+          // If breed/size missing but petId available, fetch from pet profile
+          if ((!breed || !size) && petId) {
+            try {
+              const petsRaw = await kv.get(`pet:profiles:${tenantId}`);
+              const pets: any[] = petsRaw ? JSON.parse(petsRaw) : [];
+              const pet = pets.find((p: any) => p.id === petId);
+              if (pet) {
+                if (!breed && pet.breed) breed = pet.breed;
+                if (!size && pet.size) size = pet.size;
+              }
+            } catch { /* ignore */ }
+          }
+
+          // Get breed pricing or menu default
+          let price = 0;
+          let duration = 0;
+          let source = 'default';
+
+          // Try body.meta.pricing first (booking form already calculated price)
+          const metaPricing = bodyMeta?.pricing;
+          if (metaPricing?.totalPrice > 0) {
+            price = metaPricing.totalPrice;
+            source = 'booking_pricing';
+          } else if (metaPricing?.menuPrice > 0) {
+            price = metaPricing.menuPrice;
+            source = 'booking_pricing';
+          }
+          if (!price && menuId && breed && size) {
+            const row: any = await db
+              .prepare("SELECT price, duration_minutes FROM breed_size_pricing WHERE tenant_id = ? AND menu_id = ? AND breed = ? AND size = ? LIMIT 1")
+              .bind(tenantId, menuId, breed, size)
+              .first();
+            if (row) {
+              price = row.price;
+              duration = row.duration_minutes;
+              source = 'breed_pricing';
+            }
+          }
+
+          // Fallback to menu default (by ID or name match)
+          if (!price) {
+            try {
+              const menuListRaw = await kv.get(`admin:menu:list:${tenantId}`);
+              const menus: any[] = menuListRaw ? JSON.parse(menuListRaw) : [];
+              const menu = menuId
+                ? menus.find((m: any) => m.id === menuId)
+                : menuName
+                  ? menus.find((m: any) => m.name === menuName)
+                  : menus[0]; // last resort: first menu
+              if (menu) {
+                price = menu.price ?? 0;
+                duration = menu.durationMin ?? 60;
+                if (!menuId && menu.id) { /* capture for later use */ }
+              }
+            } catch { /* ignore KV error */ }
+          }
+
+          // Final fallback: if still 0, query reservation row for menu info
+          if (!price) {
+            try {
+              const resRow: any = await db
+                .prepare("SELECT meta FROM reservations WHERE id = ? AND tenant_id = ? LIMIT 1")
+                .bind(rid, tenantId)
+                .first();
+              if (resRow?.meta) {
+                const resMeta = typeof resRow.meta === 'string' ? JSON.parse(resRow.meta) : resRow.meta;
+                const resMenuId = resMeta?.menuId;
+                if (resMenuId) {
+                  const menuListRaw = await kv.get(`admin:menu:list:${tenantId}`);
+                  const menus: any[] = menuListRaw ? JSON.parse(menuListRaw) : [];
+                  const m = menus.find((mm: any) => mm.id === resMenuId);
+                  if (m) { price = m.price ?? 0; duration = m.durationMin ?? 60; }
+                }
+              }
+            } catch { /* ignore */ }
+          }
+
+          // Get pet grooming history for AI
+          let groomingHistory: any[] = [];
+          if (petId) {
+            const petsRaw = await kv.get(`pet:profiles:${tenantId}`);
+            const pets: any[] = petsRaw ? JSON.parse(petsRaw) : [];
+            const pet = pets.find((p: any) => p.id === petId);
+            if (pet?.groomingHistory) groomingHistory = pet.groomingHistory.slice(0, 5);
+          }
+
+          // Try AI estimate with 5s timeout
+          let aiResult: any = null;
+          const openaiApiKey: string = (env as any).OPENAI_API_KEY || '';
+          if (openaiApiKey && breed && size) {
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 5000);
+            try {
+              const historyCtx = groomingHistory.length > 0
+                ? groomingHistory.map((g: any) => `${g.date}: ${g.course || ''}${g.notes ? ' (' + g.notes + ')' : ''}`).join('\n')
+                : 'なし';
+              const resp = await fetch("https://api.openai.com/v1/chat/completions", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${openaiApiKey}` },
+                body: JSON.stringify({
+                  model: "gpt-4o-mini",
+                  messages: [
+                    { role: "system", content: `ペットサロンの料金見積もりアシスタントです。料金表をもとに見積もりをJSON形式で出力してください。
+{"estimated_price":数値,"estimated_duration_minutes":数値,"breakdown":[{"item":"項目名","price":数値,"duration":数値}],"ai_reasoning":"理由"}` },
+                    { role: "user", content: `犬種:${breed} サイズ:${size} メニュー:${menuName} 基本料金:¥${price} 基本時間:${duration}分\n過去施術:${historyCtx}` },
+                  ],
+                  temperature: 0.2, max_tokens: 400, response_format: { type: "json_object" },
+                }),
+                signal: controller.signal,
+              });
+              clearTimeout(timeout);
+              if (resp.ok) {
+                const json: any = await resp.json();
+                const content = json?.choices?.[0]?.message?.content;
+                if (content) aiResult = JSON.parse(content);
+              }
+            } catch { /* timeout or error — use fallback */ }
+          }
+
+          const estPrice = aiResult?.estimated_price ?? price;
+          const estDuration = aiResult?.estimated_duration_minutes ?? duration;
+          const breakdown = aiResult?.breakdown ?? [{ item: `${menuName}（${breed}・${size}）`, price, duration }];
+          const reasoning = aiResult?.ai_reasoning ?? (source === 'breed_pricing' ? '犬種別料金表から算出' : 'メニューデフォルト料金');
+
+          const estimateId = `est_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`;
+          const now = new Date().toISOString();
+          await db.prepare(
+            `INSERT INTO estimates (id, tenant_id, reservation_id, customer_id, pet_id, estimated_price, estimated_duration_minutes, breakdown, ai_reasoning, status, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`
+          ).bind(estimateId, tenantId, rid, null, petId, estPrice, estDuration, JSON.stringify(breakdown), reasoning, now, now).run();
+        } catch (err: any) {
+          console.error("[ESTIMATE_AUTO] error:", String(err?.message ?? err));
+        }
+      };
+
+      const execCtx = (c as any).executionCtx ?? (c as any).execution;
+      if (execCtx?.waitUntil) {
+        execCtx.waitUntil(generateEstimate());
+      } else {
+        generateEstimate().catch(() => null);
+      }
+    }
+  } catch (e: any) {
+    console.error("[ESTIMATE_MODE_CHECK] error:", String(e?.message ?? e));
   }
 
   return c.json({ ok:true, id: rid, tenantId, staffId, startAt, endAt, ...(customerKey ? { customerKey } : {}) })
@@ -855,6 +1035,463 @@ app.get("/my/reservations", async (c: any) => {
   } catch (e: any) {
     console.error("[MY_RESERVATIONS]", String(e?.message ?? e));
     return c.json({ ok: false, error: "db_error" }, 500);
+  }
+});
+
+// ---- CANCEL RESERVATION ----
+app.post("/my/reservations/:reservationId/cancel", async (c: any) => {
+  const tenantId = getTenantId(c);
+  const reservationId = c.req.param("reservationId");
+  const body = await c.req.json().catch(() => null) as any;
+  const customerKey = body?.customerKey || c.req.query("customerKey");
+
+  if (!customerKey || customerKey.trim().length < 4) {
+    return c.json({ ok: false, error: "missing_customerKey" }, 400);
+  }
+  if (!reservationId) {
+    return c.json({ ok: false, error: "missing_reservationId" }, 400);
+  }
+
+  const env = c.env as any;
+  const db = env.DB;
+  const kv = env.SAAS_FACTORY;
+  if (!db) return c.json({ ok: false, error: "DB_not_bound" }, 500);
+
+  try {
+    // 1. 予約データ取得 + 本人確認
+    const row = await db.prepare(
+      `SELECT id, start_at, status, meta FROM reservations WHERE tenant_id = ? AND id = ?`
+    ).bind(tenantId, reservationId).first();
+
+    if (!row) return c.json({ ok: false, error: "not_found" }, 404);
+
+    let meta: any = {};
+    try { meta = row.meta ? JSON.parse(row.meta) : {}; } catch { /* ignore */ }
+    if (meta.customerKey !== customerKey.trim()) {
+      return c.json({ ok: false, error: "forbidden" }, 403);
+    }
+    if (row.status === CANCELLED_STATUS) {
+      return c.json({ ok: false, error: "already_cancelled" }, 400);
+    }
+
+    // 2. キャンセルポリシー確認
+    let cancelPolicy = { allowCancel: true, deadlineHours: 24, allowSameDay: false, message: "" };
+    if (kv) {
+      const settings = await kv.get(`settings:${tenantId}`, "json").catch(() => null) as any;
+      if (settings?.cancelPolicy) {
+        cancelPolicy = { ...cancelPolicy, ...settings.cancelPolicy };
+      } else if (settings?.rules?.cancelMinutes) {
+        // legacy: rules.cancelMinutes → deadlineHours 変換
+        cancelPolicy.deadlineHours = Math.floor(settings.rules.cancelMinutes / 60);
+      }
+    }
+
+    if (!cancelPolicy.allowCancel) {
+      return c.json({ ok: false, error: "cancel_not_allowed", message: cancelPolicy.message || "キャンセルは受け付けておりません" }, 400);
+    }
+
+    // 3. 期限チェック
+    const startAt = new Date(row.start_at);
+    const now = new Date();
+    const hoursUntil = (startAt.getTime() - now.getTime()) / (1000 * 60 * 60);
+
+    if (hoursUntil < cancelPolicy.deadlineHours) {
+      return c.json({
+        ok: false, error: "deadline_passed",
+        message: `キャンセル期限（予約の${cancelPolicy.deadlineHours}時間前まで）を過ぎています`,
+      }, 400);
+    }
+
+    // 当日チェック（JST）
+    const jstOffset = 9 * 60 * 60 * 1000;
+    const nowJST = new Date(now.getTime() + jstOffset);
+    const startJST = new Date(startAt.getTime() + jstOffset);
+    const isSameDay = nowJST.toISOString().slice(0, 10) === startJST.toISOString().slice(0, 10);
+    if (isSameDay && !cancelPolicy.allowSameDay) {
+      return c.json({ ok: false, error: "same_day_cancel_not_allowed", message: "当日キャンセルはお受けできません" }, 400);
+    }
+
+    // 4. キャンセル実行
+    await db.prepare(
+      `UPDATE reservations SET status = ?, updated_at = datetime('now') WHERE tenant_id = ? AND id = ?`
+    ).bind(CANCELLED_STATUS, tenantId, reservationId).run();
+
+    console.log(`[CANCEL] tenant=${tenantId} reservation=${reservationId}`);
+    return c.json({ ok: true, tenantId, reservationId, status: CANCELLED_STATUS });
+  } catch (e: any) {
+    console.error("[CANCEL]", String(e?.message ?? e));
+    return c.json({ ok: false, error: "db_error" }, 500);
+  }
+});
+
+// ============================================================
+// GET /public/booking/monthly-status — 月次予約チェック
+// ============================================================
+app.get("/public/booking/monthly-status", async (c: any) => {
+  const tenantId = getTenantId(c, null);
+  const yearMonth = (c.req.query("yearMonth") || "").trim();
+  if (!/^\d{4}-\d{2}$/.test(yearMonth)) {
+    return c.json({ ok: false, error: "bad_yearMonth", hint: "YYYY-MM" }, 400);
+  }
+  const env = c.env as any;
+  const db = env.DB;
+  const kv = env.SAAS_FACTORY;
+  if (!db) return c.json({ ok: false, error: "DB_not_bound" }, 500);
+
+  // Read monthlyBookingLimit from KV settings
+  let limit: number | null = null;
+  try {
+    const raw = kv ? await kv.get(`settings:${tenantId}`) : null;
+    if (raw) {
+      const s = JSON.parse(raw);
+      const v = s?.monthlyBookingLimit;
+      if (v != null && Number.isFinite(Number(v))) limit = Number(v);
+    }
+  } catch { /* ignore */ }
+
+  // Count active bookings for this month
+  const startDate = `${yearMonth}-01T00:00:00+09:00`;
+  const endMonth = yearMonth.split("-");
+  const y = Number(endMonth[0]);
+  const m = Number(endMonth[1]);
+  const nextMonth = m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, "0")}`;
+  const endDate = `${nextMonth}-01T00:00:00+09:00`;
+
+  let booked = 0;
+  try {
+    const q = await db.prepare(
+      `SELECT COUNT(*) as cnt FROM reservations WHERE tenant_id = ? AND start_at >= ? AND start_at < ? AND ${SQL_ACTIVE_FILTER}`
+    ).bind(tenantId, startDate, endDate).first() as any;
+    booked = Number(q?.cnt ?? 0);
+  } catch { /* ignore */ }
+
+  const isFull = limit != null ? booked >= limit : false;
+  return c.json({ ok: true, yearMonth, limit, booked, isFull });
+});
+
+// ============================================================
+// GET /public/time-blocks — 公開用ブロック取得
+// ============================================================
+app.get("/public/time-blocks", async (c: any) => {
+  const tenantId = getTenantId(c, null);
+  const month = (c.req.query("month") || "").trim();
+  if (!/^\d{4}-\d{2}$/.test(month)) {
+    return c.json({ ok: false, error: "bad_month", hint: "YYYY-MM" }, 400);
+  }
+  const env = c.env as any;
+  const db = env.DB;
+  if (!db) return c.json({ ok: false, error: "DB_not_bound" }, 500);
+
+  const startDate = `${month}-01`;
+  const endMonth = month.split("-");
+  const y = Number(endMonth[0]);
+  const m = Number(endMonth[1]);
+  const nextMonth = m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, "0")}`;
+  const endDate = `${nextMonth}-01`;
+
+  try {
+    const q = await db.prepare(
+      `SELECT id, date, block_type, available_slots, note, time_range FROM time_blocks WHERE tenant_id = ? AND date >= ? AND date < ? ORDER BY date`
+    ).bind(tenantId, startDate, endDate).all();
+    const blocks = (q.results || []).map((r: any) => ({
+      id: r.id,
+      date: r.date,
+      blockType: r.block_type,
+      availableSlots: r.available_slots ? JSON.parse(r.available_slots) : null,
+      note: r.note || "",
+      timeRange: r.time_range || null,
+    }));
+    return c.json({ ok: true, blocks });
+  } catch (e: any) {
+    return c.json({ ok: false, error: "db_error", detail: String(e?.message ?? e) }, 500);
+  }
+});
+
+// ============================================================
+// GET /admin/time-blocks — 管理者用ブロック取得
+// ============================================================
+app.get("/admin/time-blocks", async (c: any) => {
+  const tenantId = getTenantId(c, null);
+  const month = (c.req.query("month") || "").trim();
+  if (!/^\d{4}-\d{2}$/.test(month)) {
+    return c.json({ ok: false, error: "bad_month", hint: "YYYY-MM" }, 400);
+  }
+  const env = c.env as any;
+  const db = env.DB;
+  if (!db) return c.json({ ok: false, error: "DB_not_bound" }, 500);
+
+  const startDate = `${month}-01`;
+  const endMonth = month.split("-");
+  const y = Number(endMonth[0]);
+  const m = Number(endMonth[1]);
+  const nextMonth = m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, "0")}`;
+  const endDate = `${nextMonth}-01`;
+
+  try {
+    const q = await db.prepare(
+      `SELECT id, date, block_type, available_slots, note, time_range, created_at FROM time_blocks WHERE tenant_id = ? AND date >= ? AND date < ? ORDER BY date`
+    ).bind(tenantId, startDate, endDate).all();
+    const blocks = (q.results || []).map((r: any) => ({
+      id: r.id,
+      date: r.date,
+      blockType: r.block_type,
+      availableSlots: r.available_slots ? JSON.parse(r.available_slots) : null,
+      note: r.note || "",
+      timeRange: r.time_range || null,
+      createdAt: r.created_at,
+    }));
+    return c.json({ ok: true, blocks });
+  } catch (e: any) {
+    return c.json({ ok: false, error: "db_error", detail: String(e?.message ?? e) }, 500);
+  }
+});
+
+// ============================================================
+// POST /admin/time-blocks — ブロック作成
+// ============================================================
+app.post("/admin/time-blocks", async (c: any) => {
+  const body = await c.req.json().catch(() => null) as any;
+  if (!body) return c.json({ ok: false, error: "bad_json" }, 400);
+  const tenantId = getTenantId(c, body);
+  const env = c.env as any;
+  const db = env.DB;
+  if (!db) return c.json({ ok: false, error: "DB_not_bound" }, 500);
+
+  const date = String(body.date || "").trim();
+  const blockType = String(body.blockType || "").trim();
+  const availableSlots = body.availableSlots ? JSON.stringify(body.availableSlots) : null;
+  const note = body.note ? String(body.note).trim() : null;
+  const timeRange = body.timeRange ? String(body.timeRange).trim() : null;
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return c.json({ ok: false, error: "bad_date", hint: "YYYY-MM-DD" }, 400);
+  }
+  if (!["closed", "full", "partial"].includes(blockType)) {
+    return c.json({ ok: false, error: "bad_blockType", hint: "closed | full | partial" }, 400);
+  }
+
+  const id = crypto.randomUUID();
+  try {
+    await db.prepare(
+      `INSERT INTO time_blocks (id, tenant_id, date, block_type, available_slots, note, time_range) VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).bind(id, tenantId, date, blockType, availableSlots, note, timeRange).run();
+    return c.json({ ok: true, id, date, blockType });
+  } catch (e: any) {
+    return c.json({ ok: false, error: "db_error", detail: String(e?.message ?? e) }, 500);
+  }
+});
+
+// ============================================================
+// DELETE /admin/time-blocks/:id — ブロック削除
+// ============================================================
+app.delete("/admin/time-blocks/:id", async (c: any) => {
+  const tenantId = getTenantId(c, null);
+  const blockId = c.req.param("id");
+  const env = c.env as any;
+  const db = env.DB;
+  if (!db) return c.json({ ok: false, error: "DB_not_bound" }, 500);
+
+  try {
+    const existing = await db.prepare(
+      `SELECT id FROM time_blocks WHERE id = ? AND tenant_id = ?`
+    ).bind(blockId, tenantId).first();
+    if (!existing) return c.json({ ok: false, error: "not_found" }, 404);
+    await db.prepare(`DELETE FROM time_blocks WHERE id = ? AND tenant_id = ?`).bind(blockId, tenantId).run();
+    return c.json({ ok: true, deleted: blockId });
+  } catch (e: any) {
+    return c.json({ ok: false, error: "db_error", detail: String(e?.message ?? e) }, 500);
+  }
+});
+
+// ============================================================
+// POST /admin/time-blocks/ai-parse — AIチャット空き枠パース
+// ============================================================
+app.post("/admin/time-blocks/ai-parse", async (c: any) => {
+  const body = await c.req.json().catch(() => null) as any;
+  if (!body) return c.json({ ok: false, error: "bad_json" }, 400);
+  const tenantId = getTenantId(c, body);
+  const env = c.env as any;
+  const db = env.DB;
+  if (!db) return c.json({ ok: false, error: "DB_not_bound" }, 500);
+
+  const message = String(body.message || "").trim();
+  const yearMonth = String(body.yearMonth || "").trim();
+  if (!message) return c.json({ ok: false, error: "missing_message" }, 400);
+  if (!/^\d{4}-\d{2}$/.test(yearMonth)) {
+    return c.json({ ok: false, error: "bad_yearMonth", hint: "YYYY-MM" }, 400);
+  }
+
+  const apiKey = env.OPENAI_API_KEY;
+  if (!apiKey) return c.json({ ok: false, error: "openai_not_configured" }, 500);
+
+  const systemPrompt = `あなたはペットサロンの空き枠管理アシスタントです。
+オーナーの自然言語入力から予約ブロック情報をJSONで返してください。
+入力例: 「6日14時〜19時空き、8日はClosed、12日は満員、29日は9:00と13:00が空いてる」
+出力形式（JSON配列のみ、説明不要）:
+[
+{"date":"${yearMonth}-06","blockType":"partial","availableSlots":["14:00","15:00","16:00","17:00","18:00","19:00"],"timeRange":"14:00〜19:00","note":""},
+{"date":"${yearMonth}-08","blockType":"closed","availableSlots":null,"timeRange":null,"note":"Closed"},
+{"date":"${yearMonth}-12","blockType":"full","availableSlots":null,"timeRange":null,"note":"満員"},
+{"date":"${yearMonth}-29","blockType":"partial","availableSlots":["9:00","13:00"],"timeRange":null,"note":""}
+]
+blockTypeルール:
+closed: 定休・完全クローズ
+full: 予約満員（当日受付不可）
+partial: 一部時間のみ空き（availableSlotsに空き時間を列挙）
+
+timeRangeルール:
+- 「14時〜19時」のような連続した時間帯の場合、"14:00〜19:00" の形式でセットする
+- 個別の時間が列挙されている場合（例: 9:00と13:00）はnullにする
+- closed/fullの場合はnullにする
+
+今月: ${yearMonth}`;
+
+  try {
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: "gpt-4o",
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: message },
+        ],
+        temperature: 0,
+      }),
+    });
+
+    if (!res.ok) {
+      const errText = await res.text().catch(() => "");
+      return c.json({ ok: false, error: "openai_error", status: res.status, detail: errText.slice(0, 300) }, 502);
+    }
+
+    const data = await res.json() as any;
+    const raw = (data.choices?.[0]?.message?.content || "").trim();
+
+    // Extract JSON array from response (may be wrapped in ```json ... ```)
+    let jsonStr = raw;
+    const fenceMatch = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (fenceMatch) jsonStr = fenceMatch[1].trim();
+
+    let blocks: any[];
+    try {
+      blocks = JSON.parse(jsonStr);
+    } catch {
+      return c.json({ ok: false, error: "parse_failed", raw: raw.slice(0, 500) }, 422);
+    }
+
+    if (!Array.isArray(blocks)) {
+      return c.json({ ok: false, error: "not_array", raw: raw.slice(0, 500) }, 422);
+    }
+
+    // Validate and insert
+    let inserted = 0;
+    for (const b of blocks) {
+      const date = String(b.date || "").trim();
+      const blockType = String(b.blockType || "").trim();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
+      if (!["closed", "full", "partial"].includes(blockType)) continue;
+
+      const availableSlots = b.availableSlots ? JSON.stringify(b.availableSlots) : null;
+      const note = b.note ? String(b.note).trim() : null;
+      const timeRange = b.timeRange ? String(b.timeRange).trim() : null;
+      const id = crypto.randomUUID();
+
+      await db.prepare(
+        `INSERT INTO time_blocks (id, tenant_id, date, block_type, available_slots, note, time_range) VALUES (?, ?, ?, ?, ?, ?, ?)`
+      ).bind(id, tenantId, date, blockType, availableSlots, note, timeRange).run();
+      inserted++;
+    }
+
+    return c.json({ ok: true, inserted, parsed: blocks.length });
+  } catch (e: any) {
+    return c.json({ ok: false, error: "ai_parse_error", detail: String(e?.message ?? e) }, 500);
+  }
+});
+
+// ── GET /public/reservations — 公開予約履歴（LINE userId） ────────────────
+app.get("/public/reservations", async (c: any) => {
+  const tenantId = getTenantId(c, null);
+  const lineUserId = (c.req.query("lineUserId") || "").trim();
+  const limit = Math.min(Number(c.req.query("limit") || 5), 20);
+  if (!tenantId || !lineUserId) {
+    return c.json({ ok: false, error: "missing_params" }, 400);
+  }
+  const db = (c.env as any)?.DB;
+  if (!db) return c.json({ ok: false, error: "DB_not_bound" }, 500);
+
+  try {
+    const rows = await db.prepare(
+      `SELECT id, start_at, end_at, customer_name, meta FROM reservations
+       WHERE tenant_id = ? AND line_user_id = ?
+       ORDER BY start_at DESC LIMIT ?`
+    ).bind(tenantId, lineUserId, limit).all();
+
+    const data = (rows.results || []).map((r: any) => {
+      let menuName = "";
+      if (r.meta) { try { const m = JSON.parse(r.meta); menuName = m?.menuName ?? ""; } catch {} }
+      return { id: r.id, start_at: r.start_at, end_at: r.end_at, customer_name: r.customer_name, menu_name: menuName };
+    });
+
+    return c.json({ ok: true, tenantId, data });
+  } catch (e: any) {
+    return c.json({ ok: false, error: "exception", detail: String(e?.message ?? e) }, 500);
+  }
+});
+
+// ── GET /public/karte — 公開カルテ取得（LINE userId で認証） ─────────────
+app.get("/public/karte", async (c: any) => {
+  const tenantId = getTenantId(c, null);
+  const userId = (c.req.query("userId") || "").trim();
+  if (!tenantId || !userId) {
+    return c.json({ ok: false, error: "missing_params", hint: "tenantId & userId required" }, 400);
+  }
+  const db = (c.env as any)?.DB;
+  if (!db) return c.json({ ok: false, error: "DB_not_bound" }, 500);
+
+  try {
+    const row = await db.prepare(
+      "SELECT * FROM customer_kartes WHERE tenant_id = ? AND customer_id = ?"
+    ).bind(tenantId, userId).first();
+    return c.json({ ok: true, tenantId, data: row ?? null });
+  } catch (e: any) {
+    return c.json({ ok: false, error: "exception", detail: String(e?.message ?? e) }, 500);
+  }
+});
+
+// ── POST /public/karte — 公開カルテ作成・更新（upsert） ──────────────────
+app.post("/public/karte", async (c: any) => {
+  const body = await c.req.json().catch(() => ({} as any));
+  const tenantId = body.tenantId || getTenantId(c, null);
+  const userId = (body.userId || "").trim();
+  if (!tenantId || !userId) {
+    return c.json({ ok: false, error: "missing_params", hint: "tenantId & userId required" }, 400);
+  }
+  const db = (c.env as any)?.DB;
+  if (!db) return c.json({ ok: false, error: "DB_not_bound" }, 500);
+
+  const { customerName, petName, petBreed, petAge, petWeight, allergies, cutStyle, notes } = body;
+  const id = `${tenantId}:${userId}`;
+
+  try {
+    await db.prepare(`
+      INSERT INTO customer_kartes (id, tenant_id, customer_id, customer_name, pet_name, pet_breed, pet_age, pet_weight, allergies, cut_style, notes, first_visit_date, updated_at)
+      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, date('now'), datetime('now'))
+      ON CONFLICT(tenant_id, customer_id) DO UPDATE SET
+        customer_name = ?4, pet_name = ?5, pet_breed = ?6, pet_age = ?7, pet_weight = ?8,
+        allergies = ?9, cut_style = ?10, notes = ?11, updated_at = datetime('now')
+    `).bind(
+      id, tenantId, userId,
+      customerName ?? null, petName ?? null, petBreed ?? null, petAge ?? null, petWeight ?? null,
+      allergies ?? null, cutStyle ?? null, notes ?? null,
+    ).run();
+
+    return c.json({ ok: true, tenantId, id });
+  } catch (e: any) {
+    return c.json({ ok: false, error: "exception", detail: String(e?.message ?? e) }, 500);
   }
 });
 

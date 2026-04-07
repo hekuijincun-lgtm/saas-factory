@@ -1,7 +1,22 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { getSlots, type TimeSlot } from '@/src/lib/bookingApi';
+
+interface TimeBlock {
+  id: string;
+  date: string;
+  blockType: 'closed' | 'full' | 'partial';
+  availableSlots: string[] | null;
+  note: string;
+}
+
+interface MonthlyStatus {
+  yearMonth: string;
+  limit: number | null;
+  booked: number;
+  isFull: boolean;
+}
 
 interface Props {
   staffId: string | null;
@@ -19,7 +34,6 @@ function getWeekDates(offsetWeeks: number): string[] {
   for (let i = 0; i < 7; i++) {
     const d = new Date(base);
     d.setDate(base.getDate() + offsetWeeks * 7 + i);
-    // format as YYYY-MM-DD in local time
     const y = d.getFullYear();
     const m = String(d.getMonth() + 1).padStart(2, '0');
     const day = String(d.getDate()).padStart(2, '0');
@@ -34,6 +48,15 @@ function today(): string {
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${day}`;
+}
+
+function getYearMonth(dateStr: string): string {
+  return dateStr.slice(0, 7); // "YYYY-MM"
+}
+
+function getTenantId(): string {
+  if (typeof window === 'undefined') return 'default';
+  return new URLSearchParams(window.location.search).get('tenantId') || 'default';
 }
 
 function Spinner() {
@@ -59,31 +82,100 @@ export default function StepDatetime({ staffId, durationMin, onSelect, onBack }:
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // time_blocks & monthly-status
+  const [timeBlocks, setTimeBlocks] = useState<TimeBlock[]>([]);
+  const [monthlyStatus, setMonthlyStatus] = useState<MonthlyStatus | null>(null);
+  const [loadedMonth, setLoadedMonth] = useState<string>('');
+
   const weekDates = getWeekDates(weekOffset);
   const todayStr = today();
+
+  // Fetch time blocks and monthly status when month changes
+  const fetchMonthData = useCallback(async (month: string) => {
+    if (month === loadedMonth) return;
+    const tenantId = getTenantId();
+    try {
+      const [blocksRes, statusRes] = await Promise.all([
+        fetch(`/api/proxy/public/time-blocks?tenantId=${encodeURIComponent(tenantId)}&month=${month}`, {
+          headers: { accept: 'application/json' },
+          cache: 'no-store',
+        }),
+        fetch(`/api/proxy/public/booking/monthly-status?tenantId=${encodeURIComponent(tenantId)}&yearMonth=${month}`, {
+          headers: { accept: 'application/json' },
+          cache: 'no-store',
+        }),
+      ]);
+      const blocksData = await blocksRes.json().catch(() => ({ blocks: [] })) as any;
+      const statusData = await statusRes.json().catch(() => ({})) as any;
+      setTimeBlocks(blocksData.blocks || []);
+      if (statusData.ok) {
+        setMonthlyStatus(statusData as MonthlyStatus);
+      }
+      setLoadedMonth(month);
+    } catch {
+      // Best effort — don't block booking flow
+    }
+  }, [loadedMonth]);
 
   // Set initial date to today on mount
   useEffect(() => {
     setSelectedDate(todayStr);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Load month data when week changes
+  useEffect(() => {
+    if (weekDates.length === 0) return;
+    // Use mid-week date to determine month
+    const midDate = weekDates[3] || weekDates[0];
+    const month = getYearMonth(midDate);
+    fetchMonthData(month);
+  }, [weekOffset, fetchMonthData]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Build blocked dates lookup
+  const blockedDates = new Map<string, TimeBlock>();
+  for (const b of timeBlocks) {
+    blockedDates.set(b.date, b);
+  }
+
+  const isDateBlocked = (d: string): boolean => {
+    const block = blockedDates.get(d);
+    if (!block) return false;
+    return block.blockType === 'closed' || block.blockType === 'full';
+  };
+
+  const getBlockForDate = (d: string): TimeBlock | undefined => {
+    return blockedDates.get(d);
+  };
+
   // Fetch slots when date, staffId, or durationMin changes
   useEffect(() => {
     if (!selectedDate) return;
+    // Skip fetching slots if date is blocked
+    if (isDateBlocked(selectedDate)) {
+      setSlots([]);
+      return;
+    }
     setLoading(true);
     setError(null);
     getSlots(selectedDate, staffId && staffId !== 'any' ? staffId : undefined, durationMin ?? undefined)
       .then(r => {
-        console.log("[StepDatetime] getSlots response", {
-          date: selectedDate, total: r.slots.length,
-          cellAvailable: r.slots.filter((s: any) => s.cellAvailable ?? s.available).length,
-          bookable: r.slots.filter((s: any) => s.bookableForMenu ?? s.available).length,
-        });
-        setSlots(r.slots);
+        const block = getBlockForDate(selectedDate);
+        let filteredSlots = r.slots;
+        // If partial block, filter to only available slots
+        if (block && block.blockType === 'partial' && block.availableSlots) {
+          const allowed = new Set(block.availableSlots);
+          filteredSlots = filteredSlots.map(s => {
+            if (!allowed.has(s.time)) {
+              return { ...s, available: false, cellAvailable: false, bookableForMenu: false };
+            }
+            return s;
+          });
+        }
+        setSlots(filteredSlots);
       })
       .catch(e => setError(e.message || 'スロットの取得に失敗しました'))
       .finally(() => setLoading(false));
-  }, [selectedDate, staffId, durationMin]);
+  }, [selectedDate, staffId, durationMin, timeBlocks]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="space-y-4">
@@ -95,8 +187,15 @@ export default function StepDatetime({ staffId, durationMin, onSelect, onBack }:
         >
           ←
         </button>
-        <h2 className="text-lg font-semibold text-brand-text">日時を選択</h2>
+        <h2 className="text-lg font-semibold text-brand-text">日時を��択</h2>
       </div>
+
+      {/* Monthly full banner */}
+      {monthlyStatus?.isFull && (
+        <div className="p-3 bg-amber-50 border border-amber-200 rounded-2xl text-sm text-amber-800">
+          今月は満員です。来月以降をお選びください。
+        </div>
+      )}
 
       {/* Week navigator */}
       <div className="flex items-center gap-1">
@@ -115,6 +214,8 @@ export default function StepDatetime({ staffId, durationMin, onSelect, onBack }:
             const dayIdx = dt.getDay();
             const isSelected = d === selectedDate;
             const isPast = d < todayStr;
+            const blocked = isDateBlocked(d);
+            const isDisabled = isPast || blocked;
             const dayNum = parseInt(d.slice(8, 10), 10);
             const isSun = dayIdx === 0;
             const isSat = dayIdx === 6;
@@ -122,17 +223,18 @@ export default function StepDatetime({ staffId, durationMin, onSelect, onBack }:
             return (
               <button
                 key={d}
-                onClick={() => { if (!isPast) setSelectedDate(d); }}
-                disabled={isPast}
+                onClick={() => { if (!isDisabled) setSelectedDate(d); }}
+                disabled={isDisabled}
                 className={`
                   flex flex-col items-center py-2 rounded-xl text-xs transition-all
-                  ${isPast ? 'opacity-30 cursor-not-allowed' : 'hover:bg-brand-bg cursor-pointer'}
-                  ${isSelected ? 'bg-brand-primary text-white hover:bg-brand-primary' : ''}
+                  ${isDisabled ? 'opacity-30 cursor-not-allowed' : 'hover:bg-brand-bg cursor-pointer'}
+                  ${isSelected && !isDisabled ? 'bg-brand-primary text-white hover:bg-brand-primary' : ''}
+                  ${blocked && !isPast ? 'bg-gray-100 line-through' : ''}
                 `}
               >
                 <span
                   className={`text-xs ${
-                    isSelected
+                    isSelected && !isDisabled
                       ? 'text-white'
                       : isSun
                       ? 'text-red-400'
@@ -145,7 +247,7 @@ export default function StepDatetime({ staffId, durationMin, onSelect, onBack }:
                 </span>
                 <span
                   className={`font-semibold mt-0.5 ${
-                    isSelected ? 'text-white' : 'text-brand-text'
+                    isSelected && !isDisabled ? 'text-white' : 'text-brand-text'
                   }`}
                 >
                   {dayNum}
@@ -164,8 +266,14 @@ export default function StepDatetime({ staffId, durationMin, onSelect, onBack }:
         </button>
       </div>
 
-      {/* Slot grid */}
-      {loading ? (
+      {/* Blocked date message */}
+      {selectedDate && isDateBlocked(selectedDate) ? (
+        <p className="text-center text-brand-muted text-sm py-8">
+          {blockedDates.get(selectedDate)?.blockType === 'closed' ? '定休日です' : '満員です'}
+          {blockedDates.get(selectedDate)?.note ? ` (${blockedDates.get(selectedDate)!.note})` : ''}
+        </p>
+      ) : /* Slot grid */
+      loading ? (
         <Spinner />
       ) : error ? (
         <ErrorMsg msg={error} />
