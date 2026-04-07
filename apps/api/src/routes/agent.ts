@@ -39,6 +39,9 @@ function buildSystemPrompt(vertical: string, tenantId: string): string {
 - クーポンの作成・一覧・LINE送信
 - KPI・ダッシュボード情報の要約
 
+予約の作成・キャンセル・完了、クーポン作成などの操作が可能です。
+操作内容を確認してから実行してください。
+
 ルール:
 - 日本語で回答すること
 - 具体的な数値はツール実行結果に基づいて回答すること
@@ -284,7 +287,6 @@ async function executeTool(
   _args: Record<string, unknown>,
   tenantId: string,
   env: any,
-  baseUrl: string,
   authToken: string,
 ): Promise<string> {
   const db = env.DB;
@@ -405,29 +407,42 @@ async function executeTool(
       }
 
       case 'create_reservation': {
-        const res = await fetch(`${baseUrl}/admin/reservations?tenantId=${encodeURIComponent(tenantId)}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-Admin-Token': authToken },
-          body: JSON.stringify(args),
+        if (!db) return JSON.stringify({ error: 'DB not available' });
+        const rid = crypto.randomUUID();
+        const startAt = args.start_at as string;
+        const durationMin = 60; // default 60min
+        const endAt = new Date(new Date(startAt).getTime() + durationMin * 60000).toISOString().slice(0, 16);
+        const meta = JSON.stringify({
+          petName: args.pet_name || undefined,
+          breed: args.breed || undefined,
+          size: args.size || undefined,
+          menuId: args.menu_id || undefined,
         });
-        return JSON.stringify(await res.json());
+        await db.prepare(
+          `INSERT INTO reservations (id, tenant_id, slot_start, duration_minutes, customer_name, customer_phone, staff_id, start_at, end_at, status, meta)
+           VALUES (?, ?, ?, ?, ?, ?, '', ?, ?, 'confirmed', ?)`
+        ).bind(
+          rid, tenantId, startAt, durationMin,
+          args.customer_name as string, args.phone as string || null,
+          startAt, endAt, meta
+        ).run();
+        return JSON.stringify({ success: true, id: rid, message: '予約を作成しました' });
       }
 
       case 'cancel_reservation': {
-        const res = await fetch(`${baseUrl}/admin/reservations/${args.reservation_id}?tenantId=${encodeURIComponent(tenantId)}`, {
-          method: 'DELETE',
-          headers: { 'X-Admin-Token': authToken },
-        });
-        return JSON.stringify(await res.json());
+        if (!db) return JSON.stringify({ error: 'DB not available' });
+        await db.prepare(
+          `UPDATE reservations SET status = 'cancelled' WHERE id = ? AND tenant_id = ?`
+        ).bind(args.reservation_id as string, tenantId).run();
+        return JSON.stringify({ success: true, message: 'キャンセルしました' });
       }
 
       case 'complete_reservation': {
-        const res = await fetch(`${baseUrl}/admin/reservations/${args.reservation_id}/complete?tenantId=${encodeURIComponent(tenantId)}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json', 'X-Admin-Token': authToken },
-          body: JSON.stringify({ actual_duration_minutes: args.actual_duration_minutes }),
-        });
-        return JSON.stringify(await res.json());
+        if (!db) return JSON.stringify({ error: 'DB not available' });
+        await db.prepare(
+          `UPDATE reservations SET status = 'completed', actual_duration_minutes = ? WHERE id = ? AND tenant_id = ?`
+        ).bind(args.actual_duration_minutes as number, args.reservation_id as string, tenantId).run();
+        return JSON.stringify({ success: true, message: '完了済みにしました' });
       }
 
       case 'list_customers': {
@@ -541,17 +556,25 @@ async function executeTool(
       }
 
       case 'create_coupon': {
-        const res = await fetch(`${baseUrl}/admin/coupons?tenantId=${encodeURIComponent(tenantId)}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-Admin-Token': authToken },
-          body: JSON.stringify(args),
-        });
-        return JSON.stringify(await res.json());
+        if (!db) return JSON.stringify({ error: 'DB not available' });
+        const cpId = crypto.randomUUID();
+        const cpTitle = args.name as string;
+        const now2 = new Date().toISOString().slice(0, 10);
+        await db.prepare(
+          `INSERT INTO coupons (id, tenant_id, title, discount_type, discount_value, valid_from, valid_until, is_active)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 1)`
+        ).bind(
+          cpId, tenantId, cpTitle,
+          args.discount_type as string, args.discount_value as number,
+          now2, args.expires_at as string || '2099-12-31'
+        ).run();
+        return JSON.stringify({ success: true, id: cpId, message: `クーポン「${cpTitle}」を作成しました` });
       }
 
       case 'send_coupon_via_line': {
+        const apiBase = env.API_BASE_URL || 'https://saas-factory-api.hekuijincun.workers.dev';
         const res = await fetch(
-          `${baseUrl}/admin/coupons/${args.coupon_id}/send-line?tenantId=${encodeURIComponent(tenantId)}`,
+          `${apiBase}/admin/coupons/${args.coupon_id}/send-line?tenantId=${encodeURIComponent(tenantId)}`,
           {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'X-Admin-Token': authToken },
@@ -562,7 +585,8 @@ async function executeTool(
       }
 
       case 'send_repeat_reminder': {
-        const res = await fetch(`${baseUrl}/admin/repeat-send?tenantId=${encodeURIComponent(tenantId)}`, {
+        const apiBase2 = env.API_BASE_URL || 'https://saas-factory-api.hekuijincun.workers.dev';
+        const res = await fetch(`${apiBase2}/admin/repeat-send?tenantId=${encodeURIComponent(tenantId)}`, {
           method: 'POST',
           headers: { 'X-Admin-Token': authToken },
         });
@@ -609,9 +633,7 @@ export function registerAgentRoutes(app: any) {
     const sessionId = session_id || crypto.randomUUID();
     const kv = env.SAAS_FACTORY as KVNamespace | undefined;
 
-    // Derive base URL and auth token for internal API calls
-    const reqUrl = new URL(c.req.url);
-    const baseUrl = `${reqUrl.protocol}//${reqUrl.host}`;
+    // Auth token for LINE send tools (fetch to self)
     const authToken = c.req.header('X-Admin-Token') || '';
 
     // Load conversation history from KV (last 20 messages, 1h TTL)
@@ -680,7 +702,7 @@ export function registerAgentRoutes(app: any) {
         for (const tc of msg.tool_calls) {
           let args: Record<string, unknown> = {};
           try { args = JSON.parse(tc.function.arguments || '{}'); } catch {}
-          const result = await executeTool(tc.function.name, args, tenantId, env, baseUrl, authToken);
+          const result = await executeTool(tc.function.name, args, tenantId, env, authToken);
           messages.push({
             role: 'tool',
             content: result,
