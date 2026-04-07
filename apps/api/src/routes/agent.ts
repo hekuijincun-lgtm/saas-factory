@@ -30,9 +30,13 @@ function buildSystemPrompt(vertical: string, tenantId: string): string {
 
 以下の機能があります:
 - 予約情報の検索・集計（今日/今週/今月の予約件数・売上）
-- 顧客情報の検索（来店履歴、リピート率）
+- 予約の作成・キャンセル・完了処理
+- 顧客情報の検索・詳細表示（来店履歴、リピート率）
+- ペット情報の一覧・犬種別料金検索
 - ワクチン期限切れの確認（ペットサロンの場合）
-- リピート対象顧客の一覧
+- リピート対象顧客の一覧・リピート促進メッセージ一括送信
+- メニュー・見積もりの一覧取得
+- クーポンの作成・一覧・LINE送信
 - KPI・ダッシュボード情報の要約
 
 ルール:
@@ -89,6 +93,188 @@ const TOOLS = [
       parameters: { type: 'object', properties: {}, required: [] },
     },
   },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'create_reservation',
+      description: '新しい予約を作成します。顧客名・電話番号・メニューID・開始日時・ペット名・犬種・サイズが必要です。実行前に必ず内容を確認してください。',
+      parameters: {
+        type: 'object',
+        properties: {
+          customer_name: { type: 'string', description: '顧客名' },
+          phone: { type: 'string', description: '電話番号' },
+          menu_id: { type: 'string', description: 'メニューID' },
+          start_at: { type: 'string', description: '開始日時 ISO8601形式' },
+          pet_name: { type: 'string', description: 'ペット名' },
+          breed: { type: 'string', description: '犬種' },
+          size: { type: 'string', description: 'サイズ (small/medium/large)' },
+        },
+        required: ['customer_name', 'phone', 'menu_id', 'start_at'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'cancel_reservation',
+      description: '予約をキャンセルします。予約IDが必要です。破壊的操作のため実行前に必ず確認してください。',
+      parameters: {
+        type: 'object',
+        properties: {
+          reservation_id: { type: 'string', description: '予約ID' },
+        },
+        required: ['reservation_id'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'complete_reservation',
+      description: '予約を完了済みにします。実際の施術時間（分）も記録します。',
+      parameters: {
+        type: 'object',
+        properties: {
+          reservation_id: { type: 'string', description: '予約ID' },
+          actual_duration_minutes: { type: 'number', description: '実際の施術時間（分）' },
+        },
+        required: ['reservation_id', 'actual_duration_minutes'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'list_customers',
+      description: '顧客一覧を取得します。名前や電話番号で検索できます。',
+      parameters: {
+        type: 'object',
+        properties: {
+          search: { type: 'string', description: '検索キーワード（名前・電話番号）' },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'get_customer',
+      description: '顧客の詳細情報と予約履歴を取得します。',
+      parameters: {
+        type: 'object',
+        properties: {
+          customer_id: { type: 'string', description: '顧客ID' },
+        },
+        required: ['customer_id'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'list_pets',
+      description: 'ペットの一覧を取得します。顧客IDで絞り込みも可能です。',
+      parameters: {
+        type: 'object',
+        properties: {
+          customer_id: { type: 'string', description: '顧客ID（省略可）' },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'get_breed_pricing',
+      description: '犬種とサイズから料金と施術時間を検索します。',
+      parameters: {
+        type: 'object',
+        properties: {
+          breed: { type: 'string', description: '犬種名' },
+          size: { type: 'string', description: 'サイズ (small/medium/large)' },
+        },
+        required: ['breed', 'size'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'list_estimates',
+      description: 'AI見積の一覧を取得します。',
+      parameters: {
+        type: 'object',
+        properties: {
+          status: { type: 'string', enum: ['draft', 'sent'], description: 'ステータスで絞り込み（省略可）' },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'list_menu_items',
+      description: '提供しているメニューと料金の一覧を取得します。',
+      parameters: { type: 'object', properties: {}, required: [] },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'list_coupons',
+      description: 'クーポンの一覧を取得します。',
+      parameters: {
+        type: 'object',
+        properties: {
+          active_only: { type: 'boolean', description: '有効なクーポンのみ取得する場合はtrue' },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'create_coupon',
+      description: '新しいクーポンを作成します。実行前に内容を確認してください。',
+      parameters: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'クーポン名' },
+          discount_type: { type: 'string', enum: ['percent', 'fixed'], description: '割引タイプ' },
+          discount_value: { type: 'number', description: '割引値（%または円）' },
+          expires_at: { type: 'string', description: '有効期限 ISO8601形式' },
+        },
+        required: ['name', 'discount_type', 'discount_value'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'send_coupon_via_line',
+      description: 'クーポンをLINEで送信します。customer_idを省略すると全員に送信します。実行前に必ず確認してください。',
+      parameters: {
+        type: 'object',
+        properties: {
+          coupon_id: { type: 'string', description: 'クーポンID' },
+          customer_id: { type: 'string', description: '顧客ID（省略すると全員送信）' },
+        },
+        required: ['coupon_id'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'send_repeat_reminder',
+      description: 'しばらく来店していない顧客にLINEでリピート促進メッセージを一括送信します。実行前に必ず確認してください。',
+      parameters: { type: 'object', properties: {}, required: [] },
+    },
+  },
 ];
 
 // ── Tool execution ────────────────────────────────────────────────────
@@ -98,11 +284,14 @@ async function executeTool(
   _args: Record<string, unknown>,
   tenantId: string,
   env: any,
+  baseUrl: string,
+  authToken: string,
 ): Promise<string> {
   const db = env.DB;
   const kv = env.SAAS_FACTORY;
   const now = new Date();
   const todayStr = now.toISOString().slice(0, 10);
+  const args = _args;
 
   try {
     switch (name) {
@@ -215,6 +404,124 @@ async function executeTool(
         });
       }
 
+      case 'create_reservation': {
+        const res = await fetch(`${baseUrl}/admin/reservations?tenantId=${encodeURIComponent(tenantId)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Admin-Token': authToken },
+          body: JSON.stringify(args),
+        });
+        return JSON.stringify(await res.json());
+      }
+
+      case 'cancel_reservation': {
+        const res = await fetch(`${baseUrl}/admin/reservations/${args.reservation_id}?tenantId=${encodeURIComponent(tenantId)}`, {
+          method: 'DELETE',
+          headers: { 'X-Admin-Token': authToken },
+        });
+        return JSON.stringify(await res.json());
+      }
+
+      case 'complete_reservation': {
+        const res = await fetch(`${baseUrl}/admin/reservations/${args.reservation_id}/complete?tenantId=${encodeURIComponent(tenantId)}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', 'X-Admin-Token': authToken },
+          body: JSON.stringify({ actual_duration_minutes: args.actual_duration_minutes }),
+        });
+        return JSON.stringify(await res.json());
+      }
+
+      case 'list_customers': {
+        const p = new URLSearchParams({ tenantId });
+        if (args.search) p.set('search', args.search as string);
+        const res = await fetch(`${baseUrl}/admin/customers?${p}`, {
+          headers: { 'X-Admin-Token': authToken },
+        });
+        return JSON.stringify(await res.json());
+      }
+
+      case 'get_customer': {
+        const [detail, reservations] = await Promise.all([
+          fetch(`${baseUrl}/admin/customers/${args.customer_id}?tenantId=${encodeURIComponent(tenantId)}`, {
+            headers: { 'X-Admin-Token': authToken },
+          }).then(r => r.json()),
+          fetch(`${baseUrl}/admin/customers/${args.customer_id}/reservations?tenantId=${encodeURIComponent(tenantId)}`, {
+            headers: { 'X-Admin-Token': authToken },
+          }).then(r => r.json()),
+        ]);
+        return JSON.stringify({ ...(detail as any), reservations });
+      }
+
+      case 'list_pets': {
+        const p = new URLSearchParams({ tenantId });
+        if (args.customer_id) p.set('customerId', args.customer_id as string);
+        const res = await fetch(`${baseUrl}/admin/pets?${p}`, {
+          headers: { 'X-Admin-Token': authToken },
+        });
+        return JSON.stringify(await res.json());
+      }
+
+      case 'get_breed_pricing': {
+        const res = await fetch(
+          `${baseUrl}/admin/breed-pricing/lookup?tenantId=${encodeURIComponent(tenantId)}&breed=${encodeURIComponent(args.breed as string)}&size=${encodeURIComponent(args.size as string)}`,
+          { headers: { 'X-Admin-Token': authToken } },
+        );
+        return JSON.stringify(await res.json());
+      }
+
+      case 'list_estimates': {
+        const p = new URLSearchParams({ tenantId });
+        if (args.status) p.set('status', args.status as string);
+        const res = await fetch(`${baseUrl}/admin/estimates?${p}`, {
+          headers: { 'X-Admin-Token': authToken },
+        });
+        return JSON.stringify(await res.json());
+      }
+
+      case 'list_menu_items': {
+        const res = await fetch(`${baseUrl}/admin/menu?tenantId=${encodeURIComponent(tenantId)}`, {
+          headers: { 'X-Admin-Token': authToken },
+        });
+        return JSON.stringify(await res.json());
+      }
+
+      case 'list_coupons': {
+        const p = new URLSearchParams({ tenantId });
+        if (args.active_only) p.set('active_only', 'true');
+        const res = await fetch(`${baseUrl}/admin/coupons?${p}`, {
+          headers: { 'X-Admin-Token': authToken },
+        });
+        return JSON.stringify(await res.json());
+      }
+
+      case 'create_coupon': {
+        const res = await fetch(`${baseUrl}/admin/coupons?tenantId=${encodeURIComponent(tenantId)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Admin-Token': authToken },
+          body: JSON.stringify(args),
+        });
+        return JSON.stringify(await res.json());
+      }
+
+      case 'send_coupon_via_line': {
+        const res = await fetch(
+          `${baseUrl}/admin/coupons/${args.coupon_id}/send-line?tenantId=${encodeURIComponent(tenantId)}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Admin-Token': authToken },
+            body: JSON.stringify({ customer_id: args.customer_id }),
+          },
+        );
+        return JSON.stringify(await res.json());
+      }
+
+      case 'send_repeat_reminder': {
+        const res = await fetch(`${baseUrl}/admin/repeat-send?tenantId=${encodeURIComponent(tenantId)}`, {
+          method: 'POST',
+          headers: { 'X-Admin-Token': authToken },
+        });
+        return JSON.stringify(await res.json());
+      }
+
       default:
         return JSON.stringify({ error: `Unknown tool: ${name}` });
     }
@@ -254,6 +561,11 @@ export function registerAgentRoutes(app: any) {
     const vert = vertical || 'generic';
     const sessionId = session_id || crypto.randomUUID();
     const kv = env.SAAS_FACTORY as KVNamespace | undefined;
+
+    // Derive base URL and auth token for internal API calls
+    const reqUrl = new URL(c.req.url);
+    const baseUrl = `${reqUrl.protocol}//${reqUrl.host}`;
+    const authToken = c.req.header('X-Admin-Token') || '';
 
     // Load conversation history from KV (last 20 messages, 1h TTL)
     const historyKey = `agent:chat:${tenantId}:${sessionId}`;
@@ -321,7 +633,7 @@ export function registerAgentRoutes(app: any) {
         for (const tc of msg.tool_calls) {
           let args: Record<string, unknown> = {};
           try { args = JSON.parse(tc.function.arguments || '{}'); } catch {}
-          const result = await executeTool(tc.function.name, args, tenantId, env);
+          const result = await executeTool(tc.function.name, args, tenantId, env, baseUrl, authToken);
           messages.push({
             role: 'tool',
             content: result,
