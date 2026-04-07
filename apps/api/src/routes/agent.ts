@@ -25,32 +25,15 @@ function buildSystemPrompt(vertical: string, tenantId: string): string {
   };
   const label = verticalLabels[vertical] || '店舗';
 
-  return `あなたは${label}の管理者向けAIアシスタントです。
+  return `あなたは${label}の運営を支援するAIアシスタントです。
 テナントID: ${tenantId}
 
-以下の機能があります:
-- 予約情報の検索・集計（今日/今週/今月の予約件数・売上）
-- 予約の作成・キャンセル・完了処理
-- 顧客情報の検索・詳細表示（来店履歴、リピート率）
-- ペット情報の一覧・犬種別料金検索
-- ワクチン期限切れの確認（ペットサロンの場合）
-- リピート対象顧客の一覧・リピート促進メッセージ一括送信
-- メニュー・見積もりの一覧取得
-- クーポンの作成・一覧・LINE送信
-- KPI・ダッシュボード情報の要約
+スタッフ確認・予約管理・顧客管理・クーポン・売上集計・LINE送信など
+サロン運営に必要な操作を会話形式で実行できます。
 
-予約の作成・キャンセル・完了、クーポン作成などの操作が可能です。
-操作内容を確認してから実行してください。
-
-ルール:
-- 日本語で回答すること
-- 具体的な数値はツール実行結果に基づいて回答すること
-- データが取得できない場合は「確認できませんでした」と正直に答えること
-- 管理者の業務効率化を支援すること
-- 回答は簡潔に、要点を箇条書きにすること
-- 返答は必ず簡潔にまとめること
-- 「何か他にお手伝いできることがあれば」などの定型文は絶対に使わないこと
-- 結果だけを端的に日本語で報告すること`;
+予約の作成・キャンセル・LINE送信等の操作は
+実行前に必ず「〇〇を実行してよいですか？」と確認を取ること。
+返答は簡潔に、結果だけを日本語で報告すること。定型文は使わないこと。`;
 }
 
 // ── Tool definitions for function calling ──────────────────────────────
@@ -278,6 +261,60 @@ const TOOLS = [
       parameters: { type: 'object', properties: {}, required: [] },
     },
   },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'list_staff',
+      description: 'スタッフ（トリマー）の一覧を取得します。予約作成時のスタッフ確認に使います。',
+      parameters: { type: 'object', properties: {}, required: [] },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'update_reservation',
+      description: '予約の日時・スタッフ・ステータスを変更します。変更内容を確認してから実行してください。',
+      parameters: {
+        type: 'object',
+        properties: {
+          reservation_id: { type: 'string', description: '予約ID' },
+          slot_start: { type: 'string', description: '新しい開始日時 ISO8601形式（省略可）' },
+          staff_id: { type: 'string', description: '新しいスタッフID（省略可）' },
+          status: { type: 'string', enum: ['confirmed', 'cancelled', 'completed'], description: '新しいステータス（省略可）' },
+        },
+        required: ['reservation_id'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'get_revenue_stats',
+      description: '今月・先月・今週の売上金額を集計します。「売上はどう？」「今月いくら？」などに使います。',
+      parameters: {
+        type: 'object',
+        properties: {
+          period: { type: 'string', enum: ['today', 'week', 'month', 'last_month'], description: '集計期間' },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'send_line_message',
+      description: '特定の顧客にLINEでメッセージを送信します。customer_idと送信するメッセージ内容が必要です。実行前に必ず確認してください。',
+      parameters: {
+        type: 'object',
+        properties: {
+          customer_id: { type: 'string', description: '顧客ID' },
+          message: { type: 'string', description: '送信するメッセージ内容' },
+        },
+        required: ['customer_id', 'message'],
+      },
+    },
+  },
 ];
 
 // ── Tool execution ────────────────────────────────────────────────────
@@ -410,8 +447,16 @@ async function executeTool(
         if (!db) return JSON.stringify({ error: 'DB not available' });
         const rid = crypto.randomUUID();
         const startAt = args.start_at as string;
-        const durationMin = 60; // default 60min
-        const endAt = new Date(new Date(startAt).getTime() + durationMin * 60000).toISOString().slice(0, 16);
+        // Get default staff from KV
+        const staffRaw = kv ? await kv.get(`admin:staff:list:${tenantId}`) : null;
+        const staffList: any[] = staffRaw ? JSON.parse(staffRaw) : [];
+        const defaultStaffId = staffList[0]?.id ?? 'unassigned';
+        // Get duration from breed_size_pricing if breed/size provided
+        const pricing = (args.breed && args.size) ? await db.prepare(
+          `SELECT duration_minutes FROM breed_size_pricing WHERE tenant_id = ? AND breed = ? AND size = ? LIMIT 1`
+        ).bind(tenantId, args.breed as string, args.size as string).first<{ duration_minutes: number }>() : null;
+        const duration = pricing?.duration_minutes ?? 60;
+        const endAt = new Date(new Date(startAt).getTime() + duration * 60000).toISOString().slice(0, 16);
         const meta = JSON.stringify({
           petName: args.pet_name || undefined,
           breed: args.breed || undefined,
@@ -420,11 +465,11 @@ async function executeTool(
         });
         await db.prepare(
           `INSERT INTO reservations (id, tenant_id, slot_start, duration_minutes, customer_name, customer_phone, staff_id, start_at, end_at, status, meta)
-           VALUES (?, ?, ?, ?, ?, ?, '', ?, ?, 'confirmed', ?)`
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'confirmed', ?)`
         ).bind(
-          rid, tenantId, startAt, durationMin,
-          args.customer_name as string, args.phone as string || null,
-          startAt, endAt, meta
+          rid, tenantId, startAt, duration,
+          args.customer_name as string, (args.phone as string) || null,
+          defaultStaffId, startAt, endAt, meta
         ).run();
         return JSON.stringify({ success: true, id: rid, message: '予約を作成しました' });
       }
@@ -589,6 +634,65 @@ async function executeTool(
         const res = await fetch(`${apiBase2}/admin/repeat-send?tenantId=${encodeURIComponent(tenantId)}`, {
           method: 'POST',
           headers: { 'X-Admin-Token': authToken },
+        });
+        return JSON.stringify(await res.json());
+      }
+
+      case 'list_staff': {
+        if (!kv) return JSON.stringify({ error: 'KV not available' });
+        const raw = await kv.get(`admin:staff:list:${tenantId}`);
+        if (!raw) return JSON.stringify({ staff: [] });
+        return JSON.stringify({ staff: JSON.parse(raw) });
+      }
+
+      case 'update_reservation': {
+        if (!db) return JSON.stringify({ error: 'DB not available' });
+        const fields: string[] = [];
+        const values: unknown[] = [];
+        if (args.slot_start) { fields.push('slot_start = ?', 'start_at = ?'); values.push(args.slot_start, args.slot_start); }
+        if (args.staff_id) { fields.push('staff_id = ?'); values.push(args.staff_id); }
+        if (args.status) { fields.push('status = ?'); values.push(args.status); }
+        if (fields.length === 0) return JSON.stringify({ success: false, message: '変更項目がありません' });
+        values.push(args.reservation_id as string, tenantId);
+        await db.prepare(
+          `UPDATE reservations SET ${fields.join(', ')} WHERE id = ? AND tenant_id = ?`
+        ).bind(...values).run();
+        return JSON.stringify({ success: true, message: '予約を更新しました' });
+      }
+
+      case 'get_revenue_stats': {
+        if (!db) return JSON.stringify({ error: 'DB not available' });
+        const thisMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+        const lastMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+        const lastMonthStr = `${lastMonthDate.getFullYear()}-${String(lastMonthDate.getMonth() + 1).padStart(2, '0')}`;
+        const weekAgoStr = new Date(now.getTime() - 7 * 86400000).toISOString().slice(0, 10);
+
+        const rows = await db.prepare(
+          `SELECT slot_start, meta FROM reservations
+           WHERE tenant_id = ? AND status = 'completed'
+           AND slot_start >= date('now', '-60 days')`
+        ).bind(tenantId).all();
+
+        let thisMonthTotal = 0, lastMonthTotal = 0, todayTotal2 = 0, weekTotal = 0;
+        for (const row of (rows.results ?? []) as any[]) {
+          let price = 0;
+          try { const m = JSON.parse(row.meta || '{}'); price = Number(m.price ?? m.total_price ?? 0); } catch {}
+          const date = (row.slot_start || '').slice(0, 10);
+          const month = (row.slot_start || '').slice(0, 7);
+          if (month === thisMonth) thisMonthTotal += price;
+          if (month === lastMonthStr) lastMonthTotal += price;
+          if (date === todayStr) todayTotal2 += price;
+          if (date >= weekAgoStr) weekTotal += price;
+        }
+        return JSON.stringify({ today: todayTotal2, this_week: weekTotal, this_month: thisMonthTotal, last_month: lastMonthTotal });
+      }
+
+      case 'send_line_message': {
+        const apiBase3 = env.API_BASE_URL || 'https://saas-factory-api.hekuijincun.workers.dev';
+        const res = await fetch(`${apiBase3}/admin/line-core/test-push?tenantId=${encodeURIComponent(tenantId)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Admin-Token': authToken },
+          body: JSON.stringify({ customer_id: args.customer_id, message: args.message }),
         });
         return JSON.stringify(await res.json());
       }
