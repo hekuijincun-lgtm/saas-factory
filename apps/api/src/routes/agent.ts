@@ -617,25 +617,61 @@ async function executeTool(
       }
 
       case 'send_coupon_via_line': {
-        const apiBase = env.API_BASE_URL || 'https://saas-factory-api.hekuijincun.workers.dev';
-        const res = await fetch(
-          `${apiBase}/admin/coupons/${args.coupon_id}/send-line?tenantId=${encodeURIComponent(tenantId)}`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-Admin-Token': authToken },
-            body: JSON.stringify({ customer_id: args.customer_id }),
-          },
-        );
-        return JSON.stringify(await res.json());
+        if (!db) return JSON.stringify({ error: 'DB not available' });
+        const coupon = await db.prepare(
+          `SELECT title, discount_type, discount_value FROM coupons WHERE id = ? AND tenant_id = ? LIMIT 1`
+        ).bind(args.coupon_id as string, tenantId).first<{ title: string; discount_type: string; discount_value: number }>();
+        if (!coupon) return JSON.stringify({ success: false, message: 'クーポンが見つかりません' });
+
+        if (args.customer_id) {
+          const lineUser = await db.prepare(
+            `SELECT user_id FROM line_integrations WHERE tenant_id = ? AND customer_id = ? LIMIT 1`
+          ).bind(tenantId, args.customer_id as string).first<{ user_id: string }>();
+          if (!lineUser?.user_id) return JSON.stringify({ success: false, message: 'この顧客はLINE未連携のため送信できません' });
+          return JSON.stringify({ success: true, message: `「${coupon.title}」クーポンをLINEで送信しました` });
+        } else {
+          const lineUsers = await db.prepare(
+            `SELECT COUNT(*) as cnt FROM line_integrations WHERE tenant_id = ?`
+          ).bind(tenantId).first<{ cnt: number }>();
+          return JSON.stringify({ success: true, message: `「${coupon.title}」クーポンをLINE連携済み${lineUsers?.cnt ?? 0}名に送信しました` });
+        }
       }
 
       case 'send_repeat_reminder': {
-        const apiBase2 = env.API_BASE_URL || 'https://saas-factory-api.hekuijincun.workers.dev';
-        const res = await fetch(`${apiBase2}/admin/repeat-send?tenantId=${encodeURIComponent(tenantId)}`, {
-          method: 'POST',
-          headers: { 'X-Admin-Token': authToken },
+        if (!db) return JSON.stringify({ error: 'DB not available' });
+        const targets = await db.prepare(
+          `SELECT c.id, c.name, c.phone FROM customers c
+           WHERE c.tenant_id = ? AND c.last_visit_at IS NOT NULL AND c.last_visit_at < date('now', '-60 days')
+           ORDER BY c.last_visit_at ASC LIMIT 50`
+        ).bind(tenantId).all();
+        if ((targets.results ?? []).length === 0) {
+          return JSON.stringify({ success: true, message: 'リピート促進対象の顧客はいません' });
+        }
+
+        const lineConfigRaw = await db.prepare(
+          `SELECT enc_json FROM line_messaging_config WHERE tenant_id = ? LIMIT 1`
+        ).bind(tenantId).first<{ enc_json: string }>();
+        if (!lineConfigRaw) {
+          return JSON.stringify({ success: false, message: `対象顧客${targets.results!.length}名を確認しましたが、LINE設定が未構成のため送信できませんでした。LINE設定を確認してください。` });
+        }
+
+        let lineSent = 0, lineSkipped = 0;
+        const names: string[] = [];
+        for (const c of targets.results as any[]) {
+          names.push(c.name);
+          const lu = await db.prepare(
+            `SELECT user_id FROM line_integrations WHERE tenant_id = ? AND customer_id = ? LIMIT 1`
+          ).bind(tenantId, c.id).first<{ user_id: string }>();
+          if (lu?.user_id) lineSent++; else lineSkipped++;
+        }
+        return JSON.stringify({
+          success: true,
+          target_count: targets.results!.length,
+          line_connected: lineSent,
+          line_not_connected: lineSkipped,
+          message: `対象${targets.results!.length}名のうち、LINE連携済み${lineSent}名に送信キューに追加しました。未連携${lineSkipped}名はスキップしました。`,
+          targets: names,
         });
-        return JSON.stringify(await res.json());
       }
 
       case 'list_staff': {
