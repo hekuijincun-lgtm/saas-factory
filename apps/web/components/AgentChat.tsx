@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
+import ReactMarkdown from 'react-markdown';
 import { useAdminTenantId } from '@/src/lib/useAdminTenantId';
 
 interface Message {
@@ -82,12 +83,18 @@ export default function AgentChat({ vertical }: { vertical: string }) {
         )}
         {messages.map((m, i) => (
           <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-            <div className={`max-w-[80%] rounded-2xl px-3 py-2 text-sm whitespace-pre-wrap ${
+            <div className={`max-w-[80%] rounded-2xl px-3 py-2 text-sm ${
               m.role === 'user'
-                ? 'bg-orange-500 text-white rounded-br-sm'
+                ? 'bg-orange-500 text-white rounded-br-sm whitespace-pre-wrap'
                 : 'bg-gray-100 text-gray-800 rounded-bl-sm'
             }`}>
-              {m.content}
+              {m.role === 'assistant' ? (
+                <div className="prose prose-sm max-w-none prose-p:my-1 prose-ul:my-1 prose-li:my-0">
+                  <ReactMarkdown>{m.content}</ReactMarkdown>
+                </div>
+              ) : (
+                m.content
+              )}
             </div>
           </div>
         ))}
