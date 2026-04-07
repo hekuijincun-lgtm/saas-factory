@@ -431,66 +431,113 @@ async function executeTool(
       }
 
       case 'list_customers': {
-        const p = new URLSearchParams({ tenantId });
-        if (args.search) p.set('search', args.search as string);
-        const res = await fetch(`${baseUrl}/admin/customers?${p}`, {
-          headers: { 'X-Admin-Token': authToken },
-        });
-        return JSON.stringify(await res.json());
+        if (!db) return JSON.stringify({ error: 'DB not available' });
+        const search = args.search as string | undefined;
+        let rows;
+        if (search) {
+          rows = await db.prepare(
+            `SELECT id, name, phone, visit_count, last_visit_at, created_at
+             FROM customers WHERE tenant_id = ? AND (name LIKE ? OR phone LIKE ?)
+             ORDER BY created_at DESC LIMIT 50`
+          ).bind(tenantId, `%${search}%`, `%${search}%`).all();
+        } else {
+          rows = await db.prepare(
+            `SELECT id, name, phone, visit_count, last_visit_at, created_at
+             FROM customers WHERE tenant_id = ?
+             ORDER BY created_at DESC LIMIT 50`
+          ).bind(tenantId).all();
+        }
+        return JSON.stringify({ customers: rows.results ?? [] });
       }
 
       case 'get_customer': {
-        const [detail, reservations] = await Promise.all([
-          fetch(`${baseUrl}/admin/customers/${args.customer_id}?tenantId=${encodeURIComponent(tenantId)}`, {
-            headers: { 'X-Admin-Token': authToken },
-          }).then(r => r.json()),
-          fetch(`${baseUrl}/admin/customers/${args.customer_id}/reservations?tenantId=${encodeURIComponent(tenantId)}`, {
-            headers: { 'X-Admin-Token': authToken },
-          }).then(r => r.json()),
-        ]);
-        return JSON.stringify({ ...(detail as any), reservations });
+        if (!db) return JSON.stringify({ error: 'DB not available' });
+        const cid = args.customer_id as string;
+        const customer = await db.prepare(
+          `SELECT id, name, phone, email, notes, visit_count, last_visit_at, created_at
+           FROM customers WHERE id = ? AND tenant_id = ?`
+        ).bind(cid, tenantId).first();
+        if (!customer) return JSON.stringify({ error: 'Customer not found' });
+        const resRows = await db.prepare(
+          `SELECT id, slot_start, status, meta FROM reservations
+           WHERE customer_id = ? AND tenant_id = ?
+           ORDER BY slot_start DESC LIMIT 20`
+        ).bind(cid, tenantId).all();
+        return JSON.stringify({ ...(customer as any), reservations: resRows.results ?? [] });
       }
 
       case 'list_pets': {
-        const p = new URLSearchParams({ tenantId });
-        if (args.customer_id) p.set('customerId', args.customer_id as string);
-        const res = await fetch(`${baseUrl}/admin/pets?${p}`, {
-          headers: { 'X-Admin-Token': authToken },
-        });
-        return JSON.stringify(await res.json());
+        if (!kv) return JSON.stringify({ error: 'KV not available' });
+        const raw = await kv.get(`pet:profiles:${tenantId}`);
+        if (!raw) return JSON.stringify({ pets: [] });
+        let pets: any[] = JSON.parse(raw);
+        const custId = args.customer_id as string | undefined;
+        if (custId) {
+          pets = pets.filter((p: any) => p.customerId === custId || p.customerKey === custId);
+        }
+        return JSON.stringify({ pets: pets.slice(0, 50) });
       }
 
       case 'get_breed_pricing': {
-        const res = await fetch(
-          `${baseUrl}/admin/breed-pricing/lookup?tenantId=${encodeURIComponent(tenantId)}&breed=${encodeURIComponent(args.breed as string)}&size=${encodeURIComponent(args.size as string)}`,
-          { headers: { 'X-Admin-Token': authToken } },
-        );
-        return JSON.stringify(await res.json());
+        if (!db) return JSON.stringify({ error: 'DB not available' });
+        const row = await db.prepare(
+          `SELECT id, menu_id, breed, size, price, duration_minutes, notes
+           FROM breed_size_pricing
+           WHERE tenant_id = ? AND breed = ? AND size = ?`
+        ).bind(tenantId, args.breed as string, args.size as string).first();
+        if (!row) return JSON.stringify({ error: 'Pricing not found for this breed/size' });
+        return JSON.stringify(row);
       }
 
       case 'list_estimates': {
-        const p = new URLSearchParams({ tenantId });
-        if (args.status) p.set('status', args.status as string);
-        const res = await fetch(`${baseUrl}/admin/estimates?${p}`, {
-          headers: { 'X-Admin-Token': authToken },
-        });
-        return JSON.stringify(await res.json());
+        if (!db) return JSON.stringify({ error: 'DB not available' });
+        const statusFilter = args.status as string | undefined;
+        let estRows;
+        if (statusFilter) {
+          estRows = await db.prepare(
+            `SELECT id, reservation_id, customer_id, pet_id, estimated_price, estimated_duration_minutes,
+                    breakdown, ai_reasoning, final_price, status, created_at
+             FROM estimates WHERE tenant_id = ? AND status = ?
+             ORDER BY created_at DESC LIMIT 100`
+          ).bind(tenantId, statusFilter).all();
+        } else {
+          estRows = await db.prepare(
+            `SELECT id, reservation_id, customer_id, pet_id, estimated_price, estimated_duration_minutes,
+                    breakdown, ai_reasoning, final_price, status, created_at
+             FROM estimates WHERE tenant_id = ?
+             ORDER BY status, created_at DESC LIMIT 100`
+          ).bind(tenantId).all();
+        }
+        return JSON.stringify({ estimates: estRows.results ?? [] });
       }
 
       case 'list_menu_items': {
-        const res = await fetch(`${baseUrl}/admin/menu?tenantId=${encodeURIComponent(tenantId)}`, {
-          headers: { 'X-Admin-Token': authToken },
-        });
-        return JSON.stringify(await res.json());
+        if (!kv) return JSON.stringify({ error: 'KV not available' });
+        const raw = await kv.get(`admin:menu:list:${tenantId}`);
+        if (!raw) return JSON.stringify({ menus: [] });
+        return JSON.stringify({ menus: JSON.parse(raw) });
       }
 
       case 'list_coupons': {
-        const p = new URLSearchParams({ tenantId });
-        if (args.active_only) p.set('active_only', 'true');
-        const res = await fetch(`${baseUrl}/admin/coupons?${p}`, {
-          headers: { 'X-Admin-Token': authToken },
-        });
-        return JSON.stringify(await res.json());
+        if (!db) return JSON.stringify({ error: 'DB not available' });
+        const activeOnly = args.active_only as boolean | undefined;
+        let cpRows;
+        if (activeOnly) {
+          cpRows = await db.prepare(
+            `SELECT id, title, description, discount_type, discount_value, valid_from, valid_until,
+                    max_uses, used_count, is_active, created_at
+             FROM coupons WHERE tenant_id = ? AND is_active = 1
+             ORDER BY created_at DESC`
+          ).bind(tenantId).all();
+        } else {
+          cpRows = await db.prepare(
+            `SELECT id, title, description, discount_type, discount_value, valid_from, valid_until,
+                    max_uses, used_count, is_active, created_at
+             FROM coupons WHERE tenant_id = ?
+             ORDER BY created_at DESC`
+          ).bind(tenantId).all();
+        }
+        return JSON.stringify({ coupons: cpRows.results ?? [] });
       }
 
       case 'create_coupon': {
