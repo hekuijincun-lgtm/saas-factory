@@ -113,14 +113,6 @@ export default function PetProfileListPage() {
       <AdminTopBar
         title="ペットカルテ一覧"
         subtitle="登録されたペットのプロフィールを管理します。"
-        right={
-          <Link
-            href={withTenant('/admin/pet/profiles/new', tenantId)}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-orange-500 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-orange-600 transition-colors flex-shrink-0 whitespace-nowrap"
-          >
-            + 新規登録
-          </Link>
-        }
       />
 
       <div className="px-6 pb-8 space-y-6">
@@ -137,6 +129,15 @@ export default function PetProfileListPage() {
             className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-gray-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-orange-300 focus:border-orange-400"
           />
         </div>
+
+        {/* 新規登録ボタン */}
+        <Link
+          href={withTenant('/admin/pet/profiles/new', tenantId)}
+          className="w-full bg-orange-500 text-white rounded-xl py-3 font-medium text-sm hover:bg-orange-600 transition flex items-center justify-center gap-2"
+        >
+          <span>＋</span>
+          <span>新規登録</span>
+        </Link>
 
         {/* Empty state */}
         {filtered.length === 0 && (
