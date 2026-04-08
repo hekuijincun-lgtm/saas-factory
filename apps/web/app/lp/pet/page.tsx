@@ -447,13 +447,13 @@ export default function PetLPPage() {
           <p className="text-gray-500 mb-6 text-sm">
             むずかしい設定は不要。5ステップで完了します。
           </p>
-          <a
+          <Link
             href="/lp/pet/line-setup"
             className="inline-flex items-center gap-2 bg-[#06C755] text-white font-bold px-6 py-3 rounded-full hover:bg-[#05a847] transition shadow-md"
           >
             <span>LINE連携の手順を見る</span>
             <span>→</span>
-          </a>
+          </Link>
         </div>
       </section>
 
