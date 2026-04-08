@@ -315,6 +315,92 @@ const TOOLS = [
       },
     },
   },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'create_menu',
+      description: 'メニューを新規作成します。メニュー名と料金が必要です。実行前に確認してください。',
+      parameters: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'メニュー名' },
+          price: { type: 'number', description: '料金（円）' },
+          duration_minutes: { type: 'number', description: '所要時間（分）' },
+          description: { type: 'string', description: 'メニューの説明（省略可）' },
+        },
+        required: ['name', 'price'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'update_menu',
+      description: 'メニューの名前・料金・所要時間を変更します。メニューIDが必要です。',
+      parameters: {
+        type: 'object',
+        properties: {
+          menu_id: { type: 'string', description: 'メニューID' },
+          name: { type: 'string', description: '新しいメニュー名（省略可）' },
+          price: { type: 'number', description: '新しい料金（省略可）' },
+          duration_minutes: { type: 'number', description: '新しい所要時間（省略可）' },
+          description: { type: 'string', description: '新しい説明（省略可）' },
+        },
+        required: ['menu_id'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'delete_menu',
+      description: 'メニューを削除します。実行前に必ず確認してください。',
+      parameters: {
+        type: 'object',
+        properties: {
+          menu_id: { type: 'string', description: '削除するメニューID' },
+        },
+        required: ['menu_id'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'create_pet',
+      description: '新しいペットを登録します。ペット名・犬種・サイズ・飼い主IDが必要です。',
+      parameters: {
+        type: 'object',
+        properties: {
+          customer_id: { type: 'string', description: '飼い主の顧客ID' },
+          name: { type: 'string', description: 'ペット名' },
+          breed: { type: 'string', description: '犬種' },
+          size: { type: 'string', enum: ['small', 'medium', 'large'], description: 'サイズ' },
+          birth_date: { type: 'string', description: '誕生日 YYYY-MM-DD形式（省略可）' },
+          notes: { type: 'string', description: '備考（省略可）' },
+        },
+        required: ['customer_id', 'name', 'breed', 'size'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'update_pet',
+      description: 'ペットの情報を更新します。ペットIDが必要です。',
+      parameters: {
+        type: 'object',
+        properties: {
+          pet_id: { type: 'string', description: 'ペットID' },
+          name: { type: 'string', description: '新しいペット名（省略可）' },
+          breed: { type: 'string', description: '新しい犬種（省略可）' },
+          size: { type: 'string', enum: ['small', 'medium', 'large'], description: '新しいサイズ（省略可）' },
+          notes: { type: 'string', description: '備考（省略可）' },
+        },
+        required: ['pet_id'],
+      },
+    },
+  },
 ];
 
 // ── Tool execution ────────────────────────────────────────────────────
@@ -731,6 +817,83 @@ async function executeTool(
           body: JSON.stringify({ customer_id: args.customer_id, message: args.message }),
         });
         return JSON.stringify(await res.json());
+      }
+
+      case 'create_menu': {
+        if (!kv) return JSON.stringify({ error: 'KV not available' });
+        const raw = await kv.get(`admin:menu:list:${tenantId}`);
+        const menuList: any[] = raw ? JSON.parse(raw) : [];
+        const menuId = crypto.randomUUID();
+        menuList.push({
+          id: menuId,
+          name: args.name as string,
+          price: args.price as number,
+          duration_minutes: (args.duration_minutes as number) ?? 60,
+          description: (args.description as string) ?? '',
+          createdAt: new Date().toISOString(),
+        });
+        await kv.put(`admin:menu:list:${tenantId}`, JSON.stringify(menuList));
+        return JSON.stringify({ success: true, id: menuId, message: `メニュー「${args.name}」を作成しました` });
+      }
+
+      case 'update_menu': {
+        if (!kv) return JSON.stringify({ error: 'KV not available' });
+        const raw = await kv.get(`admin:menu:list:${tenantId}`);
+        const menuList: any[] = raw ? JSON.parse(raw) : [];
+        const idx = menuList.findIndex((m: any) => m.id === args.menu_id);
+        if (idx === -1) return JSON.stringify({ success: false, message: 'メニューが見つかりません' });
+        if (args.name) menuList[idx].name = args.name;
+        if (args.price !== undefined) menuList[idx].price = args.price;
+        if (args.duration_minutes !== undefined) menuList[idx].duration_minutes = args.duration_minutes;
+        if (args.description !== undefined) menuList[idx].description = args.description;
+        await kv.put(`admin:menu:list:${tenantId}`, JSON.stringify(menuList));
+        return JSON.stringify({ success: true, message: `メニュー「${menuList[idx].name}」を更新しました` });
+      }
+
+      case 'delete_menu': {
+        if (!kv) return JSON.stringify({ error: 'KV not available' });
+        const raw = await kv.get(`admin:menu:list:${tenantId}`);
+        const menuList: any[] = raw ? JSON.parse(raw) : [];
+        const target = menuList.find((m: any) => m.id === args.menu_id);
+        if (!target) return JSON.stringify({ success: false, message: 'メニューが見つかりません' });
+        const filtered = menuList.filter((m: any) => m.id !== args.menu_id);
+        await kv.put(`admin:menu:list:${tenantId}`, JSON.stringify(filtered));
+        return JSON.stringify({ success: true, message: `メニュー「${target.name}」を削除しました` });
+      }
+
+      case 'create_pet': {
+        if (!kv) return JSON.stringify({ error: 'KV not available' });
+        const raw = await kv.get(`pet:profiles:${tenantId}`);
+        const profiles: any[] = raw ? JSON.parse(raw) : [];
+        const petId = crypto.randomUUID();
+        profiles.push({
+          id: petId,
+          tenantId,
+          customerId: args.customer_id as string,
+          name: args.name as string,
+          breed: args.breed as string,
+          size: args.size as string,
+          birthDate: (args.birth_date as string) ?? null,
+          notes: (args.notes as string) ?? '',
+          vaccines: [],
+          createdAt: new Date().toISOString(),
+        });
+        await kv.put(`pet:profiles:${tenantId}`, JSON.stringify(profiles));
+        return JSON.stringify({ success: true, id: petId, message: `ペット「${args.name}」を登録しました` });
+      }
+
+      case 'update_pet': {
+        if (!kv) return JSON.stringify({ error: 'KV not available' });
+        const raw = await kv.get(`pet:profiles:${tenantId}`);
+        const profiles: any[] = raw ? JSON.parse(raw) : [];
+        const idx = profiles.findIndex((p: any) => p.id === args.pet_id);
+        if (idx === -1) return JSON.stringify({ success: false, message: 'ペットが見つかりません' });
+        if (args.name) profiles[idx].name = args.name;
+        if (args.breed) profiles[idx].breed = args.breed;
+        if (args.size) profiles[idx].size = args.size;
+        if (args.notes !== undefined) profiles[idx].notes = args.notes;
+        await kv.put(`pet:profiles:${tenantId}`, JSON.stringify(profiles));
+        return JSON.stringify({ success: true, message: `「${profiles[idx].name}」の情報を更新しました` });
       }
 
       default:
