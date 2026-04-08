@@ -637,7 +637,7 @@ const TOOLS = [
     type: 'function' as const,
     function: {
       name: 'update_breed_pricing',
-      description: '犬種×サイズの料金と施術時間を更新します。実行前にまず list_menu_items でメニュー一覧を取得し、該当するメニューのIDを特定してから update_breed_pricing を呼ぶこと。menu_idはユーザーに聞かず自動で特定すること。',
+      description: '犬種×サイズの料金と施術時間を更新します。menu_idは省略可能でユーザーに聞かないこと。「トイプードル小型の料金を4500円にして」という指示があれば breed=トイプードル、size=small、price=4500 で即座に実行すること。list_menu_itemsを事前に呼ぶ必要はない。',
       parameters: {
         type: 'object',
         properties: {
