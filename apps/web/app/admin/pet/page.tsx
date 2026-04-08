@@ -180,19 +180,19 @@ export default function PetDashboardPage() {
               <table className="min-w-full text-sm">
                 <thead>
                   <tr className="border-b border-gray-100 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    <th className="px-5 py-3 min-w-[90px]">日付</th>
-                    <th className="px-5 py-3 min-w-[60px]">時間</th>
-                    <th className="px-5 py-3 min-w-[80px]">お客様</th>
-                    <th className="px-5 py-3 min-w-[80px]">コース</th>
+                    <th className="px-5 py-3 min-w-[90px] whitespace-nowrap">日付</th>
+                    <th className="px-5 py-3 min-w-[60px] whitespace-nowrap">時間</th>
+                    <th className="px-5 py-3 min-w-[80px] whitespace-nowrap">お客様</th>
+                    <th className="px-5 py-3 min-w-[80px] whitespace-nowrap">コース</th>
                   </tr>
                 </thead>
                 <tbody>
                   {recentBookings.map(r => (
                     <tr key={r.id} className="border-b border-gray-50 hover:bg-orange-50/40 transition-colors">
-                      <td className="px-5 py-3 text-gray-700">{r.date}</td>
-                      <td className="px-5 py-3 text-gray-700">{r.time}</td>
-                      <td className="px-5 py-3 font-medium text-gray-900">{r.customerName}</td>
-                      <td className="px-5 py-3 text-gray-700">{r.menuName || '-'}</td>
+                      <td className="px-5 py-3 text-gray-700 whitespace-nowrap">{r.date}</td>
+                      <td className="px-5 py-3 text-gray-700 whitespace-nowrap">{r.time}</td>
+                      <td className="px-5 py-3 font-medium text-gray-900 whitespace-nowrap">{r.customerName}</td>
+                      <td className="px-5 py-3 text-gray-700 whitespace-nowrap">{r.menuName || '-'}</td>
                     </tr>
                   ))}
                 </tbody>
