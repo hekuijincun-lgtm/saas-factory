@@ -1047,23 +1047,76 @@ availableSlotsは空き枠数（closedの場合はnull）。`,
 
       case 'generate_image': {
         const imageType = args.type as string;
-        const apiBase = env.API_BASE_URL || 'https://saas-factory-api.hekuijincun.workers.dev';
-        const res = await fetch(`${apiBase}/admin/ai/generate-image?tenantId=${encodeURIComponent(tenantId)}`, {
+        const openaiKey = env.OPENAI_API_KEY as string | undefined;
+        if (!openaiKey) return JSON.stringify({ error: 'OPENAI_API_KEY not configured' });
+        const r2 = env.MENU_IMAGES;
+        if (!r2) return JSON.stringify({ error: 'R2 not configured' });
+
+        const presets: Record<string, { prompt: string; size: string }> = {
+          'hero': {
+            prompt: 'A warm and professional pet salon hero image. Clean, bright interior with grooming tools. Soft lighting, welcoming atmosphere. Japanese pet salon style.',
+            size: '1792x1024',
+          },
+          'richmenu': {
+            prompt: 'A clean LINE rich menu background for a pet salon. Soft pastel colors, minimal design with space for buttons. Professional and cute style.',
+            size: '1792x1024',
+          },
+          'menu-thumbnail': {
+            prompt: `A professional pet grooming service thumbnail image${args.menu_name ? ` for "${args.menu_name}"` : ''}. Clean white background, cute dog being groomed. Square format.`,
+            size: '1024x1024',
+          },
+        };
+        const preset = presets[imageType] ?? presets['hero'];
+        const finalPrompt = args.prompt ? `${preset.prompt} ${args.prompt}` : preset.prompt;
+
+        const openaiRes = await fetch('https://api.openai.com/v1/images/generations', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-Admin-Token': authToken },
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${openaiKey}` },
           body: JSON.stringify({
-            type: imageType,
-            vertical: 'pet',
-            prompt: (args.prompt as string) ?? '',
-            menuName: (args.menu_name as string) ?? '',
+            model: 'dall-e-3',
+            prompt: finalPrompt,
+            size: preset.size,
+            quality: 'standard',
+            response_format: 'b64_json',
+            n: 1,
           }),
         });
-        const imgData = await res.json() as any;
-        if (!imgData.ok) return JSON.stringify({ success: false, message: '画像生成に失敗しました' });
+        if (!openaiRes.ok) {
+          const errText = await openaiRes.text().catch(() => '');
+          console.error('[generate_image] OpenAI error:', errText.slice(0, 200));
+          return JSON.stringify({ success: false, message: '画像生成に失敗しました（OpenAI APIエラー）' });
+        }
+        const openaiData = await openaiRes.json() as any;
+        const b64 = openaiData.data?.[0]?.b64_json;
+        if (!b64) return JSON.stringify({ success: false, message: '画像データが取得できませんでした' });
+
+        const binaryStr = atob(b64);
+        const bytes = new Uint8Array(binaryStr.length);
+        for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
+
+        const ts2 = Date.now();
+        const rand = Math.random().toString(36).slice(2, 7);
+        const r2Key = `ai-images/${tenantId}/${imageType}-${ts2}-${rand}.png`;
+        await r2.put(r2Key, bytes.buffer, { httpMetadata: { contentType: 'image/png' } });
+
+        const imageUrl = `${env.API_BASE_URL || 'https://saas-factory-api.hekuijincun.workers.dev'}/media/menu/${r2Key}`;
+
+        if (kv) {
+          try {
+            const settingsRaw = await kv.get(`settings:${tenantId}`);
+            const settings: any = settingsRaw ? JSON.parse(settingsRaw) : {};
+            if (!settings.images) settings.images = {};
+            if (imageType === 'hero') settings.images.hero = imageUrl;
+            if (imageType === 'richmenu') settings.images.richMenuBg = imageUrl;
+            await kv.put(`settings:${tenantId}`, JSON.stringify(settings));
+          } catch { /* best effort */ }
+        }
+
         return JSON.stringify({
           success: true,
-          image_url: imgData.imageUrl,
-          message: `${imageType}画像を生成しました。URLを管理画面で確認できます。`,
+          image_url: imageUrl,
+          r2_key: r2Key,
+          message: `${imageType}画像を生成しました。`,
         });
       }
 
