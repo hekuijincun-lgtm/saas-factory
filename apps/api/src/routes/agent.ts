@@ -34,7 +34,10 @@ function buildSystemPrompt(vertical: string, tenantId: string): string {
 予約の作成・キャンセル・LINE送信等の操作は
 実行前に必ず「〇〇を実行してよいですか？」と確認を取ること。
 返答は簡潔に、結果だけを日本語で報告すること。定型文は使わないこと。
-画像生成が成功した場合、必ず返答にMarkdown形式の画像タグ ![画像](URL) を含めること。URLはtool結果のimage_urlをそのまま使うこと。`;
+画像生成が成功した場合、必ず返答にMarkdown形式の画像タグ ![画像](URL) を含めること。URLはtool結果のimage_urlをそのまま使うこと。
+カレンダー生成が成功した場合（type: 'calendar_result'）、返答に必ず以下のJSON文字列をそのまま含めること（Markdownコードブロックなし）:
+__CALENDAR__:{"month":"YYYY-MM","shopName":"店名","blocks":[]}
+このマーカーはフロントエンドが検出してカレンダーを描画するために使用する。tool結果のmonth, shopName, blocksをそのまま使うこと。`;
 }
 
 // ── Tool definitions for function calling ──────────────────────────────
@@ -462,6 +465,20 @@ const TOOLS = [
           menu_name: { type: 'string', description: 'menu-thumbnailの場合のメニュー名（省略可）' },
         },
         required: ['type'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'generate_calendar',
+      description: 'Instagramストーリー用の空き状況カレンダー画像を生成します。「カレンダー作って」「今月のカレンダー」などに使います。',
+      parameters: {
+        type: 'object',
+        properties: {
+          month: { type: 'string', description: '対象月 YYYY-MM形式（省略時は今月）' },
+        },
+        required: [],
       },
     },
   },
@@ -1119,6 +1136,24 @@ availableSlotsは空き枠数（closedの場合はnull）。`,
           r2_key: r2Key,
           type: 'image_result',
           message: `${imageType}画像を生成しました。\n![generated](${imageUrl})`,
+        });
+      }
+
+      case 'generate_calendar': {
+        if (!kv) return JSON.stringify({ error: 'KV not available' });
+        const calMonth = (args.month as string) ?? now.toISOString().slice(0, 7);
+        const tbRaw = await kv.get(`timeblocks:${tenantId}`);
+        const tbData: any = tbRaw ? JSON.parse(tbRaw) : { blocks: [] };
+        const calBlocks = (tbData.blocks || []).filter((b: any) => b.date.startsWith(calMonth));
+        const stRaw = await kv.get(`settings:${tenantId}`);
+        const st: any = stRaw ? JSON.parse(stRaw) : {};
+        const shopName = st.shopName ?? st.name ?? 'MY SHOP';
+        return JSON.stringify({
+          type: 'calendar_result',
+          month: calMonth,
+          shopName,
+          blocks: calBlocks,
+          message: `${calMonth}のカレンダーデータを取得しました。`,
         });
       }
 
