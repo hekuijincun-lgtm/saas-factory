@@ -33,7 +33,8 @@ function buildSystemPrompt(vertical: string, tenantId: string): string {
 
 予約の作成・キャンセル・LINE送信等の操作は
 実行前に必ず「〇〇を実行してよいですか？」と確認を取ること。
-返答は簡潔に、結果だけを日本語で報告すること。定型文は使わないこと。`;
+返答は簡潔に、結果だけを日本語で報告すること。定型文は使わないこと。
+画像生成が成功した場合、必ず返答にMarkdown形式の画像タグ ![画像](URL) を含めること。URLはtool結果のimage_urlをそのまま使うこと。`;
 }
 
 // ── Tool definitions for function calling ──────────────────────────────
@@ -1116,7 +1117,8 @@ availableSlotsは空き枠数（closedの場合はnull）。`,
           success: true,
           image_url: imageUrl,
           r2_key: r2Key,
-          message: `${imageType}画像を生成しました。`,
+          type: 'image_result',
+          message: `${imageType}画像を生成しました。\n![generated](${imageUrl})`,
         });
       }
 

@@ -90,7 +90,30 @@ export default function AgentChat({ vertical }: { vertical: string }) {
             }`}>
               {m.role === 'assistant' ? (
                 <div className="prose prose-sm max-w-none prose-p:my-1 prose-ul:my-1 prose-li:my-0">
-                  <ReactMarkdown>{m.content}</ReactMarkdown>
+                  <ReactMarkdown
+                    components={{
+                      img: ({ src, alt }) => (
+                        <div className="mt-2">
+                          <img
+                            src={src}
+                            alt={alt ?? '生成画像'}
+                            className="rounded-xl max-w-full border border-gray-200 shadow-sm"
+                            style={{ maxHeight: '300px', objectFit: 'contain' }}
+                          />
+                          <a
+                            href={src}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="block text-xs text-orange-500 mt-1 hover:underline"
+                          >
+                            フルサイズで開く →
+                          </a>
+                        </div>
+                      ),
+                    }}
+                  >
+                    {m.content}
+                  </ReactMarkdown>
                 </div>
               ) : (
                 m.content
