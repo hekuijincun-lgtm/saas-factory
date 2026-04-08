@@ -21,11 +21,13 @@ function extractCalendar(content: string): {
   calendarData: { month: string; shopName: string; blocks: any[] } | null;
   cleanContent: string;
 } {
-  const marker = '__CALENDAR__:';
+  const marker = 'CALENDAR_DATA:';
   const idx = content.indexOf(marker);
   if (idx === -1) return { calendarData: null, cleanContent: content };
   try {
-    const jsonStr = content.slice(idx + marker.length).split('\n')[0].trim();
+    const rest = content.slice(idx + marker.length).trim();
+    const jsonEnd = rest.indexOf('\n');
+    const jsonStr = jsonEnd === -1 ? rest : rest.slice(0, jsonEnd);
     const calendarData = JSON.parse(jsonStr);
     const cleanContent = content.slice(0, idx).trim();
     return { calendarData, cleanContent };

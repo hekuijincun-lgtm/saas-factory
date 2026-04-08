@@ -35,9 +35,9 @@ function buildSystemPrompt(vertical: string, tenantId: string): string {
 実行前に必ず「〇〇を実行してよいですか？」と確認を取ること。
 返答は簡潔に、結果だけを日本語で報告すること。定型文は使わないこと。
 画像生成が成功した場合、必ず返答にMarkdown形式の画像タグ ![画像](URL) を含めること。URLはtool結果のimage_urlをそのまま使うこと。
-カレンダー生成が成功した場合（type: 'calendar_result'）、返答に必ず以下のJSON文字列をそのまま含めること（Markdownコードブロックなし）:
-__CALENDAR__:{"month":"YYYY-MM","shopName":"店名","blocks":[]}
-このマーカーはフロントエンドが検出してカレンダーを描画するために使用する。tool結果のmonth, shopName, blocksをそのまま使うこと。`;
+generate_calendar ツールが成功した場合、返答の末尾に必ず以下の形式でデータを出力すること（他の文章の後に改行して追加）:
+CALENDAR_DATA:{"month":"YYYY-MM","shopName":"店名","blocks":[]}
+このマーカー文字列はフロントエンドが検出して使用する。省略・変形禁止。`;
 }
 
 // ── Tool definitions for function calling ──────────────────────────────
@@ -1141,7 +1141,8 @@ availableSlotsは空き枠数（closedの場合はnull）。`,
 
       case 'generate_calendar': {
         if (!kv) return JSON.stringify({ error: 'KV not available' });
-        const calMonth = (args.month as string) ?? now.toISOString().slice(0, 7);
+        const jstNow = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+        const calMonth = (args.month as string) ?? jstNow.toISOString().slice(0, 7);
         const tbRaw = await kv.get(`timeblocks:${tenantId}`);
         const tbData: any = tbRaw ? JSON.parse(tbRaw) : { blocks: [] };
         const calBlocks = (tbData.blocks || []).filter((b: any) => b.date.startsWith(calMonth));
@@ -1153,7 +1154,7 @@ availableSlotsは空き枠数（closedの場合はnull）。`,
           month: calMonth,
           shopName,
           blocks: calBlocks,
-          message: `${calMonth}のカレンダーデータを取得しました。`,
+          message: `${calMonth}のカレンダーを生成しました。\nCALENDAR_DATA:${JSON.stringify({ month: calMonth, shopName, blocks: calBlocks })}`,
         });
       }
 
