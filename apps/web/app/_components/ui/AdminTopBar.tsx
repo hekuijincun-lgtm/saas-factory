@@ -11,16 +11,15 @@ interface AdminTopBarProps {
 
 export default function AdminTopBar({ title, subtitle, right }: AdminTopBarProps) {
   return (
-    <div className="px-6 py-4 flex items-start justify-between gap-2">
-      <div className="flex-1 min-w-0">
-        <h1 className="text-2xl font-semibold tracking-tight text-brand-text break-keep">{title}</h1>
-        {subtitle && <p className="text-sm text-brand-muted mt-1 break-keep">{subtitle}</p>}
-      </div>
-      <div className="flex items-center gap-2 sm:gap-4 flex-shrink-0">
+    <div className="px-4 sm:px-6 pt-4 pb-2">
+      <div className="flex items-center justify-end gap-2 mb-2">
         {right}
         <ClientDatePill format="full" />
+      </div>
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight text-brand-text break-keep">{title}</h1>
+        {subtitle && <p className="text-sm text-brand-muted mt-0.5 break-keep">{subtitle}</p>}
       </div>
     </div>
   );
 }
-
