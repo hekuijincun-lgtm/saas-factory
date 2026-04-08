@@ -1627,10 +1627,17 @@ export async function POST(req: Request) {
         }
 
         const replyText = `店舗情報です📍\n\n店舗名: ${storeName}\n住所: ${address}\nメール: ${email}`;
-        const pbRep = await replyLine(cfg.channelAccessToken, String(postbackEv.replyToken), [
-          { type: "text", text: replyText },
-        ]);
-        console.log(`[WH_POSTBACK] store_info replyOk=${pbRep.ok} st=${pbRep.status} traceId=${traceId}`);
+        const storeInfoMessages = [{ type: "text" as const, text: replyText }];
+        const storeInfoReplyFn = async () => {
+          const pbRep = await replyLine(cfg.channelAccessToken, String(postbackEv.replyToken), storeInfoMessages);
+          console.log(`[WH_POSTBACK] store_info replyOk=${pbRep.ok} st=${pbRep.status} traceId=${traceId}`);
+        };
+        const storeInfoCtx = getRequestContext();
+        if (storeInfoCtx?.ctx?.waitUntil) {
+          storeInfoCtx.ctx.waitUntil(storeInfoReplyFn());
+        } else {
+          await storeInfoReplyFn();
+        }
 
         return NextResponse.json({
           ok: true, stamp: STAMP, where, tenantId, source: cfg.source,
@@ -1875,8 +1882,16 @@ export async function POST(req: Request) {
           messages = [{ type: "text", text: "現在お知らせはありません。\n新着があればお届けします🐾" }];
         }
 
-        const pbRep = await replyLine(cfg.channelAccessToken, String(postbackEv.replyToken), messages);
-        console.log(`[WH_POSTBACK] custom_msg="${msgText}" replyOk=${pbRep.ok} st=${pbRep.status} traceId=${traceId}`);
+        const customMsgReplyFn = async () => {
+          const pbRep = await replyLine(cfg.channelAccessToken, String(postbackEv.replyToken), messages);
+          console.log(`[WH_POSTBACK] custom_msg="${msgText}" replyOk=${pbRep.ok} st=${pbRep.status} traceId=${traceId}`);
+        };
+        const customMsgCtx = getRequestContext();
+        if (customMsgCtx?.ctx?.waitUntil) {
+          customMsgCtx.ctx.waitUntil(customMsgReplyFn());
+        } else {
+          await customMsgReplyFn();
+        }
 
         return NextResponse.json({
           ok: true, stamp: STAMP, where, tenantId, source: cfg.source,
@@ -1944,8 +1959,16 @@ export async function POST(req: Request) {
           }
         }
 
-        const pbRep = await replyLine(cfg.channelAccessToken, String(postbackEv.replyToken), messages);
-        console.log(`[WH_POSTBACK] show_coupon replyOk=${pbRep.ok} st=${pbRep.status} traceId=${traceId}`);
+        const showCouponReplyFn = async () => {
+          const pbRep = await replyLine(cfg.channelAccessToken, String(postbackEv.replyToken), messages);
+          console.log(`[WH_POSTBACK] show_coupon replyOk=${pbRep.ok} st=${pbRep.status} traceId=${traceId}`);
+        };
+        const showCouponCtx = getRequestContext();
+        if (showCouponCtx?.ctx?.waitUntil) {
+          showCouponCtx.ctx.waitUntil(showCouponReplyFn());
+        } else {
+          await showCouponReplyFn();
+        }
 
         return NextResponse.json({
           ok: true, stamp: STAMP, where, tenantId, source: cfg.source,
@@ -2017,8 +2040,16 @@ export async function POST(req: Request) {
                 },
               },
             ];
-            await replyLine(cfg.channelAccessToken, String(followEv.replyToken), welcomeMsg);
-            console.log(`[WH_FOLLOW] coupon sent traceId=${traceId} tenantId=${tenantId}`);
+            const followReplyFn = async () => {
+              await replyLine(cfg.channelAccessToken, String(followEv.replyToken), welcomeMsg);
+              console.log(`[WH_FOLLOW] coupon sent traceId=${traceId} tenantId=${tenantId}`);
+            };
+            const followCtx = getRequestContext();
+            if (followCtx?.ctx?.waitUntil) {
+              followCtx.ctx.waitUntil(followReplyFn());
+            } else {
+              await followReplyFn();
+            }
           }
         }
       }
