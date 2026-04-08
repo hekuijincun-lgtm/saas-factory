@@ -25,7 +25,7 @@ function TrendBadge({ value }: { value: number | null }) {
   const isUp = value > 0;
   const isFlat = value === 0;
   return (
-    <span className={`inline-flex items-center gap-0.5 text-xs font-medium ${isUp ? 'text-green-600' : isFlat ? 'text-gray-500' : 'text-red-500'}`}>
+    <span className={`inline-flex items-center gap-0.5 text-xs font-medium whitespace-nowrap ${isUp ? 'text-green-600' : isFlat ? 'text-gray-500' : 'text-red-500'}`}>
       {isUp ? '↑' : isFlat ? '→' : '↓'}
       {isFlat ? '前月同' : `${Math.abs(value)}% ${isUp ? '増' : '減'}`}
     </span>
@@ -177,13 +177,13 @@ export default function PetDashboardPage() {
             <div className="p-5 text-sm text-gray-400 text-center">予約データがありません</div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+              <table className="min-w-full text-sm">
                 <thead>
                   <tr className="border-b border-gray-100 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    <th className="px-5 py-3">日付</th>
-                    <th className="px-5 py-3">時間</th>
-                    <th className="px-5 py-3">お客様</th>
-                    <th className="px-5 py-3">コース</th>
+                    <th className="px-5 py-3 min-w-[90px]">日付</th>
+                    <th className="px-5 py-3 min-w-[60px]">時間</th>
+                    <th className="px-5 py-3 min-w-[80px]">お客様</th>
+                    <th className="px-5 py-3 min-w-[80px]">コース</th>
                   </tr>
                 </thead>
                 <tbody>

@@ -116,7 +116,7 @@ export default function PetProfileListPage() {
         right={
           <Link
             href={withTenant('/admin/pet/profiles/new', tenantId)}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-orange-500 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-orange-600 transition-colors"
+            className="inline-flex items-center gap-1.5 rounded-lg bg-orange-500 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-orange-600 transition-colors flex-shrink-0 whitespace-nowrap"
           >
             + 新規登録
           </Link>
@@ -161,7 +161,7 @@ export default function PetProfileListPage() {
               <Link
                 key={pet.id}
                 href={withTenant(`/admin/pet/profiles/${pet.id}`, tenantId)}
-                className="group rounded-2xl border border-gray-200 bg-white p-5 shadow-sm hover:border-orange-300 hover:shadow-md transition-all"
+                className="group rounded-2xl border border-gray-200 bg-white p-5 shadow-sm hover:border-orange-300 hover:shadow-md transition-all overflow-hidden"
               >
                 <div className="flex items-start gap-4">
                   {/* Photo or placeholder */}
@@ -179,7 +179,7 @@ export default function PetProfileListPage() {
                     </div>
                   )}
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <p className="text-lg font-bold text-gray-900 group-hover:text-orange-600 transition-colors truncate">
                         {pet.name}
                       </p>

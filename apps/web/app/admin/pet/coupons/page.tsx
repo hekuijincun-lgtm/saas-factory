@@ -143,10 +143,10 @@ export default function CouponsPage() {
 
       <div className="px-6 pb-8 space-y-6">
         {/* Header */}
-        <div className="flex items-center justify-between">
+        <div className="flex items-start justify-between gap-2">
           <p className="text-sm text-gray-500">{coupons.length}件のクーポン</p>
           <button onClick={openCreate}
-            className="px-4 py-2 bg-orange-500 text-white text-sm font-medium rounded-lg hover:bg-orange-600 transition-colors">
+            className="px-4 py-2 bg-orange-500 text-white text-sm font-medium rounded-lg hover:bg-orange-600 transition-colors flex-shrink-0 whitespace-nowrap">
             + 新規クーポン
           </button>
         </div>
@@ -261,38 +261,38 @@ export default function CouponsPage() {
               const statusColor = !c.isActive ? 'bg-gray-100 text-gray-600' : isExpired ? 'bg-red-50 text-red-600' : isNotStarted ? 'bg-yellow-50 text-yellow-600' : 'bg-green-50 text-green-600';
 
               return (
-                <div key={c.id} className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm hover:shadow-md transition-shadow">
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-1">
-                        <h3 className="text-base font-semibold text-gray-900">{c.title}</h3>
-                        <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${statusColor}`}>{statusLabel}</span>
-                        <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-orange-50 text-orange-600">
+                <div key={c.id} className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm hover:shadow-md transition-shadow overflow-hidden w-full">
+                  <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1 flex-wrap">
+                        <h3 className="text-base font-semibold text-gray-900 break-words">{c.title}</h3>
+                        <span className={`px-2 py-0.5 text-xs font-medium rounded-full whitespace-nowrap ${statusColor}`}>{statusLabel}</span>
+                        <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-orange-50 text-orange-600 whitespace-nowrap">
                           {TRIGGER_LABELS[c.triggerType] || c.triggerType}
                         </span>
                       </div>
-                      {c.description && <p className="text-sm text-gray-500 mb-2">{c.description}</p>}
-                      <div className="flex items-center gap-4 text-sm">
-                        <span className="font-bold text-orange-600 text-lg">{formatDiscount(c.discountType, c.discountValue)}</span>
-                        <span className="text-gray-400">|</span>
-                        <span className="text-gray-500">{c.validFrom} ~ {c.validUntil}</span>
-                        <span className="text-gray-400">|</span>
-                        <span className="text-gray-500">使用: {c.usedCount}{c.maxUses ? `/${c.maxUses}` : ''}</span>
+                      {c.description && <p className="text-sm text-gray-500 mb-2 break-words">{c.description}</p>}
+                      <div className="flex items-center gap-2 sm:gap-4 text-sm flex-wrap">
+                        <span className="font-bold text-orange-600 text-lg whitespace-nowrap">{formatDiscount(c.discountType, c.discountValue)}</span>
+                        <span className="text-gray-400 hidden sm:inline">|</span>
+                        <span className="text-gray-500 whitespace-nowrap">{c.validFrom} ~ {c.validUntil}</span>
+                        <span className="text-gray-400 hidden sm:inline">|</span>
+                        <span className="text-gray-500 whitespace-nowrap">使用: {c.usedCount}{c.maxUses ? `/${c.maxUses}` : ''}</span>
                       </div>
                     </div>
-                    <div className="flex items-center gap-2 ml-4">
+                    <div className="flex items-center gap-1 flex-wrap flex-shrink-0">
                       <button onClick={() => handleToggleActive(c)}
-                        className={`px-3 py-1 text-xs font-medium rounded-lg border transition-colors ${
+                        className={`px-3 py-1 text-xs font-medium rounded-lg border transition-colors whitespace-nowrap ${
                           c.isActive ? 'border-gray-300 text-gray-600 hover:bg-gray-50' : 'border-green-300 text-green-600 hover:bg-green-50'
                         }`}>
                         {c.isActive ? '無効化' : '有効化'}
                       </button>
                       <button onClick={() => openEdit(c)}
-                        className="px-3 py-1 text-xs font-medium rounded-lg border border-orange-300 text-orange-600 hover:bg-orange-50 transition-colors">
+                        className="px-3 py-1 text-xs font-medium rounded-lg border border-orange-300 text-orange-600 hover:bg-orange-50 transition-colors whitespace-nowrap">
                         編集
                       </button>
                       <button onClick={() => handleDelete(c.id)}
-                        className="px-3 py-1 text-xs font-medium rounded-lg border border-red-300 text-red-600 hover:bg-red-50 transition-colors">
+                        className="px-3 py-1 text-xs font-medium rounded-lg border border-red-300 text-red-600 hover:bg-red-50 transition-colors whitespace-nowrap">
                         削除
                       </button>
                     </div>

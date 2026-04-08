@@ -41,14 +41,14 @@ export default function ClientDatePill({ className = '', format = 'full' }: Clie
     // SSR時は空文字を返す（DOM構造は維持）
     return (
       <div className={`px-3 py-1.5 bg-brand-bg rounded-xl border border-brand-border ${className}`}>
-        <span className="text-sm font-medium text-brand-text">&nbsp;</span>
+        <span className="text-sm font-medium text-brand-text whitespace-nowrap">&nbsp;</span>
       </div>
     );
   }
 
   return (
     <div className={`px-3 py-1.5 bg-brand-bg rounded-xl border border-brand-border ${className}`}>
-      <span className="text-sm font-medium text-brand-text">{formattedDate}</span>
+      <span className="text-sm font-medium text-brand-text whitespace-nowrap">{formattedDate}</span>
     </div>
   );
 }
