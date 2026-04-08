@@ -10,12 +10,19 @@ interface Message {
   content: string;
 }
 
-const SUGGESTIONS = [
+const DEFAULT_SUGGESTIONS = [
   '今日の予約を確認',
   'ワクチン期限切れを確認',
   'リピート対象に一括送信',
   '今月の売上を教えて',
 ];
+
+function buildSuggestionsFromBrief(brief: string): string[] {
+  const list: string[] = ['今日の予約を確認', '今月の売上を教えて'];
+  if (/ワクチン/.test(brief)) list.push('ワクチン詳細を確認');
+  if (/リピート|未来店/.test(brief)) list.push('リピート対象に送信');
+  return list;
+}
 
 function extractCalendar(content: string): {
   calendarData: { month: string; shopName: string; blocks: unknown[] } | null;
@@ -51,6 +58,7 @@ function extractCalendar(content: string): {
 export default function AgentChat({ vertical }: { vertical: string }) {
   const { tenantId, status } = useAdminTenantId();
   const [messages, setMessages] = useState<Message[]>([]);
+  const [suggestions, setSuggestions] = useState<string[]>(DEFAULT_SUGGESTIONS);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [sessionId] = useState(() => Math.random().toString(36).slice(2));
@@ -59,6 +67,34 @@ export default function AgentChat({ vertical }: { vertical: string }) {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  // Fetch morning brief on mount once tenantId is ready
+  useEffect(() => {
+    if (status !== 'ready') return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(
+          `/api/proxy/admin/agent/morning-brief?tenantId=${encodeURIComponent(tenantId)}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({}),
+          }
+        );
+        if (!res.ok) return;
+        const data = await res.json() as any;
+        if (cancelled) return;
+        if (data?.brief) {
+          setMessages([{ role: 'assistant', content: data.brief }]);
+          setSuggestions(buildSuggestionsFromBrief(data.brief));
+        }
+      } catch {
+        // silently ignore — user can still interact normally
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [status, tenantId]);
 
   const send = async (text: string) => {
     if (!text.trim() || loading || status !== 'ready') return;
@@ -97,11 +133,11 @@ export default function AgentChat({ vertical }: { vertical: string }) {
       </div>
 
       <div className="flex-1 overflow-y-auto space-y-3 mb-3">
-        {messages.length === 0 && (
+        {!messages.some(m => m.role === 'user') && (
           <div className="space-y-2">
             <p className="text-xs text-gray-400 text-center">よく使う操作</p>
             <div className="flex flex-wrap gap-2">
-              {SUGGESTIONS.map(s => (
+              {suggestions.map(s => (
                 <button
                   key={s}
                   onClick={() => send(s)}

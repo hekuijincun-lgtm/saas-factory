@@ -1641,18 +1641,21 @@ export function registerAgentRoutes(app: any) {
           break;
         }
 
-        // Process tool calls
+        // Process tool calls in parallel (Phase 1: parallelization)
         messages.push(msg);
-        for (const tc of msg.tool_calls) {
-          let args: Record<string, unknown> = {};
-          try { args = JSON.parse(tc.function.arguments || '{}'); } catch {}
-          const result = await executeTool(tc.function.name, args, tenantId, env, authToken);
-          messages.push({
-            role: 'tool',
-            content: result,
-            tool_call_id: tc.id,
-          });
-        }
+        const toolResults = await Promise.all(
+          msg.tool_calls.map(async (tc: any) => {
+            let args: Record<string, unknown> = {};
+            try { args = JSON.parse(tc.function.arguments || '{}'); } catch {}
+            const result = await executeTool(tc.function.name, args, tenantId, env, authToken);
+            return {
+              role: 'tool' as const,
+              content: result,
+              tool_call_id: tc.id,
+            };
+          })
+        );
+        messages.push(...toolResults);
 
         // If last round, force a text response
         if (round === MAX_ROUNDS - 1) {
@@ -1679,6 +1682,86 @@ export function registerAgentRoutes(app: any) {
       ok: true,
       reply: assistantReply,
       session_id: sessionId,
+    });
+  });
+
+  // ── Morning brief: proactive dashboard summary ───────────────────────
+  app.post('/admin/agent/morning-brief', async (c: any) => {
+    const env = c.env as any;
+    const apiKey = env.OPENAI_API_KEY as string | undefined;
+    if (!apiKey) {
+      return c.json({ ok: false, error: 'OPENAI_API_KEY not configured' }, 500);
+    }
+
+    const tenantId = getTenantId(c);
+    const authToken = c.req.header('X-Admin-Token') || '';
+
+    // Fetch all data sources in parallel via the same tool implementations
+    const [todayJson, vaccinesJson, repeatJson, revenueJson] = await Promise.all([
+      executeTool('get_today_reservations', {}, tenantId, env, authToken).catch(() => '{}'),
+      executeTool('get_expiring_vaccines', {}, tenantId, env, authToken).catch(() => '{}'),
+      executeTool('get_repeat_targets', {}, tenantId, env, authToken).catch(() => '{}'),
+      executeTool('get_revenue_stats', { period: 'month' }, tenantId, env, authToken).catch(() => '{}'),
+    ]);
+
+    let today_reservations: any = {};
+    let expiring_vaccines: any = {};
+    let repeat_targets: any = {};
+    let revenue: any = {};
+    try { today_reservations = JSON.parse(todayJson); } catch {}
+    try { expiring_vaccines = JSON.parse(vaccinesJson); } catch {}
+    try { repeat_targets = JSON.parse(repeatJson); } catch {}
+    try { revenue = JSON.parse(revenueJson); } catch {}
+
+    const dataPayload = {
+      today_reservations,
+      expiring_vaccines,
+      repeat_targets,
+      revenue,
+    };
+
+    const systemPrompt = `あなたはペットサロンのAIアシスタントです。
+以下のデータを元に、今日オーナーがやるべきことを箇条書きで3〜5件にまとめてください。
+重要度順に並べ、各項目は1行で簡潔に。
+絵文字を先頭に使うこと。
+例:
+📅 今日の予約: かずきさん 14:00 トリミング
+⚠️ ワクチン期限切れ: マロン（狂犬病）
+💰 今月売上: ¥8,000（先月比+25%）
+🔁 リピート促進: 2名が60日以上未来店`;
+
+    const userPrompt = `データ:\n${JSON.stringify(dataPayload, null, 2)}`;
+
+    let brief = '';
+    try {
+      const res = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt },
+          ],
+          temperature: 0.3,
+          max_tokens: 400,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json() as any;
+        brief = data.choices?.[0]?.message?.content?.trim() || '';
+      }
+    } catch (e: any) {
+      console.error(`[morning-brief] OpenAI error: ${String(e?.message ?? e).slice(0, 200)}`);
+    }
+
+    return c.json({
+      ok: true,
+      brief,
+      data: dataPayload,
     });
   });
 }
