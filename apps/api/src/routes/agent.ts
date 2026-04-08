@@ -637,7 +637,7 @@ const TOOLS = [
     type: 'function' as const,
     function: {
       name: 'update_breed_pricing',
-      description: '犬種×サイズの料金と施術時間を更新します。「トイプードル小型の料金を4000円にして」などに使います。menu_idは省略可能です。実行前に確認してください。menu_idを聞かずにbreed・size・priceだけで実行してください。',
+      description: '犬種×サイズの料金と施術時間を更新します。「トイプードル小型の料金を4000円にして」などに使います。実行前に確認してください。',
       parameters: {
         type: 'object',
         properties: {
@@ -645,7 +645,6 @@ const TOOLS = [
           size: { type: 'string', enum: ['small', 'medium', 'large'], description: 'サイズ' },
           price: { type: 'number', description: '新しい料金（円）' },
           duration_minutes: { type: 'number', description: '新しい施術時間（分）（省略可）' },
-          menu_id: { type: 'string', description: '省略してください。指定不要です。' },
         },
         required: ['breed', 'size', 'price'],
       },
@@ -1536,7 +1535,7 @@ availableSlotsは空き枠数（closedの場合はnull）。`,
             args.size as string,
             args.price as number,
             (args.duration_minutes as number | undefined) ?? 60,
-            (args.menu_id as string | undefined) ?? null,
+            null,
           ).run();
           return JSON.stringify({ success: true, message: `${args.breed}（${args.size}）の料金を¥${args.price}で新規登録しました` });
         }
