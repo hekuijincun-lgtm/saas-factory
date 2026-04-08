@@ -18,20 +18,32 @@ const SUGGESTIONS = [
 ];
 
 function extractCalendar(content: string): {
-  calendarData: { month: string; shopName: string; blocks: any[] } | null;
+  calendarData: { month: string; shopName: string; blocks: unknown[] } | null;
   cleanContent: string;
 } {
   const marker = 'CALENDAR_DATA:';
   const idx = content.indexOf(marker);
   if (idx === -1) return { calendarData: null, cleanContent: content };
   try {
-    const rest = content.slice(idx + marker.length).trim();
-    const jsonEnd = rest.indexOf('\n');
-    const jsonStr = jsonEnd === -1 ? rest : rest.slice(0, jsonEnd);
+    const rest = content.slice(idx + marker.length);
+    const start = rest.indexOf('{');
+    if (start === -1) return { calendarData: null, cleanContent: content };
+    let depth = 0;
+    let end = -1;
+    for (let i = start; i < rest.length; i++) {
+      if (rest[i] === '{') depth++;
+      else if (rest[i] === '}') {
+        depth--;
+        if (depth === 0) { end = i; break; }
+      }
+    }
+    if (end === -1) return { calendarData: null, cleanContent: content };
+    const jsonStr = rest.slice(start, end + 1);
     const calendarData = JSON.parse(jsonStr);
     const cleanContent = content.slice(0, idx).trim();
     return { calendarData, cleanContent };
-  } catch {
+  } catch (e) {
+    console.error('[extractCalendar] parse error:', e);
     return { calendarData: null, cleanContent: content };
   }
 }
