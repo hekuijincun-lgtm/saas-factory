@@ -401,6 +401,69 @@ const TOOLS = [
       },
     },
   },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'list_time_blocks',
+      description: '登録済みの空き・ブロック枠を月別に取得します。カレンダー確認に使います。',
+      parameters: {
+        type: 'object',
+        properties: {
+          month: { type: 'string', description: '取得する月 YYYY-MM形式（省略時は今月）' },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'add_time_block',
+      description: '空き枠またはブロック枠を追加します。「来週火曜は休み」「今月15日は午後から空き3枠」などの自然言語でも登録できます。',
+      parameters: {
+        type: 'object',
+        properties: {
+          text: { type: 'string', description: '自然言語での枠情報（例: 4月15日は終日お休み）' },
+        },
+        required: ['text'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'delete_time_block',
+      description: '登録済みの枠をIDまたは日付で削除します。',
+      parameters: {
+        type: 'object',
+        properties: {
+          block_id: { type: 'string', description: '削除する枠のID（省略可）' },
+          date: { type: 'string', description: '削除する日付 YYYY-MM-DD（省略可）' },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'generate_image',
+      description: 'DALL-E 3でサロン用の画像を生成します。ヒーロー画像・リッチメニュー背景・メニューサムネイルを生成できます。',
+      parameters: {
+        type: 'object',
+        properties: {
+          type: {
+            type: 'string',
+            enum: ['hero', 'richmenu', 'menu-thumbnail'],
+            description: '生成する画像の種類。hero=トップ画像、richmenu=LINE背景、menu-thumbnail=メニュー画像',
+          },
+          prompt: { type: 'string', description: '画像の追加指示（省略可）' },
+          menu_name: { type: 'string', description: 'menu-thumbnailの場合のメニュー名（省略可）' },
+        },
+        required: ['type'],
+      },
+    },
+  },
 ];
 
 // ── Tool execution ────────────────────────────────────────────────────
@@ -894,6 +957,114 @@ async function executeTool(
         if (args.notes !== undefined) profiles[idx].notes = args.notes;
         await kv.put(`pet:profiles:${tenantId}`, JSON.stringify(profiles));
         return JSON.stringify({ success: true, message: `「${profiles[idx].name}」の情報を更新しました` });
+      }
+
+      case 'list_time_blocks': {
+        if (!kv) return JSON.stringify({ error: 'KV not available' });
+        const raw = await kv.get(`timeblocks:${tenantId}`);
+        const data: any = raw ? JSON.parse(raw) : { blocks: [] };
+        const month = (args.month as string) ?? now.toISOString().slice(0, 7);
+        const filtered = (data.blocks || []).filter((b: any) => b.date.startsWith(month));
+        return JSON.stringify({ month, blocks: filtered, total: filtered.length });
+      }
+
+      case 'add_time_block': {
+        if (!kv) return JSON.stringify({ error: 'KV not available' });
+        const openaiKey = env.OPENAI_API_KEY as string | undefined;
+        if (!openaiKey) return JSON.stringify({ error: 'OPENAI_API_KEY not configured' });
+        const openaiRes = await fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${openaiKey}` },
+          body: JSON.stringify({
+            model: 'gpt-4o-mini',
+            response_format: { type: 'json_object' },
+            messages: [
+              {
+                role: 'system',
+                content: `今日は${todayStr}です。
+入力テキストから予約ブロック情報を抽出しJSON形式で返してください。
+必ず以下の形式で返すこと:
+{
+  "blocks": [
+    {
+      "date": "YYYY-MM-DD",
+      "blockType": "closed" | "available",
+      "availableSlots": number | null,
+      "memo": string | null
+    }
+  ]
+}
+blockTypeは「休み・お休み・ブロック・不可」→"closed"、「空き・受付可」→"available"。
+availableSlotsは空き枠数（closedの場合はnull）。`,
+              },
+              { role: 'user', content: args.text as string },
+            ],
+          }),
+        });
+        if (!openaiRes.ok) return JSON.stringify({ error: 'AI parse failed' });
+        const openaiData = await openaiRes.json() as any;
+        const parsed = JSON.parse(openaiData.choices[0].message.content);
+
+        const raw = await kv.get(`timeblocks:${tenantId}`);
+        const data: any = raw ? JSON.parse(raw) : { version: 1, blocks: [] };
+        const newBlocks = ((parsed.blocks || []) as any[]).map((b: any) => ({
+          id: crypto.randomUUID(),
+          date: b.date,
+          blockType: b.blockType,
+          availableSlots: b.availableSlots ?? null,
+          memo: b.memo ?? null,
+          createdAt: new Date().toISOString(),
+        }));
+        for (const nb of newBlocks) {
+          const i = data.blocks.findIndex((b: any) => b.date === nb.date);
+          if (i >= 0) data.blocks[i] = nb; else data.blocks.push(nb);
+        }
+        data.blocks.sort((a: any, b: any) => a.date.localeCompare(b.date));
+        await kv.put(`timeblocks:${tenantId}`, JSON.stringify(data));
+        return JSON.stringify({
+          success: true,
+          added: newBlocks.length,
+          blocks: newBlocks,
+          message: `${newBlocks.map((b: any) => `${b.date}(${b.blockType === 'closed' ? '休み' : '空き'})`).join('、')}を登録しました`,
+        });
+      }
+
+      case 'delete_time_block': {
+        if (!kv) return JSON.stringify({ error: 'KV not available' });
+        const raw = await kv.get(`timeblocks:${tenantId}`);
+        const data: any = raw ? JSON.parse(raw) : { version: 1, blocks: [] };
+        const before = data.blocks.length;
+        if (args.block_id) {
+          data.blocks = data.blocks.filter((b: any) => b.id !== args.block_id);
+        } else if (args.date) {
+          data.blocks = data.blocks.filter((b: any) => b.date !== args.date);
+        } else {
+          return JSON.stringify({ success: false, message: 'block_idまたはdateを指定してください' });
+        }
+        await kv.put(`timeblocks:${tenantId}`, JSON.stringify(data));
+        return JSON.stringify({ success: true, message: `${before - data.blocks.length}件の枠を削除しました` });
+      }
+
+      case 'generate_image': {
+        const imageType = args.type as string;
+        const apiBase = env.API_BASE_URL || 'https://saas-factory-api.hekuijincun.workers.dev';
+        const res = await fetch(`${apiBase}/admin/ai/generate-image?tenantId=${encodeURIComponent(tenantId)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Admin-Token': authToken },
+          body: JSON.stringify({
+            type: imageType,
+            vertical: 'pet',
+            prompt: (args.prompt as string) ?? '',
+            menuName: (args.menu_name as string) ?? '',
+          }),
+        });
+        const imgData = await res.json() as any;
+        if (!imgData.ok) return JSON.stringify({ success: false, message: '画像生成に失敗しました' });
+        return JSON.stringify({
+          success: true,
+          image_url: imgData.imageUrl,
+          message: `${imageType}画像を生成しました。URLを管理画面で確認できます。`,
+        });
       }
 
       default:
