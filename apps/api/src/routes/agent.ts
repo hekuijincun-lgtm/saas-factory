@@ -1505,40 +1505,36 @@ availableSlotsは空き枠数（closedの場合はnull）。`,
       }
 
       case 'update_breed_pricing': {
-        if (!db) return JSON.stringify({ error: 'DB not available' });
-        const existing = await db.prepare(
-          `SELECT id FROM breed_size_pricing
-           WHERE tenant_id = ? AND breed = ? AND size = ?
-           LIMIT 1`
-        ).bind(tenantId, args.breed as string, args.size as string).first<{ id: string }>();
+        if (!kv) return JSON.stringify({ error: 'KV not available' });
+        const key = `breed_pricing:${tenantId}`;
+        const raw = await kv.get(key);
+        const pricing: Array<Record<string, unknown>> = raw ? JSON.parse(raw) : [];
 
-        if (existing) {
-          const fields: string[] = ['price = ?'];
-          const values: unknown[] = [args.price];
-          if (args.duration_minutes) {
-            fields.push('duration_minutes = ?');
-            values.push(args.duration_minutes);
-          }
-          values.push(existing.id, tenantId);
-          await db.prepare(
-            `UPDATE breed_size_pricing SET ${fields.join(', ')} WHERE id = ? AND tenant_id = ?`
-          ).bind(...values).run();
-          return JSON.stringify({ success: true, message: `${args.breed}（${args.size}）の料金を¥${args.price}に更新しました` });
+        const existingIdx = pricing.findIndex(
+          p => p.breed === args.breed && p.size === args.size
+        );
+
+        const entry = {
+          id: existingIdx >= 0 ? pricing[existingIdx].id : crypto.randomUUID(),
+          breed: args.breed,
+          size: args.size,
+          price: args.price,
+          duration_minutes: (args.duration_minutes as number | undefined) ?? 60,
+          menu_id: (args.menu_id as string | undefined) ?? null,
+          updatedAt: new Date().toISOString(),
+        };
+
+        if (existingIdx >= 0) {
+          pricing[existingIdx] = entry;
         } else {
-          const id = crypto.randomUUID();
-          await db.prepare(
-            `INSERT INTO breed_size_pricing (id, tenant_id, breed, size, price, duration_minutes, menu_id)
-             VALUES (?, ?, ?, ?, ?, ?, ?)`
-          ).bind(
-            id, tenantId,
-            args.breed as string,
-            args.size as string,
-            args.price as number,
-            (args.duration_minutes as number | undefined) ?? 60,
-            null,
-          ).run();
-          return JSON.stringify({ success: true, message: `${args.breed}（${args.size}）の料金を¥${args.price}で新規登録しました` });
+          pricing.push(entry);
         }
+
+        await kv.put(key, JSON.stringify(pricing));
+        return JSON.stringify({
+          success: true,
+          message: `${args.breed}（${args.size}）の料金を¥${args.price}に${existingIdx >= 0 ? '更新' : '登録'}しました`,
+        });
       }
 
       default:
@@ -1602,10 +1598,10 @@ export function registerAgentRoutes(app: any) {
       { role: 'user', content: message.trim() },
     ];
 
-    // Call OpenAI with tool calling (up to 3 rounds)
+    // Call OpenAI with tool calling (up to 5 rounds)
     let assistantReply = '';
     const OPENAI_URL = 'https://api.openai.com/v1/chat/completions';
-    const MAX_ROUNDS = 3;
+    const MAX_ROUNDS = 5;
 
     try {
       for (let round = 0; round < MAX_ROUNDS; round++) {
