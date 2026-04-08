@@ -13,7 +13,7 @@ interface ImageState {
 function UploadButton({ onUpload, disabled, label }: { onUpload: (file: File) => void; disabled: boolean; label?: string }) {
   const fileRef = useRef<HTMLInputElement>(null);
   return (
-    <label className={`px-4 py-1.5 text-sm font-medium rounded-lg border border-gray-300 cursor-pointer transition-colors inline-flex items-center gap-2 ${disabled ? 'opacity-50 pointer-events-none' : 'hover:bg-gray-50 text-gray-700'}`}>
+    <label className={`px-4 py-1.5 text-sm font-medium rounded-lg border border-gray-300 cursor-pointer transition-colors inline-flex items-center gap-2 whitespace-nowrap ${disabled ? 'opacity-50 pointer-events-none' : 'hover:bg-gray-50 text-gray-700'}`}>
       <input
         ref={fileRef}
         type="file"
@@ -43,11 +43,11 @@ function ImageCard({ label, imageUrl, generating, uploading, onGenerate, onUploa
 }) {
   return (
     <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="text-base font-semibold text-gray-900">{label}</h3>
-        <div className="flex items-center gap-2">
+      <div className="flex items-start justify-between gap-2 mb-3">
+        <h3 className="text-base font-semibold text-gray-900 min-w-0 flex-1 break-keep">{label}</h3>
+        <div className="flex items-center gap-2 flex-shrink-0">
           <button onClick={onGenerate} disabled={generating || uploading}
-            className="px-4 py-1.5 bg-orange-500 text-white text-sm font-medium rounded-lg hover:bg-orange-600 disabled:opacity-50 transition-colors">
+            className="px-4 py-1.5 bg-orange-500 text-white text-sm font-medium rounded-lg hover:bg-orange-600 disabled:opacity-50 transition-colors whitespace-nowrap">
             {generating ? (
               <span className="flex items-center gap-2">
                 <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
