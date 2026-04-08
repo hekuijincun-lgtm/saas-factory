@@ -503,7 +503,7 @@ const TOOLS = [
     type: 'function' as const,
     function: {
       name: 'add_vaccine_record',
-      description: 'ペットにワクチン接種記録を追加します。ペットID・ワクチン名・接種日・次回期限が必要です。',
+      description: 'ペットにワクチン接種記録を追加します。ペット名が分かればまず list_pets で検索してIDを特定してから実行してください。',
       parameters: {
         type: 'object',
         properties: {
@@ -535,7 +535,7 @@ const TOOLS = [
     type: 'function' as const,
     function: {
       name: 'add_grooming_record',
-      description: 'ペットの施術記録を追加します。施術内容・日時・料金を記録します。',
+      description: 'ペットの施術記録を追加します。ペット名が分かればまず list_pets で検索してIDを特定してから実行してください。',
       parameters: {
         type: 'object',
         properties: {
