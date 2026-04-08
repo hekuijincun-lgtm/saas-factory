@@ -634,5 +634,28 @@ export default async function VerticalLandingPage({ params }: { params: Promise<
   const t = getTheme(vertical);
   const signupUrl = `${SIGNUP_HREF}/${vertical}`;
 
-  return <Design d={d} t={t} vertical={vertical} signupUrl={signupUrl} />;
+  return (
+    <>
+      <Design d={d} t={t} vertical={vertical} signupUrl={signupUrl} />
+      {/* ── LINE連携セクション ──────────────────────────────── */}
+      <section className="py-12 px-6 bg-orange-50">
+        <div className="max-w-2xl mx-auto text-center">
+          <div className="text-4xl mb-4">📱</div>
+          <h2 className="text-2xl font-bold text-gray-800 mb-2">
+            LINEと連携するだけで始められます
+          </h2>
+          <p className="text-gray-500 mb-6 text-sm">
+            むずかしい設定は不要。5ステップで完了します。
+          </p>
+          <a
+            href={`/lp/${vertical}/line-setup`}
+            className="inline-flex items-center gap-2 bg-[#06C755] text-white font-bold px-6 py-3 rounded-full hover:bg-[#05a847] transition shadow-md"
+          >
+            <span>LINE連携の手順を見る</span>
+            <span>→</span>
+          </a>
+        </div>
+      </section>
+    </>
+  );
 }
