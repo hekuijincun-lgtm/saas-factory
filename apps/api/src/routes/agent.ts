@@ -597,6 +597,60 @@ const TOOLS = [
       },
     },
   },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'get_pet',
+      description: 'ペットの詳細情報・ワクチン記録・施術履歴を取得します。ペット名が分かれば list_pets でIDを特定してから実行してください。',
+      parameters: {
+        type: 'object',
+        properties: {
+          pet_id: { type: 'string', description: 'ペットID' },
+        },
+        required: ['pet_id'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'search_reservations',
+      description: '期間・ステータス・顧客名で予約を検索します。「来週の予約」「今月のキャンセル」「田中さんの予約」などに使います。',
+      parameters: {
+        type: 'object',
+        properties: {
+          from: { type: 'string', description: '開始日 YYYY-MM-DD（省略可）' },
+          to: { type: 'string', description: '終了日 YYYY-MM-DD（省略可）' },
+          status: {
+            type: 'string',
+            enum: ['confirmed', 'cancelled', 'completed'],
+            description: 'ステータスで絞り込み（省略可）',
+          },
+          customer_name: { type: 'string', description: '顧客名で絞り込み（省略可）' },
+          limit: { type: 'number', description: '取得件数上限（デフォルト20）' },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'update_breed_pricing',
+      description: '犬種×サイズの料金と施術時間を更新します。「トイプードル小型の料金を4000円にして」などに使います。実行前に確認してください。',
+      parameters: {
+        type: 'object',
+        properties: {
+          breed: { type: 'string', description: '犬種名' },
+          size: { type: 'string', enum: ['small', 'medium', 'large'], description: 'サイズ' },
+          price: { type: 'number', description: '新しい料金（円）' },
+          duration_minutes: { type: 'number', description: '新しい施術時間（分）（省略可）' },
+          menu_id: { type: 'string', description: 'メニューID（省略可）' },
+        },
+        required: ['breed', 'size', 'price'],
+      },
+    },
+  },
 ];
 
 // ── Tool execution ────────────────────────────────────────────────────
@@ -1388,6 +1442,104 @@ availableSlotsは空き枠数（closedの場合はnull）。`,
         });
         await kv.put(`admin:staff:list:${tenantId}`, JSON.stringify(staffList));
         return JSON.stringify({ success: true, id, message: `スタッフ「${args.name}」を追加しました` });
+      }
+
+      case 'get_pet': {
+        if (!kv) return JSON.stringify({ error: 'KV not available' });
+        const raw = await kv.get(`pet:profiles:${tenantId}`);
+        const profiles: Array<Record<string, unknown>> = raw ? JSON.parse(raw) : [];
+        const pet = profiles.find(p => p.id === args.pet_id);
+        if (!pet) return JSON.stringify({ success: false, message: 'ペットが見つかりません' });
+        return JSON.stringify(pet);
+      }
+
+      case 'search_reservations': {
+        if (!db) return JSON.stringify({ error: 'DB not available' });
+        const conditions: string[] = ['tenant_id = ?'];
+        const values: unknown[] = [tenantId];
+
+        if (args.from) {
+          conditions.push('slot_start >= ?');
+          values.push(args.from);
+        }
+        if (args.to) {
+          conditions.push('slot_start <= ?');
+          values.push(args.to + 'T23:59:59');
+        }
+        if (args.status) {
+          conditions.push('status = ?');
+          values.push(args.status);
+        }
+        if (args.customer_name) {
+          conditions.push('customer_name LIKE ?');
+          values.push(`%${args.customer_name}%`);
+        }
+
+        const limit = (args.limit as number) ?? 20;
+        values.push(limit);
+
+        const rows = await db.prepare(
+          `SELECT id, customer_name, customer_phone, slot_start,
+                  duration_minutes, status, staff_id, meta
+           FROM reservations
+           WHERE ${conditions.join(' AND ')}
+           ORDER BY slot_start ASC
+           LIMIT ?`
+        ).bind(...values).all<{
+          id: string;
+          customer_name: string;
+          customer_phone: string;
+          slot_start: string;
+          duration_minutes: number;
+          status: string;
+          staff_id: string;
+          meta: string;
+        }>();
+
+        return JSON.stringify({
+          count: rows.results.length,
+          reservations: rows.results.map((r: any) => ({
+            ...r,
+            meta: r.meta ? (() => { try { return JSON.parse(r.meta); } catch { return {}; } })() : {},
+          })),
+        });
+      }
+
+      case 'update_breed_pricing': {
+        if (!db) return JSON.stringify({ error: 'DB not available' });
+        const existing = await db.prepare(
+          `SELECT id FROM breed_size_pricing
+           WHERE tenant_id = ? AND breed = ? AND size = ?
+           LIMIT 1`
+        ).bind(tenantId, args.breed as string, args.size as string).first<{ id: string }>();
+
+        if (existing) {
+          const fields: string[] = ['price = ?'];
+          const values: unknown[] = [args.price];
+          if (args.duration_minutes) {
+            fields.push('duration_minutes = ?');
+            values.push(args.duration_minutes);
+          }
+          values.push(existing.id, tenantId);
+          await db.prepare(
+            `UPDATE breed_size_pricing SET ${fields.join(', ')} WHERE id = ? AND tenant_id = ?`
+          ).bind(...values).run();
+          return JSON.stringify({ success: true, message: `${args.breed}（${args.size}）の料金を¥${args.price}に更新しました` });
+        } else {
+          const id = crypto.randomUUID();
+          await db.prepare(
+            `INSERT INTO breed_size_pricing (id, tenant_id, breed, size, price, duration_minutes, menu_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`
+          ).bind(
+            id, tenantId,
+            args.breed as string,
+            args.size as string,
+            args.price as number,
+            (args.duration_minutes as number | undefined) ?? 60,
+            (args.menu_id as string | undefined) ?? null,
+          ).run();
+          return JSON.stringify({ success: true, message: `${args.breed}（${args.size}）の料金を¥${args.price}で新規登録しました` });
+        }
       }
 
       default:
