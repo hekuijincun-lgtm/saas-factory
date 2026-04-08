@@ -482,6 +482,121 @@ const TOOLS = [
       },
     },
   },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'create_customer',
+      description: '新しい顧客を登録します。名前と電話番号が必要です。実行前に確認してください。',
+      parameters: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: '顧客名' },
+          phone: { type: 'string', description: '電話番号' },
+          email: { type: 'string', description: 'メールアドレス（省略可）' },
+          notes: { type: 'string', description: '備考（省略可）' },
+        },
+        required: ['name', 'phone'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'add_vaccine_record',
+      description: 'ペットにワクチン接種記録を追加します。ペットID・ワクチン名・接種日・次回期限が必要です。',
+      parameters: {
+        type: 'object',
+        properties: {
+          pet_id: { type: 'string', description: 'ペットID' },
+          vaccine_name: { type: 'string', description: 'ワクチン名（例: 狂犬病、混合ワクチン）' },
+          vaccinated_at: { type: 'string', description: '接種日 YYYY-MM-DD' },
+          next_due_at: { type: 'string', description: '次回接種期限 YYYY-MM-DD' },
+        },
+        required: ['pet_id', 'vaccine_name', 'vaccinated_at', 'next_due_at'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'delete_vaccine_record',
+      description: 'ワクチン接種記録を削除します。ペットIDとワクチンIDが必要です。',
+      parameters: {
+        type: 'object',
+        properties: {
+          pet_id: { type: 'string', description: 'ペットID' },
+          vaccine_id: { type: 'string', description: 'ワクチン記録ID' },
+        },
+        required: ['pet_id', 'vaccine_id'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'add_grooming_record',
+      description: 'ペットの施術記録を追加します。施術内容・日時・料金を記録します。',
+      parameters: {
+        type: 'object',
+        properties: {
+          pet_id: { type: 'string', description: 'ペットID' },
+          service: { type: 'string', description: '施術内容（例: トリミング、シャンプー）' },
+          date: { type: 'string', description: '施術日 YYYY-MM-DD' },
+          price: { type: 'number', description: '料金（円）' },
+          notes: { type: 'string', description: '備考・特記事項（省略可）' },
+        },
+        required: ['pet_id', 'service', 'date'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'update_coupon',
+      description: 'クーポンの内容を更新します。クーポンIDが必要です。',
+      parameters: {
+        type: 'object',
+        properties: {
+          coupon_id: { type: 'string', description: 'クーポンID' },
+          title: { type: 'string', description: '新しいクーポン名（省略可）' },
+          discount_value: { type: 'number', description: '新しい割引値（省略可）' },
+          valid_until: { type: 'string', description: '新しい有効期限 YYYY-MM-DD（省略可）' },
+          is_active: { type: 'boolean', description: '有効/無効の切り替え（省略可）' },
+        },
+        required: ['coupon_id'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'delete_coupon',
+      description: 'クーポンを削除します。実行前に必ず確認してください。',
+      parameters: {
+        type: 'object',
+        properties: {
+          coupon_id: { type: 'string', description: '削除するクーポンID' },
+        },
+        required: ['coupon_id'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'create_staff',
+      description: 'スタッフ（トリマー）を新規追加します。実行前に確認してください。',
+      parameters: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'スタッフ名' },
+          role: { type: 'string', description: '役職（例: トリマー、受付）' },
+          color: { type: 'string', description: 'カレンダー表示色 hex形式（省略可 例: #FF6B6B）' },
+        },
+        required: ['name'],
+      },
+    },
+  },
 ];
 
 // ── Tool execution ────────────────────────────────────────────────────
@@ -1156,6 +1271,123 @@ availableSlotsは空き枠数（closedの場合はnull）。`,
           blocks: calBlocks,
           message: `${calMonth}のカレンダーを生成しました。\nCALENDAR_DATA:${JSON.stringify({ month: calMonth, shopName, blocks: calBlocks })}`,
         });
+      }
+
+      case 'create_customer': {
+        if (!db) return JSON.stringify({ error: 'DB not available' });
+        const id = crypto.randomUUID();
+        await db.prepare(
+          `INSERT INTO customers (id, tenant_id, name, phone, email, notes, visit_count, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, 0, datetime('now'))`
+        ).bind(
+          id, tenantId,
+          args.name as string,
+          args.phone as string,
+          (args.email as string | undefined) ?? null,
+          (args.notes as string | undefined) ?? null,
+        ).run();
+        return JSON.stringify({ success: true, id, message: `顧客「${args.name}」を登録しました` });
+      }
+
+      case 'add_vaccine_record': {
+        if (!kv) return JSON.stringify({ error: 'KV not available' });
+        const raw = await kv.get(`pet:profiles:${tenantId}`);
+        const profiles: Array<Record<string, unknown>> = raw ? JSON.parse(raw) : [];
+        const idx = profiles.findIndex(p => p.id === args.pet_id);
+        if (idx === -1) return JSON.stringify({ success: false, message: 'ペットが見つかりません' });
+
+        const vaccines = (profiles[idx].vaccines as Array<Record<string, unknown>>) ?? [];
+        const vaccineId = crypto.randomUUID();
+        vaccines.push({
+          id: vaccineId,
+          name: args.vaccine_name,
+          vaccinatedAt: args.vaccinated_at,
+          nextDueAt: args.next_due_at,
+          createdAt: new Date().toISOString(),
+        });
+        profiles[idx].vaccines = vaccines;
+        await kv.put(`pet:profiles:${tenantId}`, JSON.stringify(profiles));
+        return JSON.stringify({ success: true, vaccineId, message: `${args.vaccine_name}の接種記録を追加しました（次回: ${args.next_due_at}）` });
+      }
+
+      case 'delete_vaccine_record': {
+        if (!kv) return JSON.stringify({ error: 'KV not available' });
+        const raw = await kv.get(`pet:profiles:${tenantId}`);
+        const profiles: Array<Record<string, unknown>> = raw ? JSON.parse(raw) : [];
+        const idx = profiles.findIndex(p => p.id === args.pet_id);
+        if (idx === -1) return JSON.stringify({ success: false, message: 'ペットが見つかりません' });
+
+        const vaccines = (profiles[idx].vaccines as Array<Record<string, unknown>>) ?? [];
+        profiles[idx].vaccines = vaccines.filter(v => v.id !== args.vaccine_id);
+        await kv.put(`pet:profiles:${tenantId}`, JSON.stringify(profiles));
+        return JSON.stringify({ success: true, message: 'ワクチン記録を削除しました' });
+      }
+
+      case 'add_grooming_record': {
+        if (!kv) return JSON.stringify({ error: 'KV not available' });
+        const raw = await kv.get(`pet:profiles:${tenantId}`);
+        const profiles: Array<Record<string, unknown>> = raw ? JSON.parse(raw) : [];
+        const idx = profiles.findIndex(p => p.id === args.pet_id);
+        if (idx === -1) return JSON.stringify({ success: false, message: 'ペットが見つかりません' });
+
+        const groomings = (profiles[idx].groomingHistory as Array<Record<string, unknown>>) ?? [];
+        const groomingId = crypto.randomUUID();
+        groomings.push({
+          id: groomingId,
+          service: args.service,
+          date: args.date,
+          price: (args.price as number | undefined) ?? null,
+          notes: (args.notes as string | undefined) ?? null,
+          createdAt: new Date().toISOString(),
+        });
+        profiles[idx].groomingHistory = groomings;
+        profiles[idx].lastGroomingDate = args.date;
+        await kv.put(`pet:profiles:${tenantId}`, JSON.stringify(profiles));
+        return JSON.stringify({ success: true, groomingId, message: `${args.service}の施術記録を追加しました` });
+      }
+
+      case 'update_coupon': {
+        if (!db) return JSON.stringify({ error: 'DB not available' });
+        const fields: string[] = [];
+        const values: unknown[] = [];
+        if (args.title) { fields.push('title = ?'); values.push(args.title); }
+        if (args.discount_value !== undefined) { fields.push('discount_value = ?'); values.push(args.discount_value); }
+        if (args.valid_until) { fields.push('valid_until = ?'); values.push(args.valid_until); }
+        if (args.is_active !== undefined) { fields.push('is_active = ?'); values.push(args.is_active ? 1 : 0); }
+        if (fields.length === 0) return JSON.stringify({ success: false, message: '更新項目がありません' });
+        values.push(args.coupon_id, tenantId);
+        await db.prepare(
+          `UPDATE coupons SET ${fields.join(', ')} WHERE id = ? AND tenant_id = ?`
+        ).bind(...values).run();
+        return JSON.stringify({ success: true, message: 'クーポンを更新しました' });
+      }
+
+      case 'delete_coupon': {
+        if (!db) return JSON.stringify({ error: 'DB not available' });
+        const coupon = await db.prepare(
+          'SELECT title FROM coupons WHERE id = ? AND tenant_id = ? LIMIT 1'
+        ).bind(args.coupon_id as string, tenantId).first<{ title: string }>();
+        if (!coupon) return JSON.stringify({ success: false, message: 'クーポンが見つかりません' });
+        await db.prepare(
+          'DELETE FROM coupons WHERE id = ? AND tenant_id = ?'
+        ).bind(args.coupon_id as string, tenantId).run();
+        return JSON.stringify({ success: true, message: `クーポン「${coupon.title}」を削除しました` });
+      }
+
+      case 'create_staff': {
+        if (!kv) return JSON.stringify({ error: 'KV not available' });
+        const raw = await kv.get(`admin:staff:list:${tenantId}`);
+        const staffList: Array<Record<string, unknown>> = raw ? JSON.parse(raw) : [];
+        const id = crypto.randomUUID();
+        staffList.push({
+          id,
+          name: args.name,
+          role: (args.role as string | undefined) ?? 'トリマー',
+          color: (args.color as string | undefined) ?? '#F97316',
+          createdAt: new Date().toISOString(),
+        });
+        await kv.put(`admin:staff:list:${tenantId}`, JSON.stringify(staffList));
+        return JSON.stringify({ success: true, id, message: `スタッフ「${args.name}」を追加しました` });
       }
 
       default:
