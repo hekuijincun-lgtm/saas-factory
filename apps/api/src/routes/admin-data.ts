@@ -2219,6 +2219,148 @@ app.get("/admin/breed-pricing/lookup", async (c) => {
   }
 });
 
+/** POST /admin/breed-pricing/ai-suggest — LLM generates price suggestions per breed×size */
+app.post("/admin/breed-pricing/ai-suggest", async (c) => {
+  const openaiApiKey: string | undefined = (c.env as any).OPENAI_API_KEY;
+  if (!openaiApiKey) return c.json({ ok: false, error: "OPENAI_API_KEY_not_set" }, 500);
+
+  try {
+    const { menuName, menuPrice, breeds } = await c.req.json<{
+      menuName: string;
+      menuPrice: number;
+      breeds: Array<{ name: string; defaultSize: string }>;
+    }>();
+
+    if (!menuName || menuPrice == null || !Array.isArray(breeds) || breeds.length === 0) {
+      return c.json({ ok: false, error: "missing_fields" }, 400);
+    }
+
+    const prompt = `あなたはペットサロンの料金設定の専門家です。
+メニュー「${menuName}」（デフォルト料金: ¥${menuPrice}）について、
+以下の犬種それぞれの小型・中型・大型の料金と施術時間を提案してください。
+
+犬種リスト: ${breeds.map(b => b.name).join('、')}
+
+ルール:
+- 小型犬は デフォルト料金 ± 20%以内
+- 中型犬は 小型犬の1.2〜1.5倍
+- 大型犬は 小型犬の1.5〜2.0倍
+- 料金は500円単位に丸める
+- 施術時間: 小型60〜90分、中型90〜120分、大型120〜180分
+
+必ずJSON形式のみで返答。説明不要:
+{
+  "suggestions": [
+    {
+      "breed": "犬種名",
+      "small": { "price": 3000, "duration": 60 },
+      "medium": { "price": 4000, "duration": 90 },
+      "large": { "price": 5500, "duration": 120 }
+    }
+  ]
+}`;
+
+    const openaiRes = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${openaiApiKey}`,
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        response_format: { type: 'json_object' },
+        messages: [{ role: 'user', content: prompt }],
+      }),
+    });
+
+    if (!openaiRes.ok) {
+      const errText = await openaiRes.text();
+      return c.json({ ok: false, error: "openai_error", detail: errText }, 500);
+    }
+
+    const data = await openaiRes.json() as { choices: Array<{ message: { content: string } }> };
+    const content = data.choices?.[0]?.message?.content ?? '{}';
+    const result = JSON.parse(content);
+    return c.json(result);
+  } catch (e: any) {
+    return c.json({ ok: false, error: "exception", detail: String(e?.message ?? e) }, 500);
+  }
+});
+
+/** POST /admin/breed-pricing/parse-image — GPT-4o Vision parses a pricing sheet image */
+app.post("/admin/breed-pricing/parse-image", async (c) => {
+  const openaiApiKey: string | undefined = (c.env as any).OPENAI_API_KEY;
+  if (!openaiApiKey) return c.json({ ok: false, error: "OPENAI_API_KEY_not_set" }, 500);
+
+  try {
+    const formData = await c.req.formData();
+    const file = formData.get('file') as File | null;
+    if (!file) return c.json({ ok: false, error: "missing_file" }, 400);
+
+    if (file.size > 10 * 1024 * 1024) {
+      return c.json({ ok: false, error: "file_too_large", maxBytes: 10485760 }, 413);
+    }
+
+    const arrayBuffer = await file.arrayBuffer();
+    const bytes = new Uint8Array(arrayBuffer);
+    let binary = '';
+    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+    const base64 = btoa(binary);
+    const mimeType = file.type || 'image/jpeg';
+
+    const openaiRes = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${openaiApiKey}`,
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o',
+        response_format: { type: 'json_object' },
+        messages: [{
+          role: 'user',
+          content: [
+            {
+              type: 'image_url',
+              image_url: { url: `data:${mimeType};base64,${base64}` },
+            },
+            {
+              type: 'text',
+              text: `この画像はペットサロンの料金表です。
+犬種名と小型・中型・大型それぞれの料金を読み取り、
+必ずJSON形式のみで返答してください（説明不要）:
+{
+  "extracted": [
+    {
+      "breed": "犬種名",
+      "small": { "price": 3000, "duration": 60 },
+      "medium": { "price": 4500, "duration": 90 },
+      "large": { "price": 6000, "duration": 120 }
+    }
+  ]
+}
+読み取れないサイズはnullにしてください。
+料金が円単位でない場合は円に変換してください。`,
+            },
+          ],
+        }],
+      }),
+    });
+
+    if (!openaiRes.ok) {
+      const errText = await openaiRes.text();
+      return c.json({ ok: false, error: "openai_error", detail: errText }, 500);
+    }
+
+    const data = await openaiRes.json() as { choices: Array<{ message: { content: string } }> };
+    const content = data.choices?.[0]?.message?.content ?? '{}';
+    const result = JSON.parse(content);
+    return c.json(result);
+  } catch (e: any) {
+    return c.json({ ok: false, error: "exception", detail: String(e?.message ?? e) }, 500);
+  }
+});
+
 // ── AI Estimate (Pet Grooming) ────────────────────────────────────────────────
 
 /** POST /admin/ai-estimate — AI-powered grooming estimate */

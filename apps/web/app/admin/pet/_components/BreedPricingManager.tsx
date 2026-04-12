@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { getMenu, type MenuItem } from '@/src/lib/bookingApi';
 
 interface Breed {
@@ -46,6 +46,11 @@ export default function BreedPricingManager({ tenantId }: { tenantId: string }) 
   // Editable cells: key = `${breed}::${size}`
   const [cells, setCells] = useState<Record<string, CellEdit>>({});
   const [customBreed, setCustomBreed] = useState('');
+
+  // AI / image input state
+  const [aiLoading, setAiLoading] = useState(false);
+  const [imageUploading, setImageUploading] = useState(false);
+  const priceImageRef = useRef<HTMLInputElement>(null);
 
   // Active breed list (from master + existing rules with custom breeds)
   const [activeBreeds, setActiveBreeds] = useState<string[]>([]);
@@ -188,6 +193,121 @@ export default function BreedPricingManager({ tenantId }: { tenantId: string }) 
     }
   };
 
+  const handleAiSuggest = async () => {
+    if (!selectedMenuId) {
+      alert('先にメニューを選択してください');
+      return;
+    }
+    setAiLoading(true);
+    try {
+      const menu = menus.find(m => m.id === selectedMenuId);
+      const res = await fetch(
+        `/api/proxy/admin/breed-pricing/ai-suggest?tenantId=${encodeURIComponent(tenantId)}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            tenantId,
+            menuId: selectedMenuId,
+            menuName: menu?.name,
+            menuPrice: menu?.price,
+            breeds: breeds.map(b => ({ name: b.name, defaultSize: b.default_size })),
+          }),
+        }
+      );
+      const data: any = await res.json();
+      if (data?.suggestions && Array.isArray(data.suggestions)) {
+        setCells(prev => {
+          const next = { ...prev };
+          for (const s of data.suggestions) {
+            for (const size of ['small', 'medium', 'large'] as const) {
+              const key = `${s.breed}::${size}`;
+              const priceVal = s[size]?.price ?? menu?.price ?? 0;
+              const durVal = s[size]?.duration ?? menu?.durationMin ?? 60;
+              next[key] = {
+                breed: s.breed,
+                size,
+                price: String(priceVal),
+                duration: String(durVal),
+                notes: prev[key]?.notes ?? '',
+              };
+            }
+          }
+          return next;
+        });
+        // Make sure AI-suggested breeds appear in the table even if not in master
+        setActiveBreeds(prev => {
+          const set = new Set(prev);
+          for (const s of data.suggestions) set.add(s.breed);
+          return Array.from(set);
+        });
+        alert(`${data.suggestions.length}犬種の料金をAIが提案しました。確認後「保存」してください。`);
+      } else {
+        alert('AI提案の形式が不正です');
+      }
+    } catch {
+      alert('AI提案に失敗しました');
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
+  const handlePriceImageUpload = async (file: File) => {
+    if (!selectedMenuId) {
+      alert('先にメニューを選択してください');
+      return;
+    }
+    setImageUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('tenantId', tenantId);
+      formData.append('menuId', selectedMenuId);
+
+      const res = await fetch(
+        `/api/proxy/admin/breed-pricing/parse-image?tenantId=${encodeURIComponent(tenantId)}`,
+        {
+          method: 'POST',
+          body: formData,
+        }
+      );
+      const data: any = await res.json();
+      if (data?.extracted && Array.isArray(data.extracted)) {
+        const menu = menus.find(m => m.id === selectedMenuId);
+        setCells(prev => {
+          const next = { ...prev };
+          for (const row of data.extracted) {
+            for (const size of ['small', 'medium', 'large'] as const) {
+              if (row[size]) {
+                const key = `${row.breed}::${size}`;
+                next[key] = {
+                  breed: row.breed,
+                  size,
+                  price: String(row[size].price),
+                  duration: String(row[size].duration ?? menu?.durationMin ?? 60),
+                  notes: prev[key]?.notes ?? '',
+                };
+              }
+            }
+          }
+          return next;
+        });
+        setActiveBreeds(prev => {
+          const set = new Set(prev);
+          for (const row of data.extracted) set.add(row.breed);
+          return Array.from(set);
+        });
+        alert(`${data.extracted.length}行の料金データを読み取りました。確認後「保存」してください。`);
+      } else {
+        alert('画像読み取りの形式が不正です');
+      }
+    } catch {
+      alert('画像読み取りに失敗しました');
+    } finally {
+      setImageUploading(false);
+    }
+  };
+
   const handleDeleteBreedRules = async (breed: string) => {
     if (!confirm(`「${breed}」の全サイズの料金設定を削除しますか？`)) return;
     const toDelete = rules.filter(r => r.breed === breed);
@@ -257,6 +377,35 @@ export default function BreedPricingManager({ tenantId }: { tenantId: string }) 
             犬種別料金が未設定の場合、このデフォルト料金が使われます。
           </div>
         )}
+      </div>
+
+      {/* AI / image input buttons */}
+      <div className="flex flex-wrap gap-2">
+        <button
+          onClick={handleAiSuggest}
+          disabled={aiLoading || !selectedMenuId}
+          className="flex items-center gap-2 px-4 py-2 bg-orange-500 text-white rounded-lg text-sm font-medium hover:bg-orange-600 disabled:opacity-40 transition-colors"
+        >
+          {aiLoading ? '⏳ AI提案中...' : '🤖 AIにお任せ設定'}
+        </button>
+        <button
+          onClick={() => priceImageRef.current?.click()}
+          disabled={imageUploading || !selectedMenuId}
+          className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 disabled:opacity-40 transition-colors"
+        >
+          {imageUploading ? '⏳ 読み取り中...' : '📷 料金表画像から入力'}
+        </button>
+        <input
+          ref={priceImageRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={e => {
+            const file = e.target.files?.[0];
+            if (file) handlePriceImageUpload(file);
+            e.target.value = '';
+          }}
+        />
       </div>
 
       {/* Add custom breed */}
