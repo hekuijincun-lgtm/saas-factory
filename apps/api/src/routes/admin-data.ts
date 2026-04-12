@@ -2239,7 +2239,7 @@ app.post("/admin/breed-pricing/ai-suggest", async (c) => {
 メニュー「${menuName}」（デフォルト料金: ¥${menuPrice}）について、
 以下の犬種それぞれの小型・中型・大型の料金と施術時間を提案してください。
 
-犬種リスト: ${breeds.map(b => b.name).join('、')}
+犬種リスト（この名前を必ずそのまま使うこと）: ${breeds.map(b => b.name).join('、')}
 
 ルール:
 - 小型犬は デフォルト料金 ± 20%以内
@@ -2248,11 +2248,11 @@ app.post("/admin/breed-pricing/ai-suggest", async (c) => {
 - 料金は500円単位に丸める
 - 施術時間: 小型60〜90分、中型90〜120分、大型120〜180分
 
-必ずJSON形式のみで返答。説明不要:
+必ずJSON形式のみで返答。説明不要。breedフィールドには上記犬種リストの名前をそのまま使用すること:
 {
   "suggestions": [
     {
-      "breed": "犬種名",
+      "breed": "犬種リストの名前をそのまま使用",
       "small": { "price": 3000, "duration": 60 },
       "medium": { "price": 4000, "duration": 90 },
       "large": { "price": 5500, "duration": 120 }

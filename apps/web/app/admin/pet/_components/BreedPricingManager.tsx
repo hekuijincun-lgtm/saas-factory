@@ -34,6 +34,8 @@ const SIZE_OPTIONS = [
   { value: 'large', label: '大型' },
 ];
 
+const normalize = (s: string) => s.replace(/[・\s\-]/g, '').toLowerCase();
+
 export default function BreedPricingManager({ tenantId }: { tenantId: string }) {
   const [menus, setMenus] = useState<MenuItem[]>([]);
   const [breeds, setBreeds] = useState<Breed[]>([]);
@@ -220,12 +222,20 @@ export default function BreedPricingManager({ tenantId }: { tenantId: string }) 
         setCells(prev => {
           const next = { ...prev };
           for (const s of data.suggestions) {
+            const matchedBreed = breeds.find(
+              b => normalize(b.name) === normalize(s.breed) ||
+                   normalize(b.name).includes(normalize(s.breed)) ||
+                   normalize(s.breed).includes(normalize(b.name))
+            );
+            const breedName = matchedBreed?.name ?? s.breed;
             for (const size of ['small', 'medium', 'large'] as const) {
-              const key = `${s.breed}::${size}`;
-              const priceVal = s[size]?.price ?? menu?.price ?? 0;
-              const durVal = s[size]?.duration ?? menu?.durationMin ?? 60;
+              const sizeData = s[size];
+              if (!sizeData) continue;
+              const key = `${breedName}::${size}`;
+              const priceVal = Number(sizeData.price) || (menu?.price ?? 0);
+              const durVal = Number(sizeData.duration) || (menu?.durationMin ?? 60);
               next[key] = {
-                breed: s.breed,
+                breed: breedName,
                 size,
                 price: String(priceVal),
                 duration: String(durVal),
@@ -238,7 +248,14 @@ export default function BreedPricingManager({ tenantId }: { tenantId: string }) 
         // Make sure AI-suggested breeds appear in the table even if not in master
         setActiveBreeds(prev => {
           const set = new Set(prev);
-          for (const s of data.suggestions) set.add(s.breed);
+          for (const s of data.suggestions) {
+            const matchedBreed = breeds.find(
+              b => normalize(b.name) === normalize(s.breed) ||
+                   normalize(b.name).includes(normalize(s.breed)) ||
+                   normalize(s.breed).includes(normalize(b.name))
+            );
+            set.add(matchedBreed?.name ?? s.breed);
+          }
           return Array.from(set);
         });
         alert(`${data.suggestions.length}犬種の料金をAIが提案しました。確認後「保存」してください。`);
@@ -277,24 +294,36 @@ export default function BreedPricingManager({ tenantId }: { tenantId: string }) 
         setCells(prev => {
           const next = { ...prev };
           for (const row of data.extracted) {
+            const matchedBreed = breeds.find(
+              b => normalize(b.name) === normalize(row.breed) ||
+                   normalize(b.name).includes(normalize(row.breed)) ||
+                   normalize(row.breed).includes(normalize(b.name))
+            );
+            const breedName = matchedBreed?.name ?? row.breed;
             for (const size of ['small', 'medium', 'large'] as const) {
-              if (row[size]) {
-                const key = `${row.breed}::${size}`;
-                next[key] = {
-                  breed: row.breed,
-                  size,
-                  price: String(row[size].price),
-                  duration: String(row[size].duration ?? menu?.durationMin ?? 60),
-                  notes: prev[key]?.notes ?? '',
-                };
-              }
+              if (!row[size]) continue;
+              const key = `${breedName}::${size}`;
+              next[key] = {
+                breed: breedName,
+                size,
+                price: String(row[size].price),
+                duration: String(row[size].duration ?? menu?.durationMin ?? 60),
+                notes: prev[key]?.notes ?? '',
+              };
             }
           }
           return next;
         });
         setActiveBreeds(prev => {
           const set = new Set(prev);
-          for (const row of data.extracted) set.add(row.breed);
+          for (const row of data.extracted) {
+            const matchedBreed = breeds.find(
+              b => normalize(b.name) === normalize(row.breed) ||
+                   normalize(b.name).includes(normalize(row.breed)) ||
+                   normalize(row.breed).includes(normalize(b.name))
+            );
+            set.add(matchedBreed?.name ?? row.breed);
+          }
           return Array.from(set);
         });
         alert(`${data.extracted.length}行の料金データを読み取りました。確認後「保存」してください。`);
