@@ -218,6 +218,7 @@ export default function BreedPricingManager({ tenantId }: { tenantId: string }) 
         }
       );
       const data: any = await res.json();
+      alert(`AI提案取得: ${data.suggestions?.length}件\n最初: ${JSON.stringify(data.suggestions?.[0])}`);
       if (data?.suggestions && Array.isArray(data.suggestions)) {
         setCells(prev => {
           const next = { ...prev };
@@ -505,27 +506,23 @@ export default function BreedPricingManager({ tenantId }: { tenantId: string }) 
                     {SIZE_OPTIONS.map(s => {
                       const key = `${breed}::${s.value}`;
                       const cell = cells[key];
-                      if (!cell) return [
-                        <td key={`${key}_p`} className="px-1 py-1.5"></td>,
-                        <td key={`${key}_d`} className="px-1 py-1.5"></td>,
-                      ];
                       return [
                         <td key={`${key}_p`} className="px-1 py-1.5">
                           <input
                             type="number"
-                            value={cell.price}
+                            value={cell?.price ?? ''}
                             onChange={e => handleCellChange(breed, s.value, 'price', e.target.value)}
                             placeholder={selectedMenu ? String(selectedMenu.price) : '—'}
-                            className="w-20 px-2 py-1.5 rounded border border-gray-200 text-sm text-right focus:outline-none focus:ring-1 focus:ring-orange-300 tabular-nums placeholder:text-gray-300"
+                            className="w-20 text-sm border border-gray-200 rounded px-1 py-0.5 text-center focus:outline-none focus:border-orange-400"
                           />
                         </td>,
                         <td key={`${key}_d`} className="px-1 py-1.5">
                           <input
                             type="number"
-                            value={cell.duration}
+                            value={cell?.duration ?? ''}
                             onChange={e => handleCellChange(breed, s.value, 'duration', e.target.value)}
                             placeholder={selectedMenu ? String(selectedMenu.durationMin) : '—'}
-                            className="w-16 px-2 py-1.5 rounded border border-gray-200 text-sm text-right focus:outline-none focus:ring-1 focus:ring-orange-300 tabular-nums placeholder:text-gray-300"
+                            className="w-16 text-sm border border-gray-200 rounded px-1 py-0.5 text-center focus:outline-none focus:border-orange-400"
                           />
                         </td>,
                       ];
