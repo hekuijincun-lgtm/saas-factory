@@ -33,6 +33,24 @@ module.exports = {
           muted: '#64748B',
           border: '#E2E8F0',
         },
+        ink: '#1B2330',
+        cream: '#F7F3EC',
+        'cream-tint': '#FAECE7',
+        terracotta: {
+          DEFAULT: '#C45A3D',
+          hover: '#B04F33',
+        },
+        fog: {
+          DEFAULT: '#5C6470',
+          light: '#8B92A1',
+        },
+        sage: '#EAEFE6',
+        'sage-deep': '#3B6D11',
+      },
+      fontFamily: {
+        'serif-jp': ['"Noto Serif JP"', '"Hiragino Mincho ProN"', 'YuMincho', 'serif'],
+        'sans-jp': ['"Noto Sans JP"', '"Hiragino Sans"', 'sans-serif'],
+        'sans-ui': ['Inter', 'system-ui', 'sans-serif'],
       },
       borderRadius: {
         xl: '1rem',
