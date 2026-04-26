@@ -1,16 +1,26 @@
 // route: /admin/billing
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import AdminTopBar from '../../_components/ui/AdminTopBar';
 import { useAdminTenantId } from '@/src/lib/useAdminTenantId';
 import type { SubscriptionInfo, PlanId } from '@/src/types/settings';
 import { CreditCard, AlertTriangle, X } from 'lucide-react';
+import { loadStripe, type Stripe as StripeJS } from '@stripe/stripe-js';
+import { Elements, PaymentElement, useStripe, useElements } from '@stripe/react-stripe-js';
 
-// PAY.JP public key
-const PAYJP_PUBLIC_KEY = process.env.NEXT_PUBLIC_PAYJP_PUBLIC_KEY ?? '';
+// Stripe config from env
+const STRIPE_PUBLISHABLE_KEY = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY ?? '';
 
-// ── Plan display ─────────────────────────────────────────────────────────────
+let stripePromise: Promise<StripeJS | null> | null = null;
+function getStripePromise() {
+  if (!stripePromise && STRIPE_PUBLISHABLE_KEY) {
+    stripePromise = loadStripe(STRIPE_PUBLISHABLE_KEY);
+  }
+  return stripePromise;
+}
+
+// ── Plan display ─────────��──────────────────────────────���────────────────────
 
 const PLAN_LABELS: Record<PlanId, string> = {
   starter: 'Starter',
@@ -40,8 +50,6 @@ function formatDateTime(ms: number | undefined): string {
   });
 }
 
-// ── Row component ────────────────────────────────────────────────────────────
-
 function InfoRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex items-start justify-between py-3 border-b border-gray-100 last:border-b-0">
@@ -51,21 +59,17 @@ function InfoRow({ label, children }: { label: string; children: React.ReactNode
   );
 }
 
-// ── Empty state ──────────────────────────────────────────────────────────────
-
 function NoSubscription() {
   return (
     <div className="flex flex-col items-center justify-center py-16 text-center">
       <div className="w-14 h-14 rounded-full bg-gray-100 flex items-center justify-center mb-4">
         <CreditCard className="w-7 h-7 text-gray-400" />
       </div>
-      <p className="text-sm font-medium text-gray-500">課金情報がありません</p>
+      <p className="text-sm font-medium text-gray-500">課金情報��ありません</p>
       <p className="text-xs text-gray-400 mt-1">プランを契約すると、ここにプラン情報が表示されます。</p>
     </div>
   );
 }
-
-// ── Charge history item ──────────────────────────────────────────────────────
 
 interface ChargeItem {
   id: string;
@@ -76,7 +80,55 @@ interface ChargeItem {
   description: string;
 }
 
-// ── Main page ────────────────────────────────────────────────────────────────
+// ── Stripe SetupIntent card update (inner component) ────────────────────────
+
+function StripeCardUpdateInner({
+  onSuccess,
+  onError,
+  updating,
+  setUpdating,
+}: {
+  onSuccess: () => void;
+  onError: (msg: string) => void;
+  updating: boolean;
+  setUpdating: (v: boolean) => void;
+}) {
+  const stripe = useStripe();
+  const elements = useElements();
+
+  async function handleConfirm() {
+    if (!stripe || !elements) return;
+    setUpdating(true);
+    const { error } = await stripe.confirmSetup({
+      elements,
+      confirmParams: { return_url: window.location.href },
+      redirect: 'if_required',
+    });
+    setUpdating(false);
+    if (error) {
+      onError(error.message ?? 'カードの更新に失敗しました');
+    } else {
+      onSuccess();
+    }
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="rounded-lg border border-gray-200 px-4 py-3 bg-white">
+        <PaymentElement options={{ layout: 'tabs' }} />
+      </div>
+      <button
+        onClick={handleConfirm}
+        disabled={updating || !stripe}
+        className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-50 transition-all"
+      >
+        {updating ? '更新中...' : 'カードを更新'}
+      </button>
+    </div>
+  );
+}
+
+// ── Main page ─────────────���──────────────────────────────────────────────────
 
 export default function BillingPage() {
   const { status: tenantStatus, tenantId } = useAdminTenantId();
@@ -89,9 +141,7 @@ export default function BillingPage() {
   const [cardUpdating, setCardUpdating] = useState(false);
   const [cardError, setCardError] = useState<string | null>(null);
   const [cardSuccess, setCardSuccess] = useState(false);
-  const payjpRef = useRef<any>(null);
-  const cardElementRef = useRef<any>(null);
-  const cardMountRef = useRef<HTMLDivElement>(null);
+  const [stripeSetupSecret, setStripeSetupSecret] = useState<string | null>(null);
 
   // Cancel state
   const [cancelConfirm, setCancelConfirm] = useState(false);
@@ -101,6 +151,9 @@ export default function BillingPage() {
   // Charges
   const [charges, setCharges] = useState<ChargeItem[]>([]);
   const [chargesLoading, setChargesLoading] = useState(false);
+
+  const hasCustomer = !!subscription?.stripeCustomerId;
+  const customerId = subscription?.stripeCustomerId ?? '';
 
   useEffect(() => {
     if (tenantStatus !== 'ready') return;
@@ -118,84 +171,37 @@ export default function BillingPage() {
 
   // Load charges when subscription has a customer
   useEffect(() => {
-    if (!subscription?.payjpCustomerId) return;
+    if (!hasCustomer) return;
     setChargesLoading(true);
     fetch(`/api/proxy/admin/billing/charges?tenantId=${encodeURIComponent(tenantId)}`, { cache: 'no-store' })
       .then(r => r.ok ? r.json() : Promise.reject(r.status))
       .then((json: any) => { if (json.ok) setCharges(json.charges ?? []); })
       .catch(() => {})
       .finally(() => setChargesLoading(false));
-  }, [subscription?.payjpCustomerId, tenantId]);
+  }, [hasCustomer, tenantId]);
 
-  // Mount PAY.JP card element for card update
+  // ── Stripe: fetch SetupIntent clientSecret when opening card form ──────
   useEffect(() => {
-    if (!showCardForm || !PAYJP_PUBLIC_KEY) return;
-
-    function initPayjp() {
-      if (payjpRef.current) return;
-      const payjp = (window as any).Payjp(PAYJP_PUBLIC_KEY);
-      payjpRef.current = payjp;
-      const elements = payjp.elements();
-      const el = elements.create('card', {
-        style: { base: { fontSize: '14px', color: '#334155' }, invalid: { color: '#ef4444' } },
-      });
-      cardElementRef.current = el;
-      if (cardMountRef.current) el.mount(cardMountRef.current);
-    }
-
-    if (!document.getElementById('payjp-script')) {
-      const script = document.createElement('script');
-      script.id = 'payjp-script';
-      script.src = 'https://js.pay.jp/v2/pay.js';
-      script.onload = initPayjp;
-      document.head.appendChild(script);
-    } else if ((window as any).Payjp) {
-      initPayjp();
-    }
-
-    return () => {
-      if (cardElementRef.current) {
-        try { cardElementRef.current.unmount(); } catch {}
-        cardElementRef.current = null;
+    if (!showCardForm) return;
+    setStripeSetupSecret(null);
+    (async () => {
+      try {
+        const res = await fetch(`/api/proxy/admin/billing/update-card?tenantId=${encodeURIComponent(tenantId)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+        });
+        const data = await res.json() as any;
+        if (data.ok && data.clientSecret) {
+          setStripeSetupSecret(data.clientSecret);
+        } else {
+          setCardError(data.detail ?? data.error ?? 'SetupIntentの取得に失敗しました');
+        }
+      } catch {
+        setCardError('SetupIntentの取得に失敗しま���た');
       }
-      payjpRef.current = null;
-    };
-  }, [showCardForm]);
-
-  async function handleCardUpdate() {
-    if (!cardElementRef.current || !payjpRef.current) return;
-    setCardUpdating(true);
-    setCardError(null);
-    setCardSuccess(false);
-
-    try {
-      // Create token with 3-D Secure authentication
-      const result = await payjpRef.current.createToken(cardElementRef.current, {
-        three_d_secure: true,
-      });
-      if (result.error) {
-        setCardError(result.error.message ?? 'カード情報が正しくありません');
-        return;
-      }
-
-      const res = await fetch(`/api/proxy/admin/billing/update-card?tenantId=${encodeURIComponent(tenantId)}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token: result.id }),
-      });
-      const data = await res.json() as any;
-      if (data.ok) {
-        setCardSuccess(true);
-        setShowCardForm(false);
-      } else {
-        setCardError(data.detail ?? data.error ?? 'カードの更新に失敗しました');
-      }
-    } catch {
-      setCardError('カードの更新に失敗しました');
-    } finally {
-      setCardUpdating(false);
-    }
-  }
+    })();
+  }, [showCardForm, tenantId]);
 
   async function handleCancel() {
     setCancelling(true);
@@ -214,7 +220,7 @@ export default function BillingPage() {
         setCancelError(data.detail ?? data.error ?? '解約に失敗しました');
       }
     } catch {
-      setCancelError('解約に失敗しました');
+      setCancelError('解約に��敗しました');
     } finally {
       setCancelling(false);
     }
@@ -277,44 +283,38 @@ export default function BillingPage() {
                       {STATUS_CONFIG[subscription.status]?.label ?? subscription.status}
                     </span>
                   </InfoRow>
+                  <InfoRow label="決済プロバイダー">
+                    {hasCustomer ? 'Stripe' : '—'}
+                  </InfoRow>
                   <InfoRow label="次回更新日">
                     {formatDate(subscription.currentPeriodEnd)}
                   </InfoRow>
-                  <InfoRow label="契約開始日">
+                  <InfoRow label="契約開���日">
                     {formatDateTime(subscription.createdAt)}
                   </InfoRow>
-                  {subscription.payjpCustomerId && (
+                  {customerId && (
                     <InfoRow label="顧客 ID">
                       <code className="text-xs font-mono bg-gray-100 px-1.5 py-0.5 rounded">
-                        {subscription.payjpCustomerId}
-                      </code>
-                    </InfoRow>
-                  )}
-                  {subscription.payjpSubscriptionId && (
-                    <InfoRow label="サブスクリプション ID">
-                      <code className="text-xs font-mono bg-gray-100 px-1.5 py-0.5 rounded">
-                        {subscription.payjpSubscriptionId}
+                        {customerId}
                       </code>
                     </InfoRow>
                   )}
                 </div>
 
-                {/* Past due warning */}
                 {subscription.status === 'past_due' && (
                   <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
-                    <p className="text-sm font-medium text-amber-800">お支払いに問題があります</p>
+                    <p className="text-sm font-medium text-amber-800">お支払いに問題がありま���</p>
                     <p className="text-xs text-amber-700 mt-0.5">
                       お支払い情報をご確認ください。問題が解消されない場合、サービスが制限される場合があります。
                     </p>
                   </div>
                 )}
 
-                {/* Cancelled info */}
                 {subscription.status === 'cancelled' && (
                   <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3">
                     <p className="text-sm font-medium text-red-800">サブスクリプションはキャンセル済みです</p>
                     <p className="text-xs text-red-700 mt-0.5">
-                      再開するには新しいプランをご契約ください。
+                      再開するには新しいプランをご契約くだ���い。
                     </p>
                   </div>
                 )}
@@ -322,12 +322,11 @@ export default function BillingPage() {
             )}
           </div>
 
-          {/* Management actions (PAY.JP self-managed) */}
-          {subscription?.payjpCustomerId && subscription.status !== 'cancelled' && (
+          {/* Management actions */}
+          {hasCustomer && subscription?.status !== 'cancelled' && (
             <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 space-y-4">
               <h2 className="text-base font-semibold text-gray-900 mb-1">契約管理</h2>
 
-              {/* Card update */}
               {cardSuccess && (
                 <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
                   カード情報を更新しました
@@ -336,7 +335,7 @@ export default function BillingPage() {
 
               {!showCardForm ? (
                 <button
-                  onClick={() => { setShowCardForm(true); setCardSuccess(false); }}
+                  onClick={() => { setShowCardForm(true); setCardSuccess(false); setCardError(null); }}
                   className="inline-flex items-center gap-2 px-4 py-2.5 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-all"
                 >
                   <CreditCard className="w-4 h-4" />
@@ -346,19 +345,27 @@ export default function BillingPage() {
                 <div className="border border-gray-200 rounded-xl p-4 space-y-3">
                   <div className="flex items-center justify-between">
                     <span className="text-sm font-medium text-gray-700">新しいカード情報</span>
-                    <button onClick={() => setShowCardForm(false)} className="text-gray-400 hover:text-gray-600">
+                    <button onClick={() => { setShowCardForm(false); setStripeSetupSecret(null); }} className="text-gray-400 hover:text-gray-600">
                       <X className="w-4 h-4" />
                     </button>
                   </div>
-                  <div ref={cardMountRef} className="rounded-lg border border-gray-200 px-4 py-3 min-h-[44px] bg-white" />
+
+                  {/* Stripe card update */}
+                  {stripeSetupSecret && (
+                    <Elements stripe={getStripePromise()} options={{ clientSecret: stripeSetupSecret, appearance: { theme: 'stripe' } }}>
+                      <StripeCardUpdateInner
+                        onSuccess={() => { setCardSuccess(true); setShowCardForm(false); setStripeSetupSecret(null); }}
+                        onError={(msg) => setCardError(msg)}
+                        updating={cardUpdating}
+                        setUpdating={setCardUpdating}
+                      />
+                    </Elements>
+                  )}
+                  {!stripeSetupSecret && (
+                    <div className="py-4 text-center text-sm text-gray-400">準備中...</div>
+                  )}
+
                   {cardError && <p className="text-xs text-red-500">{cardError}</p>}
-                  <button
-                    onClick={handleCardUpdate}
-                    disabled={cardUpdating}
-                    className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-50 transition-all"
-                  >
-                    {cardUpdating ? '更新中...' : 'カードを更新'}
-                  </button>
                 </div>
               )}
 
@@ -405,7 +412,7 @@ export default function BillingPage() {
           )}
 
           {/* Charge history */}
-          {subscription?.payjpCustomerId && charges.length > 0 && (
+          {hasCustomer && charges.length > 0 && (
             <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6">
               <h2 className="text-base font-semibold text-gray-900 mb-4">請求履歴</h2>
               <div className="divide-y divide-gray-100">

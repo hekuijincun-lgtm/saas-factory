@@ -63,7 +63,7 @@ export interface IntegrationSettings {
     notifyOnReminder?: boolean; // リマインド通知（default: false）
     lastError?: string; // 最後のエラーメッセージ
   };
-  payjp?: {
+  stripe?: {
     connected: boolean;
   };
 }
@@ -141,8 +141,9 @@ export type PlanId = 'starter' | 'pro' | 'enterprise';
 
 export interface SubscriptionInfo {
   planId: PlanId;
-  payjpCustomerId?: string;
-  payjpSubscriptionId?: string;
+  provider?: 'stripe';
+  stripeCustomerId?: string;
+  stripeSubscriptionId?: string;
   status: 'active' | 'past_due' | 'cancelled' | 'trialing';
   currentPeriodEnd?: number;
   createdAt: number;
@@ -209,7 +210,7 @@ export interface AdminSettings {
   verticalConfig?: VerticalConfig;
   /** 管理者ログイン許可 LINE userId リスト（空 = セルフシード待ち） */
   allowedAdminLineUserIds?: string[];
-  /** サブスクリプション情報（PAY.JP 経由で設定） */
+  /** サブスクリプション情報 */
   subscription?: SubscriptionInfo;
   /** マルチLINEアカウント */
   lineAccounts?: LineAccount[];
@@ -292,7 +293,7 @@ export const DEFAULT_ADMIN_SETTINGS: AdminSettings = {
       notifyOnReminder: false,
       lastError: undefined,
     },
-    payjp: {
+    stripe: {
       connected: false,
     },
   },
@@ -506,8 +507,8 @@ export function mergeSettings(defaults: AdminSettings, partial: Partial<AdminSet
         notifyOnReminder:    partial.integrations?.line?.notifyOnReminder    ?? defaults.integrations.line?.notifyOnReminder,
         lastError:           partial.integrations?.line?.lastError           ?? defaults.integrations.line?.lastError,
       },
-      payjp: {
-        connected: partial.integrations?.payjp?.connected ?? defaults.integrations.payjp?.connected ?? false,
+      stripe: {
+        connected: partial.integrations?.stripe?.connected ?? defaults.integrations.stripe?.connected ?? false,
       },
     },
     onboarding: (partial.onboarding || defaults.onboarding)

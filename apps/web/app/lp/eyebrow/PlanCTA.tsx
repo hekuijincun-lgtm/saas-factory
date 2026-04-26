@@ -17,8 +17,8 @@ export function PlanCTA({ planId, label, highlighted = false }: PlanCTAProps) {
     setLoading(true);
     setError('');
 
-    // PAY.JP flow: redirect to signup page with plan pre-selected.
-    // Card input is handled on the signup page via payjp.js.
+    // Redirect to signup page with plan pre-selected.
+    // Card input is handled on the signup page via Stripe Elements.
     window.location.href = `/signup?plan=${encodeURIComponent(planId)}`;
   }
 

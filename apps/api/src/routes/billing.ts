@@ -1,52 +1,56 @@
 /**
- * Billing routes — PAY.JP subscription, webhooks, self-managed portal, enterprise inquiry, support
+ * Billing routes — Stripe only
  *
- * PAY.JP REST API を fetch() で直接呼び出す（Cloudflare Workers 互換）。
- * SDK は Edge Runtime 非対応のため不使用。
+ * All payment processing uses the official Stripe SDK (stripe v22)
+ * with fetch httpClient for Cloudflare Workers compatibility.
  */
+import Stripe from 'stripe';
 import type { PlanId, SubscriptionInfo } from "../settings";
 import { getTenantId } from "../helpers";
 
-const PAYJP_API = 'https://api.pay.jp/v1';
-
-/** PAY.JP REST API helper — Basic Auth (secret key : empty password) */
-async function payjpFetch(env: any, path: string, method: string = 'GET', body?: Record<string, string>): Promise<any> {
-  const key: string = env.PAYJP_SECRET_KEY ?? '';
-  if (!key) throw new Error('payjp_not_configured');
-
-  const headers: Record<string, string> = {
-    'Authorization': 'Basic ' + btoa(key + ':'),
-  };
-
-  let fetchBody: string | undefined;
-  if (body && (method === 'POST' || method === 'PUT' || method === 'DELETE')) {
-    headers['Content-Type'] = 'application/x-www-form-urlencoded';
-    fetchBody = new URLSearchParams(body).toString();
-  }
-
-  const res = await fetch(`${PAYJP_API}${path}`, { method, headers, body: fetchBody });
-  const json = await res.json();
-  if (!res.ok) {
-    const err = (json as any)?.error?.message ?? `PAY.JP API error ${res.status}`;
-    throw new Error(err);
-  }
-  return json;
+// ────────────────────────────────────────────────────────────────────────────
+// Stripe helpers
+// ────────────────────────────────────────────────────────────────────────────
+function getStripeClient(env: any): Stripe {
+  return new Stripe(env.STRIPE_SECRET_KEY, {
+    apiVersion: '2026-03-25.dahlia' as any,
+    httpClient: Stripe.createFetchHttpClient(),
+  });
 }
 
-/** HMAC-SHA256 Webhook signature verification */
-async function verifyPayjpSignature(rawBody: string, signature: string, secret: string): Promise<boolean> {
-  const enc = new TextEncoder();
-  const key = await crypto.subtle.importKey('raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
-  const sig = await crypto.subtle.sign('HMAC', key, enc.encode(rawBody));
-  const expected = Array.from(new Uint8Array(sig)).map(b => b.toString(16).padStart(2, '0')).join('');
-  return expected === signature;
+function stripePriceId(env: any, planId: PlanId): string {
+  return planId === 'starter'
+    ? String(env.STRIPE_PRICE_ID_STARTER ?? '')
+    : String(env.STRIPE_PRICE_ID_PRO ?? '');
 }
 
+function mapStripeStatus(s: Stripe.Subscription.Status): SubscriptionInfo['status'] {
+  switch (s) {
+    case 'active':
+    case 'incomplete':
+      return 'active';
+    case 'trialing':
+      return 'trialing';
+    case 'past_due':
+    case 'unpaid':
+      return 'past_due';
+    case 'canceled':
+    case 'incomplete_expired':
+    case 'paused':
+      return 'cancelled';
+    default:
+      return 'active';
+  }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Registration
+// ────────────────────────────────────────────────────────────────────────────
 export function registerBillingRoutes(app: any) {
 
-  // ── Rate limit helper for card operations (10 attempts/hour per IP) ──
+  // ── Rate limit helper for card/subscribe operations (10 attempts/hour per IP) ──
   const CARD_RATE_LIMIT = 10;
-  const CARD_RATE_TTL = 3600; // 1 hour
+  const CARD_RATE_TTL = 3600;
   async function checkCardRateLimit(c: any): Promise<Response | null> {
     const env = c.env as any;
     const kv = env.SAAS_FACTORY as KVNamespace;
@@ -62,102 +66,106 @@ export function registerBillingRoutes(app: any) {
     return null;
   }
 
-  // ── Create subscription (card token from frontend → customer → subscription) ──
+  // ───────────────────────────────────────────────────────────────────────────
+  // POST /billing/subscribe
+  //   Create Stripe Customer + incomplete Subscription, return clientSecret
+  // ───────────────────────────────────────────────────────────────────────────
   app.post('/billing/subscribe', async (c: any) => {
     const env = c.env as any;
-    if (!env.PAYJP_SECRET_KEY) {
-      return c.json({ ok: false, error: 'payjp_not_configured' }, 500);
-    }
 
-    // Card attempt rate limiting
     const rlBlock = await checkCardRateLimit(c);
     if (rlBlock) return rlBlock;
 
     let body: any = {};
     try { body = await c.req.json(); } catch {}
 
-    const token: string = String(body.token ?? '').trim();
     const planId: string = String(body.planId ?? '');
     const email: string = String(body.email ?? '').trim();
 
-    if (!token) {
-      return c.json({ ok: false, error: 'missing_token' }, 400);
-    }
     if (planId !== 'starter' && planId !== 'pro') {
       return c.json({ ok: false, error: 'invalid_plan' }, 400);
     }
 
-    const payjpPlanId: string = planId === 'starter'
-      ? (env.PAYJP_PLAN_STARTER ?? '')
-      : (env.PAYJP_PLAN_PRO ?? '');
-
-    if (!payjpPlanId) {
+    if (!env.STRIPE_SECRET_KEY) {
+      return c.json({ ok: false, error: 'stripe_not_configured' }, 500);
+    }
+    const priceId = stripePriceId(env, planId as PlanId);
+    if (!priceId) {
       return c.json({ ok: false, error: 'plan_not_configured' }, 500);
     }
 
     try {
-      // 1. Finalize 3-D Secure on token (required before use)
-      try {
-        await payjpFetch(env, `/tokens/${token}/tds_finish`, 'POST');
-      } catch (tdsErr: any) {
-        // tds_finish may fail if 3DS was not triggered (e.g. frictionless flow) — log but continue
-        console.warn('tds_finish warning:', tdsErr?.message);
-      }
+      const stripe = getStripeClient(env);
 
-      // 2. Create customer with card token
-      const customerParams: Record<string, string> = { card: token };
-      if (email) customerParams.email = email;
-      customerParams.metadata_planId = planId;
-
-      const customer = await payjpFetch(env, '/customers', 'POST', customerParams);
-
-      // 3. Create subscription
-      const subscription = await payjpFetch(env, '/subscriptions', 'POST', {
-        customer: customer.id,
-        plan: payjpPlanId,
-        metadata_planId: planId,
+      // 1. Customer
+      const customer = await stripe.customers.create({
+        ...(email ? { email } : {}),
+        metadata: { planId },
       });
+
+      // 2. Subscription with deferred payment (clientSecret for PaymentElement)
+      const subscription = await stripe.subscriptions.create({
+        customer: customer.id,
+        items: [{ price: priceId }],
+        payment_behavior: 'default_incomplete',
+        payment_settings: {
+          payment_method_types: ['card'],
+          save_default_payment_method: 'on_subscription',
+        },
+        metadata: { planId },
+        expand: ['latest_invoice.payment_intent'],
+      });
+
+      const latestInvoice = subscription.latest_invoice as Stripe.Invoice | null;
+      const paymentIntent = (latestInvoice as any)?.payment_intent as Stripe.PaymentIntent | undefined;
+      const clientSecret = paymentIntent?.client_secret ?? null;
 
       return c.json({
         ok: true,
+        provider: 'stripe',
         customerId: customer.id,
         subscriptionId: subscription.id,
         planId,
         status: subscription.status,
+        clientSecret,
       });
     } catch (err: any) {
       const msg: string = err?.message ?? 'subscribe_failed';
-      console.error('billing/subscribe error:', msg);
+      console.error('stripe subscribe error:', msg);
       return c.json({ ok: false, error: 'subscribe_failed', detail: msg }, 500);
     }
   });
 
-  // ── Verify subscription (used during signup to confirm subscription exists) ──
+  // ───────────────────────────────────────────────────────────────────────────
+  // POST /billing/verify-subscription
+  //   Confirm subscription is active (used during signup hand-off)
+  // ───────────────────────────────────────────────────────────────────────────
   app.post('/billing/verify-subscription', async (c: any) => {
     const env = c.env as any;
-    if (!env.PAYJP_SECRET_KEY) {
-      return c.json({ ok: false, error: 'payjp_not_configured' }, 500);
-    }
 
     let body: any = {};
     try { body = await c.req.json(); } catch {}
-
     const subscriptionId: string = String(body.subscriptionId ?? '').trim();
     if (!subscriptionId) {
       return c.json({ ok: false, error: 'missing_subscription_id' }, 400);
     }
 
+    if (!env.STRIPE_SECRET_KEY) {
+      return c.json({ ok: false, error: 'stripe_not_configured' }, 500);
+    }
     try {
-      const sub = await payjpFetch(env, `/subscriptions/${subscriptionId}`);
-      if (sub.status !== 'active' && sub.status !== 'trial') {
+      const stripe = getStripeClient(env);
+      const sub = await stripe.subscriptions.retrieve(subscriptionId);
+      if (sub.status !== 'active' && sub.status !== 'trialing') {
         return c.json({ ok: false, error: 'subscription_not_active', status: sub.status });
       }
       const planId = (sub.metadata?.planId ?? 'starter') as PlanId;
       return c.json({
         ok: true,
+        provider: 'stripe',
         planId,
         status: sub.status,
-        customerId: sub.customer,
+        customerId: typeof sub.customer === 'string' ? sub.customer : sub.customer.id,
         subscriptionId: sub.id,
       });
     } catch (err: any) {
@@ -165,37 +173,16 @@ export function registerBillingRoutes(app: any) {
     }
   });
 
-  // ── Webhook ──────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────────────────────────────────────
+  // POST /billing/webhook
+  //   Stripe webhook handler
+  // ───────────────────────────────────────────────────────────────────────────
   app.post('/billing/webhook', async (c: any) => {
     const env = c.env as any;
     const kv = env.SAAS_FACTORY as KVNamespace;
-    const whSecret: string = env.PAYJP_WEBHOOK_SECRET ?? '';
 
-    if (!env.PAYJP_SECRET_KEY || !whSecret) {
-      return c.json({ ok: false, error: 'webhook_not_configured' }, 500);
-    }
-
-    // 1. Signature verification
+    const stripeSig = c.req.header('stripe-signature') ?? '';
     const rawBody = await c.req.text();
-    const sig = c.req.header('X-Payjp-Signature') ?? '';
-    const valid = await verifyPayjpSignature(rawBody, sig, whSecret);
-    if (!valid) {
-      return c.json({ ok: false, error: 'signature_invalid' }, 401);
-    }
-
-    let event: any;
-    try { event = JSON.parse(rawBody); } catch {
-      return c.json({ ok: false, error: 'invalid_json' }, 400);
-    }
-
-    // 2. Tenant resolution helper
-    async function resolveTenant(customerId: string) {
-      const tenantId = await kv.get(`payjp:customer:${customerId}`);
-      if (!tenantId) return null;
-      const raw = await kv.get(`settings:${tenantId}`);
-      const settings = raw ? JSON.parse(raw) : null;
-      return { tenantId, settings };
-    }
 
     async function saveSubscription(tenantId: string, settings: any, sub: Partial<SubscriptionInfo>) {
       const existing: SubscriptionInfo | undefined = settings?.subscription;
@@ -208,88 +195,115 @@ export function registerBillingRoutes(app: any) {
       await kv.put(`settings:${tenantId}`, JSON.stringify(merged));
     }
 
-    // 3. Event dispatch — PAY.JP event types
-    const eventType: string = event.type ?? '';
-    const data = event.data ?? {};
-
-    switch (eventType) {
-      case 'subscription.created': {
-        const customerId = String(data.customer ?? '');
-        const subscriptionId = String(data.id ?? '');
-        const planId = (data.metadata?.planId ?? '') as PlanId;
-        if (customerId) {
-          const t = await resolveTenant(customerId);
-          if (t) {
-            await saveSubscription(t.tenantId, t.settings, {
-              planId: planId || t.settings?.subscription?.planId || 'starter',
-              payjpCustomerId: customerId,
-              payjpSubscriptionId: subscriptionId || undefined,
-              status: 'active',
-            });
-          }
-        }
-        break;
-      }
-
-      case 'subscription.updated': {
-        const customerId = String(data.customer ?? '');
-        const t = await resolveTenant(customerId);
-        if (t) {
-          const payjpStatus: string = data.status ?? '';
-          const statusMap: Record<string, SubscriptionInfo['status']> = {
-            active: 'active', trial: 'trialing', canceled: 'cancelled',
-            paused: 'cancelled',
-          };
-          const planId = (data.metadata?.planId ?? '') as PlanId;
-          await saveSubscription(t.tenantId, t.settings, {
-            status: statusMap[payjpStatus] ?? 'active',
-            currentPeriodEnd: data.current_period_end ? data.current_period_end * 1000 : undefined,
-            ...(planId ? { planId } : {}),
-            payjpSubscriptionId: data.id,
-          });
-        }
-        break;
-      }
-
-      case 'subscription.deleted': {
-        const customerId = String(data.customer ?? '');
-        const t = await resolveTenant(customerId);
-        if (t) {
-          await saveSubscription(t.tenantId, t.settings, {
-            status: 'cancelled',
-            payjpSubscriptionId: data.id,
-          });
-        }
-        break;
-      }
-
-      case 'charge.failed': {
-        // Payment failure — mark as past_due
-        const customerId = String(data.customer ?? '');
-        const t = await resolveTenant(customerId);
-        if (t) {
-          await saveSubscription(t.tenantId, t.settings, {
-            status: 'past_due',
-          });
-        }
-        break;
-      }
+    async function resolveTenant(indexKey: string) {
+      const tenantId = await kv.get(indexKey);
+      if (!tenantId) return null;
+      const raw = await kv.get(`settings:${tenantId}`);
+      const settings = raw ? JSON.parse(raw) : null;
+      return { tenantId, settings };
     }
 
-    return c.json({ ok: true, type: eventType });
+    if (!stripeSig) {
+      return c.json({ ok: false, error: 'missing_signature' }, 400);
+    }
+
+    if (!env.STRIPE_SECRET_KEY || !env.STRIPE_WEBHOOK_SECRET) {
+      return c.json({ ok: false, error: 'webhook_not_configured' }, 500);
+    }
+    const stripe = getStripeClient(env);
+    let event: Stripe.Event;
+    try {
+      event = await stripe.webhooks.constructEventAsync(
+        rawBody,
+        stripeSig,
+        env.STRIPE_WEBHOOK_SECRET,
+      );
+    } catch (err: any) {
+      console.error('stripe webhook signature invalid:', err?.message);
+      return c.json({ ok: false, error: 'signature_invalid' }, 400);
+    }
+
+    try {
+      switch (event.type) {
+        case 'customer.subscription.created':
+        case 'customer.subscription.updated': {
+          const sub = event.data.object as Stripe.Subscription;
+          const customerId = typeof sub.customer === 'string' ? sub.customer : sub.customer.id;
+          const t = await resolveTenant(`stripe:customer:${customerId}`);
+          if (t) {
+            const planId = (sub.metadata?.planId ?? '') as PlanId;
+            await saveSubscription(t.tenantId, t.settings, {
+              provider: 'stripe',
+              status: mapStripeStatus(sub.status),
+              currentPeriodEnd: (sub as any).current_period_end
+                ? (sub as any).current_period_end * 1000
+                : undefined,
+              ...(planId ? { planId } : {}),
+              stripeCustomerId: customerId,
+              stripeSubscriptionId: sub.id,
+            });
+          }
+          break;
+        }
+        case 'customer.subscription.deleted': {
+          const sub = event.data.object as Stripe.Subscription;
+          const customerId = typeof sub.customer === 'string' ? sub.customer : sub.customer.id;
+          const t = await resolveTenant(`stripe:customer:${customerId}`);
+          if (t) {
+            await saveSubscription(t.tenantId, t.settings, {
+              provider: 'stripe',
+              status: 'cancelled',
+              stripeSubscriptionId: sub.id,
+            });
+          }
+          break;
+        }
+        case 'invoice.payment_succeeded': {
+          const inv = event.data.object as Stripe.Invoice;
+          const customerId = typeof inv.customer === 'string' ? inv.customer : inv.customer?.id ?? '';
+          if (customerId) {
+            const t = await resolveTenant(`stripe:customer:${customerId}`);
+            if (t) {
+              await saveSubscription(t.tenantId, t.settings, {
+                provider: 'stripe',
+                status: 'active',
+              });
+            }
+          }
+          break;
+        }
+        case 'invoice.payment_failed': {
+          const inv = event.data.object as Stripe.Invoice;
+          const customerId = typeof inv.customer === 'string' ? inv.customer : inv.customer?.id ?? '';
+          if (customerId) {
+            const t = await resolveTenant(`stripe:customer:${customerId}`);
+            if (t) {
+              await saveSubscription(t.tenantId, t.settings, {
+                provider: 'stripe',
+                status: 'past_due',
+              });
+            }
+          }
+          break;
+        }
+        default:
+          // Unhandled → 200 to acknowledge
+          break;
+      }
+    } catch (err: any) {
+      console.error('stripe webhook handler error:', err?.message);
+    }
+    return c.json({ ok: true, type: event.type });
   });
 
-  // ── Self-managed billing portal (PAY.JP has no hosted portal) ─────────────
-
-  // Card update: replace customer's default card
+  // ───────────────────────────────────────────────────────────────────────────
+  // POST /admin/billing/update-card
+  //   Stripe: create SetupIntent for PaymentElement → client confirms
+  // ───────────────────────────────────────────────────────────────────────────
   app.post('/admin/billing/update-card', async (c: any) => {
     const env = c.env as any;
     const kv = env.SAAS_FACTORY as KVNamespace;
-    if (!env.PAYJP_SECRET_KEY) {
-      return c.json({ ok: false, error: 'payjp_not_configured' }, 500);
-    }
 
-    // Card attempt rate limiting
     const rlBlock = await checkCardRateLimit(c);
     if (rlBlock) return rlBlock;
 
@@ -298,43 +312,59 @@ export function registerBillingRoutes(app: any) {
       return c.json({ ok: false, error: 'missing_tenant_id' }, 400);
     }
 
-    let body: any = {};
-    try { body = await c.req.json(); } catch {}
-    const token: string = String(body.token ?? '').trim();
-    if (!token) {
-      return c.json({ ok: false, error: 'missing_token' }, 400);
-    }
-
     const raw = await kv.get(`settings:${tenantId}`);
     if (!raw) return c.json({ ok: false, error: 'tenant_not_found' }, 404);
     const settings = JSON.parse(raw);
-    const customerId: string = settings?.subscription?.payjpCustomerId ?? '';
+    const sub: SubscriptionInfo | undefined = settings?.subscription;
+
+    if (!env.STRIPE_SECRET_KEY) {
+      return c.json({ ok: false, error: 'stripe_not_configured' }, 500);
+    }
+    const customerId = sub?.stripeCustomerId ?? '';
     if (!customerId) {
-      return c.json({ ok: false, error: 'no_payjp_customer' }, 400);
+      return c.json({ ok: false, error: 'no_stripe_customer' }, 400);
     }
 
+    let body: any = {};
+    try { body = await c.req.json(); } catch {}
+    const paymentMethodId: string = String(body.paymentMethodId ?? '').trim();
+
     try {
-      // Finalize 3-D Secure on token before use
-      try {
-        await payjpFetch(env, `/tokens/${token}/tds_finish`, 'POST');
-      } catch (tdsErr: any) {
-        console.warn('tds_finish warning (card update):', tdsErr?.message);
+      const stripe = getStripeClient(env);
+
+      // Mode A: client has already confirmed SetupIntent → pass paymentMethodId
+      if (paymentMethodId) {
+        await stripe.paymentMethods.attach(paymentMethodId, { customer: customerId });
+        await stripe.customers.update(customerId, {
+          invoice_settings: { default_payment_method: paymentMethodId },
+        });
+        // Also update the subscription's default PM
+        if (sub?.stripeSubscriptionId) {
+          await stripe.subscriptions.update(sub.stripeSubscriptionId, {
+            default_payment_method: paymentMethodId,
+          });
+        }
+        return c.json({ ok: true });
       }
 
-      await payjpFetch(env, `/customers/${customerId}`, 'POST', { card: token });
-      return c.json({ ok: true });
+      // Mode B: bootstrap — return SetupIntent clientSecret for PaymentElement
+      const setupIntent = await stripe.setupIntents.create({
+        customer: customerId,
+        payment_method_types: ['card'],
+        usage: 'off_session',
+      });
+      return c.json({ ok: true, clientSecret: setupIntent.client_secret });
     } catch (err: any) {
       return c.json({ ok: false, error: 'card_update_failed', detail: err.message }, 500);
     }
   });
 
-  // Cancel subscription
+  // ───────────────────────────────────────────────────────────────────────────
+  // POST /admin/billing/cancel
+  // ───────────────────────────────────────────────────────────────────────────
   app.post('/admin/billing/cancel', async (c: any) => {
     const env = c.env as any;
     const kv = env.SAAS_FACTORY as KVNamespace;
-    if (!env.PAYJP_SECRET_KEY) {
-      return c.json({ ok: false, error: 'payjp_not_configured' }, 500);
-    }
 
     const tenantId = getTenantId(c);
     if (!tenantId || tenantId === 'default') {
@@ -344,34 +374,32 @@ export function registerBillingRoutes(app: any) {
     const raw = await kv.get(`settings:${tenantId}`);
     if (!raw) return c.json({ ok: false, error: 'tenant_not_found' }, 404);
     const settings = JSON.parse(raw);
-    const subscriptionId: string = settings?.subscription?.payjpSubscriptionId ?? '';
+    const sub: SubscriptionInfo | undefined = settings?.subscription;
+
+    if (!env.STRIPE_SECRET_KEY) {
+      return c.json({ ok: false, error: 'stripe_not_configured' }, 500);
+    }
+    const subscriptionId = sub?.stripeSubscriptionId ?? '';
     if (!subscriptionId) {
       return c.json({ ok: false, error: 'no_subscription' }, 400);
     }
-
     try {
-      await payjpFetch(env, `/subscriptions/${subscriptionId}/cancel`, 'POST');
-      // Update local state immediately
-      const existing: SubscriptionInfo | undefined = settings?.subscription;
-      const updated: SubscriptionInfo = {
-        ...existing,
-        status: 'cancelled',
-      } as SubscriptionInfo;
-      const merged = { ...settings, subscription: updated };
-      await kv.put(`settings:${tenantId}`, JSON.stringify(merged));
+      const stripe = getStripeClient(env);
+      await stripe.subscriptions.cancel(subscriptionId);
+      const updated: SubscriptionInfo = { ...(sub as SubscriptionInfo), status: 'cancelled' };
+      await kv.put(`settings:${tenantId}`, JSON.stringify({ ...settings, subscription: updated }));
       return c.json({ ok: true });
     } catch (err: any) {
       return c.json({ ok: false, error: 'cancel_failed', detail: err.message }, 500);
     }
   });
 
-  // Charges list (billing history)
+  // ───────────────────────────────────────────────────────────────────────────
+  // GET /admin/billing/charges — billing history
+  // ───────────────────────────────────────────────────────────────────────────
   app.get('/admin/billing/charges', async (c: any) => {
     const env = c.env as any;
     const kv = env.SAAS_FACTORY as KVNamespace;
-    if (!env.PAYJP_SECRET_KEY) {
-      return c.json({ ok: false, error: 'payjp_not_configured' }, 500);
-    }
 
     const tenantId = getTenantId(c);
     if (!tenantId || tenantId === 'default') {
@@ -381,20 +409,28 @@ export function registerBillingRoutes(app: any) {
     const raw = await kv.get(`settings:${tenantId}`);
     if (!raw) return c.json({ ok: false, error: 'tenant_not_found' }, 404);
     const settings = JSON.parse(raw);
-    const customerId: string = settings?.subscription?.payjpCustomerId ?? '';
-    if (!customerId) {
-      return c.json({ ok: false, error: 'no_payjp_customer' }, 400);
-    }
+    const sub: SubscriptionInfo | undefined = settings?.subscription;
 
+    if (!env.STRIPE_SECRET_KEY) {
+      return c.json({ ok: false, error: 'stripe_not_configured' }, 500);
+    }
+    const customerId = sub?.stripeCustomerId ?? '';
+    if (!customerId) {
+      return c.json({ ok: false, error: 'no_stripe_customer' }, 400);
+    }
     try {
-      const charges = await payjpFetch(env, `/charges?customer=${customerId}&limit=20`);
-      const items = (charges.data ?? []).map((ch: any) => ({
-        id: ch.id,
-        amount: ch.amount,
-        currency: ch.currency,
-        status: ch.paid ? 'paid' : ch.refunded ? 'refunded' : 'failed',
-        createdAt: ch.created ? ch.created * 1000 : 0,
-        description: ch.description ?? '',
+      const stripe = getStripeClient(env);
+      const invoices = await stripe.invoices.list({ customer: customerId, limit: 20 });
+      const items = invoices.data.map((inv: Stripe.Invoice) => ({
+        id: inv.id,
+        amount: inv.amount_paid ?? inv.amount_due ?? 0,
+        currency: inv.currency,
+        status:
+          inv.status === 'paid' ? 'paid' :
+          inv.status === 'uncollectible' || inv.status === 'void' ? 'refunded' :
+          inv.status === 'open' || inv.status === 'draft' ? 'pending' : 'failed',
+        createdAt: inv.created ? inv.created * 1000 : 0,
+        description: inv.description ?? inv.lines?.data?.[0]?.description ?? '',
       }));
       return c.json({ ok: true, charges: items });
     } catch (err: any) {
@@ -402,7 +438,21 @@ export function registerBillingRoutes(app: any) {
     }
   });
 
-  // ── Enterprise inquiry ──────────────────────────────────────────────────────
+  // ───────────────────────────────────────────────────────────────────────────
+  // GET /billing/config — expose publishable key to frontend
+  // ───────────────────────────────────────────────────────────────────────────
+  app.get('/billing/config', async (c: any) => {
+    const env = c.env as any;
+    return c.json({
+      ok: true,
+      provider: 'stripe',
+      stripePublishableKey: env.STRIPE_PUBLISHABLE_KEY ?? '',
+    });
+  });
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // POST /billing/enterprise-inquiry
+  // ───────────────────────────────────────────────────────────────────────────
   app.post('/billing/enterprise-inquiry', async (c: any) => {
     const env = c.env as any;
     const kv: KVNamespace = env.SAAS_FACTORY;
@@ -415,7 +465,6 @@ export function registerBillingRoutes(app: any) {
       return c.json({ ok: false, error: 'missing_required_fields' }, 400);
     }
 
-    // Store inquiry in KV with timestamp for later retrieval
     const inquiryId = `ent_${Date.now()}_${crypto.randomUUID().slice(0, 6)}`;
     const inquiry = {
       id: inquiryId,
@@ -425,20 +474,20 @@ export function registerBillingRoutes(app: any) {
       status: 'new',
     };
 
-    // Append to inquiry list
     const listKey = 'billing:enterprise:inquiries';
     const existing = await kv.get(listKey);
     const list = existing ? JSON.parse(existing) : [];
     list.unshift(inquiry);
-    await kv.put(listKey, JSON.stringify(list.slice(0, 200))); // keep last 200
+    await kv.put(listKey, JSON.stringify(list.slice(0, 200)));
 
-    // Also store individually for lookup
-    await kv.put(`billing:enterprise:${inquiryId}`, JSON.stringify(inquiry), { expirationTtl: 7776000 }); // 90 days
+    await kv.put(`billing:enterprise:${inquiryId}`, JSON.stringify(inquiry), { expirationTtl: 7776000 });
 
     return c.json({ ok: true, inquiryId });
   });
 
-  // ── Support ticket submission ───────────────────────────────────────────────
+  // ───────────────────────────────────────────────────────────────────────────
+  // POST /admin/support — support ticket submission
+  // ───────────────────────────────────────────────────────────────────────────
   app.post('/admin/support', async (c: any) => {
     const env = c.env as any;
     const kv = env.SAAS_FACTORY as KVNamespace;
@@ -462,7 +511,6 @@ export function registerBillingRoutes(app: any) {
       return c.json({ ok: false, error: 'message_too_short' }, 400);
     }
 
-    // Simple email validation if provided
     const contactEmail = typeof body.contactEmail === 'string' ? body.contactEmail.trim() : '';
     if (contactEmail && !contactEmail.includes('@')) {
       return c.json({ ok: false, error: 'invalid_email' }, 400);
@@ -493,7 +541,7 @@ export function registerBillingRoutes(app: any) {
     };
 
     const kvKey = `support:ticket:${tenantId}:${ticketId}`;
-    await kv.put(kvKey, JSON.stringify(ticket), { expirationTtl: 60 * 60 * 24 * 365 }); // 1 year TTL
+    await kv.put(kvKey, JSON.stringify(ticket), { expirationTtl: 60 * 60 * 24 * 365 });
 
     return c.json({ ok: true, id: ticketId, saved: true });
   });

@@ -8,23 +8,72 @@
  *         /admin/members/password
  */
 import type { Hono } from "hono";
+import { z } from 'zod';
 import { getTenantId, checkTenantMismatch, requireRole, sha256Hex } from '../helpers';
 import { mergeSettings, DEFAULT_ADMIN_SETTINGS } from '../settings';
 import type { PlanId, SubscriptionInfo } from '../settings';
 import { TRIAL_DURATION_DAYS } from '../plan-limits';
 import { getVerticalTemplate } from '../vertical-templates';
+import { setupAutonomousJobsForNewTenant } from '../autonomous/tenant-setup';
 
-const PAYJP_API = 'https://api.pay.jp/v1';
+// ── Zod schemas ──────────────────────────────────────────────────────────────
 
-async function payjpFetch(env: any, path: string): Promise<any> {
-  const key: string = env.PAYJP_SECRET_KEY ?? '';
-  if (!key) throw new Error('payjp_not_configured');
-  const res = await fetch(`${PAYJP_API}${path}`, {
-    headers: { 'Authorization': 'Basic ' + btoa(key + ':') },
+const emailSchema = z.string().trim().toLowerCase()
+  .min(1, 'メールアドレスは必須です')
+  .email('有効なメールアドレスを入力してください')
+  .max(254);
+
+const passwordSchema = z.string()
+  .min(8, 'パスワードは8文字以上です')
+  .max(128, 'パスワードは128文字以下です');
+
+const loginSchema = z.object({
+  email: emailSchema,
+  password: passwordSchema,
+  tenantId: z.string().optional(),
+});
+
+const signupSchema = z.object({
+  email: emailSchema,
+  password: passwordSchema,
+  storeName: z.string().trim().min(2, '店舗名は2文字以上です').max(50, '店舗名は50文字以下です'),
+  signup: z.literal(true).or(z.literal('1')).or(z.literal('true')),
+  vertical: z.string().optional(),
+  stripeSubscriptionId: z.string().optional(),
+  trial: z.union([z.boolean(), z.string()]).optional(),
+  returnTo: z.string().optional(),
+});
+
+const passwordChangeSchema = z.object({
+  password: passwordSchema,
+});
+
+/**
+ * Stripe subscription verification for signup hand-off.
+ * Returns { planId, customerId, subscriptionId } if subscription is active/trialing, else null.
+ */
+async function stripeVerifySubscription(env: any, subscriptionId: string):
+    Promise<{ planId: string; customerId: string; subscriptionId: string } | null> {
+  if (!env.STRIPE_SECRET_KEY) return null;
+  // Dynamic import to keep cold-start light when Stripe not configured
+  const { default: Stripe } = await import('stripe');
+  const stripe = new Stripe(env.STRIPE_SECRET_KEY, {
+    apiVersion: '2026-03-25.dahlia' as any,
+    httpClient: Stripe.createFetchHttpClient(),
   });
-  const json = await res.json();
-  if (!res.ok) throw new Error((json as any)?.error?.message ?? `PAY.JP error ${res.status}`);
-  return json;
+  try {
+    const sub = await stripe.subscriptions.retrieve(subscriptionId);
+    if (sub.status !== 'active' && sub.status !== 'trialing' && sub.status !== 'incomplete') {
+      return null;
+    }
+    return {
+      planId: (sub.metadata?.planId ?? 'starter'),
+      customerId: typeof sub.customer === 'string' ? sub.customer : sub.customer.id,
+      subscriptionId: sub.id,
+    };
+  } catch {
+    return null;
+  }
 }
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -237,10 +286,11 @@ export function registerAuthRoutes(app: any) {
 
     let body: any = {};
     try { body = await c.req.json(); } catch {}
-    const password = String(body.password ?? '');
-    if (password.length < 8 || password.length > 128) {
-      return c.json({ ok: false, error: 'password_length', hint: '8-128 characters required' }, 400);
+    const pwParsed = passwordChangeSchema.safeParse(body);
+    if (!pwParsed.success) {
+      return c.json({ ok: false, error: pwParsed.error.issues[0]?.message ?? 'password_length', hint: '8-128 characters required' }, 400);
     }
+    const password = pwParsed.data.password;
 
     const raw = await kv.get(`admin:members:${tenantId}`);
     let store: AdminMembersStore;
@@ -322,15 +372,12 @@ export function registerAuthRoutes(app: any) {
     let body: any = {};
     try { body = await c.req.json(); } catch {}
 
-    const rawEmail = String(body.email ?? '').trim().toLowerCase();
-    const password = String(body.password ?? '');
-
-    if (!rawEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(rawEmail)) {
-      return c.json({ ok: false, error: 'invalid_email' }, 400);
+    const parsed = loginSchema.safeParse(body);
+    if (!parsed.success) {
+      return c.json({ ok: false, error: parsed.error.issues[0]?.message ?? 'invalid_input' }, 400);
     }
-    if (!password) {
-      return c.json({ ok: false, error: 'missing_password' }, 400);
-    }
+    const rawEmail = parsed.data.email;
+    const password = parsed.data.password;
 
     // ── Login attempt rate limiting (10 failures / 15 min → account lock) ──
     const LOGIN_FAIL_MAX = 10;
@@ -457,28 +504,25 @@ export function registerAuthRoutes(app: any) {
     let body: any = {};
     try { body = await c.req.json(); } catch {}
 
-    const rawEmail: string = String(body.email ?? '').trim().toLowerCase();
     const bootstrapKey: string | undefined = body.bootstrapKey || undefined;
     const isDebug = body.debug === '1' || body.debug === true;
     const isDiagnose = body.diagnose === '1' || body.diagnose === true; // like debug but goes through Resend
     const isSignup = body.signup === true || body.signup === '1' || body.signup === 'true';
 
-    // Basic email validation
-    if (!rawEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(rawEmail)) {
-      return c.json({ ok: false, error: 'invalid_email' }, 400);
+    // Zod validation: signup vs login have different required fields
+    if (isSignup) {
+      const sp = signupSchema.safeParse(body);
+      if (!sp.success) {
+        return c.json({ ok: false, error: sp.error.issues[0]?.message ?? 'invalid_input' }, 400);
+      }
+    } else {
+      const ep = emailSchema.safeParse(body.email);
+      if (!ep.success) {
+        return c.json({ ok: false, error: 'invalid_email' }, 400);
+      }
     }
 
-    // Signup: validate storeName and password before any KV writes (including rate-limit)
-    if (isSignup) {
-      const rawStoreName = String(body.storeName ?? '').trim();
-      if (rawStoreName.length < 2 || rawStoreName.length > 50) {
-        return c.json({ ok: false, error: 'invalid_store_name' }, 400);
-      }
-      const rawPassword = String(body.password ?? '');
-      if (rawPassword.length < 8 || rawPassword.length > 128) {
-        return c.json({ ok: false, error: 'password_length', hint: '8-128 characters required' }, 400);
-      }
-    }
+    const rawEmail: string = String(body.email ?? '').trim().toLowerCase();
 
     // Rate limit: max 3 sends per 60s per email (checked before any KV writes)
     const rlKey = `email:rl:${rawEmail}`;
@@ -499,35 +543,28 @@ export function registerAuthRoutes(app: any) {
       tenantId = baseSlug + '-' + crypto.randomUUID().slice(0, 4);
       safeReturnTo = `/admin/onboarding?tenantId=${encodeURIComponent(tenantId)}`;
 
-      // PAY.JP subscription verification (if provided from subscribe flow)
-      const payjpSubscriptionId: string = String(body.payjpSubscriptionId ?? '').trim();
-      let payjpInfo: { planId: string; customerId: string; subscriptionId: string } | undefined;
-      if (payjpSubscriptionId) {
+      // Payment subscription verification (Stripe)
+      const stripeSubscriptionId: string = String(body.stripeSubscriptionId ?? '').trim();
+
+      let stripeInfo: { planId: string; customerId: string; subscriptionId: string } | undefined;
+
+      if (stripeSubscriptionId) {
         // Prevent subscription reuse: one subscription → one tenant
-        const usedKey = `payjp:subscription:used:${payjpSubscriptionId}`;
+        const usedKey = `stripe:subscription:used:${stripeSubscriptionId}`;
         const alreadyUsed = await kv.get(usedKey);
         if (alreadyUsed) {
-          return c.json({ ok: false, error: 'payjp_subscription_already_used' }, 409);
+          return c.json({ ok: false, error: 'stripe_subscription_already_used' }, 409);
         }
-        if (env.PAYJP_SECRET_KEY) {
-          try {
-            const sub = await payjpFetch(env, `/subscriptions/${payjpSubscriptionId}`);
-            if (sub.status === 'active' || sub.status === 'trial') {
-              payjpInfo = {
-                planId: (sub.metadata?.planId ?? 'starter'),
-                customerId: String(sub.customer ?? ''),
-                subscriptionId: payjpSubscriptionId,
-              };
-              // Mark subscription as used (30 days TTL)
-              await kv.put(usedKey, tenantId, { expirationTtl: 2592000 });
-            }
-          } catch { /* invalid subscription — continue without payjp info */ }
+        const info = await stripeVerifySubscription(env, stripeSubscriptionId);
+        if (info) {
+          stripeInfo = info;
+          await kv.put(usedKey, tenantId, { expirationTtl: 2592000 });
         }
       }
 
-      // Fallback planId from URL ?plan= (when PAY.JP is not configured)
+      // Fallback planId from URL ?plan= (when no paid subscription verified)
       const VALID_PLAN_IDS = new Set(['starter', 'pro', 'enterprise']);
-      const fallbackPlanId: string | undefined = (!payjpInfo && typeof body.planId === 'string' && VALID_PLAN_IDS.has(body.planId))
+      const fallbackPlanId: string | undefined = (!stripeInfo && typeof body.planId === 'string' && VALID_PLAN_IDS.has(body.planId))
         ? body.planId : undefined;
 
       // Phase 1a: persist vertical selection from signup form
@@ -535,8 +572,8 @@ export function registerAuthRoutes(app: any) {
       const signupVertical: string | undefined = (typeof body.vertical === 'string' && VALID_VERTICALS.has(body.vertical))
         ? body.vertical : undefined;
 
-      // Trial flag: body.trial = true → 14-day free Pro trial (no PAY.JP required)
-      const isTrial = (body.trial === true || body.trial === '1' || body.trial === 'true') && !payjpInfo;
+      // Trial flag: body.trial = true → 14-day free Pro trial (no paid subscription required)
+      const isTrial = (body.trial === true || body.trial === '1' || body.trial === 'true') && !stripeInfo;
 
       // Hash password at signup time (never stored in plaintext)
       const signupPasswordHash = body.password ? await hashPassword(String(body.password)) : undefined;
@@ -544,7 +581,7 @@ export function registerAuthRoutes(app: any) {
       await kv.put(`signup:init:${tenantId}`, JSON.stringify({
         storeName, ownerEmail: rawEmail,
         ...(signupPasswordHash ? { passwordHash: signupPasswordHash } : {}),
-        ...(payjpInfo ? { payjp: payjpInfo } : {}),
+        ...(stripeInfo ? { stripe: stripeInfo } : {}),
         ...(fallbackPlanId ? { planId: fallbackPlanId } : {}),
         ...(signupVertical ? { vertical: signupVertical } : {}),
         ...(isTrial ? { trial: true } : {}),
@@ -714,7 +751,7 @@ export function registerAuthRoutes(app: any) {
     // --- Signup provisioning (signup:init written by /start when signup=1) ---
     const signupInitRaw = await kv.get(`signup:init:${tenantId}`);
     if (signupInitRaw) {
-      const si: { storeName?: string; planId?: string; trial?: boolean; vertical?: string; passwordHash?: string; payjp?: { planId: string; customerId: string; subscriptionId: string } } = JSON.parse(signupInitRaw);
+      const si: { storeName?: string; planId?: string; trial?: boolean; vertical?: string; passwordHash?: string; stripe?: { planId: string; customerId: string; subscriptionId: string } } = JSON.parse(signupInitRaw);
       const storedName = si.storeName || email;
       const ownerStore: AdminMembersStore = {
         version: 1,
@@ -753,15 +790,16 @@ export function registerAuthRoutes(app: any) {
           await kv.put(`admin:members:${tenantId}`, JSON.stringify(existing));
         }
       }
-      // Determine subscription seed: PAY.JP > trial > fallback planId
-      const resolvedPlanId: PlanId | undefined = si.payjp
-        ? (si.payjp.planId as PlanId)
+      // Determine subscription seed: Stripe > trial > fallback planId
+      const resolvedPlanId: PlanId | undefined = si.stripe
+        ? (si.stripe.planId as PlanId)
         : (si.planId as PlanId | undefined);
-      const subscriptionSeed: Partial<SubscriptionInfo> | undefined = si.payjp
+      const subscriptionSeed: Partial<SubscriptionInfo> | undefined = si.stripe
         ? {
-            planId: si.payjp.planId as PlanId,
-            payjpCustomerId: si.payjp.customerId || undefined,
-            payjpSubscriptionId: si.payjp.subscriptionId || undefined,
+            planId: si.stripe.planId as PlanId,
+            provider: 'stripe' as const,
+            stripeCustomerId: si.stripe.customerId || undefined,
+            stripeSubscriptionId: si.stripe.subscriptionId || undefined,
             status: 'active' as const,
             createdAt: Date.now(),
           }
@@ -788,9 +826,9 @@ export function registerAuthRoutes(app: any) {
         ...(seedVertical ? { vertical: seedVertical } : {}),
       });
       await kv.put('settings:' + tenantId, JSON.stringify(seedSettings));
-      // Write reverse index: payjpCustomerId → tenantId
-      if (si.payjp?.customerId) {
-        await kv.put(`payjp:customer:${si.payjp.customerId}`, tenantId);
+      // Write reverse index: Stripe customerId → tenantId (for webhook lookup)
+      if (si.stripe?.customerId) {
+        await kv.put(`stripe:customer:${si.stripe.customerId}`, tenantId);
       }
       // admin:settings: key for tenant listing/lookup (simple format)
       const existingAdminSettings = await kv.get('admin:settings:' + tenantId);
@@ -843,6 +881,12 @@ export function registerAuthRoutes(app: any) {
 
       await kv.delete(`signup:init:${tenantId}`);
       await kv.put(`member:tenant:${identityKey}`, tenantId, { expirationTtl: 7776000 });
+
+      // Auto-setup autonomous AI agent jobs for new tenant
+      try { await setupAutonomousJobsForNewTenant(env, tenantId); } catch (e) {
+        console.error('[auth/signup] autonomous setup failed (non-blocking):', e);
+      }
+
       return c.json({ ok: true, identityKey, email, displayName, allowed: true,
                       role: 'owner', membersFound: false, signedUp: true, hasPassword: !!si.passwordHash, tenantId });
     }

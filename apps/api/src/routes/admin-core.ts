@@ -2,7 +2,7 @@
  * Admin Core Routes (Part 1): settings, menu, staff, media
  * Extracted from index.ts — routes registered via registerAdminCoreRoutes(app).
  */
-import { getTenantId, checkTenantMismatch, requireRole, setTenantDebugHeaders, normalizePhone, buildCustomerKey } from '../helpers';
+import { getTenantId, checkTenantMismatch, requireRole, setTenantDebugHeaders, normalizePhone, buildCustomerKey, validateUploadedFile } from '../helpers';
 import { resolveVertical, mergeSettings, DEFAULT_ADMIN_SETTINGS } from '../settings';
 import { getPlanLimits, isTrialExpired } from '../plan-limits';
 import { getVerticalPlugin } from '../verticals/registry';
@@ -310,16 +310,13 @@ app.get('/admin/rbac/audit', async (c) => {
       if(ev && typeof ev === 'object') existing = ev
     } catch { try { const s = await kv.get(key); if(s) existing = JSON.parse(s) } catch {} }
 
-    // deep-merge integrations so sub-objects (line, payjp) are merged not replaced
+    // deep-merge integrations so sub-objects (line, stripe) are merged not replaced
     if(body.integrations != null && typeof body.integrations === 'object') {
       const existingInteg = existing.integrations || {}
       const bodyInteg = body.integrations
       patch.integrations = { ...existingInteg }
       if(bodyInteg.line != null && typeof bodyInteg.line === 'object') {
         patch.integrations.line = { ...(existingInteg.line || {}), ...bodyInteg.line }
-      }
-      if(bodyInteg.payjp != null && typeof bodyInteg.payjp === 'object') {
-        patch.integrations.payjp = { ...(existingInteg.payjp || {}), ...bodyInteg.payjp }
       }
     }
     // notifications: deep merge (lineReminder sub-object も保持)
@@ -437,6 +434,23 @@ app.get("/public/sales-line", async (c) => {
 /** =========================
  * Cache-Control: public, max-age=31536000, immutable（key が変わる運用なのでOK）
  * ========================= */
+app.get("/media/characters/*", async (c) => {
+  try {
+    const r2 = (c.env as any).MENU_IMAGES;
+    if (!r2) return new Response("R2 not configured", { status: 503 });
+    const url = new URL(c.req.url);
+    const key = decodeURIComponent(url.pathname.replace(/^\/media\/characters\//, ""));
+    if (!key) return new Response("Not Found", { status: 404 });
+    const obj = await r2.get(`characters/${key}`);
+    if (!obj) return new Response("Not Found", { status: 404 });
+    const headers = new Headers();
+    headers.set("Content-Type", obj.httpMetadata?.contentType ?? "image/png");
+    headers.set("Cache-Control", "public, max-age=86400");
+    headers.set("Access-Control-Allow-Origin", "*");
+    return new Response(obj.body, { status: 200, headers });
+  } catch { return new Response("Server Error", { status: 500 }); }
+});
+
 app.get("/media/menu/*", async (c) => {
   try {
     const r2 = (c.env as any).MENU_IMAGES;
@@ -574,11 +588,12 @@ app.post("/admin/menu/image", async (c) => {
       return c.json({ ok: false, error: "file_too_large", maxBytes: 3145728 }, 413);
     }
 
-    const contentType = file.type || "application/octet-stream";
-    if (!contentType.startsWith("image/")) {
-      return c.json({ ok: false, error: "invalid_file_type", got: contentType }, 400);
+    const uploadCheck = validateUploadedFile(file);
+    if (!uploadCheck.valid) {
+      return c.json({ ok: false, error: "invalid_file_type", reason: uploadCheck.reason }, 400);
     }
 
+    const contentType = file.type || "image/jpeg";
     const ext = (file.name.split(".").pop() ?? "jpg").toLowerCase().replace(/[^a-z0-9]/g, "") || "jpg";
     const rand = Math.random().toString(36).slice(2, 9);
     const imageKey = `menu-images/${tenantId}/${menuId}/${Date.now()}-${rand}.${ext}`;
@@ -622,11 +637,12 @@ app.post("/admin/images/upload", async (c) => {
 
     const file = formData.get("file") as File | null;
     if (!file) return c.json({ ok: false, error: "missing_file_field" }, 400);
-    if (file.size > 3 * 1024 * 1024) return c.json({ ok: false, error: "file_too_large", maxBytes: 3145728 }, 413);
+    if (file.size > 10 * 1024 * 1024) return c.json({ ok: false, error: "file_too_large", maxBytes: 10485760, actualBytes: file.size }, 413);
 
-    const contentType = file.type || "application/octet-stream";
-    if (!contentType.startsWith("image/")) return c.json({ ok: false, error: "invalid_file_type", got: contentType }, 400);
+    const uploadCheck2 = validateUploadedFile(file);
+    if (!uploadCheck2.valid) return c.json({ ok: false, error: "invalid_file_type", reason: uploadCheck2.reason }, 400);
 
+    const contentType = file.type || "image/jpeg";
     const ext = (file.name.split(".").pop() ?? "jpg").toLowerCase().replace(/[^a-z0-9]/g, "") || "jpg";
     const rand = Math.random().toString(36).slice(2, 9);
     const ts = Date.now();
@@ -718,11 +734,12 @@ app.post("/admin/pets/:petId/image", async (c) => {
       return c.json({ ok: false, error: "file_too_large", maxBytes: 3145728 }, 413);
     }
 
-    const contentType = file.type || "application/octet-stream";
-    if (!contentType.startsWith("image/")) {
-      return c.json({ ok: false, error: "invalid_file_type", got: contentType }, 400);
+    const uploadCheck3 = validateUploadedFile(file);
+    if (!uploadCheck3.valid) {
+      return c.json({ ok: false, error: "invalid_file_type", reason: uploadCheck3.reason }, 400);
     }
 
+    const contentType = file.type || "image/jpeg";
     const ext = (file.name.split(".").pop() ?? "jpg").toLowerCase().replace(/[^a-z0-9]/g, "") || "jpg";
     const rand = Math.random().toString(36).slice(2, 9);
     const imageKey = `pet-photos/${tenantId}/${petId}/${Date.now()}-${rand}.${ext}`;
@@ -803,11 +820,12 @@ app.post("/admin/reservations/:id/image", async (c) => {
       return c.json({ ok: false, error: "file_too_large", maxBytes: 3145728 }, 413);
     }
 
-    const contentType = file.type || "application/octet-stream";
-    if (!contentType.startsWith("image/")) {
-      return c.json({ ok: false, error: "invalid_file_type", got: contentType }, 400);
+    const uploadCheck4 = validateUploadedFile(file);
+    if (!uploadCheck4.valid) {
+      return c.json({ ok: false, error: "invalid_file_type", reason: uploadCheck4.reason }, 400);
     }
 
+    const contentType = file.type || "image/jpeg";
     const ext = (file.name.split(".").pop() ?? "jpg").toLowerCase().replace(/[^a-z0-9]/g, "") || "jpg";
     const rand = Math.random().toString(36).slice(2, 9);
     const imageKey = `tenants/${tenantId}/reservations/${id}/${kind}-${Date.now()}-${rand}.${ext}`;

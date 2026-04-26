@@ -25,7 +25,6 @@ export interface AdminSettings {
   contactEmail: string; // 連絡先メールアドレス
   integrations?: {
     lineConnected?: boolean;
-    payjpConnected?: boolean;
   };
   // 既存フィールド（後方互換性のため）
   openTime?: string; // "HH:mm"
