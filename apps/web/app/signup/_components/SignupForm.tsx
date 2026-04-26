@@ -27,7 +27,7 @@ const VERTICAL_OPTIONS = [
   { value: "eyebrow", label: "アイブロウサロン" },
   { value: "nail", label: "ネイルサロン" },
   { value: "hair", label: "ヘアサロン" },
-  { value: "esthetic", label: "エステ・リラクゼ���ション" },
+  { value: "esthetic", label: "エステ・リラクゼーション" },
   { value: "dental", label: "歯科・クリニック" },
   { value: "cleaning", label: "ハウスクリーニング" },
   { value: "handyman", label: "便利屋・なんでも屋" },
@@ -49,11 +49,11 @@ const VERTICAL_DESCRIPTIONS: Record<string, string> = {
   nail: 'ジェルネイル・アート・ケアなどデザイン別メニュー管理に対応しています',
   hair: 'カット・カラー・パーマなどカテゴリ別の施術管理に対応しています',
   esthetic: 'フェイシャル・ボディ・毛穴ケアなど施術カテゴリ別管理に対応しています',
-  dental: '診療種別管理・問診票・定期検診リマインドに対応していま���',
-  cleaning: 'ハウスクリーニング専用の見積もり・スケジュール��理に対応しています',
+  dental: '診療種別管理・問診票・定期検診リマインドに対応しています',
+  cleaning: 'ハウスクリーニング専用の見積もり・スケジュール管理に対応しています',
   handyman: '多岐にわたるサービスの見積もり自動化・顧客管理に対応しています',
-  pet: 'ペットカルテ・ワクチン管理・トリミング予約に対応して���ます',
-  seitai: '施術部位マッピング・カルテ管理・リピート促進に対応���ています',
+  pet: 'ペットカルテ・ワクチン管理・トリミング予約に対応しています',
+  seitai: '施術部位マッピング・カルテ管理・リピート促進に対応しています',
   gym: 'QR会員証・チェックイン管理・月謝管理を自動化',
   school: '月謝管理・出席記録・進捗管理を自動化',
   shop: '商品管理・注文対応・リピート促進をLINEで自動化',
@@ -200,7 +200,7 @@ export default function SignupForm({ initialVertical }: SignupFormProps) {
     if (!emailTrimmed) return;
 
     if (password.length < 8) {
-      setErrorMsg("��スワードは8文字以上で入力してください。");
+      setErrorMsg("パスワードは8文字以上で入力してください。");
       setStatus("error");
       return;
     }
@@ -232,7 +232,7 @@ export default function SignupForm({ initialVertical }: SignupFormProps) {
         setPlan({ status: 'verified', planId: urlPlanId, subscriptionId: subId ?? undefined });
       } catch {
         setStatus("error");
-        setErrorMsg(cardError ?? '決済に失敗しまし���');
+        setErrorMsg(cardError ?? '決済に失敗しました');
         setSubscribing(false);
         return;
       }
@@ -261,7 +261,7 @@ export default function SignupForm({ initialVertical }: SignupFormProps) {
     }).catch(() => null);
 
     if (!res) {
-      setErrorMsg("ネットワーク��ラーが発生しました。");
+      setErrorMsg("ネットワークエラーが発生しました。");
       setStatus("error");
       return;
     }
@@ -330,7 +330,7 @@ export default function SignupForm({ initialVertical }: SignupFormProps) {
             }}
             className="mt-6 text-sm text-slate-400 hover:text-slate-600 transition-colors"
           >
-            別のメールアドレスで���す
+            別のメールアドレスで試す
           </button>
         </div>
       </div>
@@ -386,7 +386,7 @@ export default function SignupForm({ initialVertical }: SignupFormProps) {
           {isTrial && plan.status === "idle" && !subscribedId && (
             <div className="mb-5 rounded-xl bg-emerald-50 border border-emerald-200 px-4 py-4 text-center">
               <span className="inline-block bg-emerald-600 text-white text-xs font-bold px-3 py-1 rounded-full mb-2">
-                14日間無料トライ��ル
+                14日間無料トライアル
               </span>
               <p className="text-sm text-emerald-700">
                 クレジットカード不要・14日間すべての機能をお試しいただけます
@@ -465,7 +465,7 @@ export default function SignupForm({ initialVertical }: SignupFormProps) {
                 className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100 transition"
               />
               <p className="mt-1 text-xs text-slate-400">
-                省略するとメールアドレスから自動生成され��す
+                省略するとメールアドレスから自動生成されます
               </p>
             </div>
 
@@ -488,7 +488,7 @@ export default function SignupForm({ initialVertical }: SignupFormProps) {
                 {vertical !== 'generic' && VERTICAL_DESCRIPTIONS[vertical] ? (
                   <p className="mt-1.5 text-xs text-indigo-500">{VERTICAL_DESCRIPTIONS[vertical]}</p>
                 ) : (
-                  <p className="mt-1 text-xs text-slate-400">後から管理���面で変更できます</p>
+                  <p className="mt-1 text-xs text-slate-400">後から管理画面で変更できます</p>
                 )}
               </div>
             )}
@@ -511,7 +511,7 @@ export default function SignupForm({ initialVertical }: SignupFormProps) {
             </button>
 
             <p className="text-center text-xs text-slate-400 pt-2">
-              すでにアカウ��トをお持ちの場合は{" "}
+              すでにアカウントをお持ちの場合は{" "}
               <Link href="/login" className="text-indigo-500 hover:underline">
                 ログイン
               </Link>

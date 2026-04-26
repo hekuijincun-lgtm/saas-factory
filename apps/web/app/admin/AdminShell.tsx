@@ -29,6 +29,7 @@ import {
 } from "lucide-react";
 import { adminNavItems, filterNavItems } from "./nav.config";
 import { getVerticalTheme } from "@/src/lib/verticalTheme";
+import TrialBanner from "./_components/TrialBanner";
 
 // ============================================================
 // 定数
@@ -59,6 +60,7 @@ const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   "/admin/pet/karte":    ClipboardCheck,
   "/admin/pet/ai-config": Bot,
   "/admin/pet/settings": Settings,
+  "/admin/autonomous-agent": Bot,
   "/admin/marketing":    Megaphone,
   "/admin/support":      LifeBuoy,
   "/admin/settings":     Settings,
@@ -494,6 +496,9 @@ export default function AdminShell({
             {storeName}
           </span>
         </header>
+
+        {/* トライアルバナー */}
+        <TrialBanner tenantId={sessionTenantId} />
 
         {/* ページコンテンツ — pb-16 for bottom tab bar on mobile */}
         <main className="flex-1 overflow-y-auto p-4 pb-20 sm:p-6 sm:pb-6 lg:p-8">
