@@ -44,7 +44,7 @@ export default function Hero() {
 
             <div className="mb-7 flex flex-wrap items-center gap-4">
               <Link
-                href="/signup?plan=pro&vertical=pet"
+                href="/signup?plan=pro&vertical=pet&trial=1"
                 className="rounded-md bg-terracotta px-6 py-3.5 text-[13.5px] font-medium tracking-wide text-white transition hover:bg-terracotta-hover"
               >
                 14日間 無料で試す →
