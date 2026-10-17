@@ -119,14 +119,14 @@ export default function TobanPage() {
               className="px-2.5 sm:px-3 py-1.5 text-xs sm:text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-1"
             >
               <FileText size={14} />
-              <span className="hidden xs:inline">PDF</span>
+              <span>保存・共有</span>
             </button>
             <button
               onClick={handleExcelExport}
-              className="px-2.5 sm:px-3 py-1.5 text-xs sm:text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center gap-1"
+              className="hidden sm:flex px-2.5 sm:px-3 py-1.5 text-xs sm:text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 items-center gap-1"
             >
               <Download size={14} />
-              <span className="hidden xs:inline">Excel</span>
+              <span>Excel</span>
             </button>
           </div>
         </div>
