@@ -10,6 +10,7 @@ import {
   ChevronDown,
   ChevronUp,
   Copy,
+  MoreHorizontal,
 } from "lucide-react";
 import type { Row, Schedule } from "../_lib/types";
 import { createRow } from "../_lib/types";
@@ -26,14 +27,13 @@ type CellRef = { row: number; col: number };
 export default function ScheduleEditor({ schedule, onChange }: Props) {
   const { rows, year, members } = schedule;
   const [focusCell, setFocusCell] = useState<CellRef | null>(null);
+  const [openMenu, setOpenMenu] = useState<number | null>(null);
   const cellRefs = useRef<Map<string, HTMLInputElement>>(new Map());
 
   const maxMembers = Math.max(3, ...rows.map((r) => r.members.length));
 
-  // セルのキー
   const cellKey = (row: number, col: number) => `${row}-${col}`;
 
-  // セルに ref を登録
   const registerRef = useCallback(
     (row: number, col: number) => (el: HTMLInputElement | null) => {
       const key = cellKey(row, col);
@@ -43,13 +43,20 @@ export default function ScheduleEditor({ schedule, onChange }: Props) {
     []
   );
 
-  // フォーカス移動
   useEffect(() => {
     if (!focusCell) return;
     const key = cellKey(focusCell.row, focusCell.col);
     const el = cellRefs.current.get(key);
     el?.focus();
   }, [focusCell]);
+
+  // メニュー外クリックで閉じる
+  useEffect(() => {
+    if (openMenu === null) return;
+    const handler = () => setOpenMenu(null);
+    document.addEventListener("click", handler);
+    return () => document.removeEventListener("click", handler);
+  }, [openMenu]);
 
   const updateRow = (index: number, patch: Partial<Row>) => {
     const newRows = [...rows];
@@ -60,7 +67,6 @@ export default function ScheduleEditor({ schedule, onChange }: Props) {
   const updateCell = (rowIdx: number, col: number, value: string) => {
     const row = rows[rowIdx];
     if (col === 0) {
-      // 日付セル — 曜日を自動計算
       const weekday = calcWeekday(value, year);
       updateRow(rowIdx, { date: value, weekday });
     } else if (col === 1) {
@@ -74,13 +80,6 @@ export default function ScheduleEditor({ schedule, onChange }: Props) {
     }
   };
 
-  const getCellValue = (rowIdx: number, col: number): string => {
-    const row = rows[rowIdx];
-    if (col === 0) return row.date;
-    if (col === 1) return row.place;
-    return row.members[col - 2] ?? "";
-  };
-
   const totalCols = 2 + maxMembers;
 
   const handleKeyNav = (rowIdx: number, col: number) => (e: React.KeyboardEvent) => {
@@ -88,7 +87,6 @@ export default function ScheduleEditor({ schedule, onChange }: Props) {
       e.preventDefault();
       const nr = rowIdx + dr;
       const nc = col + dc;
-      // 空行をスキップ
       if (nr >= 0 && nr < rows.length && nc >= 0 && nc < totalCols) {
         setFocusCell({ row: nr, col: nc });
       }
@@ -150,26 +148,19 @@ export default function ScheduleEditor({ schedule, onChange }: Props) {
   };
 
   const addMemberColumn = () => {
-    const newRows = rows.map((r) => ({
-      ...r,
-      members: [...r.members, ""],
-    }));
+    const newRows = rows.map((r) => ({ ...r, members: [...r.members, ""] }));
     onChange({ ...schedule, rows: newRows });
   };
 
   const removeMemberColumn = () => {
     if (maxMembers <= 1) return;
-    const newRows = rows.map((r) => ({
-      ...r,
-      members: r.members.slice(0, -1),
-    }));
+    const newRows = rows.map((r) => ({ ...r, members: r.members.slice(0, -1) }));
     onChange({ ...schedule, rows: newRows });
   };
 
-  // Excelからの貼り付け対応
   const handlePaste = (rowIdx: number, col: number) => (e: React.ClipboardEvent) => {
     const text = e.clipboardData.getData("text/plain");
-    if (!text.includes("\t") && !text.includes("\n")) return; // 単一セルは通常処理
+    if (!text.includes("\t") && !text.includes("\n")) return;
     e.preventDefault();
 
     const pasteRows = text.split(/\r?\n/).filter((line) => line.trim());
@@ -179,7 +170,6 @@ export default function ScheduleEditor({ schedule, onChange }: Props) {
       const targetRow = rowIdx + ri;
       const cells = pasteRows[ri].split("\t");
 
-      // 行が足りなければ追加
       while (newRows.length <= targetRow) {
         newRows.push(createRow({ members: Array(maxMembers).fill("") }));
       }
@@ -190,11 +180,7 @@ export default function ScheduleEditor({ schedule, onChange }: Props) {
         const value = cells[ci].trim();
 
         if (targetCol === 0) {
-          newRows[targetRow] = {
-            ...newRows[targetRow],
-            date: value,
-            weekday: calcWeekday(value, year),
-          };
+          newRows[targetRow] = { ...newRows[targetRow], date: value, weekday: calcWeekday(value, year) };
         } else if (targetCol === 1) {
           newRows[targetRow] = { ...newRows[targetRow], place: value };
         } else {
@@ -216,31 +202,31 @@ export default function ScheduleEditor({ schedule, onChange }: Props) {
       <div className="flex flex-wrap items-center gap-2">
         <button
           onClick={() => addRow()}
-          className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 flex items-center gap-1"
+          className="px-3 py-1.5 text-xs sm:text-sm bg-blue-600 text-white rounded hover:bg-blue-700 flex items-center gap-1"
         >
           <Plus size={14} /> 行を追加
         </button>
         <button
           onClick={addMemberColumn}
-          className="px-3 py-1.5 text-sm bg-gray-100 text-gray-700 rounded hover:bg-gray-200 flex items-center gap-1"
+          className="px-2.5 sm:px-3 py-1.5 text-xs sm:text-sm bg-gray-100 text-gray-700 rounded hover:bg-gray-200 flex items-center gap-1"
         >
-          <Plus size={14} /> 担当列
+          <Plus size={14} /> <span className="hidden sm:inline">担当</span>列
         </button>
         {maxMembers > 1 && (
           <button
             onClick={removeMemberColumn}
-            className="px-3 py-1.5 text-sm bg-gray-100 text-gray-700 rounded hover:bg-gray-200 flex items-center gap-1"
+            className="px-2.5 sm:px-3 py-1.5 text-xs sm:text-sm bg-gray-100 text-gray-700 rounded hover:bg-gray-200 flex items-center gap-1"
           >
-            <Trash2 size={14} /> 担当列
+            <Trash2 size={14} /> <span className="hidden sm:inline">担当</span>列
           </button>
         )}
-        <span className="text-xs text-gray-400 ml-2">
+        <span className="hidden sm:inline text-xs text-gray-400 ml-2">
           Tab/Enter で移動 ・ Excelからの貼り付け対応
         </span>
       </div>
 
-      {/* テーブル */}
-      <div className="overflow-x-auto border border-gray-200 rounded-lg">
+      {/* デスクトップ: テーブル表示 */}
+      <div className="hidden md:block overflow-x-auto border border-gray-200 rounded-lg">
         <table className="w-full text-sm border-collapse">
           <thead>
             <tr className="bg-gray-50 text-gray-600">
@@ -263,11 +249,8 @@ export default function ScheduleEditor({ schedule, onChange }: Props) {
                   <td colSpan={totalCols + 2} className="py-1 text-center">
                     <div className="flex items-center justify-center gap-2">
                       <span className="text-xs text-gray-400">— 区切り —</span>
-                      <button
-                        onClick={() => deleteRow(ri)}
-                        className="text-gray-300 hover:text-red-500"
-                      >
-                        <X size={13} />
+                      <button onClick={() => deleteRow(ri)} className="text-gray-300 hover:text-red-500">
+                        <XIcon size={13} />
                       </button>
                     </div>
                   </td>
@@ -275,18 +258,9 @@ export default function ScheduleEditor({ schedule, onChange }: Props) {
               ) : (
                 <tr
                   key={row.id}
-                  className={`border-t border-gray-200 ${
-                    row.cancelled
-                      ? "bg-gray-50 text-gray-400 line-through"
-                      : ""
-                  }`}
+                  className={`border-t border-gray-200 ${row.cancelled ? "bg-gray-50 text-gray-400 line-through" : ""}`}
                 >
-                  {/* ドラッグハンドル */}
-                  <td className="px-1 text-center text-gray-300">
-                    <GripVertical size={14} />
-                  </td>
-
-                  {/* 日付 */}
+                  <td className="px-1 text-center text-gray-300"><GripVertical size={14} /></td>
                   <td className="px-1 py-1">
                     <input
                       ref={registerRef(ri, 0)}
@@ -299,23 +273,11 @@ export default function ScheduleEditor({ schedule, onChange }: Props) {
                       className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white"
                     />
                   </td>
-
-                  {/* 曜日（自動計算・読み取り専用） */}
                   <td className="px-1 py-1 text-center">
-                    <span
-                      className={`text-sm font-medium ${
-                        row.weekday === "土"
-                          ? "text-blue-600"
-                          : row.weekday === "日"
-                          ? "text-red-500"
-                          : "text-gray-600"
-                      }`}
-                    >
+                    <span className={`text-sm font-medium ${row.weekday === "土" ? "text-blue-600" : row.weekday === "日" ? "text-red-500" : "text-gray-600"}`}>
                       {row.weekday}
                     </span>
                   </td>
-
-                  {/* 場所 */}
                   <td className="px-1 py-1">
                     <input
                       ref={registerRef(ri, 1)}
@@ -328,8 +290,6 @@ export default function ScheduleEditor({ schedule, onChange }: Props) {
                       className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white"
                     />
                   </td>
-
-                  {/* 担当セル */}
                   {Array.from({ length: maxMembers }, (_, mi) => (
                     <td key={mi} className="px-1 py-1">
                       <Autocomplete
@@ -342,54 +302,16 @@ export default function ScheduleEditor({ schedule, onChange }: Props) {
                       />
                     </td>
                   ))}
-
-                  {/* 操作ボタン */}
                   <td className="px-1 py-1">
                     <div className="flex items-center gap-0.5">
-                      <button
-                        onClick={() => toggleCancelled(ri)}
-                        title={row.cancelled ? "中止を取消" : "中止にする"}
-                        className={`p-1 rounded hover:bg-gray-100 ${
-                          row.cancelled ? "text-orange-500" : "text-gray-400"
-                        }`}
-                      >
+                      <button onClick={() => toggleCancelled(ri)} title={row.cancelled ? "中止を取消" : "中止にする"} className={`p-1 rounded hover:bg-gray-100 ${row.cancelled ? "text-orange-500" : "text-gray-400"}`}>
                         {row.cancelled ? <RotateCcw size={14} /> : <Ban size={14} />}
                       </button>
-                      <button
-                        onClick={() => moveRow(ri, -1)}
-                        disabled={ri === 0}
-                        className="p-1 rounded hover:bg-gray-100 text-gray-400 disabled:opacity-30"
-                      >
-                        <ChevronUp size={14} />
-                      </button>
-                      <button
-                        onClick={() => moveRow(ri, 1)}
-                        disabled={ri === rows.length - 1}
-                        className="p-1 rounded hover:bg-gray-100 text-gray-400 disabled:opacity-30"
-                      >
-                        <ChevronDown size={14} />
-                      </button>
-                      <button
-                        onClick={() => addRow(ri)}
-                        title="下に行を追加"
-                        className="p-1 rounded hover:bg-gray-100 text-gray-400"
-                      >
-                        <Plus size={14} />
-                      </button>
-                      <button
-                        onClick={() => addBlankRow(ri)}
-                        title="区切り行を追加"
-                        className="p-1 rounded hover:bg-gray-100 text-gray-400"
-                      >
-                        <Copy size={14} />
-                      </button>
-                      <button
-                        onClick={() => deleteRow(ri)}
-                        disabled={rows.length <= 1}
-                        className="p-1 rounded hover:bg-gray-100 text-red-400 disabled:opacity-30"
-                      >
-                        <Trash2 size={14} />
-                      </button>
+                      <button onClick={() => moveRow(ri, -1)} disabled={ri === 0} className="p-1 rounded hover:bg-gray-100 text-gray-400 disabled:opacity-30"><ChevronUp size={14} /></button>
+                      <button onClick={() => moveRow(ri, 1)} disabled={ri === rows.length - 1} className="p-1 rounded hover:bg-gray-100 text-gray-400 disabled:opacity-30"><ChevronDown size={14} /></button>
+                      <button onClick={() => addRow(ri)} title="下に行を追加" className="p-1 rounded hover:bg-gray-100 text-gray-400"><Plus size={14} /></button>
+                      <button onClick={() => addBlankRow(ri)} title="区切り行を追加" className="p-1 rounded hover:bg-gray-100 text-gray-400"><Copy size={14} /></button>
+                      <button onClick={() => deleteRow(ri)} disabled={rows.length <= 1} className="p-1 rounded hover:bg-gray-100 text-red-400 disabled:opacity-30"><Trash2 size={14} /></button>
                     </div>
                   </td>
                 </tr>
@@ -398,12 +320,137 @@ export default function ScheduleEditor({ schedule, onChange }: Props) {
           </tbody>
         </table>
       </div>
+
+      {/* モバイル: カード表示 */}
+      <div className="md:hidden space-y-2">
+        {rows.map((row, ri) =>
+          row.isBlank ? (
+            <div key={row.id} className="flex items-center justify-center gap-2 py-2 border-t border-dashed border-gray-300">
+              <span className="text-xs text-gray-400">— 区切り —</span>
+              <button onClick={() => deleteRow(ri)} className="text-gray-300 hover:text-red-500">
+                <XIcon size={13} />
+              </button>
+            </div>
+          ) : (
+            <div
+              key={row.id}
+              className={`bg-white border rounded-lg p-3 space-y-2.5 ${
+                row.cancelled
+                  ? "border-gray-300 bg-gray-50 opacity-70"
+                  : "border-gray-200"
+              }`}
+            >
+              {/* 1段目: 日付・曜日・場所 + メニュー */}
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={row.date}
+                  onChange={(e) => updateCell(ri, 0, e.target.value)}
+                  placeholder="7/4"
+                  className={`w-16 px-2 py-1.5 text-sm border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white ${row.cancelled ? "line-through text-gray-400" : ""}`}
+                />
+                <span
+                  className={`text-sm font-bold w-6 text-center ${
+                    row.weekday === "土" ? "text-blue-600" : row.weekday === "日" ? "text-red-500" : "text-gray-500"
+                  }`}
+                >
+                  {row.weekday}
+                </span>
+                <input
+                  type="text"
+                  value={row.place}
+                  onChange={(e) => updateCell(ri, 1, e.target.value)}
+                  placeholder="場所"
+                  className={`flex-1 px-2 py-1.5 text-sm border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white ${row.cancelled ? "line-through text-gray-400" : ""}`}
+                />
+
+                {/* 行アクションメニュー */}
+                <div className="relative">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setOpenMenu(openMenu === ri ? null : ri);
+                    }}
+                    className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400"
+                  >
+                    <MoreHorizontal size={16} />
+                  </button>
+                  {openMenu === ri && (
+                    <div className="absolute right-0 top-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-20 py-1 w-36">
+                      <button
+                        onClick={() => { toggleCancelled(ri); setOpenMenu(null); }}
+                        className="flex items-center gap-2 w-full px-3 py-2 text-sm hover:bg-gray-50 text-left"
+                      >
+                        {row.cancelled ? <RotateCcw size={14} /> : <Ban size={14} />}
+                        {row.cancelled ? "中止を取消" : "中止にする"}
+                      </button>
+                      <button
+                        onClick={() => { moveRow(ri, -1); setOpenMenu(null); }}
+                        disabled={ri === 0}
+                        className="flex items-center gap-2 w-full px-3 py-2 text-sm hover:bg-gray-50 text-left disabled:opacity-30"
+                      >
+                        <ChevronUp size={14} /> 上に移動
+                      </button>
+                      <button
+                        onClick={() => { moveRow(ri, 1); setOpenMenu(null); }}
+                        disabled={ri === rows.length - 1}
+                        className="flex items-center gap-2 w-full px-3 py-2 text-sm hover:bg-gray-50 text-left disabled:opacity-30"
+                      >
+                        <ChevronDown size={14} /> 下に移動
+                      </button>
+                      <button
+                        onClick={() => { addRow(ri); setOpenMenu(null); }}
+                        className="flex items-center gap-2 w-full px-3 py-2 text-sm hover:bg-gray-50 text-left"
+                      >
+                        <Plus size={14} /> 下に行追加
+                      </button>
+                      <button
+                        onClick={() => { addBlankRow(ri); setOpenMenu(null); }}
+                        className="flex items-center gap-2 w-full px-3 py-2 text-sm hover:bg-gray-50 text-left"
+                      >
+                        <Copy size={14} /> 区切り追加
+                      </button>
+                      <hr className="my-1 border-gray-100" />
+                      <button
+                        onClick={() => { deleteRow(ri); setOpenMenu(null); }}
+                        disabled={rows.length <= 1}
+                        className="flex items-center gap-2 w-full px-3 py-2 text-sm hover:bg-gray-50 text-left text-red-500 disabled:opacity-30"
+                      >
+                        <Trash2 size={14} /> 削除
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* 2段目: 担当者 */}
+              <div className="flex flex-wrap gap-1.5">
+                {Array.from({ length: maxMembers }, (_, mi) => (
+                  <Autocomplete
+                    key={mi}
+                    value={row.members[mi] ?? ""}
+                    onChange={(v) => updateCell(ri, 2 + mi, v)}
+                    suggestions={members}
+                    placeholder={`担当${mi + 1}`}
+                  />
+                ))}
+              </div>
+
+              {/* 中止バッジ */}
+              {row.cancelled && (
+                <span className="inline-block text-[10px] px-2 py-0.5 bg-orange-100 text-orange-600 rounded-full font-medium">
+                  中止
+                </span>
+              )}
+            </div>
+          )
+        )}
+      </div>
     </div>
   );
 }
 
-// X icon used in blank row
-function X({ size }: { size: number }) {
+function XIcon({ size }: { size: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
       <line x1="18" y1="6" x2="6" y2="18" />

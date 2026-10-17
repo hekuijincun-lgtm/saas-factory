@@ -71,24 +71,25 @@ export default function ReviewDialog({ rows: initialRows, schedule, onChange, on
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="bg-white rounded-xl shadow-xl w-full max-w-4xl max-h-[85vh] flex flex-col">
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 sm:p-4">
+      <div className="bg-white rounded-t-xl sm:rounded-xl shadow-xl w-full sm:max-w-4xl max-h-[90vh] sm:max-h-[85vh] flex flex-col">
         {/* ヘッダー */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
-          <div>
-            <h3 className="text-lg font-semibold text-gray-800">{title}</h3>
-            <p className="text-sm text-gray-500 mt-0.5">
-              {rows.length}件の行を検出しました。内容を確認・修正してください。
+        <div className="flex items-center justify-between px-4 sm:px-6 py-3 sm:py-4 border-b border-gray-200">
+          <div className="min-w-0">
+            <h3 className="text-base sm:text-lg font-semibold text-gray-800 truncate">{title}</h3>
+            <p className="text-xs sm:text-sm text-gray-500 mt-0.5">
+              {rows.length}件検出。確認・修正してください。
             </p>
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 flex-shrink-0 ml-2">
             <X size={20} />
           </button>
         </div>
 
-        {/* テーブル */}
-        <div className="flex-1 overflow-auto px-6 py-4">
-          <table className="w-full text-sm border-collapse">
+        {/* コンテンツ — モバイルではカード表示 */}
+        <div className="flex-1 overflow-auto px-4 sm:px-6 py-3 sm:py-4">
+          {/* デスクトップ: テーブル */}
+          <table className="hidden sm:table w-full text-sm border-collapse">
             <thead>
               <tr className="bg-gray-50 text-gray-600">
                 <th className="px-2 py-2 text-left font-medium">日付</th>
@@ -101,119 +102,84 @@ export default function ReviewDialog({ rows: initialRows, schedule, onChange, on
             </thead>
             <tbody>
               {rows.map((row, ri) => (
-                <tr
-                  key={row.id}
-                  className={`border-t border-gray-200 ${
-                    row.cancelled ? "bg-gray-50 text-gray-400" : ""
-                  }`}
-                >
+                <tr key={row.id} className={`border-t border-gray-200 ${row.cancelled ? "bg-gray-50 text-gray-400" : ""}`}>
                   <td className="px-1 py-1.5">
-                    <input
-                      type="text"
-                      value={row.date}
-                      onChange={(e) => {
-                        const date = e.target.value;
-                        const weekday = calcWeekday(date, schedule.year);
-                        updateRow(ri, { date, weekday });
-                      }}
-                      className="w-20 px-2 py-1 text-sm border border-gray-300 rounded"
-                    />
+                    <input type="text" value={row.date} onChange={(e) => { const date = e.target.value; const weekday = calcWeekday(date, schedule.year); updateRow(ri, { date, weekday }); }} className="w-20 px-2 py-1 text-sm border border-gray-300 rounded" />
                   </td>
                   <td className="px-1 py-1.5 text-center">
-                    <span
-                      className={`text-sm font-medium ${
-                        row.weekday === "土"
-                          ? "text-blue-600"
-                          : row.weekday === "日"
-                          ? "text-red-500"
-                          : "text-gray-600"
-                      }`}
-                    >
-                      {row.weekday}
-                    </span>
+                    <span className={`text-sm font-medium ${row.weekday === "土" ? "text-blue-600" : row.weekday === "日" ? "text-red-500" : "text-gray-600"}`}>{row.weekday}</span>
                   </td>
                   <td className="px-1 py-1.5">
-                    <input
-                      type="text"
-                      value={row.place}
-                      onChange={(e) => updateRow(ri, { place: e.target.value })}
-                      className="w-28 px-2 py-1 text-sm border border-gray-300 rounded"
-                    />
+                    <input type="text" value={row.place} onChange={(e) => updateRow(ri, { place: e.target.value })} className="w-28 px-2 py-1 text-sm border border-gray-300 rounded" />
                   </td>
                   <td className="px-1 py-1.5">
                     <div className="flex flex-wrap gap-1 items-center">
                       {row.members.map((m, mi) => (
-                        <input
-                          key={mi}
-                          type="text"
-                          value={m}
-                          onChange={(e) => updateMember(ri, mi, e.target.value)}
-                          className="w-20 px-2 py-1 text-sm border border-gray-300 rounded"
-                        />
+                        <input key={mi} type="text" value={m} onChange={(e) => updateMember(ri, mi, e.target.value)} className="w-20 px-2 py-1 text-sm border border-gray-300 rounded" />
                       ))}
-                      <button
-                        onClick={() => addMember(ri)}
-                        className="text-blue-500 hover:text-blue-700"
-                      >
-                        <Plus size={14} />
-                      </button>
+                      <button onClick={() => addMember(ri)} className="text-blue-500 hover:text-blue-700"><Plus size={14} /></button>
                     </div>
                   </td>
                   <td className="px-1 py-1.5 text-center">
-                    <button
-                      onClick={() => toggleCancelled(ri)}
-                      className={`p-1 rounded hover:bg-gray-100 ${
-                        row.cancelled ? "text-orange-500" : "text-gray-300"
-                      }`}
-                    >
+                    <button onClick={() => toggleCancelled(ri)} className={`p-1 rounded hover:bg-gray-100 ${row.cancelled ? "text-orange-500" : "text-gray-300"}`}>
                       {row.cancelled ? <RotateCcw size={14} /> : <Ban size={14} />}
                     </button>
                   </td>
                   <td className="px-1 py-1.5">
-                    <button
-                      onClick={() => removeRow(ri)}
-                      className="text-gray-300 hover:text-red-500"
-                    >
-                      <X size={14} />
-                    </button>
+                    <button onClick={() => removeRow(ri)} className="text-gray-300 hover:text-red-500"><X size={14} /></button>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
 
+          {/* モバイル: カード */}
+          <div className="sm:hidden space-y-2">
+            {rows.map((row, ri) => (
+              <div key={row.id} className={`border rounded-lg p-3 space-y-2 ${row.cancelled ? "bg-gray-50 border-gray-300" : "border-gray-200"}`}>
+                <div className="flex items-center gap-2">
+                  <input type="text" value={row.date} onChange={(e) => { const date = e.target.value; const weekday = calcWeekday(date, schedule.year); updateRow(ri, { date, weekday }); }} className="w-16 px-2 py-1 text-sm border border-gray-300 rounded" />
+                  <span className={`text-sm font-bold w-6 text-center ${row.weekday === "土" ? "text-blue-600" : row.weekday === "日" ? "text-red-500" : "text-gray-500"}`}>{row.weekday}</span>
+                  <input type="text" value={row.place} onChange={(e) => updateRow(ri, { place: e.target.value })} className="flex-1 px-2 py-1 text-sm border border-gray-300 rounded" />
+                  <button onClick={() => toggleCancelled(ri)} className={`p-1 ${row.cancelled ? "text-orange-500" : "text-gray-300"}`}>
+                    {row.cancelled ? <RotateCcw size={14} /> : <Ban size={14} />}
+                  </button>
+                  <button onClick={() => removeRow(ri)} className="text-gray-300 hover:text-red-500"><X size={14} /></button>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {row.members.map((m, mi) => (
+                    <input key={mi} type="text" value={m} onChange={(e) => updateMember(ri, mi, e.target.value)} className="w-20 px-2 py-1 text-sm border border-gray-300 rounded" />
+                  ))}
+                  <button onClick={() => addMember(ri)} className="text-blue-500 hover:text-blue-700 p-1"><Plus size={14} /></button>
+                </div>
+                {row.cancelled && <span className="inline-block text-[10px] px-2 py-0.5 bg-orange-100 text-orange-600 rounded-full">中止</span>}
+              </div>
+            ))}
+          </div>
+
           {rows.some((r) => r.cancelled) && (
             <div className="flex items-center gap-2 mt-3 px-2 text-xs text-orange-600">
               <AlertTriangle size={13} />
-              <span>取り消し線が検出された行があります（中止マーク付き）</span>
+              <span>取り消し線が検出された行があります</span>
             </div>
           )}
         </div>
 
         {/* フッター */}
-        <div className="flex items-center justify-between px-6 py-4 border-t border-gray-200 bg-gray-50 rounded-b-xl">
-          <p className="text-xs text-gray-400">
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 px-4 sm:px-6 py-3 sm:py-4 border-t border-gray-200 bg-gray-50 rounded-b-xl">
+          <p className="hidden sm:block text-xs text-gray-400">
             画像・データはサーバーに保存されません
           </p>
           <div className="flex gap-2">
-            <button
-              onClick={onClose}
-              className="px-4 py-2 text-sm text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50"
-            >
+            <button onClick={onClose} className="flex-1 sm:flex-none px-3 sm:px-4 py-2 text-sm text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50">
               キャンセル
             </button>
-            <button
-              onClick={handleReplace}
-              className="px-4 py-2 text-sm text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50"
-            >
-              既存を置換
+            <button onClick={handleReplace} className="flex-1 sm:flex-none px-3 sm:px-4 py-2 text-sm text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50">
+              置換
             </button>
-            <button
-              onClick={handleConfirm}
-              className="px-4 py-2 text-sm text-white bg-green-600 rounded-lg hover:bg-green-700 flex items-center gap-1.5"
-            >
+            <button onClick={handleConfirm} className="flex-1 sm:flex-none px-3 sm:px-4 py-2 text-sm text-white bg-green-600 rounded-lg hover:bg-green-700 flex items-center justify-center gap-1.5">
               <Check size={15} />
-              表に追加
+              追加
             </button>
           </div>
         </div>

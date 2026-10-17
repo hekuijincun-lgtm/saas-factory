@@ -107,92 +107,111 @@ export default function TobanPage() {
     <div className="min-h-screen bg-gray-50">
       {/* ヘッダー */}
       <header className="bg-white border-b border-gray-200 sticky top-0 z-40">
-        <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Calendar size={22} className="text-blue-600" />
-            <h1 className="text-lg font-bold text-gray-800">当番表メーカー</h1>
+        <div className="max-w-6xl mx-auto px-3 sm:px-4 py-2.5 sm:py-3 flex items-center justify-between">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+            <Calendar size={20} className="text-blue-600 flex-shrink-0" />
+            <h1 className="text-base sm:text-lg font-bold text-gray-800 truncate">当番表メーカー</h1>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0">
             <button
               onClick={() => setShowPdf(true)}
-              className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-1.5"
+              className="px-2.5 sm:px-3 py-1.5 text-xs sm:text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-1"
             >
-              <FileText size={15} />
-              <span className="hidden sm:inline">PDF出力</span>
+              <FileText size={14} />
+              <span className="hidden xs:inline">PDF</span>
             </button>
             <button
               onClick={handleExcelExport}
-              className="px-3 py-1.5 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center gap-1.5"
+              className="px-2.5 sm:px-3 py-1.5 text-xs sm:text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center gap-1"
             >
-              <Download size={15} />
-              <span className="hidden sm:inline">Excel出力</span>
+              <Download size={14} />
+              <span className="hidden xs:inline">Excel</span>
             </button>
           </div>
         </div>
       </header>
 
-      <main className="max-w-6xl mx-auto px-4 py-6 space-y-6">
+      <main className="max-w-6xl mx-auto px-3 sm:px-4 py-4 sm:py-6 space-y-4 sm:space-y-6">
         {/* プライバシー通知 */}
-        <div className="flex items-start gap-2 px-4 py-3 bg-blue-50 border border-blue-100 rounded-lg text-sm text-blue-700">
-          <Shield size={16} className="mt-0.5 flex-shrink-0" />
-          <p>
-            入力データはすべてブラウザ内（localStorage）に保存されます。サーバーへの送信・保存は行いません。
-          </p>
+        <div className="flex items-start gap-2 px-3 sm:px-4 py-2.5 sm:py-3 bg-blue-50 border border-blue-100 rounded-lg text-xs sm:text-sm text-blue-700">
+          <Shield size={14} className="mt-0.5 flex-shrink-0" />
+          <p>データはブラウザ内に保存されます。サーバーへの送信は行いません。</p>
         </div>
 
-        {/* スケジュール選択 */}
-        <div className="flex items-center gap-3">
-          <div className="relative">
-            <button
-              onClick={() => setShowSelector(!showSelector)}
-              className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 rounded-lg text-sm hover:bg-gray-50"
-            >
-              <span className="font-medium text-gray-800 max-w-[200px] truncate">
-                {current?.title || "当番表を選択"}
-              </span>
-              <ChevronDown size={14} className="text-gray-400" />
-            </button>
+        {/* スケジュール選択 — モバイルではスタック */}
+        <div className="flex flex-col sm:flex-row gap-2 sm:gap-3">
+          {/* 上段: スケジュールセレクタ + 年 */}
+          <div className="flex items-center gap-2">
+            <div className="relative flex-1 sm:flex-none">
+              <button
+                onClick={() => setShowSelector(!showSelector)}
+                className="flex items-center gap-2 w-full sm:w-auto px-3 sm:px-4 py-2 bg-white border border-gray-200 rounded-lg text-sm hover:bg-gray-50"
+              >
+                <span className="font-medium text-gray-800 truncate">
+                  {current?.title || "当番表を選択"}
+                </span>
+                <ChevronDown size={14} className="text-gray-400 flex-shrink-0" />
+              </button>
 
-            {showSelector && (
-              <div className="absolute top-full left-0 mt-1 w-72 bg-white border border-gray-200 rounded-lg shadow-lg z-30">
-                {schedules.map((s) => (
-                  <div
-                    key={s.id}
-                    className={`flex items-center justify-between px-4 py-2.5 text-sm cursor-pointer hover:bg-gray-50 ${
-                      s.id === activeId ? "bg-blue-50 text-blue-700" : "text-gray-700"
-                    }`}
-                  >
-                    <span
-                      onClick={() => {
-                        setActive(s.id);
-                        setShowSelector(false);
-                      }}
-                      className="flex-1 truncate"
+              {showSelector && (
+                <div className="absolute top-full left-0 mt-1 w-full sm:w-72 bg-white border border-gray-200 rounded-lg shadow-lg z-30">
+                  {schedules.map((s) => (
+                    <div
+                      key={s.id}
+                      className={`flex items-center justify-between px-4 py-2.5 text-sm cursor-pointer hover:bg-gray-50 ${
+                        s.id === activeId ? "bg-blue-50 text-blue-700" : "text-gray-700"
+                      }`}
                     >
-                      {s.title || "無題"}
-                    </span>
-                    {schedules.length > 1 && (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDeleteSchedule(s.id);
+                      <span
+                        onClick={() => {
+                          setActive(s.id);
+                          setShowSelector(false);
                         }}
-                        className="text-gray-300 hover:text-red-500 ml-2"
+                        className="flex-1 truncate"
                       >
-                        <Trash2 size={13} />
-                      </button>
-                    )}
-                  </div>
-                ))}
-                <button
-                  onClick={handleAddSchedule}
-                  className="flex items-center gap-2 w-full px-4 py-2.5 text-sm text-blue-600 hover:bg-blue-50 border-t border-gray-100"
-                >
-                  <Plus size={14} />
-                  新しい当番表を作成
-                </button>
-              </div>
+                        {s.title || "無題"}
+                      </span>
+                      {schedules.length > 1 && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteSchedule(s.id);
+                          }}
+                          className="text-gray-300 hover:text-red-500 ml-2"
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                  <button
+                    onClick={handleAddSchedule}
+                    className="flex items-center gap-2 w-full px-4 py-2.5 text-sm text-blue-600 hover:bg-blue-50 border-t border-gray-100"
+                  >
+                    <Plus size={14} />
+                    新しい当番表を作成
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* 年の設定 */}
+            {current && (
+              <label className="flex items-center gap-1 text-sm text-gray-600 flex-shrink-0">
+                <input
+                  type="number"
+                  value={current.year}
+                  onChange={(e) =>
+                    handleScheduleChange({
+                      ...current,
+                      year: parseInt(e.target.value) || new Date().getFullYear(),
+                    })
+                  }
+                  className="w-16 sm:w-20 px-2 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 text-center"
+                />
+                <span>年</span>
+              </label>
             )}
           </div>
 
@@ -205,71 +224,33 @@ export default function TobanPage() {
                 handleScheduleChange({ ...current, title: e.target.value })
               }
               placeholder="当番表タイトル"
-              className="flex-1 px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+              className="w-full sm:flex-1 px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white"
             />
-          )}
-
-          {/* 年の設定 */}
-          {current && (
-            <label className="flex items-center gap-1.5 text-sm text-gray-600">
-              <span>年:</span>
-              <input
-                type="number"
-                value={current.year}
-                onChange={(e) =>
-                  handleScheduleChange({
-                    ...current,
-                    year: parseInt(e.target.value) || new Date().getFullYear(),
-                  })
-                }
-                className="w-20 px-2 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"
-              />
-            </label>
           )}
         </div>
 
-        {/* タブ切り替え */}
-        <div className="flex border-b border-gray-200">
-          <button
-            onClick={() => setTab("editor")}
-            className={`px-4 py-2.5 text-sm font-medium border-b-2 -mb-px ${
-              tab === "editor"
-                ? "border-blue-600 text-blue-600"
-                : "border-transparent text-gray-500 hover:text-gray-700"
-            }`}
-          >
-            表エディタ
-          </button>
-          <button
-            onClick={() => setTab("text")}
-            className={`px-4 py-2.5 text-sm font-medium border-b-2 -mb-px ${
-              tab === "text"
-                ? "border-blue-600 text-blue-600"
-                : "border-transparent text-gray-500 hover:text-gray-700"
-            }`}
-          >
-            テキスト入力
-          </button>
-          <button
-            onClick={() => setTab("import")}
-            className={`px-4 py-2.5 text-sm font-medium border-b-2 -mb-px ${
-              tab === "import"
-                ? "border-blue-600 text-blue-600"
-                : "border-transparent text-gray-500 hover:text-gray-700"
-            }`}
-          >
-            読み込み
-          </button>
-          <button
-            onClick={() => setTab("members")}
-            className={`px-4 py-2.5 text-sm font-medium border-b-2 -mb-px ${
-              tab === "members"
-                ? "border-blue-600 text-blue-600"
-                : "border-transparent text-gray-500 hover:text-gray-700"
-            }`}
-          >
-            メンバー名簿
-          </button>
+        {/* タブ切り替え — モバイルでスクロール可能 */}
+        <div className="flex border-b border-gray-200 overflow-x-auto -mx-3 px-3 sm:mx-0 sm:px-0 scrollbar-hide">
+          {(
+            [
+              { key: "editor", label: "表エディタ" },
+              { key: "text", label: "テキスト" },
+              { key: "import", label: "読み込み" },
+              { key: "members", label: "名簿" },
+            ] as const
+          ).map((t) => (
+            <button
+              key={t.key}
+              onClick={() => setTab(t.key)}
+              className={`px-3 sm:px-4 py-2.5 text-xs sm:text-sm font-medium border-b-2 -mb-px whitespace-nowrap ${
+                tab === t.key
+                  ? "border-blue-600 text-blue-600"
+                  : "border-transparent text-gray-500 hover:text-gray-700"
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
         </div>
 
         {/* コンテンツ */}
@@ -278,13 +259,13 @@ export default function TobanPage() {
         )}
 
         {current && tab === "text" && (
-          <div className="bg-white border border-gray-200 rounded-lg p-6">
+          <div className="bg-white border border-gray-200 rounded-lg p-4 sm:p-6">
             <TextParseInput schedule={current} onChange={handleScheduleChange} />
           </div>
         )}
 
         {current && tab === "import" && (
-          <div className="bg-white border border-gray-200 rounded-lg p-6 space-y-8">
+          <div className="bg-white border border-gray-200 rounded-lg p-4 sm:p-6 space-y-6 sm:space-y-8">
             <ImageUploader schedule={current} onChange={handleScheduleChange} />
             <hr className="border-gray-200" />
             <ExcelImporter schedule={current} onChange={handleScheduleChange} />
@@ -292,7 +273,7 @@ export default function TobanPage() {
         )}
 
         {current && tab === "members" && (
-          <div className="bg-white border border-gray-200 rounded-lg p-6">
+          <div className="bg-white border border-gray-200 rounded-lg p-4 sm:p-6">
             <MemberManager
               members={current.members}
               onChange={(members) =>

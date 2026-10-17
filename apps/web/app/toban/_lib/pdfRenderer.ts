@@ -29,9 +29,10 @@ async function ensureFont(doc: jsPDF): Promise<void> {
         binary += String.fromCharCode(bytes[i]);
       }
       const base64 = btoa(binary);
-      // jsPDF にフォント登録（全 jsPDF インスタンスで共有）
+      // jsPDF にフォント登録（normal + bold 両方を同じTTFで登録）
       doc.addFileToVFS("NotoSansJP-Regular.ttf", base64);
       doc.addFont("NotoSansJP-Regular.ttf", "NotoSansJP", "normal");
+      doc.addFont("NotoSansJP-Regular.ttf", "NotoSansJP", "bold");
       fontLoaded = true;
     })();
   }
