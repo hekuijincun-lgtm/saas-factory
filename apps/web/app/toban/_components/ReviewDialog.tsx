@@ -18,8 +18,32 @@ interface Props {
  * OCR / Excel 読み取り結果の確認・修正ダイアログ
  * 確認後に表エディタに流し込む
  */
+/** 簡易類似度: 1文字違いの名前を候補として返す */
+function findSimilar(name: string, members: string[]): string[] {
+  if (!name.trim() || members.length === 0) return [];
+  return members.filter((m) => {
+    if (m === name) return false;
+    // レーベンシュタイン距離1以内
+    if (Math.abs(m.length - name.length) > 1) return false;
+    let diff = 0;
+    const longer = m.length >= name.length ? m : name;
+    const shorter = m.length >= name.length ? name : m;
+    let si = 0;
+    for (let li = 0; li < longer.length && diff <= 1; li++) {
+      if (shorter[si] === longer[li]) {
+        si++;
+      } else {
+        diff++;
+        if (m.length === name.length) si++;
+      }
+    }
+    return diff <= 1;
+  });
+}
+
 export default function ReviewDialog({ rows: initialRows, schedule, onChange, onClose, title }: Props) {
   const [rows, setRows] = useState<Row[]>(initialRows);
+  const memberList = schedule.members;
 
   const updateRow = (index: number, patch: Partial<Row>) => {
     setRows((prev) => prev.map((r, i) => (i === index ? { ...r, ...patch } : r)));
@@ -114,9 +138,23 @@ export default function ReviewDialog({ rows: initialRows, schedule, onChange, on
                   </td>
                   <td className="px-1 py-1.5">
                     <div className="flex flex-wrap gap-1 items-center">
-                      {row.members.map((m, mi) => (
-                        <input key={mi} type="text" value={m} onChange={(e) => updateMember(ri, mi, e.target.value)} className="w-20 px-2 py-1 text-sm border border-gray-300 rounded" />
-                      ))}
+                      {row.members.map((m, mi) => {
+                        const unknown = m.trim() && memberList.length > 0 && !memberList.includes(m.trim());
+                        const similar = unknown ? findSimilar(m.trim(), memberList) : [];
+                        return (
+                          <div key={mi} className="relative group">
+                            <input type="text" value={m} onChange={(e) => updateMember(ri, mi, e.target.value)} className={`w-20 px-2 py-1 text-sm border rounded ${unknown ? "border-yellow-400 bg-yellow-50" : "border-gray-300"}`} />
+                            {similar.length > 0 && (
+                              <div className="absolute z-10 top-full left-0 mt-0.5 hidden group-hover:block bg-white border border-yellow-300 rounded shadow-sm p-1 text-xs">
+                                <span className="text-yellow-700">もしかして: </span>
+                                {similar.map((s) => (
+                                  <button key={s} onClick={() => updateMember(ri, mi, s)} className="text-blue-600 hover:underline ml-1">{s}</button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
                       <button onClick={() => addMember(ri)} className="text-blue-500 hover:text-blue-700"><Plus size={14} /></button>
                     </div>
                   </td>
@@ -147,9 +185,22 @@ export default function ReviewDialog({ rows: initialRows, schedule, onChange, on
                   <button onClick={() => removeRow(ri)} className="text-gray-300 hover:text-red-500"><X size={14} /></button>
                 </div>
                 <div className="flex flex-wrap gap-1.5">
-                  {row.members.map((m, mi) => (
-                    <input key={mi} type="text" value={m} onChange={(e) => updateMember(ri, mi, e.target.value)} className="w-20 px-2 py-1 text-sm border border-gray-300 rounded" />
-                  ))}
+                  {row.members.map((m, mi) => {
+                    const unknown = m.trim() && memberList.length > 0 && !memberList.includes(m.trim());
+                    const similar = unknown ? findSimilar(m.trim(), memberList) : [];
+                    return (
+                      <div key={mi}>
+                        <input type="text" value={m} onChange={(e) => updateMember(ri, mi, e.target.value)} className={`w-20 px-2 py-1 text-sm border rounded ${unknown ? "border-yellow-400 bg-yellow-50" : "border-gray-300"}`} />
+                        {similar.length > 0 && (
+                          <div className="text-[10px] mt-0.5 text-yellow-700">
+                            →{similar.map((s) => (
+                              <button key={s} onClick={() => updateMember(ri, mi, s)} className="text-blue-600 hover:underline ml-1">{s}</button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                   <button onClick={() => addMember(ri)} className="text-blue-500 hover:text-blue-700 p-1"><Plus size={14} /></button>
                 </div>
                 {row.cancelled && <span className="inline-block text-[10px] px-2 py-0.5 bg-orange-100 text-orange-600 rounded-full">中止</span>}

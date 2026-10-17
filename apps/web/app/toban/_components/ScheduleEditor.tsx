@@ -11,6 +11,7 @@ import {
   ChevronUp,
   Copy,
   MoreHorizontal,
+  X,
 } from "lucide-react";
 import type { Row, Schedule } from "../_lib/types";
 import { createRow } from "../_lib/types";
@@ -28,6 +29,8 @@ export default function ScheduleEditor({ schedule, onChange }: Props) {
   const { rows, year, members } = schedule;
   const [focusCell, setFocusCell] = useState<CellRef | null>(null);
   const [openMenu, setOpenMenu] = useState<number | null>(null);
+  const [chipRow, setChipRow] = useState<number | null>(null); // モバイル: チップ選択表示中の行
+  const [addToListPrompt, setAddToListPrompt] = useState<{ rowIdx: number; name: string } | null>(null);
   const cellRefs = useRef<Map<string, HTMLInputElement>>(new Map());
 
   const maxMembers = Math.max(3, ...rows.map((r) => r.members.length));
@@ -145,6 +148,46 @@ export default function ScheduleEditor({ schedule, onChange }: Props) {
     const newRows = [...rows];
     [newRows[index], newRows[newIdx]] = [newRows[newIdx], newRows[index]];
     onChange({ ...schedule, rows: newRows });
+  };
+
+  /** モバイル: チップタップで担当を追加/削除 */
+  const toggleMemberChip = (rowIdx: number, name: string) => {
+    const row = rows[rowIdx];
+    const idx = row.members.indexOf(name);
+    if (idx >= 0) {
+      // 削除
+      const newMembers = row.members.filter((_, i) => i !== idx);
+      updateRow(rowIdx, { members: newMembers.length > 0 ? newMembers : [""] });
+    } else {
+      // 追加: 空のスロットがあればそこに、なければ末尾に
+      const emptyIdx = row.members.findIndex((m) => !m.trim());
+      if (emptyIdx >= 0) {
+        const newMembers = [...row.members];
+        newMembers[emptyIdx] = name;
+        updateRow(rowIdx, { members: newMembers });
+      } else {
+        updateRow(rowIdx, { members: [...row.members, name] });
+      }
+    }
+  };
+
+  /** 名簿にない名前を入力したときの確認 */
+  const handleUnknownName = (rowIdx: number, name: string) => {
+    if (name.trim() && members.length > 0 && !members.includes(name.trim())) {
+      setAddToListPrompt({ rowIdx, name: name.trim() });
+    }
+  };
+
+  const confirmAddToList = () => {
+    if (!addToListPrompt) return;
+    onChange({ ...schedule, members: [...members, addToListPrompt.name] });
+    setAddToListPrompt(null);
+  };
+
+  /** 同じ日に同じ名前がいないかチェック */
+  const isDuplicate = (rowIdx: number, name: string) => {
+    if (!name.trim()) return false;
+    return rows.some((r, i) => i !== rowIdx && r.date === rows[rowIdx].date && r.members.includes(name));
   };
 
   const addMemberColumn = () => {
@@ -423,17 +466,76 @@ export default function ScheduleEditor({ schedule, onChange }: Props) {
                 </div>
               </div>
 
-              {/* 2段目: 担当者 */}
-              <div className="flex flex-wrap gap-1.5">
-                {Array.from({ length: maxMembers }, (_, mi) => (
-                  <Autocomplete
-                    key={mi}
-                    value={row.members[mi] ?? ""}
-                    onChange={(v) => updateCell(ri, 2 + mi, v)}
-                    suggestions={members}
-                    placeholder={`担当${mi + 1}`}
-                  />
-                ))}
+              {/* 2段目: 担当者 — チップ選択 + 手入力 */}
+              <div className="space-y-2">
+                {/* 選択済みの担当者 */}
+                <div className="flex flex-wrap gap-1.5">
+                  {row.members.filter((m) => m.trim()).map((m, mi) => (
+                    <span
+                      key={mi}
+                      className={`inline-flex items-center gap-1 px-2.5 py-1 text-sm rounded-full ${
+                        isDuplicate(ri, m)
+                          ? "bg-yellow-100 text-yellow-800 border border-yellow-300"
+                          : "bg-blue-100 text-blue-800"
+                      }`}
+                    >
+                      {m}
+                      <button
+                        onClick={() => {
+                          const newMembers = row.members.filter((_, i) => i !== row.members.indexOf(m));
+                          updateRow(ri, { members: newMembers.length > 0 ? newMembers : [""] });
+                        }}
+                        className="text-blue-400 hover:text-red-500"
+                      >
+                        <X size={12} />
+                      </button>
+                    </span>
+                  ))}
+                  <button
+                    onClick={() => setChipRow(chipRow === ri ? null : ri)}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 text-sm text-gray-500 bg-gray-100 rounded-full hover:bg-gray-200"
+                  >
+                    <Plus size={12} /> 追加
+                  </button>
+                </div>
+
+                {/* 名簿チップ選択パネル */}
+                {chipRow === ri && members.length > 0 && (
+                  <div className="bg-gray-50 rounded-lg p-2.5 space-y-2">
+                    <p className="text-xs text-gray-500">名簿からタップで選択:</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {members.map((name) => {
+                        const selected = row.members.includes(name);
+                        return (
+                          <button
+                            key={name}
+                            onClick={() => toggleMemberChip(ri, name)}
+                            className={`px-3 py-1.5 text-sm rounded-full transition-colors ${
+                              selected
+                                ? "bg-blue-600 text-white"
+                                : "bg-white text-gray-700 border border-gray-300 hover:bg-blue-50"
+                            }`}
+                          >
+                            {name}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {/* 手入力 */}
+                    <div className="pt-1">
+                      <Autocomplete
+                        value=""
+                        onChange={(v) => {
+                          if (!v.trim()) return;
+                          toggleMemberChip(ri, v.trim());
+                          handleUnknownName(ri, v);
+                        }}
+                        suggestions={members}
+                        placeholder="手入力で追加..."
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* 中止バッジ */}
@@ -446,6 +548,31 @@ export default function ScheduleEditor({ schedule, onChange }: Props) {
           )
         )}
       </div>
+
+      {/* 名簿追加の確認 */}
+      {addToListPrompt && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
+          <div className="bg-white rounded-xl shadow-xl p-5 max-w-sm w-full space-y-3">
+            <p className="text-sm text-gray-800">
+              「<strong>{addToListPrompt.name}</strong>」は名簿にありません。名簿に追加しますか？
+            </p>
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => setAddToListPrompt(null)}
+                className="px-3 py-2 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200"
+              >
+                いいえ
+              </button>
+              <button
+                onClick={confirmAddToList}
+                className="px-3 py-2 text-sm text-white bg-blue-600 rounded-lg hover:bg-blue-700"
+              >
+                追加する
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

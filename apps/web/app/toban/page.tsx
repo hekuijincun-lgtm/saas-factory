@@ -24,7 +24,7 @@ import MemberManager from "./_components/MemberManager";
 import PdfExportDialog from "./_components/PdfExportDialog";
 import TextParseInput from "./_components/TextParseInput";
 import ImageUploader from "./_components/ImageUploader";
-import ExcelImporter from "./_components/ExcelImporter";
+// ExcelImporter は ImageUploader に統合済み
 
 type Tab = "editor" | "text" | "import" | "members";
 
@@ -265,10 +265,8 @@ export default function TobanPage() {
         )}
 
         {current && tab === "import" && (
-          <div className="bg-white border border-gray-200 rounded-lg p-4 sm:p-6 space-y-6 sm:space-y-8">
+          <div className="bg-white border border-gray-200 rounded-lg p-4 sm:p-6">
             <ImageUploader schedule={current} onChange={handleScheduleChange} />
-            <hr className="border-gray-200" />
-            <ExcelImporter schedule={current} onChange={handleScheduleChange} />
           </div>
         )}
 
