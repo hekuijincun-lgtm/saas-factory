@@ -11,9 +11,15 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.135.0",
+    "@stripe/react-stripe-js": "^6.2.0",
+    "@stripe/stripe-js": "^9.2.0",
     "@tailwindcss/typography": "^0.5.19",
     "dom-to-image-more": "^3.7.2",
+    "exceljs": "^4.4.0",
     "framer-motion": "^12.23.26",
+    "jspdf": "^4.2.1",
+    "jspdf-autotable": "^5.0.9",
     "next": "15.5.2",
     "react": "18.3.1",
     "react-dom": "18.3.1",
