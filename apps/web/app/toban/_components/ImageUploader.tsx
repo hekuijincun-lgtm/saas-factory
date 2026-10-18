@@ -40,11 +40,18 @@ export default function ImageUploader({ schedule, onChange }: Props) {
     try {
       let processedFile = file;
 
-      // 2MB超の場合はリサイズ・圧縮
-      if (file.size > MAX_IMAGE_BYTES) {
-        setLoadingMsg("画像を圧縮しています...");
+      // 常にリサイズ・圧縮（OCRには高解像度は不要、通信量を減らす）
+      setLoadingMsg("画像を圧縮しています...");
+      try {
         const { compressImage } = await import("@/src/lib/compressImage");
-        processedFile = await compressImage(file, { maxBytes: MAX_IMAGE_BYTES });
+        processedFile = await compressImage(file, {
+          maxBytes: MAX_IMAGE_BYTES,
+          maxDim: 1600,
+          quality: 0.8,
+        });
+      } catch (compressErr) {
+        console.warn("Image compression failed, using original:", compressErr);
+        // 圧縮失敗時はオリジナルで続行
       }
 
       // プレビュー表示

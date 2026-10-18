@@ -23,8 +23,9 @@ export async function POST(req: Request) {
 
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
+    console.error("ANTHROPIC_API_KEY is not set in environment variables");
     return Response.json(
-      { error: "ANTHROPIC_API_KEY not configured" },
+      { error: "読み取りサービスの設定が完了していません。管理者にお問い合わせください。" },
       { status: 500 }
     );
   }
@@ -42,14 +43,15 @@ export async function POST(req: Request) {
     return Response.json({ error: "image is required" }, { status: 400 });
   }
 
-  // 画像を base64 に変換
+  // 画像を base64 に変換（チャンクでメモリ安全に処理）
   const buf = await file.arrayBuffer();
   const bytes = new Uint8Array(buf);
-  let binary = "";
-  for (let i = 0; i < bytes.length; i++) {
-    binary += String.fromCharCode(bytes[i]);
+  const CHUNK = 8192;
+  const parts: string[] = [];
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    parts.push(String.fromCharCode(...bytes.subarray(i, i + CHUNK)));
   }
-  const base64 = btoa(binary);
+  const base64 = btoa(parts.join(""));
 
   // MIME type
   const mediaType = file.type || "image/jpeg";
@@ -61,7 +63,7 @@ export async function POST(req: Request) {
   ];
   if (!supportedTypes.includes(mediaType)) {
     return Response.json(
-      { error: `Unsupported image type: ${mediaType}. Use JPEG, PNG, GIF, or WebP.` },
+      { error: "この画像形式は対応していません。JPG、PNG、GIF、WebPのいずれかで試してください。" },
       { status: 400 }
     );
   }
@@ -100,9 +102,18 @@ export async function POST(req: Request) {
     });
 
     if (!res.ok) {
-      const err = await res.text();
-      console.error("Claude Vision API error:", err);
-      return Response.json({ error: "ai_error" }, { status: 502 });
+      const errText = await res.text();
+      console.error("Claude Vision API error:", res.status, errText);
+      if (res.status === 401 || res.status === 403) {
+        return Response.json({ error: "読み取りサービスの認証に失敗しました。API設定を確認してください。" }, { status: 502 });
+      }
+      if (res.status === 413 || res.status === 400) {
+        return Response.json({ error: "画像が大きすぎるか、形式に問題があります。別の写真で試してください。" }, { status: 400 });
+      }
+      if (res.status === 529 || res.status === 503) {
+        return Response.json({ error: "読み取りサービスが混み合っています。しばらくしてからもう一度お試しください。" }, { status: 503 });
+      }
+      return Response.json({ error: "読み取りに失敗しました。しばらくしてからもう一度お試しください。" }, { status: 502 });
     }
 
     const data: any = await res.json();
@@ -111,14 +122,15 @@ export async function POST(req: Request) {
     // JSON配列を抽出
     const jsonMatch = content.match(/\[[\s\S]*\]/);
     if (!jsonMatch) {
-      return Response.json({ error: "parse_failed", raw: content }, { status: 422 });
+      console.error("OCR parse failed. Raw response:", content);
+      return Response.json({ error: "写真から表データを読み取れませんでした。別の写真で試してください。" }, { status: 422 });
     }
 
     const rows: OcrRow[] = JSON.parse(jsonMatch[0]);
     return Response.json({ rows });
   } catch (err) {
     console.error("OCR API error:", err);
-    return Response.json({ error: "internal_error" }, { status: 500 });
+    return Response.json({ error: "読み取り中にエラーが発生しました。もう一度お試しください。" }, { status: 500 });
   }
 }
 
