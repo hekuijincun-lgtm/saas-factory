@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { FileText, Download, Loader2, ImageIcon, Share2 } from "lucide-react";
+import { FileText, Download, Loader2, ImageIcon, Share2, MessageCircle } from "lucide-react";
 import type { Row, PdfOptions } from "../_lib/types";
 import { DEFAULT_PDF_OPTIONS } from "../_lib/types";
 
@@ -30,6 +30,7 @@ export default function PdfExportDialog({ rows, defaultTitle, onClose }: Props) 
   });
   const [loading, setLoading] = useState(false);
   const [loadingAction, setLoadingAction] = useState("");
+  const [showFallback, setShowFallback] = useState(false);
 
   const generatePdfBlob = async (): Promise<Blob> => {
     const { renderPdf } = await import("../_lib/pdfRenderer");
@@ -68,45 +69,73 @@ export default function PdfExportDialog({ rows, defaultTitle, onClose }: Props) 
     }
   };
 
+  /** ファイル名を生成（日本語で分かりやすく） */
+  const makeFileName = (ext: string) => {
+    const title = options.title || "当番表";
+    const now = new Date();
+    const dateStr = `${now.getFullYear()}年${now.getMonth() + 1}月`;
+    return `${title}_${dateStr}.${ext}`;
+  };
+
   const handleShare = async () => {
     setLoading(true);
-    setLoadingAction("共有の準備中...");
+    setLoadingAction("PDFを作成しています...");
     try {
-      // Web Share API（ファイル共有）が使えるか
-      if (navigator.share) {
-        // まず画像で共有を試みる（LINEでは画像の方が見やすい）
-        const pngBlob = await generatePngBlob(rows, options);
-        const file = new File([pngBlob], `${options.title || "当番表"}.png`, { type: "image/png" });
+      const pdfBlob = await generatePdfBlob();
+      const pdfFile = new File([pdfBlob], makeFileName("pdf"), { type: "application/pdf" });
 
-        if (navigator.canShare && navigator.canShare({ files: [file] })) {
-          await navigator.share({
-            title: options.title || "当番表",
-            files: [file],
-          });
-          onClose();
-          return;
-        }
-
-        // ファイル共有非対応→テキスト共有
-        const text = rowsToText(rows, options.title);
-        await navigator.share({ title: options.title || "当番表", text });
+      // Web Share API でPDFファイルを共有
+      if (navigator.share && navigator.canShare && navigator.canShare({ files: [pdfFile] })) {
+        setLoadingAction("共有シートを開いています...");
+        await navigator.share({
+          title: options.title || "当番表",
+          files: [pdfFile],
+        });
         onClose();
         return;
       }
 
-      // Web Share API非対応 → LINE URLスキームで共有
-      const text = rowsToText(rows, options.title);
-      const lineUrl = `https://line.me/R/share?text=${encodeURIComponent(text)}`;
-      window.open(lineUrl, "_blank");
-      onClose();
+      // ファイル共有非対応 → フォールバックUI表示
+      setShowFallback(true);
+      // PDFは自動ダウンロード
+      downloadBlob(pdfBlob, makeFileName("pdf"));
     } catch (err: any) {
-      // ユーザーがキャンセルした場合は何もしない
-      if (err?.name === "AbortError") return;
+      if (err?.name === "AbortError") return; // ユーザーキャンセル
       console.error("共有エラー:", err);
-      // フォールバック: テキストをLINEで送る
-      const text = rowsToText(rows, options.title);
-      const lineUrl = `https://line.me/R/share?text=${encodeURIComponent(text)}`;
-      window.open(lineUrl, "_blank");
+      // エラー時もフォールバック表示
+      setShowFallback(true);
+    } finally {
+      setLoading(false);
+      setLoadingAction("");
+    }
+  };
+
+  const handleLineText = () => {
+    const text = rowsToText(rows, options.title);
+    const lineUrl = `https://line.me/R/share?text=${encodeURIComponent(text)}`;
+    window.open(lineUrl, "_blank");
+  };
+
+  const handlePngShare = async () => {
+    setLoading(true);
+    setLoadingAction("画像を作成しています...");
+    try {
+      const pngBlob = await generatePngBlob(rows, options);
+      const pngFile = new File([pngBlob], makeFileName("png"), { type: "image/png" });
+
+      if (navigator.share && navigator.canShare && navigator.canShare({ files: [pngFile] })) {
+        await navigator.share({ title: options.title || "当番表", files: [pngFile] });
+        onClose();
+        return;
+      }
+
+      // ファイル共有非対応→ダウンロード
+      downloadBlob(pngBlob, makeFileName("png"));
+    } catch (err: any) {
+      if (err?.name === "AbortError") return;
+      console.error("画像共有エラー:", err);
+      const pngBlob = await generatePngBlob(rows, options);
+      downloadBlob(pngBlob, makeFileName("png"));
     } finally {
       setLoading(false);
       setLoadingAction("");
@@ -213,41 +242,92 @@ export default function PdfExportDialog({ rows, defaultTitle, onClose }: Props) 
           個人名が含まれます。送り先を確認してください。
         </p>
 
-        {/* アクション — 大きなボタン */}
-        <div className="grid grid-cols-1 gap-2">
-          <button
-            onClick={handleShare}
-            disabled={loading}
-            className="w-full px-4 py-3 text-sm font-medium text-white bg-green-500 rounded-lg hover:bg-green-600 disabled:opacity-50 flex items-center justify-center gap-2"
-          >
-            <Share2 size={18} />
-            LINEで送る・共有する
-          </button>
-          <div className="grid grid-cols-2 gap-2">
+        {/* アクション */}
+        {!showFallback ? (
+          <div className="grid grid-cols-1 gap-2">
             <button
-              onClick={handlePdfDownload}
+              onClick={handleShare}
               disabled={loading}
-              className="px-4 py-3 text-sm text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50 flex items-center justify-center gap-2"
+              className="w-full px-4 py-4 text-base font-medium text-white bg-green-500 rounded-xl hover:bg-green-600 disabled:opacity-50 flex items-center justify-center gap-2"
             >
-              <Download size={16} />
-              PDFで保存
+              <Share2 size={20} />
+              LINEで送る
             </button>
+            <div className="grid grid-cols-3 gap-2">
+              <button
+                onClick={handlePdfDownload}
+                disabled={loading}
+                className="px-3 py-3 text-sm text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50 flex flex-col items-center justify-center gap-1"
+              >
+                <Download size={16} />
+                <span>PDF</span>
+              </button>
+              <button
+                onClick={handlePngDownload}
+                disabled={loading}
+                className="px-3 py-3 text-sm text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50 flex flex-col items-center justify-center gap-1"
+              >
+                <ImageIcon size={16} />
+                <span>画像</span>
+              </button>
+              <button
+                onClick={handlePngShare}
+                disabled={loading}
+                className="px-3 py-3 text-sm text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50 flex flex-col items-center justify-center gap-1"
+              >
+                <Share2 size={16} />
+                <span>画像共有</span>
+              </button>
+            </div>
             <button
-              onClick={handlePngDownload}
-              disabled={loading}
-              className="px-4 py-3 text-sm text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50 flex items-center justify-center gap-2"
+              onClick={onClose}
+              className="w-full px-4 py-2.5 text-sm text-gray-500 hover:text-gray-700"
             >
-              <ImageIcon size={16} />
-              画像で保存
+              閉じる
             </button>
           </div>
-          <button
-            onClick={onClose}
-            className="w-full px-4 py-2.5 text-sm text-gray-500 hover:text-gray-700"
-          >
-            閉じる
-          </button>
-        </div>
+        ) : (
+          /* フォールバック: 共有シートが使えない環境 */
+          <div className="space-y-3">
+            <div className="bg-green-50 border border-green-200 rounded-xl p-4 space-y-3">
+              <p className="text-sm font-medium text-green-800">
+                PDFをダウンロードしました
+              </p>
+              <div className="text-sm text-green-700 space-y-2">
+                <p className="font-medium">LINEで送る手順：</p>
+                <ol className="list-decimal list-inside space-y-1 text-xs">
+                  <li>LINEアプリで送りたいトークを開く</li>
+                  <li>メッセージ入力欄の左の「＋」をタップ</li>
+                  <li>「ファイル」を選んで、ダウンロードしたPDFを選択</li>
+                </ol>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-2">
+              <button
+                onClick={handleLineText}
+                className="w-full px-4 py-3 text-sm font-medium text-white bg-green-500 rounded-lg hover:bg-green-600 flex items-center justify-center gap-2"
+              >
+                <MessageCircle size={16} />
+                文章でLINEに送る
+              </button>
+              <button
+                onClick={handlePngShare}
+                disabled={loading}
+                className="w-full px-4 py-3 text-sm text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                <ImageIcon size={16} />
+                画像で送る（LINEで見やすい）
+              </button>
+              <button
+                onClick={() => { setShowFallback(false); }}
+                className="w-full px-4 py-2.5 text-sm text-gray-500 hover:text-gray-700"
+              >
+                戻る
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
